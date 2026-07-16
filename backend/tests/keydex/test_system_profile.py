@@ -2,9 +2,19 @@ from pathlib import Path
 
 from backend.app.keydex import (
     KeydexLayerProfile,
+    build_keydex_system_effective_snapshot,
     load_keydex_system_profile,
     resolve_system_keydex_root,
 )
+
+
+def _write_skill(root: Path, name: str) -> None:
+    skill_root = root / "skills" / name
+    skill_root.mkdir(parents=True, exist_ok=True)
+    (skill_root / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: {name}\n---\n\n# {name}\n",
+        encoding="utf-8",
+    )
 
 
 def test_t01_system_root_is_fixed_under_path_home(monkeypatch, tmp_path: Path) -> None:
@@ -38,26 +48,16 @@ def test_t03_system_layer_accepts_an_explicit_temporary_root_for_tests(
     assert layer.root != resolve_system_keydex_root()
 
 
-def test_t29_system_layer_preserves_source_and_logical_skills_root(tmp_path: Path) -> None:
-    layer = KeydexLayerProfile(
-        scope="system",
-        root=tmp_path / "system-root",
-        enabled=True,
-    )
-
-    assert layer.scope == "system"
-    assert layer.skills_root == (tmp_path / "system-root" / "skills").resolve()
-
-
-def test_t04_missing_system_directory_is_a_valid_empty_layer(tmp_path: Path) -> None:
+def test_kr04_missing_system_directory_is_a_valid_empty_layer(tmp_path: Path) -> None:
     profile = load_keydex_system_profile(tmp_path / "missing")
 
     assert profile.available is True
     assert profile.enabled is False
+    assert profile.manifest == {}
     assert profile.diagnostics == ()
 
 
-def test_t05_empty_system_directory_uses_default_manifest(tmp_path: Path) -> None:
+def test_kr05_existing_directory_is_loaded_by_convention(tmp_path: Path) -> None:
     system_root = tmp_path / "system"
     system_root.mkdir()
 
@@ -65,83 +65,51 @@ def test_t05_empty_system_directory_uses_default_manifest(tmp_path: Path) -> Non
 
     assert profile.available is True
     assert profile.enabled is True
-    assert profile.manifest == {"schema_version": 1, "skills": {"enabled": True}}
+    assert profile.skills_root == (system_root / "skills").resolve()
+    assert profile.manifest == {}
 
 
-def test_t06_valid_system_manifest_enables_system_layer(tmp_path: Path) -> None:
+def test_kr06_damaged_keydex_json_is_ignored_by_system_runtime(tmp_path: Path) -> None:
     system_root = tmp_path / "system"
-    system_root.mkdir()
-    (system_root / "keydex.json").write_text(
-        '{"schema_version": 1, "skills": {"enabled": true}}',
-        encoding="utf-8",
-    )
+    _write_skill(system_root, "global")
+    before = build_keydex_system_effective_snapshot(system_root)
 
-    profile = load_keydex_system_profile(system_root)
+    legacy = system_root / "keydex.md"
+    legacy.write_text("{invalid", encoding="utf-8")
+    damaged = build_keydex_system_effective_snapshot(system_root)
+    legacy.unlink()
+    legacy.mkdir()
+    directory = build_keydex_system_effective_snapshot(system_root)
 
-    assert profile.enabled is True
-    assert profile.available is True
+    assert damaged.fingerprint == before.fingerprint == directory.fingerprint
+    assert damaged.skill_catalog.skills["global"].source == "system"
+    assert directory.skill_catalog.skills["global"].source == "system"
+    assert damaged.diagnostics == before.diagnostics == directory.diagnostics
 
 
-def test_t07_system_disabled_is_layer_local(tmp_path: Path) -> None:
+def test_legacy_disabled_flag_cannot_disable_system_skills(tmp_path: Path) -> None:
     system_root = tmp_path / "system"
-    system_root.mkdir()
-    (system_root / "keydex.json").write_text(
-        '{"schema_version": 1, "skills": {"enabled": false}}',
-        encoding="utf-8",
-    )
-
-    profile = load_keydex_system_profile(system_root)
-
-    assert profile.enabled is False
-    assert profile.available is True
-    assert profile.inherit_system is True
-
-
-def test_t08_invalid_system_manifest_fails_closed_without_raising(tmp_path: Path) -> None:
-    system_root = tmp_path / "system"
-    system_root.mkdir()
-    (system_root / "keydex.json").write_text("{invalid", encoding="utf-8")
-
-    profile = load_keydex_system_profile(system_root)
-
-    assert profile.enabled is False
-    assert profile.available is False
-    assert profile.diagnostics[0].code == "keydex_manifest_invalid"
-
-
-def test_t17_system_disabled_does_not_change_workspace_profile_contract(
-    tmp_path: Path,
-) -> None:
-    system_root = tmp_path / "system"
-    system_root.mkdir()
-    (system_root / "keydex.json").write_text(
+    _write_skill(system_root, "global")
+    (system_root / "keydex.md").write_text(
         '{"skills": {"enabled": false}}',
         encoding="utf-8",
     )
-    workspace_root = tmp_path / "workspace" / ".keydex"
-    workspace_root.mkdir(parents=True)
 
-    system = load_keydex_system_profile(system_root)
-    workspace = KeydexLayerProfile(
-        scope="workspace",
-        root=workspace_root,
-        enabled=True,
-    )
+    snapshot = build_keydex_system_effective_snapshot(system_root)
 
-    assert system.enabled is False
-    assert workspace.enabled is True
+    assert snapshot.skill_catalog.skills["global"].source == "system"
 
 
-def test_t19_invalid_system_profile_does_not_raise_or_touch_other_roots(
-    tmp_path: Path,
-) -> None:
+def test_kr07_non_directory_system_root_is_an_isolated_layer_error(tmp_path: Path) -> None:
     broken = tmp_path / "broken-system"
-    broken.mkdir()
-    (broken / "keydex.json").mkdir()
+    broken.write_text("not a directory", encoding="utf-8")
     other = tmp_path / "other-workspace" / ".keydex"
     other.mkdir(parents=True)
 
     profile = load_keydex_system_profile(broken)
 
     assert profile.available is False
+    assert profile.enabled is False
+    assert profile.diagnostics[0].code == "keydex_root_invalid"
+    assert profile.diagnostics[0].scope == "system"
     assert other.is_dir()

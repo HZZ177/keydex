@@ -7,7 +7,7 @@ import pytest
 
 from backend.app.core.request_context import reset_request_context, set_request_context
 from backend.app.keydex import KeydexRuntimeCache
-from backend.app.keydex.skills import EffectiveSkillCatalog, SkillDefinition
+from backend.app.keydex.skills import SkillDefinition
 from backend.app.keydex.watcher import KeydexSkillsWatcher
 from backend.app.tools.skill import run_load_skill
 
@@ -58,8 +58,11 @@ async def test_t32_t37_t84_system_winner_uses_safe_source_aware_context(
     tmp_path: Path,
 ) -> None:
     system = _skill(tmp_path, "shared", "system", "SYSTEM WINNER")
-    catalog = EffectiveSkillCatalog(mode="system_only", skills={"shared": system})
-    token = set_request_context(skill_catalog=catalog)
+    snapshot = KeydexRuntimeCache(system_root=tmp_path / "system").get_system_snapshot()
+    token = set_request_context(
+        skill_catalog=snapshot.skill_catalog,
+        keydex_snapshot=snapshot,
+    )
 
     try:
         command = await run_load_skill(skill_name="shared", tool_call_id="call-system")
@@ -145,7 +148,7 @@ async def test_builtin_guide_can_activate_and_read_packaged_resources(tmp_path: 
     assert "# Keydex 产品使用指南" in pending["content"]
     resource_payload = _payload(resource)
     assert resource_payload["source"] == "builtin"
-    assert "# 内置、系统级、项目级 Skill" in resource_payload["content"]
+    assert "# `.keydex` 的内置、系统级与项目级能力" in resource_payload["content"]
 
 
 @pytest.mark.asyncio

@@ -15,7 +15,7 @@ export interface RequestOptions {
   silentStatuses?: number[];
 }
 
-const SENSITIVE_KEY_PATTERN = /api[_-]?key|authorization|auth[_-]?token|access[_-]?token|refresh[_-]?token|secret/i;
+const SENSITIVE_KEY_PATTERN = /api[_-]?key|authorization|auth[_-]?token|access[_-]?token|refresh[_-]?token|credential|password|secret/i;
 
 export class HttpClient {
   private baseUrl: string;
@@ -143,7 +143,8 @@ function fromRecord(status: number, record: Record<string, unknown>): RuntimeErr
     return null;
   }
 
-  return { code, message, details, status };
+  const retryable = typeof record.retryable === "boolean" ? record.retryable : undefined;
+  return { code, message, details, status, retryable };
 }
 
 async function readResponseBody(response: Response): Promise<{ body: unknown; rawText: string }> {

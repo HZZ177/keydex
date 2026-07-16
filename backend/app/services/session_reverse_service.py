@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from backend.app.services.file_resources import FileResourceIdentity
 from backend.app.services.file_history_service import (
     FileClassification,
     FileHistoryError,
@@ -34,6 +35,8 @@ class SessionReverseExecution:
     message_event_id: str
     mode: FileRestoreMode
     decision: FileRestoreDecision
+    file_access_mode: str = "workspace_trusted"
+    confirm_external_paths: bool = False
 
 
 class SessionReverseService:
@@ -101,6 +104,8 @@ class SessionReverseService:
                 mode=request.mode,
                 decision=request.decision,
                 workspace_root=workspace_root,
+                file_access_mode=request.file_access_mode,
+                confirm_external_paths=request.confirm_external_paths,
             )
             selected, forced, skipped = self._select_files(
                 operation,
@@ -324,13 +329,34 @@ class SessionReverseService:
         if decision == FileRestoreDecision.FORCE_CONFLICTS:
             allowed.add(FileClassification.FORCEABLE_CONFLICT)
         selected_items = [item for item in files if item.classification in allowed]
-        selected = tuple(item.canonical_path for item in selected_items)
+        selected = tuple(
+            FileResourceIdentity(
+                item.scope_kind,
+                item.scope_identity,
+                item.canonical_path,
+            ).resource_id
+            for item in selected_items
+        )
         forced = tuple(
-            item.canonical_path
+            FileResourceIdentity(
+                item.scope_kind,
+                item.scope_identity,
+                item.canonical_path,
+            ).resource_id
             for item in selected_items
             if item.classification == FileClassification.FORCEABLE_CONFLICT
         )
-        skipped = tuple(item for item in files if item.canonical_path not in selected)
+        selected_set = set(selected)
+        skipped = tuple(
+            item
+            for item in files
+            if FileResourceIdentity(
+                item.scope_kind,
+                item.scope_identity,
+                item.canonical_path,
+            ).resource_id
+            not in selected_set
+        )
         return selected, forced, skipped
 
     def _mark_skipped(
@@ -342,6 +368,8 @@ class SessionReverseService:
             self.repositories.file_history.update_operation_file(
                 operation_id,
                 item.canonical_path,
+                scope_kind=item.scope_kind,
+                scope_identity=item.scope_identity,
                 result_state=FileOperationFileStatus.SKIPPED,
                 error_code=item.reason_code or "not_selected",
             )
@@ -382,23 +410,28 @@ class SessionReverseService:
         if source is None and isinstance(detail.get("source"), dict):
             source = dict(detail["source"])
         files = self.repositories.file_history.list_operation_files(operation.id)
+        resource_id = lambda item: FileResourceIdentity(
+            item.scope_kind,
+            item.scope_identity,
+            item.canonical_path,
+        ).resource_id
         restored = tuple(
-            item.display_path
+            resource_id(item)
             for item in files
             if item.result_state == FileOperationFileStatus.RESTORED
         )
         forced = tuple(
-            item.display_path
+            resource_id(item)
             for item in files
             if item.result_state == FileOperationFileStatus.FORCED
         )
         skipped = tuple(
-            item.display_path
+            resource_id(item)
             for item in files
             if item.result_state == FileOperationFileStatus.SKIPPED
         )
         failed = tuple(
-            item.display_path
+            resource_id(item)
             for item in files
             if item.result_state == FileOperationFileStatus.FAILED
         )

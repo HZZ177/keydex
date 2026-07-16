@@ -1113,10 +1113,13 @@ export const AGENT_CHAT_ACTIONS = [
   "pending_input_paused",
   "pending_input_resumed",
   "pending_input_failed",
-  "keydexSkillsChanged",
+  "keydexWorkspaceChanged",
   "workspaceWatchBound",
   "workspaceWatchUnbound",
   "workspaceFilesChanged",
+  "gitRepositoryWatchBound",
+  "gitRepositoryWatchUnbound",
+  "gitMetadataChanged",
   "localFileWatchBound",
   "localFileWatchUnbound",
   "localFileChanged",
@@ -1208,6 +1211,8 @@ export const AGENT_INBOUND_ACTIONS = [
   "mcp_elicitation_resolved",
   "bind_workspace_watch",
   "unbind_workspace_watch",
+  "bind_git_repository_watch",
+  "unbind_git_repository_watch",
   "bind_local_file_watch",
   "unbind_local_file_watch",
 ] as const;
@@ -1882,6 +1887,23 @@ export interface AgentStreamActionData {
   trace_id?: string;
   trace_record_id?: string;
   turn_index?: number | null;
+}
+
+export interface KeydexWorkspaceChangedData {
+  session_id?: string | null;
+  sessionId?: string | null;
+  session_scope?: "system" | "workspace" | string | null;
+  sessionScope?: "system" | "workspace" | string | null;
+  workspace_root?: string | null;
+  workspaceRoot?: string | null;
+  changed_paths?: string[];
+  changedPaths?: string[];
+  changed_capabilities?: string[];
+  changedCapabilities?: string[];
+  capability_fingerprints?: Record<string, string>;
+  capabilityFingerprints?: Record<string, string>;
+  effective_fingerprint?: string | null;
+  effectiveFingerprint?: string | null;
 }
 
 export type FileChangeKind = "added" | "modified" | "deleted";

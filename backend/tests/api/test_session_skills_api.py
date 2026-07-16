@@ -49,7 +49,7 @@ def test_t58_t60_workspace_api_returns_effective_winners_and_inheritance(tmp_pat
     ]
 
 
-def test_t61_workspace_invalid_manifest_fails_closed_without_system_fallback(
+def test_removed_manifest_file_is_ignored_and_system_inheritance_is_fixed(
     tmp_path: Path,
 ) -> None:
     system_root = tmp_path / "system"
@@ -57,15 +57,18 @@ def test_t61_workspace_invalid_manifest_fails_closed_without_system_fallback(
     write_skill(system_root / "skills" / "global", "global")
     keydex_root = workspace_root / ".keydex"
     keydex_root.mkdir(parents=True)
-    (keydex_root / "keydex.json").write_text("not-json", encoding="utf-8")
+    (keydex_root / "keydex.md").write_text("not-json", encoding="utf-8")
     with TestClient(make_app(tmp_path, system_root)) as client:
         workspace = create_workspace(client, workspace_root)
         response = client.get(f"/api/workspaces/{workspace['id']}/skills")
 
     payload = response.json()
     assert response.status_code == 200
-    assert payload["skills"] == []
-    assert payload["diagnostics"][0]["code"] == "keydex_manifest_invalid"
+    assert [(item["name"], item["source"]) for item in payload["skills"]] == [
+        ("global", "system"),
+        ("keydex-guide", "builtin"),
+    ]
+    assert payload["diagnostics"] == []
 
 
 def test_t62_t63_session_scope_and_force_reload_are_stable(tmp_path: Path) -> None:

@@ -85,13 +85,15 @@ def test_layer_fingerprint_payload_does_not_expose_absolute_root(tmp_path: Path)
     assert system_root.as_posix() not in str(fingerprint.to_payload())
 
 
-def test_inherit_false_effective_fingerprint_ignores_system_content(tmp_path: Path) -> None:
+def test_legacy_inherit_false_is_ignored_and_system_changes_effective_snapshot(
+    tmp_path: Path,
+) -> None:
     system_root = tmp_path / "system"
     workspace_root = tmp_path / "workspace"
     _write_skill(system_root, "global", "one")
     workspace_keydex = workspace_root / ".keydex"
     workspace_keydex.mkdir(parents=True)
-    (workspace_keydex / "keydex.json").write_text(
+    (workspace_keydex / "keydex.md").write_text(
         '{"skills": {"inherit_system": false}}',
         encoding="utf-8",
     )
@@ -106,4 +108,5 @@ def test_inherit_false_effective_fingerprint_ignores_system_content(tmp_path: Pa
         system_root=system_root,
     )
 
-    assert first.fingerprint == second.fingerprint
+    assert first.fingerprint != second.fingerprint
+    assert second.skill_catalog.skills["global"].description == "two"

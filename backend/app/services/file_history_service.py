@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import hashlib
+import json
 import secrets
 import sqlite3
 import stat
@@ -26,6 +28,15 @@ from backend.app.services.file_history_store import (
     FileHistoryBackup,
     FileHistoryStore,
     FileHistoryStoreError,
+)
+from backend.app.services.file_resources import (
+    FileHistoryPath as MultiScopeFileHistoryPath,
+    FileHistoryPathError as MultiScopeFileHistoryPathError,
+    FileHistoryPathResolver as MultiScopeFileHistoryPathResolver,
+    FileResourceIdentity,
+    FileResourceScope,
+    FileResourceScopeCatalog,
+    FileResourceScopeKind,
 )
 from backend.app.storage import (
     FileHistoryMutationRecord,
@@ -157,6 +168,13 @@ class FilePreviewItem:
     insertions: int = 0
     deletions: int = 0
     diff: str | None = None
+    resource_id: str = ""
+    scope_kind: str = "workspace"
+    scope_identity: str = ""
+    scope_label: str = ""
+    display_path: str = ""
+    absolute_path: str = ""
+    requires_full_access: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -177,6 +195,8 @@ class FileRestorePreview:
     insertions: int = 0
     deletions: int = 0
     warnings: tuple[str, ...] = ()
+    requires_external_confirmation: bool = False
+    external_paths: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -191,6 +211,8 @@ class FileRestorePreview:
             "insertions": self.insertions,
             "deletions": self.deletions,
             "warnings": list(self.warnings),
+            "requires_external_confirmation": self.requires_external_confirmation,
+            "external_paths": list(self.external_paths),
         }
 
 
@@ -412,6 +434,14 @@ class FileHistoryPathResolver:
                 )
 
 
+# Public compatibility names now point at the multi-scope domain model. Keeping
+# the original implementation above temporarily avoids a flag-day rewrite for
+# callers that import this module while all service methods use the new globals.
+FileHistoryPath = MultiScopeFileHistoryPath
+FileHistoryPathError = MultiScopeFileHistoryPathError
+FileHistoryPathResolver = MultiScopeFileHistoryPathResolver
+
+
 def workspace_path_error_code(exc: WorkspacePathError) -> str:
     """Stable adapter for legacy workspace resolution failures."""
 
@@ -446,6 +476,26 @@ class FileHistoryService:
         self._snapshot_locks_guard = threading.Lock()
         self._session_locks: dict[str, threading.RLock] = {}
         self._workspace_locks: dict[str, threading.RLock] = {}
+        self._resource_locks: dict[str, threading.RLock] = {}
+
+    def _path_resolver(
+        self,
+        workspace_root: str | Path,
+        *,
+        allow_external: bool = True,
+    ) -> FileHistoryPathResolver:
+        catalog = FileResourceScopeCatalog.from_workspaces(
+            self.repositories.workspaces.list(limit=500)
+        )
+        return catalog.resolver(workspace_root, allow_external=allow_external)
+
+    def resolve_resource_keys(
+        self,
+        workspace_root: str | Path,
+        paths: Sequence[str | Path],
+    ) -> tuple[str, ...]:
+        resolver = self._path_resolver(workspace_root)
+        return tuple(sorted({resolver.resolve(path).resource_key for path in paths}))
 
     def cleanup_history(
         self,
@@ -522,13 +572,15 @@ class FileHistoryService:
         *,
         session_id: str,
         workspace_root: str | Path,
+        resource_keys: Sequence[str] = (),
     ) -> Iterator[None]:
         """Exclude controlled writes from restore execution in this process."""
 
-        resolver = FileHistoryPathResolver(workspace_root)
+        resolver = self._path_resolver(workspace_root)
         keys_and_locks = self._coordination_locks(
             session_id=session_id,
             workspace_identity=resolver.workspace_identity,
+            resource_keys=resource_keys,
         )
         acquired = self._acquire_local_locks(keys_and_locks)
         if not acquired:
@@ -553,10 +605,18 @@ class FileHistoryService:
     ) -> Iterator[None]:
         """Hold Session and Workspace restore leases for the mutation phase only."""
 
-        resolver = FileHistoryPathResolver(workspace_root)
+        resolver = self._path_resolver(workspace_root)
+        operation_files = self.repository.list_operation_files(operation_id)
+        resource_keys = tuple(
+            FileResourceIdentity(
+                item.scope_kind, item.scope_identity, item.canonical_path
+            ).resource_key
+            for item in operation_files
+        )
         keys_and_locks = self._coordination_locks(
             session_id=session_id,
             workspace_identity=resolver.workspace_identity,
+            resource_keys=resource_keys,
         )
         if not self._acquire_local_locks(keys_and_locks):
             raise FileHistoryError(
@@ -616,7 +676,7 @@ class FileHistoryService:
                 self._enforce_active_rewind_limit(session_id)
                 return existing
 
-            resolver = FileHistoryPathResolver(workspace_root)
+            resolver = self._path_resolver(workspace_root)
             snapshot = self._reserve_input_snapshot(
                 session_id=session_id,
                 active_session_id=active_session_id,
@@ -813,8 +873,12 @@ class FileHistoryService:
                 "该消息的文件快照不可用",
                 details={"snapshot_id": target.id, "status": target.status},
             )
-        resolver = FileHistoryPathResolver(workspace_root)
-        if target.workspace_identity != resolver.workspace_identity:
+        resolver = self._path_resolver(workspace_root)
+        if (
+            target.workspace_identity != resolver.workspace_identity
+            and normalize_workspace_root_for_storage(target.workspace_root)
+            != normalize_workspace_root_for_storage(resolver.workspace_root)
+        ):
             raise FileHistoryError(
                 FileHistoryErrorCode.WORKSPACE_MISMATCH,
                 "文件快照属于其他工作区",
@@ -831,42 +895,52 @@ class FileHistoryService:
         active_segment = list(reversed(lineage[: target_index + 1]))
         entries_by_snapshot = {
             item.id: {
-                entry.canonical_path: entry
+                FileResourceIdentity(
+                    entry.scope_kind, entry.scope_identity, entry.canonical_path
+                ).resource_key: entry
                 for entry in self.repository.list_snapshot_entries(item.id)
             }
             for item in active_segment
         }
         target_entries = entries_by_snapshot[target.id]
         tracked = {
-            item.canonical_path: item
+            FileResourceIdentity(
+                item.scope_kind, item.scope_identity, item.canonical_path
+            ).resource_key: item
             for item in self.repository.list_tracked_files(session_id)
         }
-        canonical_paths = sorted(set(tracked) | set(target_entries))
+        resource_keys = sorted(set(tracked) | set(target_entries))
         resolved_files: list[ResolvedTargetFile] = []
-        for canonical_path in canonical_paths:
-            entry = target_entries.get(canonical_path)
+        for resource_key in resource_keys:
+            entry = target_entries.get(resource_key)
             resolution = "snapshot"
             if entry is None:
                 resolution = "first_version_fallback"
                 for snapshot in active_segment:
-                    candidate = entries_by_snapshot[snapshot.id].get(canonical_path)
+                    candidate = entries_by_snapshot[snapshot.id].get(resource_key)
                     if candidate is not None and candidate.version == 1:
                         entry = candidate
                         break
-            display_path = (
-                entry.display_path
-                if entry is not None
-                else tracked[canonical_path].display_path
-            )
+            locator = entry if entry is not None else tracked[resource_key]
+            display_path = locator.display_path
             try:
-                path = resolver.resolve_stored(display_path, canonical_path)
+                path = resolver.resolve_stored(
+                    display_path,
+                    locator.canonical_path,
+                    scope_kind=locator.scope_kind,
+                    scope_identity=locator.scope_identity,
+                    scope_root=locator.scope_root,
+                    scope_label=locator.scope_label,
+                )
             except FileHistoryPathError:
                 unsafe_path = FileHistoryPath(
-                    absolute_path=resolver.workspace_root / display_path,
-                    workspace_root=resolver.workspace_root,
-                    workspace_identity=resolver.workspace_identity,
-                    canonical_path=canonical_path,
+                    absolute_path=Path(locator.scope_root) / display_path,
+                    scope_root=Path(locator.scope_root),
+                    scope_kind=locator.scope_kind,
+                    scope_identity=locator.scope_identity,
+                    canonical_path=locator.canonical_path,
                     display_path=display_path,
+                    scope_label=locator.scope_label,
                 )
                 resolved_files.append(
                     ResolvedTargetFile(
@@ -918,6 +992,16 @@ class FileHistoryService:
             preview = self._diff_target_file(target.snapshot.session_id, resolved)
             if preview is None:
                 continue
+            preview = replace(
+                preview,
+                resource_id=resolved.path.resource_id,
+                scope_kind=resolved.path.scope_kind,
+                scope_identity=resolved.path.scope_identity,
+                scope_label=resolved.path.scope_label,
+                display_path=resolved.path.display_path,
+                absolute_path=str(resolved.path.absolute_path),
+                requires_full_access=resolved.path.requires_full_access,
+            )
             previews.append(preview)
             total_insertions += preview.insertions
             total_deletions += preview.deletions
@@ -931,17 +1015,33 @@ class FileHistoryService:
         files: Sequence[FilePreviewItem],
     ) -> tuple[FilePreviewItem, ...]:
         classified: list[FilePreviewItem] = []
-        canonical_by_display = {
-            item.path.display_path: item.path.canonical_path for item in target.files
+        resolved_by_resource = {item.path.resource_id: item for item in target.files}
+        head_records = self.repository.get_path_heads(
+            [
+                (
+                    resolved_by_resource[item.resource_id].path.scope_kind,
+                    resolved_by_resource[item.resource_id].path.scope_identity,
+                    resolved_by_resource[item.resource_id].path.canonical_path,
+                )
+                for item in files
+                if item.classification == FileClassification.READY
+            ]
+        )
+        heads = {
+            (item.scope_kind, item.scope_identity, item.canonical_path): item
+            for item in head_records
         }
         for item in files:
             if item.classification != FileClassification.READY:
                 classified.append(item)
                 continue
-            canonical_path = canonical_by_display[item.path]
-            head = self.repository.get_path_head(
-                target.snapshot.workspace_identity,
-                canonical_path,
+            resolved = resolved_by_resource[item.resource_id]
+            head = heads.get(
+                (
+                    resolved.path.scope_kind,
+                    resolved.path.scope_identity,
+                    resolved.path.canonical_path,
+                )
             )
             if head is None:
                 classified.append(
@@ -986,6 +1086,7 @@ class FileHistoryService:
         message_event_id: str,
         workspace_root: str | Path,
         source: dict[str, Any],
+        file_access_mode: str = "workspace_trusted",
     ) -> FileRestorePreview:
         try:
             target = self.resolve_target(
@@ -1039,15 +1140,20 @@ class FileHistoryService:
             skipped_count=0,
             forced_count=0,
             error_code=None,
-            error_detail={},
+            error_detail={
+                "policy_fingerprint": _restore_policy_fingerprint(
+                    file_access_mode, target.files
+                ),
+                "resource_ids": sorted(item.path.resource_id for item in target.files),
+            },
             compensation_state="not_needed",
             created_at=now,
             updated_at=now,
         )
-        resolved_by_display = {item.path.display_path: item for item in target.files}
+        resolved_by_resource = {item.path.resource_id: item for item in target.files}
         operation_files: list[FileHistoryOperationFileRecord] = []
         for preview in files:
-            resolved = resolved_by_display[preview.path]
+            resolved = resolved_by_resource[preview.resource_id]
             entry = resolved.entry
             current_state = preview.current_state
             if current_state not in {"file", "missing"}:
@@ -1077,6 +1183,10 @@ class FileHistoryService:
                     safety_size=None,
                     safety_mode=None,
                     updated_at=now,
+                    scope_kind=resolved.path.scope_kind,
+                    scope_identity=resolved.path.scope_identity,
+                    scope_root=str(resolved.path.scope_root),
+                    scope_label=resolved.path.scope_label,
                 )
             )
         self.repository.create_operation(operation, operation_files)
@@ -1085,6 +1195,9 @@ class FileHistoryService:
             ("file_conflicts_detected",)
             if any(item.classification == FileClassification.FORCEABLE_CONFLICT for item in files)
             else ()
+        )
+        external_paths = tuple(
+            sorted(item.absolute_path for item in files if item.requires_full_access)
         )
         return FileRestorePreview(
             operation_id=operation_id,
@@ -1098,6 +1211,8 @@ class FileHistoryService:
             insertions=insertions,
             deletions=deletions,
             warnings=warnings,
+            requires_external_confirmation=bool(external_paths),
+            external_paths=external_paths,
         )
 
     def assert_preview_available(self, session_id: str) -> None:
@@ -1113,7 +1228,7 @@ class FileHistoryService:
         source: dict[str, Any],
         warning: str,
     ) -> FileRestorePreview:
-        resolver = FileHistoryPathResolver(workspace_root)
+        resolver = self._path_resolver(workspace_root)
         operation_id = new_id()
         token = secrets.token_urlsafe(32)
         state = self.repository.get_session_state(session_id)
@@ -1166,6 +1281,8 @@ class FileHistoryService:
         mode: FileRestoreMode | str,
         decision: FileRestoreDecision | str,
         workspace_root: str | Path,
+        file_access_mode: str = "workspace_trusted",
+        confirm_external_paths: bool = False,
     ) -> tuple[
         FileHistoryOperationRecord,
         ResolvedSnapshotTarget | None,
@@ -1226,6 +1343,29 @@ class FileHistoryService:
                 FileHistoryErrorCode.PREVIEW_STALE,
                 "回溯目标快照已变化",
             )
+        expected_policy = str(operation.error_detail.get("policy_fingerprint") or "")
+        current_policy = _restore_policy_fingerprint(file_access_mode, target.files)
+        if not expected_policy or not secrets.compare_digest(expected_policy, current_policy):
+            raise FileHistoryError(
+                "file_restore_permission_changed",
+                "文件访问策略或恢复资源集合在预览后发生变化，请重新预览",
+                details={"operation_id": operation_id},
+            )
+        external_ids = sorted(
+            item.path.resource_id for item in target.files if item.path.requires_full_access
+        )
+        if external_ids and file_access_mode != "full_access":
+            raise FileHistoryError(
+                "file_restore_full_access_required",
+                "恢复工作区外文件需要当前保持完全访问权限",
+                details={"resource_ids": external_ids},
+            )
+        if external_ids and not confirm_external_paths:
+            raise FileHistoryError(
+                "file_restore_external_confirmation_required",
+                "恢复工作区外文件需要显式确认绝对路径",
+                details={"resource_ids": external_ids},
+            )
         persisted = self.repository.list_operation_files(operation_id)
         raw_files, _, _ = self.diff_target(target)
         current_files = self.classify_conflicts(
@@ -1233,12 +1373,12 @@ class FileHistoryService:
             target=target,
             files=raw_files,
         )
-        current_signatures = {
-            _preview_signature(item.path, item) for item in current_files
-        }
+        current_signatures = {_preview_signature(item.resource_id, item) for item in current_files}
         persisted_signatures = {
             (
-                item.display_path,
+                FileResourceIdentity(
+                    item.scope_kind, item.scope_identity, item.canonical_path
+                ).resource_id,
                 item.preview_current_state,
                 item.preview_current_hash,
                 item.target_state,
@@ -1270,7 +1410,7 @@ class FileHistoryService:
                 "文件恢复 operation 不存在",
                 http_status=404,
             )
-        resolver = FileHistoryPathResolver(workspace_root)
+        resolver = self._path_resolver(workspace_root)
         if operation.workspace_identity != resolver.workspace_identity:
             raise FileHistoryError(
                 FileHistoryErrorCode.WORKSPACE_MISMATCH,
@@ -1280,14 +1420,27 @@ class FileHistoryService:
         operation_files = [
             item
             for item in self.repository.list_operation_files(operation_id)
-            if not selected or item.canonical_path in selected
+            if not selected
+            or item.canonical_path in selected
+            or item.display_path in selected
+            or FileResourceIdentity(
+                item.scope_kind, item.scope_identity, item.canonical_path
+            ).resource_id
+            in selected
         ]
         captured: list[tuple[FileHistoryOperationFileRecord, FileHistoryBackup]] = []
         for item in operation_files:
-            path = resolver.resolve_stored(item.display_path, item.canonical_path)
+            path = resolver.resolve_stored(
+                item.display_path,
+                item.canonical_path,
+                scope_kind=item.scope_kind,
+                scope_identity=item.scope_identity,
+                scope_root=item.scope_root,
+                scope_label=item.scope_label,
+            )
             backup = self.store.create_safety_backup(
                 operation_id=operation_id,
-                canonical_path=item.canonical_path,
+                resource_key=path.resource_key,
                 source_path=path.absolute_path,
             )
             if (
@@ -1306,6 +1459,8 @@ class FileHistoryService:
                 persisted = self.repository.update_operation_file(
                     operation_id,
                     item.canonical_path,
+                    scope_kind=item.scope_kind,
+                    scope_identity=item.scope_identity,
                     safety_state=backup.state,
                     safety_backup_file_name=backup.backup_file_name,
                     safety_hash=backup.content_hash,
@@ -1435,31 +1590,52 @@ class FileHistoryService:
                 FileHistoryErrorCode.SNAPSHOT_MISSING,
                 "文件恢复 operation 与目标不匹配",
             )
-        resolver = FileHistoryPathResolver(workspace_root)
-        selected = set(canonical_paths)
-        forced = set(forced_paths)
-        resolved_by_canonical = {
-            item.path.canonical_path: item for item in target.files
+        resolver = self._path_resolver(workspace_root)
+        resolved_by_resource = {
+            item.path.resource_id: item for item in target.files
         }
+        operation_file_records = self.repository.list_operation_files(operation_id)
         operation_files = {
-            item.canonical_path: item
-            for item in self.repository.list_operation_files(operation_id)
+            FileResourceIdentity(
+                item.scope_kind, item.scope_identity, item.canonical_path
+            ).resource_id: item
+            for item in operation_file_records
         }
-        self.repository.update_operation(
-            operation_id,
-            state=FileOperationStatus.RUNNING,
-            mode=mode,
-        )
+        legacy_candidates: dict[str, set[str]] = {}
+        for resource_id, item in operation_files.items():
+            legacy_candidates.setdefault(item.canonical_path, set()).add(resource_id)
+            legacy_candidates.setdefault(item.display_path, set()).add(resource_id)
+
+        def normalize_identifiers(values: Sequence[str]) -> set[str]:
+            normalized: set[str] = set()
+            for value in values:
+                if value in operation_files:
+                    normalized.add(value)
+                    continue
+                candidates = legacy_candidates.get(value, set())
+                if len(candidates) == 1:
+                    normalized.update(candidates)
+                    continue
+                normalized.add(value)
+            return normalized
+
+        selected = normalize_identifiers(canonical_paths)
+        forced = normalize_identifiers(forced_paths)
         restored: list[FileHistoryOperationFileRecord] = []
-        for canonical_path in sorted(selected):
-            item = operation_files.get(canonical_path)
-            resolved = resolved_by_canonical.get(canonical_path)
+        restore_plan: list[
+            tuple[str, FileHistoryOperationFileRecord, ResolvedTargetFile]
+        ] = []
+        for resource_id in sorted(selected):
+            item = operation_files.get(resource_id)
+            resolved = resolved_by_resource.get(resource_id)
             if item is None or resolved is None or resolved.entry is None:
                 error = "target_backup_unresolved"
                 if item is not None:
                     self.repository.update_operation_file(
                         operation_id,
-                        canonical_path,
+                        item.canonical_path,
+                        scope_kind=item.scope_kind,
+                        scope_identity=item.scope_identity,
                         result_state=FileOperationFileStatus.FAILED,
                         error_code=error,
                     )
@@ -1472,12 +1648,55 @@ class FileHistoryService:
                     FileHistoryErrorCode.RESTORE_FAILED,
                     "文件恢复目标无法解析",
                     details={
-                        "path": canonical_path,
-                        "restored_paths": [value.canonical_path for value in restored],
+                        "resource_id": resource_id,
+                        "restored_resource_ids": [
+                            FileResourceIdentity(
+                                value.scope_kind, value.scope_identity, value.canonical_path
+                            ).resource_id
+                            for value in restored
+                        ],
                     },
                 )
+            restore_plan.append((resource_id, item, resolved))
+
+        planned: dict[str, FileHistoryOperationFileRecord] = {}
+        with self.repositories.db.transaction(immediate=True) as conn:
+            self.repository.update_operation(
+                operation_id,
+                state=FileOperationStatus.RUNNING,
+                mode=mode,
+                conn=conn,
+            )
+            for resource_id, item, _resolved in restore_plan:
+                result_state = (
+                    FileOperationFileStatus.FORCED
+                    if resource_id in forced
+                    else FileOperationFileStatus.RESTORED
+                )
+                persisted = self.repository.update_operation_file(
+                    operation_id,
+                    item.canonical_path,
+                    scope_kind=item.scope_kind,
+                    scope_identity=item.scope_identity,
+                    result_state=result_state,
+                    user_authorized=resource_id in forced,
+                    error_code=None,
+                    conn=conn,
+                )
+                if persisted is None:
+                    raise RuntimeError("operation file disappeared before restore")
+                planned[resource_id] = persisted
+
+        for resource_id, item, resolved in restore_plan:
             try:
-                path = resolver.resolve_stored(item.display_path, canonical_path)
+                path = resolver.resolve_stored(
+                    item.display_path,
+                    item.canonical_path,
+                    scope_kind=item.scope_kind,
+                    scope_identity=item.scope_identity,
+                    scope_root=item.scope_root,
+                    scope_label=item.scope_label,
+                )
                 entry = resolved.entry
                 self._inject_e2e_restore_failure_once()
                 changed = self.store.restore_backup(
@@ -1493,29 +1712,16 @@ class FileHistoryService:
                     ),
                     destination=path.absolute_path,
                 )
-                result_state = (
-                    FileOperationFileStatus.FORCED
-                    if canonical_path in forced
-                    else FileOperationFileStatus.RESTORED
-                )
-                persisted = self.repository.update_operation_file(
-                    operation_id,
-                    canonical_path,
-                    result_state=result_state,
-                    user_authorized=canonical_path in forced,
-                    error_code=None,
-                )
-                if persisted is None:
-                    raise RuntimeError("operation file disappeared during restore")
-                restored.append(persisted)
+                restored.append(planned[resource_id])
                 if not changed:
                     continue
             except Exception as exc:
                 error_code = str(getattr(exc, "code", None) or "restore_failed")
                 self.repository.update_operation_file(
                     operation_id,
-                    canonical_path,
-                    result_state=FileOperationFileStatus.FAILED,
+                    item.canonical_path,
+                    scope_kind=item.scope_kind,
+                    scope_identity=item.scope_identity,
                     error_code=error_code,
                 )
                 self.repository.update_operation(
@@ -1532,11 +1738,16 @@ class FileHistoryService:
                     "文件恢复执行失败",
                     details={
                         "path": item.display_path,
-                        "restored_paths": [value.canonical_path for value in restored],
+                        "restored_resource_ids": [
+                            FileResourceIdentity(
+                                value.scope_kind, value.scope_identity, value.canonical_path
+                            ).resource_id
+                            for value in restored
+                        ],
                         "reason": error_code,
                     },
                 ) from exc
-        return restored
+        return [planned[resource_id] for resource_id, _item, _resolved in restore_plan]
 
     def _inject_e2e_restore_failure_once(self) -> None:
         """Provide a one-shot restore failure only to the isolated E2E runtime.
@@ -1581,7 +1792,7 @@ class FileHistoryService:
                 "待补偿的文件恢复 operation 不存在",
                 http_status=404,
             )
-        resolver = FileHistoryPathResolver(workspace_root)
+        resolver = self._path_resolver(workspace_root)
         if operation.workspace_identity != resolver.workspace_identity:
             raise FileHistoryError(
                 FileHistoryErrorCode.WORKSPACE_MISMATCH,
@@ -1601,9 +1812,26 @@ class FileHistoryService:
         failures: list[dict[str, str]] = []
         for item in reversed(candidates):
             try:
-                path = resolver.resolve_stored(item.display_path, item.canonical_path)
+                path = resolver.resolve_stored(
+                    item.display_path,
+                    item.canonical_path,
+                    scope_kind=item.scope_kind,
+                    scope_identity=item.scope_identity,
+                    scope_root=item.scope_root,
+                    scope_label=item.scope_label,
+                )
                 current = self._observe(path.absolute_path)
-                if current.state != item.target_state or current.content_hash != item.target_hash:
+                already_safe = (
+                    current.state == item.safety_state
+                    and current.content_hash == item.safety_hash
+                )
+                if (
+                    not already_safe
+                    and (
+                        current.state != item.target_state
+                        or current.content_hash != item.target_hash
+                    )
+                ):
                     raise FileHistoryError(
                         FileHistoryErrorCode.COMPENSATION_FAILED,
                         "补偿前文件已被其他来源再次修改",
@@ -1615,23 +1843,26 @@ class FileHistoryService:
                         "文件补偿缺少 safety snapshot",
                         details={"path": item.display_path},
                     )
-                self.store.restore_backup(
-                    session_id=operation.session_id,
-                    backup=FileHistoryBackup(
-                        state=item.safety_state,
-                        backup_file_name=item.safety_backup_file_name,
-                        version=1,
-                        backup_time=operation.created_at,
-                        size=item.safety_size,
-                        mode=item.safety_mode,
-                        content_hash=item.safety_hash,
-                    ),
-                    destination=path.absolute_path,
-                )
+                if not already_safe:
+                    self.store.restore_backup(
+                        session_id=operation.session_id,
+                        backup=FileHistoryBackup(
+                            state=item.safety_state,
+                            backup_file_name=item.safety_backup_file_name,
+                            version=1,
+                            backup_time=operation.created_at,
+                            size=item.safety_size,
+                            mode=item.safety_mode,
+                            content_hash=item.safety_hash,
+                        ),
+                        destination=path.absolute_path,
+                    )
                 with self.repositories.db.transaction(immediate=True) as conn:
                     restored = self.repository.update_operation_file(
                         operation_id,
                         item.canonical_path,
+                        scope_kind=item.scope_kind,
+                        scope_identity=item.scope_identity,
                         result_state=FileOperationFileStatus.COMPENSATED,
                         error_code=None,
                         conn=conn,
@@ -1639,7 +1870,8 @@ class FileHistoryService:
                     if item.writer_session_id and item.reason_code != "external_drift":
                         self.repository.upsert_path_head(
                             FileHistoryPathHeadRecord(
-                                workspace_identity=resolver.workspace_identity,
+                                workspace_identity=operation.workspace_identity
+                                or resolver.workspace_identity,
                                 canonical_path=item.canonical_path,
                                 display_path=item.display_path,
                                 session_id=item.writer_session_id,
@@ -1649,6 +1881,10 @@ class FileHistoryService:
                                 content_hash=item.safety_hash,
                                 revision=1,
                                 updated_at=to_iso_z(utc_now()),
+                                scope_kind=item.scope_kind,
+                                scope_identity=item.scope_identity,
+                                scope_root=item.scope_root,
+                                scope_label=item.scope_label,
                             ),
                             conn=conn,
                         )
@@ -1661,6 +1897,8 @@ class FileHistoryService:
                 self.repository.update_operation_file(
                     operation_id,
                     item.canonical_path,
+                    scope_kind=item.scope_kind,
+                    scope_identity=item.scope_identity,
                     error_code=reason,
                 )
         if failures:
@@ -1845,7 +2083,7 @@ class FileHistoryService:
         self._assert_enabled()
         if not mutations:
             return []
-        resolver = FileHistoryPathResolver(workspace_root)
+        resolver = self._path_resolver(workspace_root)
         lock = self._snapshot_lock(session_id)
         with lock:
             snapshot = self.repository.get_snapshot(snapshot_id)
@@ -1875,35 +2113,47 @@ class FileHistoryService:
             resolved_specs: dict[str, tuple[FileMutationSpec, FileHistoryPath]] = {}
             for spec in mutations:
                 path = resolver.resolve(spec.path)
-                resolved_specs.setdefault(path.canonical_path, (spec, path))
+                resolved_specs.setdefault(path.resource_key, (spec, path))
             snapshot_entries = {
-                item.canonical_path: item
+                FileResourceIdentity(
+                    item.scope_kind, item.scope_identity, item.canonical_path
+                ).resource_key: item
                 for item in self.repository.list_snapshot_entries(snapshot_id)
+            }
+            mutations_by_resource = {
+                FileResourceIdentity(
+                    item.scope_kind, item.scope_identity, item.canonical_path
+                ).resource_key: item
+                for item in self.repository.list_mutations(snapshot_id=snapshot_id)
+            }
+            tracked_by_resource = {
+                FileResourceIdentity(
+                    item.scope_kind, item.scope_identity, item.canonical_path
+                ).resource_key: item
+                for item in self.repository.list_tracked_files(session_id)
             }
             prepared: list[FileHistoryMutationRecord] = []
             new_entries: list[FileHistorySnapshotEntryRecord] = []
             tracked_updates: list[FileHistoryTrackedFileRecord] = []
             now = to_iso_z(utc_now())
-            for canonical_path, (spec, path) in resolved_specs.items():
-                existing = self.repository.get_mutation_for_snapshot_path(
-                    snapshot_id, canonical_path
-                )
+            for resource_key, (spec, path) in resolved_specs.items():
+                existing = mutations_by_resource.get(resource_key)
                 if existing is not None:
                     prepared.append(existing)
                     continue
-                entry = snapshot_entries.get(canonical_path)
-                tracked = self.repository.get_tracked_file(session_id, canonical_path)
+                entry = snapshot_entries.get(resource_key)
+                tracked = tracked_by_resource.get(resource_key)
                 if entry is None:
                     version = (tracked.latest_version if tracked else 0) + 1
                     self._assert_backup_capacity(
                         session_id=session_id,
-                        canonical_path=canonical_path,
+                        canonical_path=resource_key,
                         source_path=path.absolute_path,
                         version=version,
                     )
                     backup = self.store.create_backup(
                         session_id=session_id,
-                        canonical_path=canonical_path,
+                        resource_key=resource_key,
                         source_path=path.absolute_path,
                         version=version,
                     )
@@ -1912,7 +2162,7 @@ class FileHistoryService:
                     tracked_updates.append(
                         FileHistoryTrackedFileRecord(
                             session_id=session_id,
-                            canonical_path=canonical_path,
+                            canonical_path=path.canonical_path,
                             display_path=path.display_path,
                             latest_version=version,
                             first_snapshot_id=(tracked.first_snapshot_id if tracked else None)
@@ -1929,6 +2179,10 @@ class FileHistoryService:
                             last_observed_mode=entry.mode,
                             created_at=tracked.created_at if tracked else now,
                             updated_at=now,
+                            scope_kind=path.scope_kind,
+                            scope_identity=path.scope_identity,
+                            scope_root=str(path.scope_root),
+                            scope_label=path.scope_label,
                         )
                     )
                 prepared.append(
@@ -1939,8 +2193,8 @@ class FileHistoryService:
                         trace_id=trace_id,
                         turn_index=turn_index,
                         snapshot_id=snapshot_id,
-                        workspace_identity=resolver.workspace_identity,
-                        canonical_path=canonical_path,
+                        workspace_identity=path.scope_identity,
+                        canonical_path=path.canonical_path,
                         display_path=path.display_path,
                         tool_name=tool_name,
                         tool_call_id=tool_call_id,
@@ -1954,6 +2208,10 @@ class FileHistoryService:
                         error_code=None,
                         created_at=now,
                         updated_at=now,
+                        scope_kind=path.scope_kind,
+                        scope_identity=path.scope_identity,
+                        scope_root=str(path.scope_root),
+                        scope_label=path.scope_label,
                     )
                 )
 
@@ -1968,17 +2226,29 @@ class FileHistoryService:
                     self.repository.upsert_snapshot_entry(entry, conn=conn)
                 for tracked in tracked_updates:
                     self.repository.upsert_tracked_file(tracked, conn=conn)
-                committed: list[FileHistoryMutationRecord] = []
-                for mutation in prepared:
-                    existing = self.repository.get_mutation_for_snapshot_path(
-                        snapshot_id,
-                        mutation.canonical_path,
+                persisted_mutations = {
+                    FileResourceIdentity(
+                        item.scope_kind, item.scope_identity, item.canonical_path
+                    ).resource_key: item
+                    for item in self.repository.list_mutations(
+                        snapshot_id=snapshot_id,
                         conn=conn,
                     )
+                }
+                committed: list[FileHistoryMutationRecord] = []
+                for mutation in prepared:
+                    resource_key = FileResourceIdentity(
+                        mutation.scope_kind,
+                        mutation.scope_identity,
+                        mutation.canonical_path,
+                    ).resource_key
+                    existing = persisted_mutations.get(resource_key)
                     if existing is not None:
                         committed.append(existing)
                     else:
-                        committed.append(self.repository.create_mutation(mutation, conn=conn))
+                        created = self.repository.create_mutation(mutation, conn=conn)
+                        persisted_mutations[resource_key] = created
+                        committed.append(created)
             return committed
 
     def commit_writes(
@@ -1989,18 +2259,21 @@ class FileHistoryService:
     ) -> list[FileHistoryMutationRecord]:
         if not mutations:
             return []
-        resolver = FileHistoryPathResolver(workspace_root)
+        resolver = self._path_resolver(workspace_root)
         observations: list[tuple[FileHistoryMutationRecord, _ObservedFile]] = []
         for mutation in mutations:
-            if mutation.workspace_identity != resolver.workspace_identity:
-                raise FileHistoryError(
-                    FileHistoryErrorCode.WORKSPACE_MISMATCH,
-                    "写后归属记录的工作区已变化",
-                )
-            path = resolver.resolve_stored(mutation.display_path, mutation.canonical_path)
+            path = resolver.resolve_stored(
+                mutation.display_path,
+                mutation.canonical_path,
+                scope_kind=mutation.scope_kind,
+                scope_identity=mutation.scope_identity,
+                scope_root=mutation.scope_root,
+                scope_label=mutation.scope_label,
+            )
             observations.append((mutation, self._observe(path.absolute_path)))
         committed: list[FileHistoryMutationRecord] = []
         with self.repositories.db.transaction(immediate=True) as conn:
+            head_updates: list[FileHistoryPathHeadRecord] = []
             for mutation, observed in observations:
                 current = self.repository.get_mutation(mutation.id, conn=conn)
                 if current is None:
@@ -2024,7 +2297,7 @@ class FileHistoryService:
                 )
                 if updated is None:
                     raise RuntimeError("file history mutation disappeared")
-                self.repository.upsert_path_head(
+                head_updates.append(
                     FileHistoryPathHeadRecord(
                         workspace_identity=mutation.workspace_identity,
                         canonical_path=mutation.canonical_path,
@@ -2036,10 +2309,14 @@ class FileHistoryService:
                         content_hash=observed.content_hash,
                         revision=1,
                         updated_at=to_iso_z(utc_now()),
-                    ),
-                    conn=conn,
+                        scope_kind=mutation.scope_kind,
+                        scope_identity=mutation.scope_identity,
+                        scope_root=mutation.scope_root,
+                        scope_label=mutation.scope_label,
+                    )
                 )
                 committed.append(updated)
+            self.repository.upsert_path_heads(head_updates, conn=conn)
         return committed
 
     def abort_writes(
@@ -2062,6 +2339,101 @@ class FileHistoryService:
                     conn=conn,
                 )
 
+    def compensate_writes(
+        self,
+        mutations: Sequence[FileHistoryMutationRecord],
+        *,
+        workspace_root: str | Path,
+        error_code: str = "file_history_commit_compensated",
+    ) -> tuple[str, ...]:
+        """Restore prepared preimages after a post-write history failure."""
+
+        resolver = self._path_resolver(workspace_root)
+        restored: list[str] = []
+        failures: list[dict[str, str]] = []
+        for mutation in reversed(tuple(mutations)):
+            try:
+                if not mutation.snapshot_id:
+                    raise FileHistoryError(
+                        FileHistoryErrorCode.BACKUP_MISSING,
+                        "写入补偿缺少输入快照",
+                    )
+                entry = self.repository.get_snapshot_entry(
+                    mutation.snapshot_id,
+                    mutation.canonical_path,
+                    scope_kind=mutation.scope_kind,
+                    scope_identity=mutation.scope_identity,
+                )
+                if entry is None:
+                    raise FileHistoryError(
+                        FileHistoryErrorCode.BACKUP_MISSING,
+                        "写入补偿缺少写前状态",
+                    )
+                path = resolver.resolve_stored(
+                    mutation.display_path,
+                    mutation.canonical_path,
+                    scope_kind=mutation.scope_kind,
+                    scope_identity=mutation.scope_identity,
+                    scope_root=mutation.scope_root,
+                    scope_label=mutation.scope_label,
+                )
+                self.store.restore_backup(
+                    session_id=mutation.session_id,
+                    backup=FileHistoryBackup(
+                        state=entry.state,
+                        backup_file_name=entry.backup_file_name,
+                        version=entry.version,
+                        backup_time=entry.backup_time,
+                        size=entry.size,
+                        mode=entry.mode,
+                        content_hash=entry.content_hash,
+                    ),
+                    destination=path.absolute_path,
+                )
+                restored.append(path.resource_id)
+            except Exception as exc:
+                failures.append(
+                    {
+                        "resource_id": FileResourceIdentity(
+                            mutation.scope_kind,
+                            mutation.scope_identity,
+                            mutation.canonical_path,
+                        ).resource_id,
+                        "reason": str(getattr(exc, "code", None) or type(exc).__name__),
+                    }
+                )
+
+        blocked_reason = f"history-write:{mutations[0].batch_id or mutations[0].id}" if mutations else None
+        with self.repositories.db.transaction(immediate=True) as conn:
+            for mutation in mutations:
+                self.repository.update_mutation(
+                    mutation.id,
+                    status="dirty" if failures else "aborted",
+                    error_code=(
+                        "file_history_compensation_failed"
+                        if failures
+                        else error_code
+                    ),
+                    conn=conn,
+                )
+            if failures and mutations:
+                state = self.repository.get_session_state(mutations[0].session_id, conn=conn)
+                if state is not None:
+                    self.repository.update_session_state(
+                        mutations[0].session_id,
+                        state=FileHistorySessionStatus.BLOCKED,
+                        blocked_reason=blocked_reason,
+                        expected_revision=state.revision,
+                        conn=conn,
+                    )
+        if failures:
+            raise FileHistoryError(
+                "file_history_compensation_failed",
+                "文件历史提交失败，且磁盘补偿未能完整完成；会话已阻塞",
+                details={"failures": failures, "restored_resource_ids": restored},
+            )
+        return tuple(restored)
+
     def materialize_restore_result(
         self,
         *,
@@ -2074,7 +2446,7 @@ class FileHistoryService:
     ) -> FileHistorySnapshotRecord:
         """Persist the actual post-restore disk state and advance the active cursor."""
 
-        resolver = FileHistoryPathResolver(workspace_root)
+        resolver = self._path_resolver(workspace_root)
         lock = self._snapshot_lock(session_id)
         with lock:
             target = self.repository.get_snapshot(target_snapshot_id)
@@ -2121,19 +2493,51 @@ class FileHistoryService:
                     )
                 self.repository.create_snapshot(result, conn=conn)
             try:
-                entries, tracked_records = self._capture_materialized_state(result, resolver)
-                entries_by_path = {entry.canonical_path: entry for entry in entries}
+                read_conn = self.repositories.db.connect()
+                try:
+                    entries, tracked_records = self._capture_materialized_state(
+                        result,
+                        resolver,
+                        conn=read_conn,
+                    )
+                finally:
+                    read_conn.close()
+                entries_by_resource = {
+                    FileResourceIdentity(
+                        entry.scope_kind,
+                        entry.scope_identity,
+                        entry.canonical_path,
+                    ).resource_id: entry
+                    for entry in entries
+                }
+                legacy_entries: dict[str, list[FileHistorySnapshotEntryRecord]] = {}
+                for entry in entries:
+                    legacy_entries.setdefault(entry.canonical_path, []).append(entry)
+                    legacy_entries.setdefault(entry.display_path, []).append(entry)
                 with self.repositories.db.transaction(immediate=True) as conn:
                     self.repository.replace_snapshot_entries(result.id, entries, conn=conn)
                     for tracked in tracked_records:
                         self.repository.upsert_tracked_file(tracked, conn=conn)
-                    for canonical_path in changed_canonical_paths:
-                        entry = entries_by_path.get(canonical_path)
+                    head_updates: list[FileHistoryPathHeadRecord] = []
+                    for resource_id in changed_canonical_paths:
+                        entry = entries_by_resource.get(resource_id)
+                        if entry is None:
+                            candidates = legacy_entries.get(resource_id, [])
+                            unique_candidates = {
+                                FileResourceIdentity(
+                                    candidate.scope_kind,
+                                    candidate.scope_identity,
+                                    candidate.canonical_path,
+                                ).resource_id: candidate
+                                for candidate in candidates
+                            }
+                            if len(unique_candidates) == 1:
+                                entry = next(iter(unique_candidates.values()))
                         if entry is None:
                             raise RuntimeError(
-                                "restored path is missing from materialized snapshot"
+                                "restored resource is missing from materialized snapshot"
                             )
-                        self.repository.upsert_path_head(
+                        head_updates.append(
                             FileHistoryPathHeadRecord(
                                 workspace_identity=resolver.workspace_identity,
                                 canonical_path=entry.canonical_path,
@@ -2145,9 +2549,13 @@ class FileHistoryService:
                                 content_hash=entry.content_hash,
                                 revision=1,
                                 updated_at=now,
-                            ),
-                            conn=conn,
+                                scope_kind=entry.scope_kind,
+                                scope_identity=entry.scope_identity,
+                                scope_root=entry.scope_root,
+                                scope_label=entry.scope_label,
+                            )
                         )
+                    self.repository.upsert_path_heads(head_updates, conn=conn)
                     ready = self.repository.update_snapshot(
                         result.id,
                         status=FileSnapshotStatus.READY,
@@ -2229,7 +2637,9 @@ class FileHistoryService:
     ) -> tuple[list[FileHistorySnapshotEntryRecord], list[FileHistoryTrackedFileRecord]]:
         tracked_files = self.repository.list_tracked_files(snapshot.session_id)
         parent_entries = {
-            item.canonical_path: item
+            FileResourceIdentity(
+                item.scope_kind, item.scope_identity, item.canonical_path
+            ).resource_key: item
             for item in (
                 self.repository.list_snapshot_entries(snapshot.parent_snapshot_id)
                 if snapshot.parent_snapshot_id
@@ -2240,9 +2650,20 @@ class FileHistoryService:
         updated_tracked: list[FileHistoryTrackedFileRecord] = []
         now = to_iso_z(utc_now())
         for tracked in tracked_files:
-            path = resolver.resolve_stored(tracked.display_path, tracked.canonical_path)
+            path = (
+                resolver.resolve(tracked.display_path)
+                if tracked.scope_identity.startswith("legacy:")
+                else resolver.resolve_stored(
+                    tracked.display_path,
+                    tracked.canonical_path,
+                    scope_kind=tracked.scope_kind,
+                    scope_identity=tracked.scope_identity,
+                    scope_root=tracked.scope_root,
+                    scope_label=tracked.scope_label,
+                )
+            )
             observed = self._observe(path.absolute_path)
-            previous = parent_entries.get(tracked.canonical_path)
+            previous = parent_entries.get(path.resource_key)
             if _can_reuse_entry(previous, observed):
                 entry = FileHistorySnapshotEntryRecord(
                     snapshot_id=snapshot.id,
@@ -2255,19 +2676,23 @@ class FileHistoryService:
                     size=previous.size,
                     mode=previous.mode,
                     content_hash=previous.content_hash,
+                    scope_kind=path.scope_kind,
+                    scope_identity=path.scope_identity,
+                    scope_root=str(path.scope_root),
+                    scope_label=path.scope_label,
                 )
                 latest_version = max(tracked.latest_version, previous.version)
             else:
                 latest_version = tracked.latest_version + 1
                 self._assert_backup_capacity(
                     session_id=snapshot.session_id,
-                    canonical_path=tracked.canonical_path,
+                    canonical_path=path.resource_key,
                     source_path=path.absolute_path,
                     version=latest_version,
                 )
                 backup = self.store.create_backup(
                     session_id=snapshot.session_id,
-                    canonical_path=tracked.canonical_path,
+                    resource_key=path.resource_key,
                     source_path=path.absolute_path,
                     version=latest_version,
                 )
@@ -2288,6 +2713,10 @@ class FileHistoryService:
                     last_observed_mode=observed.mode,
                     created_at=tracked.created_at,
                     updated_at=now,
+                    scope_kind=path.scope_kind,
+                    scope_identity=path.scope_identity,
+                    scope_root=str(path.scope_root),
+                    scope_label=path.scope_label,
                 )
             )
         return entries, updated_tracked
@@ -2296,20 +2725,36 @@ class FileHistoryService:
         self,
         snapshot: FileHistorySnapshotRecord,
         resolver: FileHistoryPathResolver,
+        *,
+        conn: sqlite3.Connection | None = None,
     ) -> tuple[list[FileHistorySnapshotEntryRecord], list[FileHistoryTrackedFileRecord]]:
         tracked_files = self.repository.list_tracked_files(snapshot.session_id)
         entries: list[FileHistorySnapshotEntryRecord] = []
         tracked_updates: list[FileHistoryTrackedFileRecord] = []
         now = to_iso_z(utc_now())
         for tracked in tracked_files:
-            path = resolver.resolve_stored(tracked.display_path, tracked.canonical_path)
+            path = (
+                resolver.resolve(tracked.display_path)
+                if tracked.scope_identity.startswith("legacy:")
+                else resolver.resolve_stored(
+                    tracked.display_path,
+                    tracked.canonical_path,
+                    scope_kind=tracked.scope_kind,
+                    scope_identity=tracked.scope_identity,
+                    scope_root=tracked.scope_root,
+                    scope_label=tracked.scope_label,
+                )
+            )
             observed = self._observe(path.absolute_path)
             reusable = self.repository.find_reusable_entry(
                 snapshot.session_id,
                 tracked.canonical_path,
+                scope_kind=tracked.scope_kind,
+                scope_identity=tracked.scope_identity,
                 state=observed.state,
                 content_hash=observed.content_hash,
                 mode=observed.mode,
+                conn=conn,
             )
             if reusable is not None:
                 entry = FileHistorySnapshotEntryRecord(
@@ -2323,19 +2768,23 @@ class FileHistoryService:
                     size=reusable.size,
                     mode=reusable.mode,
                     content_hash=reusable.content_hash,
+                    scope_kind=path.scope_kind,
+                    scope_identity=path.scope_identity,
+                    scope_root=str(path.scope_root),
+                    scope_label=path.scope_label,
                 )
                 latest_version = max(tracked.latest_version, reusable.version)
             else:
                 latest_version = tracked.latest_version + 1
                 self._assert_backup_capacity(
                     session_id=snapshot.session_id,
-                    canonical_path=tracked.canonical_path,
+                    canonical_path=path.resource_key,
                     source_path=path.absolute_path,
                     version=latest_version,
                 )
                 backup = self.store.create_backup(
                     session_id=snapshot.session_id,
-                    canonical_path=tracked.canonical_path,
+                    resource_key=path.resource_key,
                     source_path=path.absolute_path,
                     version=latest_version,
                 )
@@ -2356,6 +2805,10 @@ class FileHistoryService:
                     last_observed_mode=observed.mode,
                     created_at=tracked.created_at,
                     updated_at=now,
+                    scope_kind=path.scope_kind,
+                    scope_identity=path.scope_identity,
+                    scope_root=str(path.scope_root),
+                    scope_label=path.scope_label,
                 )
             )
         return entries, tracked_updates
@@ -2395,6 +2848,7 @@ class FileHistoryService:
         *,
         session_id: str,
         workspace_identity: str,
+        resource_keys: Sequence[str] = (),
     ) -> tuple[tuple[str, threading.RLock], ...]:
         with self._snapshot_locks_guard:
             session_lock = self._session_locks.setdefault(session_id, threading.RLock())
@@ -2402,12 +2856,17 @@ class FileHistoryService:
                 workspace_identity,
                 threading.RLock(),
             )
+            resource_locks = tuple(
+                (
+                    f"resource:{resource_key}",
+                    self._resource_locks.setdefault(resource_key, threading.RLock()),
+                )
+                for resource_key in sorted(set(resource_keys))
+            )
+        scope_locks = resource_locks or ((f"workspace:{workspace_identity}", workspace_lock),)
         return tuple(
             sorted(
-                (
-                    (f"session:{session_id}", session_lock),
-                    (f"workspace:{workspace_identity}", workspace_lock),
-                ),
+                ((f"session:{session_id}", session_lock), *scope_locks),
                 key=lambda item: item[0],
             )
         )
@@ -2564,12 +3023,40 @@ def _entry_from_backup(
         size=backup.size,
         mode=backup.mode,
         content_hash=backup.content_hash,
+        scope_kind=path.scope_kind,
+        scope_identity=path.scope_identity,
+        scope_root=str(path.scope_root),
+        scope_label=path.scope_label,
     )
 
 
 def _snapshot_error_code(exc: Exception) -> str:
     code = getattr(exc, "code", None)
     return str(code or "snapshot_failed")
+
+
+def _restore_policy_fingerprint(
+    file_access_mode: str,
+    files: Sequence[ResolvedTargetFile],
+) -> str:
+    payload = {
+        "file_access_mode": str(file_access_mode),
+        "resources": sorted(
+            [
+                {
+                "resource_id": item.path.resource_id,
+                "scope_root": normalize_workspace_root_for_storage(item.path.scope_root),
+                "absolute_path": normalize_workspace_root_for_storage(
+                    item.path.absolute_path
+                ),
+                }
+                for item in files
+            ],
+            key=lambda item: item["resource_id"],
+        ),
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _parse_timestamp(value: str) -> datetime:

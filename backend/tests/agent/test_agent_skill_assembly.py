@@ -7,6 +7,9 @@ from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 
 from backend.app.agent import AgentRunner
 from backend.app.agent.factory import AgentFactory
+from backend.app.agent.keydex_markdown_context_middleware import (
+    KeydexMarkdownContextMiddleware,
+)
 from backend.app.agent.middleware.builder import build_default_middleware
 from backend.app.agent.middleware.context_compression import ContextCompressionMiddleware
 from backend.app.agent.middleware.duplicate_tool_call_guard import (
@@ -230,6 +233,7 @@ def test_t40_default_middleware_order_matches_skill_design() -> None:
         PatchToolCallsMiddleware,
         ToolCallPresetMiddleware,
         SkillActivationInjectionMiddleware,
+        KeydexMarkdownContextMiddleware,
         ToolErrorHandlingMiddleware,
         DuplicateToolCallGuardMiddleware,
         InvalidToolCallRecoveryMiddleware,
@@ -250,6 +254,7 @@ def test_default_middleware_includes_context_compression_when_enabled(tmp_path) 
         SkillActivationInjectionMiddleware,
         PendingUserInputInjectionMiddleware,
         ContextCompressionMiddleware,
+        KeydexMarkdownContextMiddleware,
         ToolErrorHandlingMiddleware,
         DuplicateToolCallGuardMiddleware,
         InvalidToolCallRecoveryMiddleware,

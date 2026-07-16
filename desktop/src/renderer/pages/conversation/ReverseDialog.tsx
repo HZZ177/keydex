@@ -22,6 +22,7 @@ export interface ReverseDialogProps {
   onCancel: () => void;
   onConfirm: () => void;
   onSelectMode: (mode: SessionReverseMode) => void;
+  onExternalConfirmationChange?: (confirmed: boolean) => void;
   onDecision: (decision: SessionReverseDecision) => void;
   onRetryPreview: () => void;
 }
@@ -53,6 +54,7 @@ export function ReverseDialog({
   onCancel,
   onConfirm,
   onSelectMode,
+  onExternalConfirmationChange,
   onDecision,
   onRetryPreview,
 }: ReverseDialogProps) {
@@ -133,6 +135,21 @@ export function ReverseDialog({
               </p>
             ) : null}
           </section>
+          {state.mode !== "conversation" && preview.requires_external_confirmation ? (
+            <label className={styles.externalConfirmation}>
+              <input
+                type="checkbox"
+                checked={state.externalPathsConfirmed ?? false}
+                disabled={state.executing}
+                onChange={(event) => onExternalConfirmationChange?.(event.currentTarget.checked)}
+              />
+              <span>
+                <strong>确认恢复工作区外文件</strong>
+                <small>以下绝对路径将被文件历史版本覆盖：</small>
+                {preview.external_paths.map((path) => <code key={path}>{path}</code>)}
+              </span>
+            </label>
+          ) : null}
           {state.mode !== "conversation" ? (
             state.phase === "decision" ? (
               <ReverseDecisionPanel state={state} onDecision={onDecision} />
@@ -172,6 +189,8 @@ function ReverseDecisionPanel({
   const canRestoreAll =
     files.length > 0 && files.every((file) => file.classification === "forceable_conflict");
   const hasUnavailable = files.some((file) => file.classification === "unrecoverable");
+  const externalConfirmationMissing =
+    preview.requires_external_confirmation && !state.externalPathsConfirmed;
   const actionProps = (action: DecisionAction) => ({
     onBlur: () => setActiveAction(null),
     onFocus: () => setActiveAction(action),
@@ -194,9 +213,11 @@ function ReverseDecisionPanel({
           ? "以下文件无法直接回溯，请选择只处理其他文件或取消。"
           : "以下文件已在其他对话或应用中修改，回溯所有文件会覆盖这些修改。"}
       </p>
-      <div className={styles.decisionFileList} aria-label="需要确认的文件">
-        {files.map((file) => <ReverseFilePreviewItem file={file} key={file.path} />)}
-      </div>
+      <ReverseFileGroups
+        files={files}
+        className={styles.decisionFileList}
+        ariaLabel="需要确认的文件"
+      />
       <div className={styles.decisionControls}>
         <div className={styles.decisionActions} role="group" aria-label="选择文件处理方式">
           <DialogButton
@@ -207,7 +228,7 @@ function ReverseDecisionPanel({
             取消回溯
           </DialogButton>
           <DialogButton
-            disabled={state.executing || !hasReady}
+            disabled={state.executing || !hasReady || externalConfirmationMissing}
             onClick={() => onDecision("safe_partial")}
             {...actionProps("safe_partial")}
           >
@@ -216,7 +237,7 @@ function ReverseDecisionPanel({
           {canRestoreAll ? (
             <DialogButton
               tone="danger"
-              disabled={state.executing}
+              disabled={state.executing || externalConfirmationMissing}
               onClick={() => onDecision("force_conflicts")}
               {...actionProps("force_conflicts")}
             >
@@ -249,9 +270,12 @@ function ReverseFilePreview({ state }: { state: ReverseDialogState }) {
         <p className={styles.notice} key={warning}>{warningLabel(warning)}</p>
       ))}
       {preview.files.length ? (
-        <div className={styles.fileList} data-testid="reverse-file-list">
-          {preview.files.map((file) => <ReverseFilePreviewItem file={file} key={file.path} />)}
-        </div>
+        <ReverseFileGroups
+          files={preview.files}
+          className={styles.fileList}
+          ariaLabel="预计回溯的文件"
+          testId="reverse-file-list"
+        />
       ) : (
         <p className={styles.empty}>文件已经是目标状态，无需修改。</p>
       )}
@@ -259,14 +283,72 @@ function ReverseFilePreview({ state }: { state: ReverseDialogState }) {
   );
 }
 
+function ReverseFileGroups({
+  files,
+  className,
+  ariaLabel,
+  testId,
+}: {
+  files: SessionReverseFilePreview[];
+  className: string;
+  ariaLabel: string;
+  testId?: string;
+}) {
+  return (
+    <div className={className} aria-label={ariaLabel} data-testid={testId}>
+      {groupFilesByScope(files).map((group) => (
+        <div className={styles.scopeGroup} data-scope-kind={group.kind} key={group.key}>
+          <div className={styles.scopeHeading}>
+            <strong>{group.label}</strong>
+            <span>{group.kind === "external" ? "工作区外" : "项目"} · {group.files.length} 个文件</span>
+          </div>
+          <div className={styles.scopeFiles}>
+            {group.files.map((file) => (
+              <ReverseFilePreviewItem file={file} key={fileResourceKey(file)} />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function groupFilesByScope(files: SessionReverseFilePreview[]) {
+  const groups = new Map<string, {
+    key: string;
+    kind: "workspace" | "external";
+    label: string;
+    files: SessionReverseFilePreview[];
+  }>();
+  for (const file of files) {
+    const kind = file.scope_kind ?? "workspace";
+    const identity = file.scope_identity || (kind === "workspace" ? "current" : file.absolute_path);
+    const key = `${kind}:${identity}`;
+    const group = groups.get(key) ?? {
+      key,
+      kind,
+      label: file.scope_label || (kind === "workspace" ? "当前项目" : "外部文件"),
+      files: [],
+    };
+    group.files.push(file);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+}
+
+function fileResourceKey(file: SessionReverseFilePreview): string {
+  return file.resource_id || `${file.scope_kind ?? "workspace"}:${file.scope_identity ?? "current"}:${file.path}`;
+}
+
 function ReverseFilePreviewItem({ file }: { file: SessionReverseFilePreview }) {
   const statusLabel = classificationLabel(file.classification, file.reason_code);
+  const displayPath = file.display_path || file.path;
   return (
     <details className={styles.fileRow} data-testid="reverse-file-preview">
       <summary className={styles.fileSummary}>
         <ChevronRight aria-hidden="true" className={styles.fileChevron} size={14} />
         <FileCode2 aria-hidden="true" size={14} />
-        <code>{file.path}</code>
+        <code title={file.scope_kind === "external" ? file.absolute_path : displayPath}>{displayPath}</code>
         <span data-classification={file.classification}>{statusLabel}</span>
         <span
           className={styles.fileStats}
@@ -276,6 +358,9 @@ function ReverseFilePreviewItem({ file }: { file: SessionReverseFilePreview }) {
           <b data-kind="removed">-{file.deletions}</b>
         </span>
       </summary>
+      {file.scope_kind === "external" && file.absolute_path ? (
+        <p className={styles.externalPath} title={file.absolute_path}>{file.absolute_path}</p>
+      ) : null}
       <div className={styles.fileExpanded}>
         {file.binary ? (
           <p>该文件可以回溯，但不提供代码行预览。</p>
@@ -294,7 +379,7 @@ function ReverseFilePreviewItem({ file }: { file: SessionReverseFilePreview }) {
 
 function fileReviewChange(file: SessionReverseFilePreview): FileReviewChange {
   return {
-    path: file.path,
+    path: file.display_path || file.path,
     additions: file.insertions,
     deletions: file.deletions,
     diff: file.diff ?? "",
@@ -316,10 +401,10 @@ function ReverseResult({ state }: { state: ReverseDialogState }) {
   const succeededFiles = uniqueFiles([...result.restored_files, ...result.forced_files]);
   const skippedFiles = uniqueFiles(result.skipped_files);
   const failedFiles = uniqueFiles(result.failed_files);
-  const successfulPaths = new Set(succeededFiles);
+  const successfulResources = new Set(succeededFiles);
   const successfulChanges = (state.preview?.files ?? []).reduce(
     (total, file) => {
-      if (successfulPaths.has(file.path)) {
+      if (successfulResources.has(file.resource_id) || successfulResources.has(file.path)) {
         total.insertions += file.insertions;
         total.deletions += file.deletions;
       }
@@ -358,7 +443,15 @@ function ReverseResult({ state }: { state: ReverseDialogState }) {
         files.length ? (
           <div className={styles.resultFiles} key={label}>
             <b>{label}</b>
-            <ul>{files.map((file) => <li key={file}><code>{file}</code></li>)}</ul>
+            <ul>
+              {files.map((resourceId) => (
+                <ResultFile
+                  key={resourceId}
+                  resourceId={resourceId}
+                  previewFiles={state.preview?.files ?? []}
+                />
+              ))}
+            </ul>
           </div>
         ) : null,
       )}
@@ -367,6 +460,28 @@ function ReverseResult({ state }: { state: ReverseDialogState }) {
       ) : null}
       {result.status !== "full" ? <IssueDetails operationId={result.operation_id} /> : null}
     </section>
+  );
+}
+
+function ResultFile({
+  resourceId,
+  previewFiles,
+}: {
+  resourceId: string;
+  previewFiles: SessionReverseFilePreview[];
+}) {
+  const file = previewFiles.find((item) => item.resource_id === resourceId);
+  if (!file) {
+    return <li><code>{resourceId}</code></li>;
+  }
+  const path = file.scope_kind === "external"
+    ? file.absolute_path
+    : file.display_path || file.path;
+  return (
+    <li>
+      <code>{path}</code>
+      <small>{file.scope_label}</small>
+    </li>
   );
 }
 
@@ -422,7 +537,14 @@ function DialogFooter({
       <DialogButton disabled={state.executing} onClick={onCancel}>取消</DialogButton>
       <DialogButton
         tone="danger"
-        disabled={state.loading || state.executing || !state.preview}
+        disabled={
+          state.loading ||
+          state.executing ||
+          !state.preview ||
+          (state.mode !== "conversation" &&
+            state.preview.requires_external_confirmation &&
+            !state.externalPathsConfirmed)
+        }
         onClick={onConfirm}
       >
         {state.executing ? "正在回溯…" : "回溯到此处"}

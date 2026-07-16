@@ -40,6 +40,10 @@ export class RuntimeWsClient {
   private sessionId: string | null = null;
   private readonly boundSessionIds = new Set<string>();
   private readonly desiredWorkspaceWatchIds = new Set<string>();
+  private readonly desiredGitRepositoryWatches = new Map<
+    string,
+    { workspaceId: string; projectRoot: string }
+  >();
   private readonly desiredLocalFileWatches = new Map<string, string>();
   private status: WsConnectionStatus = "idle";
   private reconnectAttempts = 0;
@@ -143,6 +147,41 @@ export class RuntimeWsClient {
     }
   }
 
+  bindGitRepositoryWatch(workspaceId: string, projectRoot: string, repositoryId: string) {
+    const scope = {
+      workspaceId: workspaceId.trim(),
+      projectRoot: projectRoot.trim(),
+    };
+    const cleanedRepositoryId = repositoryId.trim();
+    if (!scope.workspaceId || !scope.projectRoot || !cleanedRepositoryId) {
+      throw new Error("Git repository watch scope is incomplete");
+    }
+    const existing = this.desiredGitRepositoryWatches.get(cleanedRepositoryId);
+    if (
+      existing &&
+      (existing.workspaceId !== scope.workspaceId || existing.projectRoot !== scope.projectRoot)
+    ) {
+      throw new Error("The same repository_id cannot be rebound to another project");
+    }
+    this.desiredGitRepositoryWatches.set(cleanedRepositoryId, scope);
+    if (!existing && this.socket?.readyState === SOCKET_OPEN) {
+      this.sendAction("bind_git_repository_watch", {
+        workspace_id: scope.workspaceId,
+        project_root: scope.projectRoot,
+        repository_id: cleanedRepositoryId,
+      });
+    }
+  }
+
+  unbindGitRepositoryWatch(repositoryId: string) {
+    const cleaned = repositoryId.trim();
+    if (!cleaned) return;
+    const wasDesired = this.desiredGitRepositoryWatches.delete(cleaned);
+    if (wasDesired && this.socket?.readyState === SOCKET_OPEN) {
+      this.sendAction("unbind_git_repository_watch", { repository_id: cleaned });
+    }
+  }
+
   bindLocalFileWatch(watchId: string, path: string) {
     const cleanedWatchId = watchId.trim();
     const cleanedPath = path.trim();
@@ -212,6 +251,13 @@ export class RuntimeWsClient {
       }
       for (const workspaceId of this.desiredWorkspaceWatchIds) {
         this.sendAction("bind_workspace_watch", { workspace_id: workspaceId });
+      }
+      for (const [repositoryId, scope] of this.desiredGitRepositoryWatches) {
+        this.sendAction("bind_git_repository_watch", {
+          workspace_id: scope.workspaceId,
+          project_root: scope.projectRoot,
+          repository_id: repositoryId,
+        });
       }
       for (const [watchId, path] of this.desiredLocalFileWatches) {
         this.sendAction("bind_local_file_watch", { watch_id: watchId, path });

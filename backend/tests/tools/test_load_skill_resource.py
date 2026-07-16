@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 
 from backend.app.core.request_context import reset_request_context, set_request_context
-from backend.app.keydex.models import KeydexWorkspaceProfile
-from backend.app.keydex.skills import KEYDEX_SKILL_MAX_RESOURCE_BYTES, discover_workspace_skills
+from backend.app.keydex import KeydexRuntimeCache
+from backend.app.keydex.skills import KEYDEX_SKILL_MAX_RESOURCE_BYTES
 from backend.app.tools.skill import run_load_skill
 
 
@@ -30,21 +30,18 @@ def _write_skill(workspace: Path, name: str = "dev-plan") -> Path:
     return skill_dir
 
 
-def _catalog(workspace: Path):
-    profile = KeydexWorkspaceProfile(
-        workspace_root=workspace,
-        keydex_root=workspace / ".keydex",
-        skills_root=workspace / ".keydex" / "skills",
-    )
-    return discover_workspace_skills(profile)
+def _snapshot(workspace: Path):
+    return KeydexRuntimeCache(
+        system_root=workspace / "missing-system",
+    ).get_workspace_snapshot(workspace)
 
 
 def _payload(command) -> dict:
     return json.loads(command.update["messages"][0].content)
 
 
-async def _run_with_catalog(workspace: Path, resource_path: str):
-    token = set_request_context(skill_catalog=_catalog(workspace))
+async def _run_with_snapshot(workspace: Path, resource_path: str):
+    token = set_request_context(keydex_snapshot=_snapshot(workspace))
     try:
         return await run_load_skill(
             skill_name="dev-plan",
@@ -62,7 +59,7 @@ async def test_load_skill_resource_reads_valid_text_file(tmp_path: Path) -> None
     resource.parent.mkdir()
     resource.write_text("resource guide", encoding="utf-8")
 
-    command = await _run_with_catalog(tmp_path, "references/guide.md")
+    command = await _run_with_snapshot(tmp_path, "references/guide.md")
 
     payload = _payload(command)
     assert payload["found"] is True
@@ -81,7 +78,7 @@ async def test_t77_load_skill_resource_rejects_parent_escape(
     _write_skill(tmp_path)
     (tmp_path / ".keydex" / "skills" / "secret.md").write_text("secret", encoding="utf-8")
 
-    command = await _run_with_catalog(tmp_path, resource_path)
+    command = await _run_with_snapshot(tmp_path, resource_path)
 
     payload = _payload(command)
     assert payload["code"] == "skill_resource_forbidden"
@@ -95,7 +92,7 @@ async def test_t77_load_skill_resource_rejects_absolute_path(tmp_path: Path) -> 
     outside = tmp_path / "outside.txt"
     outside.write_text("secret", encoding="utf-8")
 
-    command = await _run_with_catalog(tmp_path, str(outside.resolve()))
+    command = await _run_with_snapshot(tmp_path, str(outside.resolve()))
 
     payload = _payload(command)
     assert payload["code"] == "skill_resource_forbidden"
@@ -112,7 +109,7 @@ async def test_t80_load_skill_resource_cannot_cross_into_another_skill(
     other = _write_skill(tmp_path, name="other")
     (other / "secret.txt").write_text("other secret", encoding="utf-8")
 
-    command = await _run_with_catalog(tmp_path, "../other/secret.txt")
+    command = await _run_with_snapshot(tmp_path, "../other/secret.txt")
 
     payload = _payload(command)
     assert payload["code"] == "skill_resource_forbidden"
@@ -126,7 +123,6 @@ async def test_t78_load_skill_resource_rejects_symlink_escape(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     skill_dir = _write_skill(tmp_path)
-    catalog = _catalog(tmp_path)
     outside = tmp_path / "outside.txt"
     outside.write_text("outside secret", encoding="utf-8")
     link = skill_dir / "linked.txt"
@@ -134,13 +130,16 @@ async def test_t78_load_skill_resource_rejects_symlink_escape(
         link.symlink_to(outside)
     except OSError:
         link.write_text("link-like placeholder", encoding="utf-8")
-        original_is_symlink = Path.is_symlink
+        from backend.app.keydex.skills import discovery
 
-        def fake_is_symlink(path: Path) -> bool:
-            return path == link or original_is_symlink(path)
+        original_is_link_like = discovery._is_link_like
 
-        monkeypatch.setattr(Path, "is_symlink", fake_is_symlink)
-    token = set_request_context(skill_catalog=catalog)
+        monkeypatch.setattr(
+            discovery,
+            "_is_link_like",
+            lambda path: path == link or original_is_link_like(path),
+        )
+    token = set_request_context(keydex_snapshot=_snapshot(tmp_path))
     try:
         command = await run_load_skill(
             skill_name="dev-plan",
@@ -151,7 +150,7 @@ async def test_t78_load_skill_resource_rejects_symlink_escape(
         reset_request_context(token)
 
     payload = _payload(command)
-    assert payload["code"] == "skill_resource_forbidden"
+    assert payload["code"] == "skill_not_found"
     assert payload["loaded"] is False
     assert "outside secret" not in json.dumps(payload)
 
@@ -164,7 +163,6 @@ async def test_t78_load_skill_resource_rejects_junction_like_component(
     skill_dir = _write_skill(tmp_path)
     junction_like = skill_dir / "junction.txt"
     junction_like.write_text("must not load", encoding="utf-8")
-    catalog = _catalog(tmp_path)
     original_is_junction = getattr(Path, "is_junction", None)
 
     def fake_is_junction(path: Path) -> bool:
@@ -173,7 +171,7 @@ async def test_t78_load_skill_resource_rejects_junction_like_component(
         return bool(original_is_junction(path)) if callable(original_is_junction) else False
 
     monkeypatch.setattr(Path, "is_junction", fake_is_junction, raising=False)
-    token = set_request_context(skill_catalog=catalog)
+    token = set_request_context(keydex_snapshot=_snapshot(tmp_path))
     try:
         command = await run_load_skill(
             skill_name="dev-plan",
@@ -184,7 +182,7 @@ async def test_t78_load_skill_resource_rejects_junction_like_component(
         reset_request_context(token)
 
     payload = _payload(command)
-    assert payload["code"] == "skill_resource_forbidden"
+    assert payload["code"] == "skill_not_found"
     assert payload["loaded"] is False
     assert "must not load" not in json.dumps(payload)
 
@@ -193,7 +191,7 @@ async def test_t78_load_skill_resource_rejects_junction_like_component(
 async def test_load_skill_resource_rejects_missing_file(tmp_path: Path) -> None:
     _write_skill(tmp_path)
 
-    command = await _run_with_catalog(tmp_path, "references/missing.md")
+    command = await _run_with_snapshot(tmp_path, "references/missing.md")
 
     payload = _payload(command)
     assert payload["code"] == "skill_resource_not_found"
@@ -205,7 +203,7 @@ async def test_load_skill_resource_rejects_directory(tmp_path: Path) -> None:
     skill_dir = _write_skill(tmp_path)
     (skill_dir / "references").mkdir()
 
-    command = await _run_with_catalog(tmp_path, "references")
+    command = await _run_with_snapshot(tmp_path, "references")
 
     payload = _payload(command)
     assert payload["code"] == "skill_resource_not_file"
@@ -218,7 +216,7 @@ async def test_t82_load_skill_resource_rejects_too_large_file(tmp_path: Path) ->
     resource = skill_dir / "large.txt"
     resource.write_text("x" * (KEYDEX_SKILL_MAX_RESOURCE_BYTES + 1), encoding="utf-8")
 
-    command = await _run_with_catalog(tmp_path, "large.txt")
+    command = await _run_with_snapshot(tmp_path, "large.txt")
 
     payload = _payload(command)
     assert payload["code"] == "skill_resource_too_large"
@@ -231,7 +229,7 @@ async def test_t81_t82_load_skill_resource_rejects_non_utf8_file(tmp_path: Path)
     resource = skill_dir / "binary.bin"
     resource.write_bytes(b"\xff\xfe\xfd")
 
-    command = await _run_with_catalog(tmp_path, "binary.bin")
+    command = await _run_with_snapshot(tmp_path, "binary.bin")
 
     payload = _payload(command)
     assert payload["code"] == "skill_resource_not_text"
@@ -244,7 +242,7 @@ async def test_t81_load_skill_resource_rejects_nul_binary_file(tmp_path: Path) -
     resource = skill_dir / "binary.dat"
     resource.write_bytes(b"text\0binary")
 
-    command = await _run_with_catalog(tmp_path, "binary.dat")
+    command = await _run_with_snapshot(tmp_path, "binary.dat")
 
     payload = _payload(command)
     assert payload["code"] == "skill_resource_not_text"
@@ -260,7 +258,7 @@ async def test_t83_script_resource_is_returned_as_read_only_text_not_activated(
     script.parent.mkdir()
     script.write_text("Write-Output should-not-run", encoding="utf-8")
 
-    command = await _run_with_catalog(tmp_path, "scripts/run.ps1")
+    command = await _run_with_snapshot(tmp_path, "scripts/run.ps1")
 
     payload = _payload(command)
     assert payload["loaded"] is True

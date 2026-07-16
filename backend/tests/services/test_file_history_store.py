@@ -109,3 +109,36 @@ def test_file_history_store_safety_backup_uses_operation_scope(tmp_path) -> None
         expected_hash=backup.content_hash or "",
         expected_size=backup.size or 0,
     ).is_file()
+
+
+def test_file_history_store_resource_key_prevents_cross_scope_collisions(tmp_path) -> None:
+    store = FileHistoryStore(tmp_path / "data")
+    source = tmp_path / "same.txt"
+    source.write_text("workspace", encoding="utf-8")
+    workspace = store.create_backup(
+        session_id="session-1",
+        resource_key="workspace\0workspace-one\0same.txt",
+        source_path=source,
+        version=1,
+    )
+    source.write_text("external", encoding="utf-8")
+    external = store.create_backup(
+        session_id="session-1",
+        resource_key="external\0d:\0same.txt",
+        source_path=source,
+        version=1,
+    )
+
+    assert workspace.backup_file_name != external.backup_file_name
+    assert store.verify_backup(
+        session_id="session-1",
+        backup_file_name=workspace.backup_file_name or "",
+        expected_hash=workspace.content_hash or "",
+        expected_size=workspace.size or 0,
+    ).is_file()
+    assert store.verify_backup(
+        session_id="session-1",
+        backup_file_name=external.backup_file_name or "",
+        expected_hash=external.content_hash or "",
+        expected_size=external.size or 0,
+    ).is_file()

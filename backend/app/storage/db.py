@@ -854,8 +854,22 @@ create index if not exists idx_file_history_snapshots_parent
   on file_history_snapshots(parent_snapshot_id)
   where parent_snapshot_id is not null;
 
+create table if not exists file_history_snapshot_scopes (
+  snapshot_id text not null,
+  scope_kind text not null check (scope_kind in ('workspace', 'external')),
+  scope_identity text not null check (length(scope_identity) > 0),
+  scope_root text not null check (length(scope_root) > 0),
+  scope_label text not null,
+  primary key(snapshot_id, scope_kind, scope_identity),
+  foreign key(snapshot_id) references file_history_snapshots(id) on delete cascade
+);
+
 create table if not exists file_history_snapshot_entries (
   snapshot_id text not null,
+  scope_kind text not null check (scope_kind in ('workspace', 'external')),
+  scope_identity text not null check (length(scope_identity) > 0),
+  scope_root text not null check (length(scope_root) > 0),
+  scope_label text not null,
   canonical_path text not null,
   display_path text not null,
   state text not null check (state in ('file', 'missing')),
@@ -865,8 +879,11 @@ create table if not exists file_history_snapshot_entries (
   size integer,
   mode integer,
   content_hash text,
-  primary key(snapshot_id, canonical_path),
+  primary key(snapshot_id, scope_kind, scope_identity, canonical_path),
   foreign key(snapshot_id) references file_history_snapshots(id) on delete cascade,
+  foreign key(snapshot_id, scope_kind, scope_identity)
+    references file_history_snapshot_scopes(snapshot_id, scope_kind, scope_identity)
+    on delete cascade,
   check (
     (state = 'missing' and backup_file_name is null and size is null and content_hash is null)
     or
@@ -878,13 +895,17 @@ create table if not exists file_history_snapshot_entries (
 );
 
 create index if not exists idx_file_history_entries_path_snapshot
-  on file_history_snapshot_entries(canonical_path, snapshot_id);
+  on file_history_snapshot_entries(scope_kind, scope_identity, canonical_path, snapshot_id);
 create index if not exists idx_file_history_entries_backup
   on file_history_snapshot_entries(backup_file_name)
   where backup_file_name is not null;
 
 create table if not exists file_history_tracked_files (
   session_id text not null,
+  scope_kind text not null check (scope_kind in ('workspace', 'external')),
+  scope_identity text not null check (length(scope_identity) > 0),
+  scope_root text not null check (length(scope_root) > 0),
+  scope_label text not null,
   canonical_path text not null,
   display_path text not null,
   latest_version integer not null default 0 check (latest_version >= 0),
@@ -897,7 +918,7 @@ create table if not exists file_history_tracked_files (
   last_observed_mode integer,
   created_at text not null,
   updated_at text not null,
-  primary key(session_id, canonical_path),
+  primary key(session_id, scope_kind, scope_identity, canonical_path),
   foreign key(session_id) references sessions(id) on delete cascade,
   foreign key(first_snapshot_id) references file_history_snapshots(id) on delete set null,
   foreign key(last_snapshot_id) references file_history_snapshots(id) on delete set null
@@ -914,6 +935,10 @@ create table if not exists file_history_mutations (
   turn_index integer,
   snapshot_id text,
   workspace_identity text not null,
+  scope_kind text not null check (scope_kind in ('workspace', 'external')),
+  scope_identity text not null check (length(scope_identity) > 0),
+  scope_root text not null check (length(scope_root) > 0),
+  scope_label text not null,
   canonical_path text not null,
   display_path text not null,
   tool_name text,
@@ -936,16 +961,20 @@ create table if not exists file_history_mutations (
 create index if not exists idx_file_history_mutations_session_trace
   on file_history_mutations(session_id, trace_id, created_at);
 create index if not exists idx_file_history_mutations_workspace_path
-  on file_history_mutations(workspace_identity, canonical_path, created_at desc);
+  on file_history_mutations(scope_kind, scope_identity, canonical_path, created_at desc);
 create index if not exists idx_file_history_mutations_batch
   on file_history_mutations(batch_id)
   where batch_id is not null;
 create unique index if not exists idx_file_history_mutations_snapshot_path
-  on file_history_mutations(snapshot_id, canonical_path)
+  on file_history_mutations(snapshot_id, scope_kind, scope_identity, canonical_path)
   where snapshot_id is not null;
 
 create table if not exists file_history_path_heads (
   workspace_identity text not null,
+  scope_kind text not null check (scope_kind in ('workspace', 'external')),
+  scope_identity text not null check (length(scope_identity) > 0),
+  scope_root text not null check (length(scope_root) > 0),
+  scope_label text not null,
   canonical_path text not null,
   display_path text not null,
   session_id text not null,
@@ -955,7 +984,7 @@ create table if not exists file_history_path_heads (
   content_hash text,
   revision integer not null default 1 check (revision >= 1),
   updated_at text not null,
-  primary key(workspace_identity, canonical_path),
+  primary key(scope_kind, scope_identity, canonical_path),
   foreign key(session_id) references sessions(id) on delete cascade,
   foreign key(mutation_id) references file_history_mutations(id) on delete set null
 );
@@ -1014,6 +1043,10 @@ create index if not exists idx_file_history_operations_target
 
 create table if not exists file_history_operation_files (
   operation_id text not null,
+  scope_kind text not null check (scope_kind in ('workspace', 'external')),
+  scope_identity text not null check (length(scope_identity) > 0),
+  scope_root text not null check (length(scope_root) > 0),
+  scope_label text not null,
   canonical_path text not null,
   display_path text not null,
   preview_current_state text not null check (preview_current_state in ('file', 'missing')),
@@ -1037,7 +1070,7 @@ create table if not exists file_history_operation_files (
   safety_size integer,
   safety_mode integer,
   updated_at text not null,
-  primary key(operation_id, canonical_path),
+  primary key(operation_id, scope_kind, scope_identity, canonical_path),
   foreign key(operation_id) references file_history_operations(id) on delete cascade
 );
 
@@ -1263,6 +1296,7 @@ class Database:
                 bool(legacy_session_columns) and "workspace_id" not in legacy_session_columns
             )
             self._migrate_archive_lifecycle_schema(conn)
+            self._migrate_file_history_multiscope_schema(conn)
             conn.executescript(SCHEMA_SQL)
             self._ensure_column(conn, "sessions", "workspace_id", "text")
             self._ensure_column(
@@ -1409,6 +1443,314 @@ class Database:
         if column_name in columns:
             return f'{alias}."{column_name}"'
         return default_sql
+
+    @classmethod
+    def _migrate_file_history_multiscope_schema(cls, conn: sqlite3.Connection) -> None:
+        """Rebuild legacy single-root history tables as composite resources.
+
+        The migration is metadata-only: roots need not be online and backup
+        artifacts are intentionally left in place. The old snapshot root is the
+        authoritative workspace scope for every legacy entry.
+        """
+
+        entry_columns = cls._column_names(conn, "file_history_snapshot_entries")
+        if not entry_columns or "scope_kind" in entry_columns:
+            return
+        required_tables = (
+            "file_history_snapshot_entries",
+            "file_history_tracked_files",
+            "file_history_mutations",
+            "file_history_path_heads",
+            "file_history_operation_files",
+        )
+        counts = {
+            table: int(conn.execute(f'select count(*) from "{table}"').fetchone()[0])
+            for table in required_tables
+        }
+        conn.commit()
+        conn.execute("pragma foreign_keys = off")
+        conn.execute("pragma legacy_alter_table = on")
+        try:
+            conn.executescript(
+                """
+                begin immediate;
+                drop index if exists idx_file_history_entries_path_snapshot;
+                drop index if exists idx_file_history_entries_backup;
+                drop index if exists idx_file_history_tracked_updated;
+                drop index if exists idx_file_history_mutations_session_trace;
+                drop index if exists idx_file_history_mutations_workspace_path;
+                drop index if exists idx_file_history_mutations_batch;
+                drop index if exists idx_file_history_mutations_snapshot_path;
+                drop index if exists idx_file_history_path_heads_session;
+                drop index if exists idx_file_history_operation_files_classification;
+
+                alter table file_history_operation_files
+                  rename to file_history_operation_files_legacy;
+                alter table file_history_path_heads
+                  rename to file_history_path_heads_legacy;
+                alter table file_history_mutations
+                  rename to file_history_mutations_legacy;
+                alter table file_history_tracked_files
+                  rename to file_history_tracked_files_legacy;
+                alter table file_history_snapshot_entries
+                  rename to file_history_snapshot_entries_legacy;
+
+                create table file_history_snapshot_scopes (
+                  snapshot_id text not null,
+                  scope_kind text not null check (scope_kind in ('workspace', 'external')),
+                  scope_identity text not null check (length(scope_identity) > 0),
+                  scope_root text not null check (length(scope_root) > 0),
+                  scope_label text not null,
+                  primary key(snapshot_id, scope_kind, scope_identity),
+                  foreign key(snapshot_id) references file_history_snapshots(id) on delete cascade
+                );
+                insert into file_history_snapshot_scopes (
+                  snapshot_id, scope_kind, scope_identity, scope_root, scope_label
+                )
+                select id, 'workspace', workspace_identity, workspace_root, workspace_root
+                from file_history_snapshots;
+
+                create table file_history_snapshot_entries (
+                  snapshot_id text not null,
+                  scope_kind text not null check (scope_kind in ('workspace', 'external')),
+                  scope_identity text not null check (length(scope_identity) > 0),
+                  scope_root text not null check (length(scope_root) > 0),
+                  scope_label text not null,
+                  canonical_path text not null,
+                  display_path text not null,
+                  state text not null check (state in ('file', 'missing')),
+                  backup_file_name text,
+                  version integer not null check (version >= 1),
+                  backup_time text not null,
+                  size integer,
+                  mode integer,
+                  content_hash text,
+                  primary key(snapshot_id, scope_kind, scope_identity, canonical_path),
+                  foreign key(snapshot_id) references file_history_snapshots(id) on delete cascade,
+                  foreign key(snapshot_id, scope_kind, scope_identity)
+                    references file_history_snapshot_scopes(snapshot_id, scope_kind, scope_identity)
+                    on delete cascade,
+                  check (
+                    (state = 'missing' and backup_file_name is null and size is null and content_hash is null)
+                    or (state = 'file' and backup_file_name is not null
+                        and size is not null and content_hash is not null)
+                  )
+                );
+                insert into file_history_snapshot_entries (
+                  snapshot_id, scope_kind, scope_identity, scope_root, scope_label,
+                  canonical_path, display_path, state, backup_file_name, version,
+                  backup_time, size, mode, content_hash
+                )
+                select e.snapshot_id, 'workspace', s.workspace_identity, s.workspace_root,
+                       s.workspace_root, e.canonical_path, e.display_path, e.state,
+                       e.backup_file_name, e.version, e.backup_time, e.size, e.mode,
+                       e.content_hash
+                from file_history_snapshot_entries_legacy e
+                join file_history_snapshots s on s.id = e.snapshot_id;
+
+                create table file_history_tracked_files (
+                  session_id text not null,
+                  scope_kind text not null check (scope_kind in ('workspace', 'external')),
+                  scope_identity text not null check (length(scope_identity) > 0),
+                  scope_root text not null check (length(scope_root) > 0),
+                  scope_label text not null,
+                  canonical_path text not null,
+                  display_path text not null,
+                  latest_version integer not null default 0 check (latest_version >= 0),
+                  first_snapshot_id text,
+                  last_snapshot_id text,
+                  last_observed_state text check (last_observed_state in ('file', 'missing')),
+                  last_observed_hash text,
+                  last_observed_size integer,
+                  last_observed_mtime_ns integer,
+                  last_observed_mode integer,
+                  created_at text not null,
+                  updated_at text not null,
+                  primary key(session_id, scope_kind, scope_identity, canonical_path),
+                  foreign key(session_id) references sessions(id) on delete cascade,
+                  foreign key(first_snapshot_id) references file_history_snapshots(id) on delete set null,
+                  foreign key(last_snapshot_id) references file_history_snapshots(id) on delete set null
+                );
+                insert into file_history_tracked_files (
+                  session_id, scope_kind, scope_identity, scope_root, scope_label,
+                  canonical_path, display_path, latest_version, first_snapshot_id,
+                  last_snapshot_id, last_observed_state, last_observed_hash,
+                  last_observed_size, last_observed_mtime_ns, last_observed_mode,
+                  created_at, updated_at
+                )
+                select t.session_id, 'workspace',
+                       coalesce(s.workspace_identity, 'legacy:' || t.session_id),
+                       coalesce(s.workspace_root, s.workspace_identity, 'legacy:' || t.session_id),
+                       coalesce(s.workspace_root, s.workspace_identity, 'legacy:' || t.session_id),
+                       t.canonical_path, t.display_path, t.latest_version,
+                       t.first_snapshot_id, t.last_snapshot_id, t.last_observed_state,
+                       t.last_observed_hash, t.last_observed_size,
+                       t.last_observed_mtime_ns, t.last_observed_mode,
+                       t.created_at, t.updated_at
+                from file_history_tracked_files_legacy t
+                left join file_history_snapshots s
+                  on s.id = coalesce(t.last_snapshot_id, t.first_snapshot_id);
+
+                create table file_history_mutations (
+                  id text primary key,
+                  session_id text not null,
+                  active_session_id text,
+                  trace_id text,
+                  turn_index integer,
+                  snapshot_id text,
+                  workspace_identity text not null,
+                  scope_kind text not null check (scope_kind in ('workspace', 'external')),
+                  scope_identity text not null check (length(scope_identity) > 0),
+                  scope_root text not null check (length(scope_root) > 0),
+                  scope_label text not null,
+                  canonical_path text not null,
+                  display_path text not null,
+                  tool_name text,
+                  tool_call_id text,
+                  batch_id text,
+                  mutation_kind text not null
+                    check (mutation_kind in ('create', 'update', 'delete', 'move_source', 'move_destination')),
+                  before_state text not null check (before_state in ('file', 'missing')),
+                  before_hash text,
+                  after_state text check (after_state in ('file', 'missing')),
+                  after_hash text,
+                  status text not null check (status in ('prepared', 'committed', 'aborted', 'dirty')),
+                  error_code text,
+                  created_at text not null,
+                  updated_at text not null,
+                  foreign key(session_id) references sessions(id) on delete cascade,
+                  foreign key(snapshot_id) references file_history_snapshots(id) on delete set null
+                );
+                insert into file_history_mutations (
+                  id, session_id, active_session_id, trace_id, turn_index, snapshot_id,
+                  workspace_identity, scope_kind, scope_identity, scope_root, scope_label,
+                  canonical_path, display_path, tool_name, tool_call_id, batch_id,
+                  mutation_kind, before_state, before_hash, after_state, after_hash,
+                  status, error_code, created_at, updated_at
+                )
+                select m.id, m.session_id, m.active_session_id, m.trace_id, m.turn_index,
+                       m.snapshot_id, m.workspace_identity, 'workspace', m.workspace_identity,
+                       coalesce(s.workspace_root, m.workspace_identity),
+                       coalesce(s.workspace_root, m.workspace_identity),
+                       m.canonical_path, m.display_path, m.tool_name, m.tool_call_id,
+                       m.batch_id, m.mutation_kind, m.before_state, m.before_hash,
+                       m.after_state, m.after_hash, m.status, m.error_code,
+                       m.created_at, m.updated_at
+                from file_history_mutations_legacy m
+                left join file_history_snapshots s on s.id = m.snapshot_id;
+
+                create table file_history_path_heads (
+                  workspace_identity text not null,
+                  scope_kind text not null check (scope_kind in ('workspace', 'external')),
+                  scope_identity text not null check (length(scope_identity) > 0),
+                  scope_root text not null check (length(scope_root) > 0),
+                  scope_label text not null,
+                  canonical_path text not null,
+                  display_path text not null,
+                  session_id text not null,
+                  trace_id text,
+                  mutation_id text,
+                  state text not null check (state in ('file', 'missing')),
+                  content_hash text,
+                  revision integer not null default 1 check (revision >= 1),
+                  updated_at text not null,
+                  primary key(scope_kind, scope_identity, canonical_path),
+                  foreign key(session_id) references sessions(id) on delete cascade,
+                  foreign key(mutation_id) references file_history_mutations(id) on delete set null
+                );
+                insert into file_history_path_heads (
+                  workspace_identity, scope_kind, scope_identity, scope_root, scope_label,
+                  canonical_path, display_path, session_id, trace_id, mutation_id,
+                  state, content_hash, revision, updated_at
+                )
+                select h.workspace_identity, 'workspace', h.workspace_identity,
+                       coalesce(s.workspace_root, h.workspace_identity),
+                       coalesce(s.workspace_root, h.workspace_identity),
+                       h.canonical_path, h.display_path, h.session_id, h.trace_id,
+                       h.mutation_id, h.state, h.content_hash, h.revision, h.updated_at
+                from file_history_path_heads_legacy h
+                left join file_history_snapshots s on s.id = (
+                  select id from file_history_snapshots
+                  where session_id = h.session_id order by sequence desc limit 1
+                );
+
+                create table file_history_operation_files (
+                  operation_id text not null,
+                  scope_kind text not null check (scope_kind in ('workspace', 'external')),
+                  scope_identity text not null check (length(scope_identity) > 0),
+                  scope_root text not null check (length(scope_root) > 0),
+                  scope_label text not null,
+                  canonical_path text not null,
+                  display_path text not null,
+                  preview_current_state text not null check (preview_current_state in ('file', 'missing')),
+                  preview_current_hash text,
+                  target_state text not null check (target_state in ('file', 'missing')),
+                  target_backup_file_name text,
+                  target_hash text,
+                  target_size integer,
+                  target_mode integer,
+                  classification text not null
+                    check (classification in ('ready', 'forceable_conflict', 'unrecoverable')),
+                  reason_code text,
+                  writer_session_id text,
+                  user_authorized integer not null default 0,
+                  result_state text not null default 'pending'
+                    check (result_state in ('pending', 'restored', 'forced', 'skipped', 'failed', 'compensated')),
+                  error_code text,
+                  safety_state text check (safety_state in ('file', 'missing')),
+                  safety_backup_file_name text,
+                  safety_hash text,
+                  safety_size integer,
+                  safety_mode integer,
+                  updated_at text not null,
+                  primary key(operation_id, scope_kind, scope_identity, canonical_path),
+                  foreign key(operation_id) references file_history_operations(id) on delete cascade
+                );
+                insert into file_history_operation_files (
+                  operation_id, scope_kind, scope_identity, scope_root, scope_label,
+                  canonical_path, display_path, preview_current_state,
+                  preview_current_hash, target_state, target_backup_file_name,
+                  target_hash, target_size, target_mode, classification, reason_code,
+                  writer_session_id, user_authorized, result_state, error_code,
+                  safety_state, safety_backup_file_name, safety_hash, safety_size,
+                  safety_mode, updated_at
+                )
+                select f.operation_id, 'workspace',
+                       coalesce(s.workspace_identity, o.workspace_identity, 'legacy:' || o.session_id),
+                       coalesce(s.workspace_root, o.workspace_identity, 'legacy:' || o.session_id),
+                       coalesce(s.workspace_root, o.workspace_identity, 'legacy:' || o.session_id),
+                       f.canonical_path, f.display_path, f.preview_current_state,
+                       f.preview_current_hash, f.target_state, f.target_backup_file_name,
+                       f.target_hash, f.target_size, f.target_mode, f.classification,
+                       f.reason_code, f.writer_session_id, f.user_authorized,
+                       f.result_state, f.error_code, f.safety_state,
+                       f.safety_backup_file_name, f.safety_hash, f.safety_size,
+                       f.safety_mode, f.updated_at
+                from file_history_operation_files_legacy f
+                join file_history_operations o on o.id = f.operation_id
+                left join file_history_snapshots s on s.id = o.target_snapshot_id;
+
+                drop table file_history_operation_files_legacy;
+                drop table file_history_path_heads_legacy;
+                drop table file_history_mutations_legacy;
+                drop table file_history_tracked_files_legacy;
+                drop table file_history_snapshot_entries_legacy;
+                commit;
+                """
+            )
+            for table, expected in counts.items():
+                actual = int(conn.execute(f'select count(*) from "{table}"').fetchone()[0])
+                if actual != expected:
+                    raise RuntimeError(
+                        f"文件历史多作用域迁移行数不一致: {table} {expected} != {actual}"
+                    )
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        finally:
+            conn.execute("pragma legacy_alter_table = off")
+            conn.execute("pragma foreign_keys = on")
 
     @classmethod
     def _migrate_archive_lifecycle_schema(cls, conn: sqlite3.Connection) -> None:

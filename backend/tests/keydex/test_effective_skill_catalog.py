@@ -27,7 +27,6 @@ def _catalog(
     *names: str,
     enabled: bool = True,
     available: bool = True,
-    inherit_system: bool = True,
     blocked_names: frozenset[str] = frozenset(),
 ) -> SkillLayerCatalog:
     root = tmp_path / scope
@@ -36,7 +35,6 @@ def _catalog(
         root=root,
         enabled=enabled,
         available=available,
-        inherit_system=inherit_system,
     )
     return SkillLayerCatalog(
         profile=profile,
@@ -54,19 +52,21 @@ def test_t14_old_workspace_defaults_to_inheriting_system(tmp_path: Path) -> None
     assert list(effective.skills) == ["global", "local"]
 
 
-def test_t15_workspace_can_disable_system_inheritance(tmp_path: Path) -> None:
+def test_t15_workspace_profile_has_no_switch_for_fixed_system_inheritance(
+    tmp_path: Path,
+) -> None:
     effective = resolve_effective_skill_catalog(
         _catalog(tmp_path, "system", "global"),
-        _catalog(tmp_path, "workspace", "local", inherit_system=False),
+        _catalog(tmp_path, "workspace", "local"),
     )
 
-    assert list(effective.skills) == ["local"]
+    assert list(effective.skills) == ["global", "local"]
 
 
 def test_t16_disabled_workspace_layer_still_inherits_system(tmp_path: Path) -> None:
     effective = resolve_effective_skill_catalog(
         _catalog(tmp_path, "system", "global"),
-        _catalog(tmp_path, "workspace", enabled=False, inherit_system=True),
+        _catalog(tmp_path, "workspace", enabled=False),
     )
 
     assert list(effective.skills) == ["global"]
@@ -81,14 +81,14 @@ def test_t17_disabled_system_does_not_disable_workspace(tmp_path: Path) -> None:
     assert list(effective.skills) == ["local"]
 
 
-def test_t18_invalid_workspace_fails_closed_without_system_fallback(tmp_path: Path) -> None:
+def test_t18_invalid_workspace_preserves_valid_parent_layers(tmp_path: Path) -> None:
     effective = resolve_effective_skill_catalog(
         _catalog(tmp_path, "system", "global"),
         _catalog(tmp_path, "workspace", available=False),
     )
 
-    assert effective.available is False
-    assert effective.skills == {}
+    assert effective.available is True
+    assert list(effective.skills) == ["global"]
 
 
 def test_t19_invalid_workspace_does_not_mutate_system_catalog(tmp_path: Path) -> None:
@@ -221,15 +221,20 @@ def test_builtin_is_the_lowest_priority_layer(tmp_path: Path) -> None:
     assert workspace_effective.skills["system-only"].source == "system"
 
 
-def test_disabling_system_inheritance_keeps_builtin_skills(tmp_path: Path) -> None:
+def test_workspace_always_keeps_fixed_system_and_builtin_layers(tmp_path: Path) -> None:
     effective = resolve_effective_skill_catalog(
         _catalog(tmp_path, "system", "system-only", "shared"),
-        _catalog(tmp_path, "workspace", "workspace-only", inherit_system=False),
+        _catalog(tmp_path, "workspace", "workspace-only"),
         builtin=_catalog(tmp_path, "builtin", "builtin-only", "shared"),
     )
 
-    assert list(effective.skills) == ["builtin-only", "shared", "workspace-only"]
-    assert effective.skills["shared"].source == "builtin"
+    assert list(effective.skills) == [
+        "builtin-only",
+        "shared",
+        "system-only",
+        "workspace-only",
+    ]
+    assert effective.skills["shared"].source == "system"
 
 
 def test_invalid_system_candidate_blocks_same_name_builtin(tmp_path: Path) -> None:

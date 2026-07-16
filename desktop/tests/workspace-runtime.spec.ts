@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { HttpClient } from "@/runtime/httpClient";
 import {
+  createKeydexRuntime,
   createSkillRuntime,
   type EffectiveSkillsResponse,
+  type RuntimeOverviewResponse,
   type SkillResourceReadResponse,
 } from "@/runtime/skills";
 
@@ -143,5 +145,68 @@ describe("skill runtime", () => {
       body,
       signal: undefined,
     });
+  });
+});
+
+describe("keydex runtime overview", () => {
+  const response: RuntimeOverviewResponse = {
+    mode: "workspace_effective",
+    fingerprint: "runtime-fingerprint",
+    loaded_at: "2026-07-15T12:00:00Z",
+    layers: [],
+    capabilities: {
+      skills: {
+        available: true,
+        fingerprint: "skills-fingerprint",
+        sources: [],
+        diagnostics: [],
+        count: 2,
+      },
+      keydex_markdown: {
+        available: true,
+        fingerprint: "markdown-fingerprint",
+        sources: ["system:keydex.md", "workspace:.keydex/keydex.md"],
+        diagnostics: [],
+        document_count: 2,
+        total_bytes: 42,
+      },
+    },
+    diagnostics: [],
+  };
+
+  it("routes all three overview scopes with encoded ids", async () => {
+    const request = vi.fn(async () => response);
+    const runtime = createKeydexRuntime({ request } as unknown as HttpClient);
+
+    await expect(runtime.listSystem()).resolves.toBe(response);
+    await expect(runtime.listWorkspace("ws 1")).resolves.toBe(response);
+    await expect(runtime.listSession("ses 1")).resolves.toBe(response);
+
+    expect(request).toHaveBeenNthCalledWith(1, "/api/keydex/runtime", {
+      signal: undefined,
+    });
+    expect(request).toHaveBeenNthCalledWith(
+      2,
+      "/api/workspaces/ws%201/keydex/runtime",
+      { signal: undefined },
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      3,
+      "/api/sessions/ses%201/keydex/runtime",
+      { signal: undefined },
+    );
+  });
+
+  it("passes force reload and abort signal", async () => {
+    const request = vi.fn(async () => response);
+    const runtime = createKeydexRuntime({ request } as unknown as HttpClient);
+    const signal = new AbortController().signal;
+
+    await runtime.listSession("ses 1", { forceReload: true, signal });
+
+    expect(request).toHaveBeenCalledWith(
+      "/api/sessions/ses%201/keydex/runtime?force_reload=true",
+      { signal },
+    );
   });
 });

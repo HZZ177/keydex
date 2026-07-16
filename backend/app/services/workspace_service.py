@@ -7,6 +7,7 @@ from typing import Any
 from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
 from backend.app.security import WorkspacePathError, resolve_workspace_path
+from backend.app.services.file_resources import FileResourceScopeCatalog
 from backend.app.storage import SessionRecord, WorkspaceRecord
 
 
@@ -75,6 +76,11 @@ class WorkspaceService:
             "list": [self.serialize_workspace(record) for record in records],
             "total": len(records),
         }
+
+    def file_resource_scope_catalog(self) -> FileResourceScopeCatalog:
+        """Return every active registered project for longest-root file matching."""
+
+        return FileResourceScopeCatalog.from_workspaces(self._workspaces.list(limit=500))
 
     def get_workspace(self, workspace_id: str) -> dict[str, Any]:
         return self.serialize_workspace(self.require_workspace(workspace_id))

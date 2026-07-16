@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ChatChannel, EffectiveSkillsResponse, RuntimeBridge, WsConnectionStatus } from "@/runtime";
 import { ConversationPage } from "@/renderer/pages/conversation";
+import { ActiveProjectCoordinatorProvider } from "@/renderer/providers/ActiveProjectCoordinatorProvider";
 import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import { PreviewProvider } from "@/renderer/providers/PreviewProvider";
 import type { AgentActionEnvelope, AgentHistoryResponse, AgentSession, Workspace } from "@/types/protocol";
@@ -193,9 +194,11 @@ describe("ConversationPage skill errors", () => {
 
 function renderConversation(ui: ReactElement) {
   return render(
-    <NotificationProvider>
-      <PreviewProvider>{ui}</PreviewProvider>
-    </NotificationProvider>,
+    <ActiveProjectCoordinatorProvider>
+      <NotificationProvider>
+        <PreviewProvider>{ui}</PreviewProvider>
+      </NotificationProvider>
+    </ActiveProjectCoordinatorProvider>,
   );
 }
 

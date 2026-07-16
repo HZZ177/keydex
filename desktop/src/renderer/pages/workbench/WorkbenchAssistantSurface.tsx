@@ -235,8 +235,21 @@ export function WorkbenchAssistantSurface({
   const [overlayTurnNavigationRequest, setOverlayTurnNavigationRequest] =
     useState<MessageListTurnNavigationRequest | null>(null);
   const [btwHistorySnapshot, setBtwHistorySnapshot] = useState<BtwConversationHistorySnapshot | null>(null);
-  const [composerFiles, setComposerFiles] = useState<SelectedFile[]>([]);
-  const [composerQuotes, setComposerQuotes] = useState<SelectedQuote[]>([]);
+  const composerFiles = controller.composerDraft.files;
+  const composerQuotes = controller.composerDraft.quotes;
+  const composerAttachments = controller.composerDraft.attachments;
+  const setComposerFiles = useCallback(
+    (files: SelectedFile[]) => controller.setComposerDraft({ files }),
+    [controller.setComposerDraft],
+  );
+  const setComposerQuotes = useCallback(
+    (quotes: SelectedQuote[]) => controller.setComposerDraft({ quotes }),
+    [controller.setComposerDraft],
+  );
+  const setComposerAttachments = useCallback(
+    (attachments: SelectedImageAttachment[]) => controller.setComposerDraft({ attachments }),
+    [controller.setComposerDraft],
+  );
   const [goalComposerOpen, setGoalComposerOpen] = useState(false);
   const [goalCreating, setGoalCreating] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
@@ -386,7 +399,9 @@ export function WorkbenchAssistantSurface({
   const canSend = controller.canSend && !creatingSession && Boolean(workspaceId);
   const canStop = controller.canStop;
   const selectedModel = modelSelection.selectedModel;
-  const hasComposerContext = Boolean(controller.selectedSkill || composerFiles.length || composerQuotes.length);
+  const hasComposerContext = Boolean(
+    controller.selectedSkill || composerFiles.length || composerQuotes.length || composerAttachments.length,
+  );
   const hasComposerContent = Boolean(controller.draft.trim() || hasComposerContext || goalComposerOpen);
   const drawerWidth =
     controlledDrawerWidth ?? uncontrolledDrawerWidthPreview ?? layout.state.workbenchAssistantDrawerWidth;
@@ -820,8 +835,6 @@ export function WorkbenchAssistantSurface({
     setUnreadAssistantMessageKey(null);
     previousRuntimeStateRef.current = runtimeState;
     dispatchAssistantState({ type: "workspace-reset" });
-    setComposerFiles([]);
-    setComposerQuotes([]);
     setGoalComposerOpen(false);
     setGoalCreating(false);
     setGoalError(null);
@@ -833,8 +846,6 @@ export function WorkbenchAssistantSurface({
     finishMessageTriggerPriming();
     setUnreadAssistantMessageKey(null);
     previousRuntimeStateRef.current = runtimeState;
-    setComposerFiles([]);
-    setComposerQuotes([]);
     setGoalComposerOpen(false);
     setGoalCreating(false);
     setGoalError(null);
@@ -1472,6 +1483,7 @@ export function WorkbenchAssistantSurface({
       skillDiagnostics={panelModel.effectiveSkillDiagnostics}
       selectedFiles={composerFiles}
       selectedQuotes={composerQuotes}
+      selectedImageAttachments={composerAttachments}
       selectedSkill={controller.selectedSkill}
       runtime={runtime}
       sessionId={panelSessionId}
@@ -1495,6 +1507,7 @@ export function WorkbenchAssistantSurface({
       }
       onSelectedFilesChange={setComposerFiles}
       onSelectedQuotesChange={setComposerQuotes}
+      onSelectedImageAttachmentsChange={setComposerAttachments}
       onChange={handleComposerChange}
       onSkillChange={controller.setSelectedSkill}
       onSubmitApproval={controller.submitApproval}
@@ -2794,6 +2807,7 @@ function WorkbenchComposer({
   skillDiagnostics,
   selectedFiles,
   selectedQuotes,
+  selectedImageAttachments,
   selectedSkill,
   runtime,
   sessionId,
@@ -2815,6 +2829,7 @@ function WorkbenchComposer({
   placeholder,
   onSelectedFilesChange,
   onSelectedQuotesChange,
+  onSelectedImageAttachmentsChange,
   onChange,
   onSkillChange,
   onSubmitApproval,
@@ -2840,6 +2855,7 @@ function WorkbenchComposer({
   skillDiagnostics?: KeydexDiagnostic[];
   selectedFiles: SelectedFile[];
   selectedQuotes: SelectedQuote[];
+  selectedImageAttachments: SelectedImageAttachment[];
   selectedSkill: SkillSummary | null;
   runtime: RuntimeBridge;
   sessionId?: string | null;
@@ -2861,6 +2877,7 @@ function WorkbenchComposer({
   placeholder?: string;
   onSelectedFilesChange: (files: SelectedFile[]) => void;
   onSelectedQuotesChange: (quotes: SelectedQuote[]) => void;
+  onSelectedImageAttachmentsChange: (attachments: SelectedImageAttachment[]) => void;
   onChange: (value: string) => void;
   onSkillChange: (skill: SkillSummary | null) => void;
   onSubmitApproval: AgentSessionController["submitApproval"];
@@ -2907,6 +2924,7 @@ function WorkbenchComposer({
       skillDiagnostics={skillDiagnostics}
       selectedFiles={selectedFiles}
       selectedQuotes={selectedQuotes}
+      selectedImageAttachments={selectedImageAttachments}
       selectedSkill={selectedSkill}
       runtime={runtime}
       sessionId={sessionId}
@@ -2928,6 +2946,7 @@ function WorkbenchComposer({
       externalQuoteRequest={quoteChipRequest}
       onSelectedFilesChange={onSelectedFilesChange}
       onSelectedQuotesChange={onSelectedQuotesChange}
+      onSelectedImageAttachmentsChange={onSelectedImageAttachmentsChange}
       onChange={onChange}
       onSkillChange={onSkillChange}
       onSend={onSend}

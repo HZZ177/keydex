@@ -1,0 +1,17 @@
+.root { display: grid; gap: 9px; padding: 13px 14px; border-top: 1px solid var(--color-border-2); }
+.root header { display: flex; align-items: center; gap: 6px; }
+.root header span { margin-left: auto; color: var(--color-text-3); font-size: 10px; }
+.add { display: grid; grid-template-columns: minmax(70px, .5fr) minmax(130px, 1fr) minmax(130px, 1fr) auto; gap: 5px; }
+.add input, .editor input { min-width: 0; height: 28px; padding: 0 6px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--color-bg-1); color: var(--color-text-1); font-size: 10px; }
+.add button, .editor button { min-height: 28px; padding: 0 8px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--surface-active); color: var(--color-text-1); cursor: pointer; font-size: 10px; }
+.add button:disabled, .editor button:disabled { cursor: default; opacity: .45; }
+.body { display: grid; grid-template-columns: minmax(100px, .65fr) minmax(180px, 1.35fr); gap: 8px; min-height: 100px; }
+.list { display: grid; align-content: start; gap: 2px; }
+.list button { display: grid; min-width: 0; gap: 2px; padding: 6px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-2); cursor: pointer; text-align: left; }
+.list button[aria-selected="true"] { background: var(--surface-active); color: var(--color-text-1); }
+.list span { overflow: hidden; color: var(--color-text-3); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.editor { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-content: start; gap: 5px; }
+.editor label { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: 5px; color: var(--color-text-3); font-size: 9px; }
+.removePreview { display: flex; grid-column: 1 / -1; align-items: center; gap: 8px; padding-top: 5px; border-top: 1px solid var(--color-border-2); }
+.removePreview span { flex: 1; color: var(--color-text-3); font-size: 9px; }
+.empty { display: grid; place-items: center; color: var(--color-text-3); font-size: 10px; }

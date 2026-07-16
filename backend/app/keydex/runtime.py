@@ -15,11 +15,13 @@ from backend.app.keydex.builtin_skills import (
     BUILTIN_SKILLS_ROOT,
     load_builtin_skill_layer_profile,
 )
+from backend.app.keydex.capabilities.skills import capture_skills_layer_resources
 from backend.app.keydex.models import (
     KeydexDiagnostic,
     KeydexLayerProfile,
     KeydexRuntimeMode,
     KeydexScope,
+    KeydexSourceEvidence,
     KeydexWorkspaceProfile,
 )
 from backend.app.keydex.profile import (
@@ -27,9 +29,12 @@ from backend.app.keydex.profile import (
     load_keydex_system_profile,
     load_keydex_workspace_profile,
 )
+from backend.app.keydex.registry import (
+    DEFAULT_KEYDEX_CAPABILITY_REGISTRY,
+    KEYDEX_RUNTIME_REVISION,
+    KeydexCapabilityRegistry,
+)
 from backend.app.keydex.skills import (
-    KEYDEX_SKILL_MAX_ENTRY_BYTES,
-    KEYDEX_SKILL_MAX_RESOURCE_BYTES,
     EffectiveSkillCatalog,
     SkillCatalog,
     SkillDefinition,
@@ -39,7 +44,6 @@ from backend.app.keydex.skills import (
     discover_layer_skills,
     discover_workspace_skills,
     normalize_skill_resource_path,
-    read_skill_text_resource,
     resolve_effective_skill_catalog,
 )
 
@@ -47,25 +51,83 @@ FileFingerprint = tuple[str, str, int | None, int | None, str | None]
 
 
 class KeydexSnapshotUnstableError(RuntimeError):
-    pass
+    code = "keydex_snapshot_unstable"
+
+    def __init__(self, reason: str, *, scope: KeydexScope | None = None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.scope = scope
+
+
+@dataclass(frozen=True)
+class KeydexCapabilityFingerprint:
+    capability_id: str
+    format_revision: str
+    evidence: tuple[KeydexSourceEvidence, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "evidence",
+            tuple(sorted(self.evidence, key=lambda item: item.locator)),
+        )
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "capability_id": self.capability_id,
+            "format_revision": self.format_revision,
+            "evidence": tuple(item.to_payload() for item in self.evidence),
+        }
+
+    def digest(self) -> str:
+        return _payload_digest(self.to_payload())
 
 
 @dataclass(frozen=True)
 class KeydexLayerFingerprint:
     scope: KeydexScope
     root: Path
-    root_digest: str
-    entries: tuple[FileFingerprint, ...]
+    runtime_revision: str
+    root_evidence: KeydexSourceEvidence
+    capabilities: tuple[KeydexCapabilityFingerprint, ...]
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "root", Path(self.root).expanduser().resolve())
-        object.__setattr__(self, "entries", tuple(self.entries))
+        object.__setattr__(self, "capabilities", tuple(self.capabilities))
+
+    @property
+    def root_digest(self) -> str:
+        return hashlib.sha256(self.scope.encode("utf-8")).hexdigest()
+
+    @property
+    def entries(self) -> tuple[FileFingerprint, ...]:
+        evidence = (
+            self.root_evidence,
+            *(item for capability in self.capabilities for item in capability.evidence),
+        )
+        return tuple(
+            (
+                item.locator,
+                item.kind,
+                None,
+                item.byte_size,
+                item.content_hash,
+            )
+            for item in evidence
+        )
+
+    @property
+    def capability_fingerprints(self) -> Mapping[str, str]:
+        return MappingProxyType(
+            {capability.capability_id: capability.digest() for capability in self.capabilities}
+        )
 
     def to_payload(self) -> dict[str, Any]:
         return {
             "scope": self.scope,
-            "root_digest": self.root_digest,
-            "entries": self.entries,
+            "runtime_revision": self.runtime_revision,
+            "root": self.root_evidence.to_payload(),
+            "capabilities": tuple(item.to_payload() for item in self.capabilities),
         }
 
     def digest(self) -> str:
@@ -188,16 +250,24 @@ def build_keydex_layer_fingerprint(
     keydex_root: str | Path,
     *,
     attempts: int = 3,
+    registry: KeydexCapabilityRegistry = DEFAULT_KEYDEX_CAPABILITY_REGISTRY,
+    runtime_revision: str = KEYDEX_RUNTIME_REVISION,
 ) -> KeydexLayerFingerprint:
     root = Path(keydex_root).expanduser().resolve()
     last_error: OSError | None = None
     for _ in range(max(1, attempts)):
         try:
-            return _sample_layer_fingerprint(scope, root)
+            return _sample_layer_fingerprint(
+                scope,
+                root,
+                registry=registry,
+                runtime_revision=runtime_revision,
+            )
         except OSError as exc:
             last_error = exc
     raise KeydexSnapshotUnstableError(
-        f"unable to sample a stable {scope} .keydex tree"
+        f"unable to sample a stable {scope} Keydex layer",
+        scope=scope,
     ) from last_error
 
 
@@ -235,7 +305,10 @@ def build_keydex_layer_runtime_snapshot(
                 skill_resources=skill_resources,
                 skill_resource_errors=skill_resource_errors,
             )
-    raise KeydexSnapshotUnstableError(f"{scope} .keydex changed while building its snapshot")
+    raise KeydexSnapshotUnstableError(
+        f"{scope} Keydex layer changed while building its snapshot",
+        scope=scope,
+    )
 
 
 def build_keydex_system_layer_runtime_snapshot(
@@ -269,33 +342,7 @@ def _capture_layer_skill_resources(
     dict[tuple[str, str], SkillTextResource],
     dict[tuple[str, str], tuple[str, str]],
 ]:
-    resources: dict[tuple[str, str], SkillTextResource] = {}
-    errors: dict[tuple[str, str], tuple[str, str]] = {}
-    for skill in catalog.sorted_skills():
-        for directory in sorted(
-            (path for path in skill.root_dir.rglob("*") if path.is_dir()),
-            key=lambda path: path.as_posix().casefold(),
-        ):
-            logical_directory = directory.relative_to(skill.root_dir).as_posix()
-            errors[(skill.name, logical_directory)] = (
-                "skill_resource_not_file",
-                "Skill resource path must point to a regular file.",
-            )
-        for logical_path in ("SKILL.md", *skill.resources):
-            key = (skill.name, logical_path)
-            try:
-                resources[key] = read_skill_text_resource(
-                    skill,
-                    logical_path,
-                    max_bytes=(
-                        KEYDEX_SKILL_MAX_ENTRY_BYTES
-                        if logical_path == "SKILL.md"
-                        else KEYDEX_SKILL_MAX_RESOURCE_BYTES
-                    ),
-                )
-            except SkillResourcePathError as exc:
-                errors[key] = (exc.code, exc.reason)
-    return resources, errors
+    return capture_skills_layer_resources(catalog)
 
 
 def build_keydex_system_effective_snapshot(
@@ -344,12 +391,6 @@ def compose_keydex_effective_runtime_snapshot(
         workspace_layer.skill_catalog if workspace_layer is not None else None,
         builtin=builtin_layer.skill_catalog if builtin_layer is not None else None,
     )
-    inherit_system = (
-        workspace_layer.profile.inherit_system if workspace_layer is not None else True
-    )
-    effective_system_fingerprint = (
-        system_layer.fingerprint if workspace_layer is None or inherit_system else None
-    )
     resolved_workspace_root = (
         Path(workspace_root).expanduser().resolve()
         if workspace_root is not None
@@ -362,11 +403,10 @@ def compose_keydex_effective_runtime_snapshot(
         builtin_fingerprint=(
             builtin_layer.fingerprint if builtin_layer is not None else None
         ),
-        system_fingerprint=effective_system_fingerprint,
+        system_fingerprint=system_layer.fingerprint,
         workspace_fingerprint=(
             workspace_layer.fingerprint if workspace_layer is not None else None
         ),
-        inherit_system=inherit_system,
         available=catalog.available,
     )
     return KeydexEffectiveRuntimeSnapshot(
@@ -400,55 +440,107 @@ def build_keydex_workspace_runtime_snapshot(
     )
 
 
-def _sample_layer_fingerprint(scope: KeydexScope, root: Path) -> KeydexLayerFingerprint:
-    entries: list[FileFingerprint] = []
+def _sample_layer_fingerprint(
+    scope: KeydexScope,
+    root: Path,
+    *,
+    registry: KeydexCapabilityRegistry,
+    runtime_revision: str,
+) -> KeydexLayerFingerprint:
     logical_root = "builtin" if scope == "builtin" else ".keydex"
-    if root.exists():
-        entries.append(_path_fingerprint(root, root, logical_path=logical_root))
-    manifest_path = root / ("catalog.json" if scope == "builtin" else "keydex.json")
-    if manifest_path.exists():
-        entries.append(
-            _path_fingerprint(
-                root,
-                manifest_path,
-                logical_path=f"{logical_root}/{manifest_path.name}",
+    root_evidence = _path_evidence(
+        capability_id="__layer__",
+        scope=scope,
+        path=root,
+        logical_path=logical_root,
+    )
+    capability_fingerprints: list[KeydexCapabilityFingerprint] = []
+    for capability in registry:
+        if scope not in capability.supported_scopes:
+            continue
+        evidence: list[KeydexSourceEvidence] = []
+        for spec in capability.watch_specs:
+            if scope not in spec.supported_scopes:
+                continue
+            source = root / spec.relative_path
+            logical_source = f"{logical_root}/{spec.relative_path}"
+            evidence.append(
+                _path_evidence(
+                    capability_id=capability.id,
+                    scope=scope,
+                    path=source,
+                    logical_path=logical_source,
+                )
+            )
+            if spec.recursive and _is_real_directory(source):
+                for path in sorted(
+                    source.rglob("*"),
+                    key=lambda item: (item.as_posix().casefold(), item.as_posix()),
+                ):
+                    relative = path.relative_to(root).as_posix()
+                    evidence.append(
+                        _path_evidence(
+                            capability_id=capability.id,
+                            scope=scope,
+                            path=path,
+                            logical_path=f"{logical_root}/{relative}",
+                        )
+                    )
+        capability_fingerprints.append(
+            KeydexCapabilityFingerprint(
+                capability_id=capability.id,
+                format_revision=capability.format_revision,
+                evidence=tuple(evidence),
             )
         )
-    skills_root = root / "skills"
-    if skills_root.exists():
-        entries.append(
-            _path_fingerprint(root, skills_root, logical_path=f"{logical_root}/skills")
-        )
-        for path in sorted(
-            skills_root.rglob("*"),
-            key=lambda item: (item.as_posix().casefold(), item.as_posix()),
-        ):
-            relative = path.relative_to(root).as_posix()
-            entries.append(
-                _path_fingerprint(root, path, logical_path=f"{logical_root}/{relative}")
-            )
-    root_text = root.as_posix()
-    if os.name == "nt":
-        root_text = root_text.casefold()
     return KeydexLayerFingerprint(
         scope=scope,
         root=root,
-        root_digest=hashlib.sha256(root_text.encode("utf-8")).hexdigest(),
-        entries=tuple(entries),
+        runtime_revision=runtime_revision,
+        root_evidence=root_evidence,
+        capabilities=tuple(capability_fingerprints),
     )
 
 
-def _path_fingerprint(root: Path, path: Path, *, logical_path: str) -> FileFingerprint:
+def _path_evidence(
+    *,
+    capability_id: str,
+    scope: KeydexScope,
+    path: Path,
+    logical_path: str,
+) -> KeydexSourceEvidence:
     if path.is_symlink():
         stat = path.lstat()
-        return (logical_path, "link", stat.st_mtime_ns, stat.st_size, None)
+        target_hash = hashlib.sha256(os.readlink(path).encode("utf-8")).hexdigest()
+        return KeydexSourceEvidence(
+            capability_id=capability_id,
+            scope=scope,
+            locator=logical_path,
+            kind="link",
+            state="invalid",
+            byte_size=stat.st_size,
+            content_hash=target_hash,
+        )
     is_junction = getattr(path, "is_junction", None)
     if callable(is_junction) and is_junction():
         stat = path.lstat()
-        return (logical_path, "junction", stat.st_mtime_ns, stat.st_size, None)
+        return KeydexSourceEvidence(
+            capability_id=capability_id,
+            scope=scope,
+            locator=logical_path,
+            kind="link",
+            state="invalid",
+            byte_size=stat.st_size,
+        )
     if path.is_dir():
-        stat = path.stat()
-        return (logical_path, "directory", stat.st_mtime_ns, 0, None)
+        return KeydexSourceEvidence(
+            capability_id=capability_id,
+            scope=scope,
+            locator=logical_path,
+            kind="directory",
+            state="present",
+            byte_size=0,
+        )
     if path.is_file():
         before = path.stat()
         content = path.read_bytes()
@@ -459,15 +551,39 @@ def _path_fingerprint(root: Path, path: Path, *, logical_path: str) -> FileFinge
             or len(content) != after.st_size
         ):
             raise OSError(f"file changed while fingerprinting: {logical_path}")
-        return (
-            logical_path,
-            "file",
-            after.st_mtime_ns,
-            after.st_size,
-            hashlib.sha256(content).hexdigest(),
+        return KeydexSourceEvidence(
+            capability_id=capability_id,
+            scope=scope,
+            locator=logical_path,
+            kind="file",
+            state="present",
+            byte_size=after.st_size,
+            content_hash=hashlib.sha256(content).hexdigest(),
+        )
+    if not path.exists():
+        return KeydexSourceEvidence(
+            capability_id=capability_id,
+            scope=scope,
+            locator=logical_path,
+            kind="missing",
+            state="missing",
         )
     stat = path.lstat()
-    return (logical_path, "special", stat.st_mtime_ns, stat.st_size, None)
+    return KeydexSourceEvidence(
+        capability_id=capability_id,
+        scope=scope,
+        locator=logical_path,
+        kind="special",
+        state="invalid",
+        byte_size=stat.st_size,
+    )
+
+
+def _is_real_directory(path: Path) -> bool:
+    if path.is_symlink():
+        return False
+    is_junction = getattr(path, "is_junction", None)
+    return path.is_dir() and not (callable(is_junction) and is_junction())
 
 
 def _effective_digest(
@@ -476,7 +592,6 @@ def _effective_digest(
     builtin_fingerprint: str | None,
     system_fingerprint: str | None,
     workspace_fingerprint: str | None,
-    inherit_system: bool,
     available: bool,
 ) -> str:
     return _payload_digest(
@@ -485,7 +600,6 @@ def _effective_digest(
             "builtin_fingerprint": builtin_fingerprint,
             "system_fingerprint": system_fingerprint,
             "workspace_fingerprint": workspace_fingerprint,
-            "inherit_system": inherit_system,
             "available": available,
         }
     )

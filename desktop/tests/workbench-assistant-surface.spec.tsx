@@ -880,10 +880,12 @@ describe("WorkbenchAssistantSurface", () => {
 
     await act(async () => {
       emit({
-        action: "keydexSkillsChanged",
+        action: "keydexWorkspaceChanged",
         data: {
           session_id: "ses-live",
           session_scope: "workspace",
+          changed_capabilities: ["skills"],
+          capability_fingerprints: { skills: "sha256:skills-changed" },
           effective_fingerprint: "sha256:changed",
         },
       } as AgentActionEnvelope);
@@ -1923,6 +1925,18 @@ describe("WorkbenchAssistantSurface", () => {
           workspace={workspace()}
           controller={fakeController({
             selectedSkill: skill,
+            composerDraft: composerDraft({
+              selectedSkill: skill,
+              files: [
+                {
+                  path: "src/main.ts",
+                  name: "main.ts",
+                  type: "file",
+                  source: "workspace",
+                },
+              ],
+              quotes: [quote],
+            }),
             fileChipRequest: {
               requestId: 1,
               file: {
@@ -1992,6 +2006,25 @@ describe("WorkbenchAssistantSurface", () => {
           workspace={workspace()}
           controller={fakeController({
             selectedSkill: skill,
+            composerDraft: composerDraft({
+              selectedSkill: skill,
+              files: [
+                {
+                  path: "src/main.ts",
+                  name: "main.ts",
+                  type: "file",
+                  source: "workspace",
+                  annotationReference: {
+                    annotationId: "ann-main",
+                    body: "Check this implementation",
+                    kind: "text",
+                    path: "src/main.ts",
+                    workspaceId: "ws-1",
+                  },
+                },
+              ],
+              quotes: [quote],
+            }),
             fileChipRequest: {
               requestId: 1,
               file: {
@@ -2332,8 +2365,18 @@ function WorkbenchReviewProbe() {
 
 function WorkbenchQuoteInjectionHarness() {
   const [quoteChipRequest, setQuoteChipRequest] = useState<AgentSessionController["quoteChipRequest"]>(null);
+  const [draftState, setDraftState] = useState<AgentSessionController["composerDraft"]>(() => composerDraft());
   const runtime = useMemo(() => fakeRuntime(), []);
-  const controller = fakeController({ quoteChipRequest });
+  const controller = fakeController({
+    quoteChipRequest,
+    composerDraft: draftState,
+    setComposerDraft: (update) => {
+      setDraftState((current) => {
+        const patch = typeof update === "function" ? update(current) : update;
+        return { ...current, ...patch, updatedAt: Date.now() };
+      });
+    },
+  });
   const quote = selectedQuoteFromText("Target text", {
     source: "selection",
     file: {
@@ -2554,6 +2597,9 @@ function fakeController(overrides: Partial<AgentSessionController> = {}): AgentS
     pendingApproval: null,
     draft: "",
     setDraft: vi.fn(),
+    composerDraft: composerDraft(),
+    setComposerDraft: vi.fn(),
+    clearComposerDraft: vi.fn(),
     selectedSkill: null,
     setSelectedSkill: vi.fn(),
     fileChipRequest: null,
@@ -2578,6 +2624,20 @@ function fakeController(overrides: Partial<AgentSessionController> = {}): AgentS
     approvalError: null,
     ...overrides,
   } as unknown as AgentSessionController;
+}
+
+function composerDraft(
+  overrides: Partial<AgentSessionController["composerDraft"]> = {},
+): AgentSessionController["composerDraft"] {
+  return {
+    text: "",
+    selectedSkill: null,
+    files: [],
+    quotes: [],
+    attachments: [],
+    updatedAt: 0,
+    ...overrides,
+  };
 }
 
 function agentMessage(overrides: Partial<AgentChatMessage> = {}): AgentChatMessage {

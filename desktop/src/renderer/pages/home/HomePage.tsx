@@ -32,6 +32,16 @@ import {
   type PreviewQuoteSelectionRequest,
 } from "@/renderer/providers/PreviewProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
+import {
+  COMPOSER_NEW_CHAT_DRAFT_SCOPE,
+  composerNewWorkspaceDraftScope,
+  composerPendingWorkspaceDraftScope,
+  useComposerDraft,
+} from "@/renderer/features/composer";
+import {
+  activeProjectDiscoveryFromWorkspace,
+  usePublishActiveProjectDiscovery,
+} from "@/renderer/providers/ActiveProjectCoordinatorProvider";
 import { prepareComposerMessage, type RuntimeParamsWithInjection } from "@/renderer/utils/messageInjection";
 import type { AgentContextItem, AgentFileAttachment, FileAccessMode, ThreadTask, Workspace } from "@/types/protocol";
 import {
@@ -73,14 +83,27 @@ export function HomePage({
   onNavigateToConversation,
   onOpenModelSettings,
 }: HomePageProps) {
-  const [draft, setDraft] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [goalComposerOpen, setGoalComposerOpen] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
   const [quoteChipRequest, setQuoteChipRequest] = useState<{ requestId: number; quote: SelectedQuote } | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceSelection, setWorkspaceSelection] = useState<WorkspaceSelection>({ type: "chat" });
-  const [selectedSkill, setSelectedSkill] = useState<SkillSummary | null>(null);
+  const composerDraftScopeKey =
+    workspaceSelection.type === "workspace"
+      ? composerNewWorkspaceDraftScope(workspaceSelection.workspace.id)
+      : workspaceSelection.type === "pending"
+        ? composerPendingWorkspaceDraftScope(workspaceSelection.rootPath)
+        : COMPOSER_NEW_CHAT_DRAFT_SCOPE;
+  const composerDraftBinding = useComposerDraft(composerDraftScopeKey);
+  const composerDraft = composerDraftBinding.draft;
+  const draft = composerDraft.text;
+  const setDraft = composerDraftBinding.setText;
+  const selectedSkill = composerDraft.selectedSkill;
+  const setSelectedSkill = useCallback(
+    (skill: SkillSummary | null) => composerDraftBinding.setDraft({ selectedSkill: skill }),
+    [composerDraftBinding.setDraft],
+  );
   const [workspaceLoading, setWorkspaceLoading] = useState(true);
   const [fileAccessMode, setFileAccessMode] = useState<FileAccessMode>("workspace_trusted");
   const selectionTouchedRef = useRef(false);
@@ -93,6 +116,15 @@ export function HomePage({
   const previewContext = useOptionalPreview();
   const setPreviewHostContext = previewContext?.setPreviewHostContext;
   const selectedWorkspaceId = workspaceSelection.type === "workspace" ? workspaceSelection.workspace.id : "";
+  const activeProjectDiscovery = useMemo(
+    () =>
+      activeProjectDiscoveryFromWorkspace(
+        workspaceSelection.type === "workspace" ? workspaceSelection.workspace : null,
+        workspaceLoading,
+      ),
+    [workspaceLoading, workspaceSelection],
+  );
+  usePublishActiveProjectDiscovery("home-route", activeProjectDiscovery);
   useWorkspaceFileWatchScope(selectedWorkspaceId);
   const effectiveSkillScope = useMemo(() => {
     if (workspaceSelection.type === "chat") {
@@ -107,12 +139,16 @@ export function HomePage({
     }
     return null;
   }, [workspaceSelection]);
-  const { state: effectiveSkillsState, refresh: refreshEffectiveSkills } = useEffectiveSkills({
+  const {
+    state: effectiveSkillsState,
+    isCurrentScope: isCurrentEffectiveSkillScope,
+    refresh: refreshEffectiveSkills,
+  } = useEffectiveSkills({
     runtime,
     scope: effectiveSkillScope,
     enabled: backendReady && effectiveSkillScope !== null,
   });
-  const effectiveSkills = effectiveSkillsState.skills;
+  const effectiveSkills = isCurrentEffectiveSkillScope ? effectiveSkillsState.skills : [];
 
   useEffect(() => {
     if (!backendReady) {
@@ -213,7 +249,11 @@ export function HomePage({
   );
 
   useEffect(() => {
-    if (!selectedSkill || effectiveSkillsState.status !== "ready") {
+    if (
+      !selectedSkill ||
+      !isCurrentEffectiveSkillScope ||
+      effectiveSkillsState.status !== "ready"
+    ) {
       return;
     }
     const status = skillSelectionStatus(selectedSkill, effectiveSkills);
@@ -226,7 +266,13 @@ export function HomePage({
         ? "同名 Skill 的有效来源已变化，请重新选择"
         : "所选 Skill 已不可用，请重新选择",
     );
-  }, [effectiveSkills, effectiveSkillsState.status, notifications, selectedSkill]);
+  }, [
+    effectiveSkills,
+    effectiveSkillsState.status,
+    isCurrentEffectiveSkillScope,
+    notifications,
+    selectedSkill,
+  ]);
 
   useEffect(() => {
     if (!backendReady) {
@@ -308,6 +354,7 @@ export function HomePage({
     !submitting &&
     modelSelection.modelLoadState !== "loading" &&
     (!selectedSkill || (
+      isCurrentEffectiveSkillScope &&
       effectiveSkillsState.status === "ready" &&
       skillSelectionStatus(selectedSkill, effectiveSkills) === "valid"
     ));
@@ -367,7 +414,7 @@ export function HomePage({
     if (goalError) {
       setGoalError(null);
     }
-  }, [goalError]);
+  }, [goalError, setDraft]);
 
   const handleSlashCommand = useCallback((command: SlashCommand) => {
     if (command.id !== "goal") {
@@ -400,6 +447,7 @@ export function HomePage({
     if (
       selectedSkill &&
       (
+        !isCurrentEffectiveSkillScope ||
         effectiveSkillsState.status !== "ready" ||
         skillSelectionStatus(selectedSkill, effectiveSkills) !== "valid"
       )
@@ -486,8 +534,7 @@ export function HomePage({
           : prepared.runtimeParams;
       const contextItems = goalItem ? [...prepared.contextItems, goalItem] : prepared.contextItems;
       emitSessionCreated(session);
-      setDraft("");
-      setSelectedSkill(null);
+      composerDraftBinding.clearDraft();
       setGoalComposerOpen(false);
       setGoalError(null);
       const injectionOptions = runtimeParams || contextItems.length || attachments.length
@@ -533,8 +580,11 @@ export function HomePage({
           fileAccessMode={fileAccessMode}
           workspaceRoots={workspaceSelection.type === "workspace" ? [workspaceSelection.workspace.root_path] : []}
           skills={effectiveSkills}
-          skillDiagnostics={effectiveSkillsState.diagnostics}
+          skillDiagnostics={isCurrentEffectiveSkillScope ? effectiveSkillsState.diagnostics : []}
           selectedSkill={selectedSkill}
+          selectedFiles={composerDraft.files}
+          selectedQuotes={composerDraft.quotes}
+          selectedImageAttachments={composerDraft.attachments}
           allowBypassConversationSlashCommand={false}
           allowContextCompressionSlashCommand={false}
           onListWorkspaceDirectory={listWorkspaceDirectory}
@@ -583,6 +633,9 @@ export function HomePage({
           }
           leftAccessory={goalModeAccessory}
           onChange={handleDraftChange}
+          onSelectedFilesChange={(files) => composerDraftBinding.setDraft({ files })}
+          onSelectedQuotesChange={(quotes) => composerDraftBinding.setDraft({ quotes })}
+          onSelectedImageAttachmentsChange={(attachments) => composerDraftBinding.setDraft({ attachments })}
           onSkillChange={setSelectedSkill}
           onRefreshSkills={() => refreshEffectiveSkills({ forceReload: true })}
           onSend={submit}

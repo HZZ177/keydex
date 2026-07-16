@@ -1,6 +1,7 @@
 export interface RuntimeErrorEnvelope {
   code: string;
   message: string;
+  retryable?: boolean;
   details?: Record<string, unknown>;
   status?: number;
 }
@@ -9,6 +10,7 @@ export class RuntimeError extends Error implements RuntimeErrorEnvelope {
   readonly code: string;
   readonly details?: Record<string, unknown>;
   readonly status?: number;
+  readonly retryable?: boolean;
 
   constructor(envelope: RuntimeErrorEnvelope) {
     super(envelope.message);
@@ -16,6 +18,7 @@ export class RuntimeError extends Error implements RuntimeErrorEnvelope {
     this.code = envelope.code;
     this.details = envelope.details;
     this.status = envelope.status;
+    this.retryable = envelope.retryable;
   }
 }
 
@@ -38,6 +41,7 @@ export class RuntimeHttpError extends RuntimeError {
       message: params.message,
       details: params.details,
       status: params.status,
+      retryable: params.retryable,
     });
     this.name = "RuntimeHttpError";
     this.method = params.method;

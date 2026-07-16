@@ -414,6 +414,9 @@ def test_agent_runner_appends_scope_guidance_only_for_full_access(tmp_path) -> N
     assert "该权限只扩大工具可以访问的最大范围" in prompt
     assert "不会改变“当前项目”的含义" in prompt
     assert "不要因为拥有完全访问权限" in prompt
+    assert f"当前运行用户主目录：`{Path.home().resolve(strict=False)}`" in prompt
+    assert f"桌面目录：`{Path.home().resolve(strict=False) / 'Desktop'}`" in prompt
+    assert "不得猜测 Windows 用户名" in prompt
 
 
 def test_agent_runner_keeps_file_tools_visible_when_file_access_disabled(tmp_path) -> None:

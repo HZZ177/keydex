@@ -6,7 +6,20 @@ from pathlib import Path
 from threading import RLock
 
 from backend.app.keydex.builtin_skills import BUILTIN_SKILLS_ROOT
-from backend.app.keydex.models import KeydexScope, resolve_system_keydex_root
+from backend.app.keydex.composer import KeydexEffectiveComposer
+from backend.app.keydex.loader import KeydexLayerLoader
+from backend.app.keydex.models import (
+    KeydexEffectiveSnapshot,
+    KeydexLayerDescriptor,
+    KeydexLayerSnapshot,
+    KeydexScope,
+    resolve_system_keydex_root,
+)
+from backend.app.keydex.registry import (
+    DEFAULT_KEYDEX_CAPABILITY_REGISTRY,
+    KEYDEX_RUNTIME_REVISION,
+    KeydexCapabilityRegistry,
+)
 from backend.app.keydex.runtime import (
     KeydexEffectiveRuntimeSnapshot,
     KeydexLayerFingerprint,
@@ -37,8 +50,244 @@ class _EffectiveCacheKey:
     builtin_fingerprint: str | None
     system_fingerprint: str | None
     workspace_fingerprint: str | None
-    inherit_system: bool
     available: bool
+
+
+@dataclass(frozen=True)
+class _CapabilityEffectiveCacheKey:
+    runtime_revision: str
+    mode: str
+    workspace_key: str | None
+    layer_fingerprints: tuple[tuple[KeydexScope, str], ...]
+
+
+class KeydexCapabilityRuntimeCache:
+    """Generic cache for immutable layer and effective capability snapshots."""
+
+    def __init__(
+        self,
+        *,
+        system_root: str | Path | None = None,
+        builtin_root: str | Path | None = None,
+        registry: KeydexCapabilityRegistry = DEFAULT_KEYDEX_CAPABILITY_REGISTRY,
+        runtime_revision: str = KEYDEX_RUNTIME_REVISION,
+        loader: KeydexLayerLoader | None = None,
+        composer: KeydexEffectiveComposer | None = None,
+        fingerprint_builder: LayerFingerprintBuilder | None = None,
+    ) -> None:
+        self._system_root = (
+            resolve_system_keydex_root()
+            if system_root is None
+            else Path(system_root).expanduser().resolve()
+        )
+        self._builtin_root = (
+            BUILTIN_SKILLS_ROOT
+            if builtin_root is None
+            else Path(builtin_root).expanduser().resolve()
+        )
+        self._registry = registry
+        self._runtime_revision = runtime_revision
+        self._loader = loader or KeydexLayerLoader(registry=registry)
+        self._composer = composer or KeydexEffectiveComposer(
+            registry=registry,
+            runtime_revision=runtime_revision,
+        )
+        self._fingerprint_builder = fingerprint_builder or self._build_fingerprint
+        self._builtin_layer: KeydexLayerSnapshot | None = None
+        self._system_layer: KeydexLayerSnapshot | None = None
+        self._workspace_layers: dict[str, KeydexLayerSnapshot] = {}
+        self._effective_snapshots: dict[
+            _CapabilityEffectiveCacheKey, KeydexEffectiveSnapshot
+        ] = {}
+        self._lock = RLock()
+
+    @property
+    def system_root(self) -> Path:
+        return self._system_root
+
+    @property
+    def builtin_root(self) -> Path:
+        return self._builtin_root
+
+    def get_builtin_layer_snapshot(
+        self,
+        *,
+        force_reload: bool = False,
+    ) -> KeydexLayerSnapshot:
+        with self._lock:
+            current = self._fingerprint_builder("builtin", self._builtin_root).digest()
+            if (
+                self._builtin_layer is not None
+                and not force_reload
+                and self._builtin_layer.fingerprint == current
+            ):
+                return self._builtin_layer
+            snapshot = self._loader.load(
+                KeydexLayerDescriptor(
+                    scope="builtin",
+                    root=self._builtin_root,
+                    logical_root="builtin",
+                )
+            )
+            self._builtin_layer = snapshot
+            self._effective_snapshots.clear()
+            return snapshot
+
+    def get_system_layer_snapshot(
+        self,
+        *,
+        force_reload: bool = False,
+    ) -> KeydexLayerSnapshot:
+        with self._lock:
+            current = self._fingerprint_builder("system", self._system_root).digest()
+            if (
+                self._system_layer is not None
+                and not force_reload
+                and self._system_layer.fingerprint == current
+            ):
+                return self._system_layer
+            snapshot = self._loader.load(
+                KeydexLayerDescriptor(
+                    scope="system",
+                    root=self._system_root,
+                    logical_root=".keydex",
+                )
+            )
+            self._system_layer = snapshot
+            self._invalidate_system_effective_locked()
+            return snapshot
+
+    def get_workspace_layer_snapshot(
+        self,
+        workspace_root: str | Path,
+        *,
+        force_reload: bool = False,
+    ) -> KeydexLayerSnapshot:
+        root = Path(workspace_root).expanduser().resolve()
+        cache_key = _cache_key(root)
+        with self._lock:
+            current = self._fingerprint_builder("workspace", root / ".keydex").digest()
+            cached = self._workspace_layers.get(cache_key)
+            if cached is not None and not force_reload and cached.fingerprint == current:
+                return cached
+            snapshot = self._loader.load(
+                KeydexLayerDescriptor(
+                    scope="workspace",
+                    root=root / ".keydex",
+                    logical_root=".keydex",
+                )
+            )
+            self._workspace_layers[cache_key] = snapshot
+            self._invalidate_workspace_effective_locked(cache_key)
+            return snapshot
+
+    def get_system_snapshot(
+        self,
+        *,
+        force_reload: bool = False,
+    ) -> KeydexEffectiveSnapshot:
+        with self._lock:
+            builtin = self.get_builtin_layer_snapshot(force_reload=force_reload)
+            system = self.get_system_layer_snapshot(force_reload=force_reload)
+            layers = (builtin, system)
+            key = self._effective_key("system_only", None, layers)
+            cached = self._effective_snapshots.get(key)
+            if cached is not None:
+                return cached
+            snapshot = self._composer.compose(mode="system_only", layers=layers)
+            self._effective_snapshots[key] = snapshot
+            return snapshot
+
+    def get_workspace_snapshot(
+        self,
+        workspace_root: str | Path,
+        *,
+        force_reload: bool = False,
+    ) -> KeydexEffectiveSnapshot:
+        root = Path(workspace_root).expanduser().resolve()
+        workspace_key = _cache_key(root)
+        with self._lock:
+            builtin = self.get_builtin_layer_snapshot(force_reload=force_reload)
+            system = self.get_system_layer_snapshot(force_reload=force_reload)
+            workspace = self.get_workspace_layer_snapshot(root, force_reload=force_reload)
+            layers = (builtin, system, workspace)
+            key = self._effective_key("workspace_effective", workspace_key, layers)
+            cached = self._effective_snapshots.get(key)
+            if cached is not None:
+                return cached
+            snapshot = self._composer.compose(
+                mode="workspace_effective",
+                layers=layers,
+                workspace_root=root,
+            )
+            self._effective_snapshots[key] = snapshot
+            return snapshot
+
+    def get_session_effective_snapshot(
+        self,
+        workspace_root: str | Path | None = None,
+        *,
+        force_reload: bool = False,
+    ) -> KeydexEffectiveSnapshot:
+        if workspace_root is None:
+            return self.get_system_snapshot(force_reload=force_reload)
+        return self.get_workspace_snapshot(workspace_root, force_reload=force_reload)
+
+    def invalidate_system(self) -> None:
+        with self._lock:
+            self._system_layer = None
+            self._invalidate_system_effective_locked()
+
+    def invalidate_builtin(self) -> None:
+        with self._lock:
+            self._builtin_layer = None
+            self._effective_snapshots.clear()
+
+    def invalidate_workspace(self, workspace_root: str | Path) -> None:
+        root = Path(workspace_root).expanduser().resolve()
+        key = _cache_key(root)
+        with self._lock:
+            self._workspace_layers.pop(key, None)
+            self._invalidate_workspace_effective_locked(key)
+
+    def invalidate_all(self) -> None:
+        with self._lock:
+            self._builtin_layer = None
+            self._system_layer = None
+            self._workspace_layers.clear()
+            self._effective_snapshots.clear()
+
+    def _build_fingerprint(
+        self,
+        scope: KeydexScope,
+        root: Path,
+    ) -> KeydexLayerFingerprint:
+        return build_keydex_layer_fingerprint(scope, root, registry=self._registry)
+
+    def _effective_key(
+        self,
+        mode: str,
+        workspace_key: str | None,
+        layers: tuple[KeydexLayerSnapshot, ...],
+    ) -> _CapabilityEffectiveCacheKey:
+        return _CapabilityEffectiveCacheKey(
+            runtime_revision=self._runtime_revision,
+            mode=mode,
+            workspace_key=workspace_key,
+            layer_fingerprints=tuple(
+                (layer.scope, layer.fingerprint) for layer in layers
+            ),
+        )
+
+    def _invalidate_system_effective_locked(self) -> None:
+        for key in list(self._effective_snapshots):
+            if any(scope == "system" for scope, _ in key.layer_fingerprints):
+                self._effective_snapshots.pop(key, None)
+
+    def _invalidate_workspace_effective_locked(self, workspace_key: str) -> None:
+        for key in list(self._effective_snapshots):
+            if key.workspace_key == workspace_key:
+                self._effective_snapshots.pop(key, None)
 
 
 class KeydexRuntimeCache:
@@ -146,7 +395,6 @@ class KeydexRuntimeCache:
                 builtin_fingerprint=builtin.fingerprint,
                 system_fingerprint=system.fingerprint,
                 workspace_fingerprint=None,
-                inherit_system=True,
                 available=(
                     system.skill_catalog.available or builtin.skill_catalog.available
                 ),
@@ -176,14 +424,12 @@ class KeydexRuntimeCache:
             builtin = self.get_builtin_layer_snapshot()
             system = self.get_system_layer_snapshot()
             workspace = self.get_workspace_layer_snapshot(root, force_reload=force_reload)
-            inherit_system = workspace.profile.inherit_system
             key = _EffectiveCacheKey(
                 mode="workspace_effective",
                 workspace_key=workspace_key,
                 builtin_fingerprint=builtin.fingerprint,
-                system_fingerprint=system.fingerprint if inherit_system else None,
+                system_fingerprint=system.fingerprint,
                 workspace_fingerprint=workspace.fingerprint,
-                inherit_system=inherit_system,
                 available=workspace.skill_catalog.available,
             )
             cached = self._effective_snapshots.get(key)

@@ -8,6 +8,11 @@ from pathlib import Path
 
 import pytest
 
+from backend.app.keydex.builtin_skills import BUILTIN_SKILLS_ROOT
+from backend.app.keydex.capabilities.skills import SKILLS_CAPABILITY_KEY, SkillsCapability
+from backend.app.keydex.composer import KeydexEffectiveComposer
+from backend.app.keydex.loader import KeydexLayerLoader
+from backend.app.keydex.models import KeydexLayerDescriptor
 from backend.app.keydex.presets import (
     BUNDLED_PRESETS_ROOT,
     LOCK_FILE_NAME,
@@ -19,6 +24,7 @@ from backend.app.keydex.presets import (
     load_and_validate_preset_catalog,
     provision_bundled_presets,
 )
+from backend.app.keydex.registry import KeydexCapabilityRegistry
 from backend.app.keydex.runtime import build_keydex_system_layer_runtime_snapshot
 
 
@@ -148,6 +154,9 @@ def test_t104_first_seed_is_atomic_managed_and_loads_as_normal_system_skill(tmp_
     assert state["presets"]["one"]["status"] == "installed"
     snapshot = build_keydex_system_layer_runtime_snapshot(system_root)
     assert snapshot.skill_catalog.skills["alpha"].source == "system"
+    capability_payload = load_capability_skills(system_root)
+    assert capability_payload.catalog.skills["alpha"].source == "system"
+    assert not (system_root / "keydex.md").exists()
 
 
 def test_t105_existing_user_skill_is_never_overwritten(tmp_path) -> None:
@@ -339,6 +348,25 @@ def test_t118_workspace_override_still_wins_over_seeded_system_skill(tmp_path) -
     )
 
     assert effective.skill_catalog.skills["alpha"].source == "workspace"
+    capability_payload = load_capability_skills(system_root, workspace_root)
+    assert capability_payload.catalog.skills["alpha"].source == "workspace"
+
+
+def test_ki22_preset_state_and_catalog_are_not_runtime_sources(tmp_path: Path) -> None:
+    bundle = create_bundle(tmp_path / "bundle", [("one", "alpha")])
+    system_root = tmp_path / "system"
+    provision_bundled_presets(bundle_root=bundle, system_root=system_root)
+    before = load_capability_skills(system_root)
+
+    state_path = system_root / MANAGED_DIR_NAME / STATE_FILE_NAME
+    state_path.write_text('{"not":"runtime configuration"}\n', encoding="utf-8")
+    (system_root / "keydex.md").write_text('{"skills":false}\n', encoding="utf-8")
+    after = load_capability_skills(system_root)
+
+    assert before.catalog.skills["alpha"].description == after.catalog.skills[
+        "alpha"
+    ].description
+    assert after.catalog.skills["alpha"].source == "system"
 
 
 def test_t119_scripts_are_copied_as_inert_resources_and_no_uninstall_is_performed(tmp_path) -> None:
@@ -382,6 +410,47 @@ def create_bundle(
         )
     write_json(root / "catalog.json", payload)
     return root
+
+
+def load_capability_skills(
+    system_root: Path,
+    workspace_root: Path | None = None,
+):
+    registry = KeydexCapabilityRegistry((SkillsCapability(),))
+    loader = KeydexLayerLoader(registry=registry)
+    layers = [
+        loader.load(
+            KeydexLayerDescriptor(
+                scope="builtin",
+                root=BUILTIN_SKILLS_ROOT,
+                logical_root="builtin",
+            )
+        ),
+        loader.load(
+            KeydexLayerDescriptor(
+                scope="system",
+                root=system_root,
+                logical_root=".keydex",
+            )
+        ),
+    ]
+    mode = "system_only"
+    if workspace_root is not None:
+        layers.append(
+            loader.load(
+                KeydexLayerDescriptor(
+                    scope="workspace",
+                    root=workspace_root / ".keydex",
+                    logical_root=".keydex",
+                )
+            )
+        )
+        mode = "workspace_effective"
+    return KeydexEffectiveComposer(registry=registry).compose(
+        mode=mode,  # type: ignore[arg-type]
+        layers=tuple(layers),
+        workspace_root=workspace_root,
+    ).require(SKILLS_CAPABILITY_KEY)
 
 
 def add_bundle_item(root: Path, payload: dict, preset_id: str, skill_name: str) -> None:

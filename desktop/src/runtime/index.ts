@@ -49,7 +49,8 @@ export { createDesktopPickerRuntime } from "./desktopPicker";
 export { createAttachmentsRuntime } from "./attachments";
 export { createAnnotationsRuntime } from "./annotations";
 export { createMcpRuntime } from "./mcp";
-export { createSkillRuntime } from "./skills";
+export { createKeydexRuntime, createSkillRuntime } from "./skills";
+export { createGitRuntime } from "./git";
 export {
   canUseAppUpdater,
   checkForAppUpdate,
@@ -65,6 +66,20 @@ export type { HttpClientOptions, RequestOptions } from "./httpClient";
 export type { WebSocketConstructor, WebSocketLike, WsClientOptions, WsConnectionStatus } from "./wsClient";
 export type { RuntimeErrorEnvelope, RuntimeHttpErrorParams } from "./errors";
 export type { RuntimeBridge, RuntimeBridgeOptions } from "./bridge";
+export type {
+  GitBranchCommand,
+  GitCheckoutCommand,
+  GitCommandBase,
+  GitCommitCommand,
+  GitMetadataListener,
+  GitPathsCommand,
+  GitProjectScope,
+  GitQueryOptions,
+  GitRemoteCommand,
+  GitRepositoryScope,
+  GitRuntime,
+} from "./git";
+export type * from "./gitTypes";
 export type {
   AgentConnection,
   AgentConnectionOptions,
@@ -153,7 +168,13 @@ export type {
 export type {
   EffectiveSkillsMode,
   EffectiveSkillsResponse,
+  KeydexCapabilityOverview,
   KeydexDiagnostic,
+  KeydexLayerCapabilityOverview,
+  KeydexLayerOverview,
+  KeydexRuntime,
+  KeydexRuntimeDiagnostic,
+  RuntimeOverviewResponse,
   SkillListOptions,
   SkillResourceReadOptions,
   SkillResourceReadRequest,

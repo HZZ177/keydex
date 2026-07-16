@@ -19,6 +19,7 @@ from backend.app.annotations.api import router as annotations_router
 from backend.app.api.approvals import router as approvals_router
 from backend.app.api.archive import router as archive_router
 from backend.app.api.attachments import router as attachments_router
+from backend.app.api.git import router as git_router
 from backend.app.api.health import router as health_router
 from backend.app.api.local_preview import router as local_preview_router
 from backend.app.api.mcp import router as mcp_router
@@ -41,11 +42,12 @@ from backend.app.core.config import AppSettings, get_settings
 from backend.app.core.exception_handler import register_exception_handlers
 from backend.app.core.logger import configure_logging, logger
 from backend.app.core.middleware import RequestLoggingMiddleware
+from backend.app.git.events import GitMetadataEventService
 from backend.app.keydex import (
-    KeydexRuntimeCache,
+    KeydexCapabilityRuntimeCache,
     provision_bundled_presets,
 )
-from backend.app.keydex.watcher import KeydexSkillsWatcher
+from backend.app.keydex.watcher import KeydexWorkspaceWatcher
 from backend.app.mcp.elicitation import McpElicitationService
 from backend.app.mcp.manager import McpManager
 from backend.app.mcp.sampling import McpOpenAICompatibleSamplingBridge, McpSamplingService
@@ -109,16 +111,22 @@ def create_app(
             yield
         finally:
             try:
-                await app.state.keydex_skills_watcher.close()
+                await app.state.keydex_workspace_watcher.close()
             except Exception as exc:
                 logger.opt(exception=True).error(
-                    f"[App] KeydexSkillsWatcher 关闭失败 | error={exc}"
+                    f"[App] KeydexWorkspaceWatcher 关闭失败 | error={exc}"
                 )
             try:
                 await app.state.file_change_hub.close()
             except Exception as exc:
                 logger.opt(exception=True).error(
                     f"[App] FileChangeHub 关闭失败 | error={exc}"
+                )
+            try:
+                await app.state.git_metadata_event_service.close()
+            except Exception as exc:
+                logger.opt(exception=True).error(
+                    f"[App] GitMetadataEventService close failed | error={exc}"
                 )
             await app.state.thread_task_elapsed_ticker.stop()
             await app.state.mcp_manager.shutdown()
@@ -227,7 +235,7 @@ def create_app(
     )
     if app.state.keydex_preset_provision_result.status == "failed":
         logger.warning("[KeydexPreset] 预置初始化失败，应用将继续启动")
-    app.state.keydex_runtime_cache = KeydexRuntimeCache(
+    app.state.keydex_runtime_cache = KeydexCapabilityRuntimeCache(
         system_root=keydex_system_root_for_testing,
         builtin_root=keydex_builtin_root_for_testing,
     )
@@ -301,15 +309,23 @@ def create_app(
         chat_stream_manager=app.state.chat_stream_manager,
     )
     app.state.chat_stream_manager.set_thread_task_runtime(app.state.thread_task_runtime)
-    app.state.keydex_skills_watcher = KeydexSkillsWatcher(
+    app.state.keydex_workspace_watcher = KeydexWorkspaceWatcher(
         runtime_cache=app.state.keydex_runtime_cache,
         notifier=lambda session_id, data: app.state.chat_stream_manager.broadcast(
             session_id=session_id,
-            action="keydexSkillsChanged",
+            action="keydexWorkspaceChanged",
             data=data,
         ),
     )
-    app.state.file_change_hub = FileChangeHub()
+    app.state.file_change_hub = FileChangeHub(
+        ignored_roots=(resolved_settings.data_dir,),
+    )
+    app.state.git_metadata_event_service = GitMetadataEventService(
+        invalidate=lambda repository_id: (
+            getattr(app.state, "git_query_service", None)
+            and app.state.git_query_service.invalidate(repository_id)
+        )
+    )
     app.state.runtime = create_desktop_runtime(
         settings=resolved_settings,
         database=app.state.database,
@@ -328,6 +344,7 @@ def create_app(
         f"duration_ms={int((time.perf_counter() - create_started) * 1000)}"
     )
     app.include_router(health_router)
+    app.include_router(git_router)
     app.include_router(annotations_router)
     app.include_router(approvals_router)
     app.include_router(archive_router)

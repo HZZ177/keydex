@@ -27,6 +27,12 @@ from backend.app.agent.factory import AgentFactory
 from backend.app.command_approval import CommandSettings, save_command_settings
 from backend.app.core.config import AppSettings
 from backend.app.core.time import to_iso_z, utc_now
+from backend.app.keydex import KeydexCapabilityRuntimeCache
+from backend.app.keydex.capabilities.keydex_markdown import (
+    KEYDEX_MARKDOWN_CONTEXT_PROTOCOL,
+)
+from backend.app.keydex.capabilities.skills import SkillsCapability
+from backend.app.keydex.registry import KeydexCapabilityRegistry
 from backend.app.mcp.tools import (
     MCP_CAPABILITY_DISCOVERY_TOOL_NAME,
     mcp_capability_discovery_tools_from_snapshot,
@@ -35,6 +41,7 @@ from backend.app.model import ModelSettings
 from backend.app.services import ChatCancellationToken, ChatRequest, ChatService
 from backend.app.services.archive_lifecycle_service import ArchiveLifecycleError
 from backend.app.services.chat_service import _chat_turn_error
+from backend.app.services.session_fork_service import SessionForkService
 from backend.app.storage import (
     MODEL_DEFAULT_CHAT,
     ModelProviderRecord,
@@ -286,6 +293,10 @@ def _service(
             settings=settings,
             repositories=repositories,
             agent_runner=runner,
+            keydex_runtime_cache=KeydexCapabilityRuntimeCache(
+                system_root=tmp_path / "system-keydex",
+                builtin_root=tmp_path / "builtin-keydex",
+            ),
             mcp_manager=mcp_manager,
         ),
         repositories,
@@ -412,6 +423,339 @@ async def test_chat_service_uses_langchain_agent_and_persists_history(tmp_path) 
 
 
 @pytest.mark.asyncio
+async def test_chat_trace_records_generic_capability_fingerprints_without_content(
+    tmp_path: Path,
+) -> None:
+    model = ToolFriendlyFakeModel(responses=[AIMessage(content="ok")])
+    service, repositories, _checkpointer, _factory = _service(tmp_path, model)
+    system_root = tmp_path / "generic-system"
+    skill_root = system_root / "skills" / "private-skill"
+    skill_root.mkdir(parents=True)
+    private_marker = "PRIVATE SKILL BODY MUST NOT ENTER TRACE METADATA"
+    (skill_root / "SKILL.md").write_text(
+        "---\nname: private-skill\ndescription: private\n---\n\n" + private_marker,
+        encoding="utf-8",
+    )
+    service.keydex_runtime_cache = KeydexCapabilityRuntimeCache(
+        system_root=system_root,
+        registry=KeydexCapabilityRegistry((SkillsCapability(),)),
+    )
+
+    result = await service.handle_chat(
+        ChatRequest(message="hello", provider_id="provider-1", model="qwen-coder")
+    )
+
+    metadata = repositories.trace_records.get(result.trace_id).metadata
+    assert metadata["keydex"]["mode"] == "system_only"
+    assert metadata["keydex"]["runtime_revision"] == "2"
+    assert metadata["keydex"]["scopes"] == ["builtin", "system"]
+    fingerprints = metadata["keydex"]["capability_fingerprints"]
+    assert set(fingerprints) == {"skills"}
+    assert len(fingerprints["skills"]) == 64
+    assert private_marker not in json.dumps(metadata, ensure_ascii=False)
+
+
+def _keydex_context_messages(messages: list[Any]) -> list[HumanMessage]:
+    return [
+        message
+        for message in messages
+        if isinstance(message, HumanMessage)
+        and message.additional_kwargs.get("protocol") == KEYDEX_MARKDOWN_CONTEXT_PROTOCOL
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chat_service_injects_system_keydex_markdown_without_persisting_it(
+    tmp_path: Path,
+) -> None:
+    model = RecordingToolFriendlyFakeModel(responses=[AIMessage(content="system applied")])
+    service, repositories, _checkpointer, _factory = _service(tmp_path, model)
+    system_root = tmp_path / "system-keydex"
+    system_root.mkdir()
+    (system_root / "keydex.md").write_text("SYSTEM-GUIDANCE", encoding="utf-8")
+    service.keydex_runtime_cache = KeydexCapabilityRuntimeCache(
+        system_root=system_root,
+        builtin_root=tmp_path / "builtin",
+    )
+
+    result = await service.handle_chat(
+        ChatRequest(message="real request", provider_id="provider-1", model="qwen-coder")
+    )
+
+    assert result.status == "completed"
+    assert len(model.recorded_messages) == 1
+    contexts = _keydex_context_messages(model.recorded_messages[0])
+    assert len(contexts) == 1
+    assert "SYSTEM-GUIDANCE" in str(contexts[0].content)
+    assert contexts[0].additional_kwargs["scopes"] == ["system"]
+    real_users = [
+        item
+        for item in model.recorded_messages[0]
+        if isinstance(item, HumanMessage) and item not in contexts
+    ]
+    assert real_users[-1].content == "real request"
+    history = service.message_event_service.get_display_messages(result.session_id)
+    assert "<keydex-instructions>" not in json.dumps(history, ensure_ascii=False)
+    assert [item["role"] for item in history if item.get("role") != "turn"] == ["user", "assistant"]
+    trace = repositories.trace_records.get(result.trace_id)
+    assert set(trace.metadata["keydex"]["capability_fingerprints"]) == {
+        "skills",
+        "keydex_markdown",
+    }
+    trace_payload = json.dumps(trace.metadata, ensure_ascii=False)
+    assert "SYSTEM-GUIDANCE" not in trace_payload
+    assert str(system_root) not in trace_payload
+
+
+@pytest.mark.asyncio
+async def test_workspace_chat_injects_system_then_bound_workspace_only(
+    tmp_path: Path,
+) -> None:
+    model = RecordingToolFriendlyFakeModel(responses=[AIMessage(content="workspace applied")])
+    service, repositories, _checkpointer, _factory = _service(tmp_path, model)
+    system_root = tmp_path / "system-keydex"
+    system_root.mkdir()
+    (system_root / "keydex.md").write_text("SYSTEM-MARKER", encoding="utf-8")
+    project = tmp_path / "project-a"
+    project_keydex = project / ".keydex"
+    project_keydex.mkdir(parents=True)
+    (project_keydex / "keydex.md").write_text("PROJECT-A-MARKER", encoding="utf-8")
+    other_project = tmp_path / "project-b"
+    other_keydex = other_project / ".keydex"
+    other_keydex.mkdir(parents=True)
+    (other_keydex / "keydex.md").write_text("PROJECT-B-SECRET", encoding="utf-8")
+    service.keydex_runtime_cache = KeydexCapabilityRuntimeCache(
+        system_root=system_root,
+        builtin_root=tmp_path / "builtin",
+    )
+    workspace = repositories.workspaces.create(workspace_id="ws-a", root_path=project)
+    session = repositories.sessions.create(
+        session_id="ses-a",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        session_type="workspace",
+        workspace_id=workspace.id,
+        cwd=str(project),
+        workspace_roots=[str(project)],
+    )
+
+    result = await service.handle_chat(
+        ChatRequest(
+            session_id=session.id,
+            message="project request",
+            provider_id="provider-1",
+            model="qwen-coder",
+        )
+    )
+
+    assert result.status == "completed"
+    context = _keydex_context_messages(model.recorded_messages[0])[0]
+    rendered = str(context.content)
+    assert rendered.index("SYSTEM-MARKER") < rendered.index("PROJECT-A-MARKER")
+    assert "PROJECT-B-SECRET" not in rendered
+    assert context.additional_kwargs["scopes"] == ["system", "workspace"]
+
+
+@pytest.mark.asyncio
+async def test_km25_km29_km30_markdown_is_pinned_for_tool_loop_and_next_turn(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "system-keydex"
+    source_root.mkdir()
+    source = source_root / "keydex.md"
+    source.write_text("GUIDANCE-V1", encoding="utf-8")
+    model = RecordingToolFriendlyFakeModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "replace_guidance", "args": {}, "id": "call_replace"}],
+            ),
+            AIMessage(content="first turn done"),
+            AIMessage(content="second turn done"),
+        ]
+    )
+    registry = ToolRegistry()
+
+    def replace_guidance(
+        _args: dict[str, Any],
+        _context: ToolExecutionContext,
+    ) -> dict[str, bool]:
+        source.write_text("GUIDANCE-V2", encoding="utf-8")
+        return {"changed": True}
+
+    registry.register(
+        FunctionTool(
+            name="replace_guidance",
+            description="Replace the guidance fixture.",
+            parameters={"type": "object", "properties": {}},
+            handler=replace_guidance,
+        )
+    )
+    service, repositories, _checkpointer, _factory = _service(
+        tmp_path,
+        model,
+        registry,
+    )
+    service.keydex_runtime_cache = KeydexCapabilityRuntimeCache(
+        system_root=source_root,
+        builtin_root=tmp_path / "builtin",
+    )
+    project = tmp_path / "turn-pinning-project"
+    project.mkdir()
+    workspace = repositories.workspaces.create(
+        workspace_id="ws-turn-pinning",
+        root_path=project,
+    )
+    session = repositories.sessions.create(
+        session_id="ses-turn-pinning",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        session_type="workspace",
+        workspace_id=workspace.id,
+        cwd=str(project),
+        workspace_roots=[str(project)],
+    )
+
+    first = await service.handle_chat(
+        ChatRequest(
+            session_id=session.id,
+            message="first turn",
+            provider_id="provider-1",
+            model="qwen-coder",
+        )
+    )
+    second = await service.handle_chat(
+        ChatRequest(
+            session_id=first.session_id,
+            message="second turn",
+            provider_id="provider-1",
+            model="qwen-coder",
+        )
+    )
+
+    assert first.status == "completed" and second.status == "completed"
+    assert len(model.recorded_messages) == 3
+    first_context = str(_keydex_context_messages(model.recorded_messages[0])[0].content)
+    tool_followup_context = str(_keydex_context_messages(model.recorded_messages[1])[0].content)
+    next_turn_context = str(_keydex_context_messages(model.recorded_messages[2])[0].content)
+    assert "GUIDANCE-V1" in first_context
+    assert "GUIDANCE-V1" in tool_followup_context
+    assert "GUIDANCE-V2" not in tool_followup_context
+    assert "GUIDANCE-V2" in next_turn_context
+
+
+@pytest.mark.asyncio
+async def test_ki10_forked_session_resolves_fresh_keydex_snapshot_for_new_turn(
+    tmp_path: Path,
+) -> None:
+    system_root = tmp_path / "system-keydex"
+    system_root.mkdir()
+    source = system_root / "keydex.md"
+    source.write_text("FORK-GUIDANCE-V1", encoding="utf-8")
+    model = RecordingToolFriendlyFakeModel(
+        responses=[AIMessage(content="source done"), AIMessage(content="fork done")]
+    )
+    service, repositories, checkpointer, _factory = _service(tmp_path, model)
+
+    first = await service.handle_chat(
+        ChatRequest(
+            message="source turn",
+            provider_id="provider-1",
+            model="qwen-coder",
+        )
+    )
+    source_event_id = next(
+        message["messageEventId"]
+        for message in reversed(
+            service.message_event_service.get_display_messages(first.session_id)
+        )
+        if message.get("role") == "assistant"
+    )
+    forked = SessionForkService(
+        repositories,
+        checkpointer=checkpointer,
+    ).fork_session(
+        session_id=first.session_id,
+        user_id="local-user",
+        message_event_id=source_event_id,
+    )
+    source.write_text("FORK-GUIDANCE-V2", encoding="utf-8")
+    service.keydex_runtime_cache.invalidate_system()
+
+    second = await service.handle_chat(
+        ChatRequest(
+            session_id=forked.session.id,
+            message="fork follow-up",
+            provider_id="provider-1",
+            model="qwen-coder",
+        )
+    )
+
+    assert first.status == "completed" and second.status == "completed"
+    assert len(model.recorded_messages) == 2
+    source_context = str(_keydex_context_messages(model.recorded_messages[0])[0].content)
+    fork_context = str(_keydex_context_messages(model.recorded_messages[1])[0].content)
+    assert "FORK-GUIDANCE-V1" in source_context
+    assert "FORK-GUIDANCE-V2" in fork_context
+    assert model.recorded_messages[1][-1].content == "fork follow-up"
+
+
+@pytest.mark.asyncio
+async def test_ki11_thread_task_continuation_receives_keydex_and_hidden_input(
+    tmp_path: Path,
+) -> None:
+    system_root = tmp_path / "system-keydex"
+    system_root.mkdir()
+    (system_root / "keydex.md").write_text(
+        "THREAD-TASK-GUIDANCE",
+        encoding="utf-8",
+    )
+    model = RecordingToolFriendlyFakeModel(responses=[AIMessage(content="thread task done")])
+    service, repositories, _checkpointer, _factory = _service(tmp_path, model)
+    session = repositories.sessions.create(
+        session_id="ses-keydex-thread-task",
+        user_id="local-user",
+        scene_id="desktop-agent",
+    )
+
+    result = await service.handle_chat(
+        ChatRequest(
+            session_id=session.id,
+            message="",
+            provider_id="provider-1",
+            model="qwen-coder",
+            runtime_params={
+                "thread_task": {
+                    "task_id": "task-keydex",
+                    "run_id": "run-keydex",
+                    "trigger": "task_continue",
+                    "type": "goal",
+                },
+                "message_injection": [
+                    {
+                        "type": "follow",
+                        "role": "HumanMessage",
+                        "content": "hidden thread task input",
+                        "hidden_for_transcript": True,
+                    }
+                ],
+            },
+        )
+    )
+
+    assert result.status == "completed"
+    messages = model.recorded_messages[0]
+    contexts = _keydex_context_messages(messages)
+    assert len(contexts) == 1
+    assert "THREAD-TASK-GUIDANCE" in str(contexts[0].content)
+    assert messages[-1].content == "hidden thread task input"
+    history = service.message_event_service.get_display_messages(session.id)
+    serialized = json.dumps(history, ensure_ascii=False)
+    assert "THREAD-TASK-GUIDANCE" not in serialized
+    assert "hidden thread task input" not in serialized
+
+
+@pytest.mark.asyncio
 async def test_chat_service_agent_assembly_does_not_block_event_loop(tmp_path) -> None:
     model = ToolFriendlyFakeModel(responses=[AIMessage(content="不应调用")])
     service, _repositories, _checkpointer, _factory = _service(tmp_path, model)
@@ -419,7 +763,6 @@ async def test_chat_service_agent_assembly_does_not_block_event_loop(tmp_path) -
     service.agent_runner = runner  # type: ignore[assignment]
     chat_adapter = RecordingChatAdapter()
 
-    started_at = time.perf_counter()
     task = asyncio.create_task(
         service.handle_chat(
             ChatRequest(message="测试冷启动", provider_id="provider-1", model="qwen-coder"),
@@ -427,11 +770,17 @@ async def test_chat_service_agent_assembly_does_not_block_event_loop(tmp_path) -
         )
     )
 
+    deadline = time.perf_counter() + 3.0
+    while not runner.started.is_set() and time.perf_counter() < deadline:
+        assert not task.done()
+        await asyncio.sleep(0.01)
+    assert runner.started.is_set()
+
+    blocking_started_at = time.perf_counter()
     await asyncio.sleep(0.05)
-    elapsed = time.perf_counter() - started_at
+    elapsed = time.perf_counter() - blocking_started_at
 
     assert elapsed < 0.35
-    assert runner.started.is_set()
     assert not runner.finished.is_set()
 
     result = await task
@@ -675,9 +1024,7 @@ async def test_chat_service_injects_mcp_runtime_tools_for_workspace_session(tmp_
     snapshots = repositories.mcp_runtime_snapshots.list_by_session(session.id)
     assert len(snapshots) == 1
     mcp_tool_names = [
-        tool_name
-        for tool_name in factory.created_tool_names[-1]
-        if tool_name.startswith("mcp__")
+        tool_name for tool_name in factory.created_tool_names[-1] if tool_name.startswith("mcp__")
     ]
     assert snapshots[0].session_id == session.id
     assert {tool["model_name"] for tool in snapshots[0].visible_tools} == {
@@ -797,9 +1144,7 @@ async def test_chat_service_deferred_mcp_tools_activate_for_next_turn(tmp_path) 
     assert factory.created_tool_names[-1].count(MCP_CAPABILITY_DISCOVERY_TOOL_NAME) == 1
     assert "search_mcp_tools" not in factory.created_tool_names[-1]
     assert "list_mcp_tools" not in factory.created_tool_names[-1]
-    assert {
-        name for name in factory.created_tool_names[-1] if name.startswith("mcp__")
-    } == set()
+    assert {name for name in factory.created_tool_names[-1] if name.startswith("mcp__")} == set()
     first_snapshot = repositories.mcp_runtime_snapshots.list_by_session(session.id)[0]
     assert first_snapshot.policy_summary["availability"] == "with_on_demand_catalog"
     assert first_snapshot.policy_summary["direct_available_tools"] == 0
@@ -912,7 +1257,13 @@ async def test_chat_service_injects_priority_mcp_tool_when_over_budget(tmp_path)
 async def test_chat_service_mcp_discovery_rebuilds_tools_in_same_run(tmp_path) -> None:
     project = tmp_path / "project"
     project.mkdir()
-    model = ToolFriendlyFakeModel(
+    system_root = tmp_path / "system-keydex"
+    system_root.mkdir()
+    (system_root / "keydex.md").write_text(
+        "MCP-CONTINUATION-GUIDANCE",
+        encoding="utf-8",
+    )
+    model = RecordingToolFriendlyFakeModel(
         responses=[
             AIMessage(
                 content="",
@@ -978,6 +1329,11 @@ async def test_chat_service_mcp_discovery_rebuilds_tools_in_same_run(tmp_path) -
     assert snapshots[0].on_demand_tools == 1
     assert snapshots[1].direct_available_tools == 1
     assert snapshots[1].on_demand_tools == 2
+    assert len(model.recorded_messages) >= 2
+    for messages in model.recorded_messages:
+        contexts = _keydex_context_messages(messages)
+        assert len(contexts) == 1
+        assert "MCP-CONTINUATION-GUIDANCE" in str(contexts[0].content)
 
 
 @pytest.mark.asyncio
@@ -1132,9 +1488,7 @@ async def test_file_access_blocked_tools_emit_failed_tool_events(
     )
 
     tool_events = [
-        item
-        for item in chat_adapter.sent
-        if item["action"] in {"tool_start", "tool_end"}
+        item for item in chat_adapter.sent if item["action"] in {"tool_start", "tool_end"}
     ]
     assert [item["action"] for item in tool_events] == ["tool_start", "tool_end"]
     assert tool_events[0]["data"]["tool"] == tool_name
@@ -1213,9 +1567,7 @@ async def test_file_access_blocked_sequential_tools_each_emit_failed_events(tmp_
     )
 
     tool_events = [
-        item
-        for item in chat_adapter.sent
-        if item["action"] in {"tool_start", "tool_end"}
+        item for item in chat_adapter.sent if item["action"] in {"tool_start", "tool_end"}
     ]
     assert [item["action"] for item in tool_events] == [
         "tool_start",
@@ -1249,7 +1601,13 @@ async def test_chat_service_runs_skill_activation_chain_with_message_injection(
 ) -> None:
     project = tmp_path / "project"
     _write_workspace_skill(project, body="Use the project planning workflow.")
-    model = ToolFriendlyFakeModel(responses=[AIMessage(content="已按 Skill 处理")])
+    system_root = tmp_path / "system-keydex"
+    system_root.mkdir()
+    (system_root / "keydex.md").write_text(
+        "SKILL-COEXIST-GUIDANCE",
+        encoding="utf-8",
+    )
+    model = RecordingToolFriendlyFakeModel(responses=[AIMessage(content="已按 Skill 处理")])
     service, repositories, checkpointer, factory = _service(tmp_path, model)
     workspace = repositories.workspaces.create(workspace_id="ws_project", root_path=project)
     session = repositories.sessions.create(
@@ -1324,6 +1682,15 @@ async def test_chat_service_runs_skill_activation_chain_with_message_injection(
     assert "<keydex_skills>" in factory.system_prompts[0]
     assert 'load_skill(skill_name="dev-plan")' in factory.system_prompts[0]
     assert "Use the project planning workflow." not in factory.system_prompts[0]
+    assert len(model.recorded_messages) == 1
+    contexts = _keydex_context_messages(model.recorded_messages[0])
+    assert len(contexts) == 1
+    assert "SKILL-COEXIST-GUIDANCE" in str(contexts[0].content)
+    assert any(
+        isinstance(message, SystemMessage)
+        and "Use the project planning workflow." in str(message.content)
+        for message in model.recorded_messages[0]
+    )
 
     visible_events = [item for item in chat_adapter.sent if item["action"] != "turn_started"]
     actions = [item["action"] for item in visible_events]
@@ -1377,6 +1744,10 @@ async def test_chat_service_forces_skill_from_second_batched_steer_after_tool(
         description="A batched steer skill.",
         body="Batched steer skill instructions.",
     )
+    system_root = tmp_path / "system-keydex"
+    system_root.mkdir()
+    guidance_source = system_root / "keydex.md"
+    guidance_source.write_text("STEER-GUIDANCE-V1", encoding="utf-8")
     registry = ToolRegistry()
     model = RecordingToolFriendlyFakeModel(
         responses=[
@@ -1409,6 +1780,7 @@ async def test_chat_service_forces_skill_from_second_batched_steer_after_tool(
         _args: dict[str, Any],
         _context: ToolExecutionContext,
     ) -> dict[str, Any]:
+        guidance_source.write_text("STEER-GUIDANCE-V2", encoding="utf-8")
         repositories.pending_inputs.create_or_get(
             session_id=session.id,
             message="你好",
@@ -1462,12 +1834,15 @@ async def test_chat_service_forces_skill_from_second_batched_steer_after_tool(
 
     assert result.status == "completed"
     tool_names = [
-        item["data"]["tool"]
-        for item in chat_adapter.sent
-        if item["action"] == "tool_start"
+        item["data"]["tool"] for item in chat_adapter.sent if item["action"] == "tool_start"
     ]
     assert tool_names == ["seed_pending_steers", "load_skill"]
     assert len(model.recorded_messages) == 2
+    for messages in model.recorded_messages:
+        context = _keydex_context_messages(messages)
+        assert len(context) == 1
+        assert "STEER-GUIDANCE-V1" in str(context[0].content)
+        assert "STEER-GUIDANCE-V2" not in str(context[0].content)
     follow_up_messages = model.recorded_messages[-1]
     steer_frames = [
         message
@@ -1503,8 +1878,7 @@ async def test_chat_service_forces_skill_from_second_batched_steer_after_tool(
     ]
     assert len(skill_messages) == 1
     assert not any(
-        message.get("role") == "system"
-        and "高优先级引导" in str(message.get("content") or "")
+        message.get("role") == "system" and "高优先级引导" in str(message.get("content") or "")
         for message in history
     )
 

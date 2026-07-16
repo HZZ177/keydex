@@ -65,6 +65,10 @@ class FileHistorySnapshotEntryRecord:
     size: int | None
     mode: int | None
     content_hash: str | None
+    scope_kind: str = "workspace"
+    scope_identity: str = ""
+    scope_root: str = ""
+    scope_label: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +86,10 @@ class FileHistoryTrackedFileRecord:
     last_observed_mode: int | None
     created_at: str
     updated_at: str
+    scope_kind: str = "workspace"
+    scope_identity: str = ""
+    scope_root: str = ""
+    scope_label: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +115,10 @@ class FileHistoryMutationRecord:
     error_code: str | None
     created_at: str
     updated_at: str
+    scope_kind: str = "workspace"
+    scope_identity: str = ""
+    scope_root: str = ""
+    scope_label: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +133,10 @@ class FileHistoryPathHeadRecord:
     content_hash: str | None
     revision: int
     updated_at: str
+    scope_kind: str = "workspace"
+    scope_identity: str = ""
+    scope_root: str = ""
+    scope_label: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +192,10 @@ class FileHistoryOperationFileRecord:
     safety_size: int | None
     safety_mode: int | None
     updated_at: str
+    scope_kind: str = "workspace"
+    scope_identity: str = ""
+    scope_root: str = ""
+    scope_label: str = ""
 
 
 class FileHistoryRepository:
@@ -198,6 +218,85 @@ class FileHistoryRepository:
             return
         with self.db.connect() as owned:
             yield owned
+
+    @staticmethod
+    def _snapshot_scope(
+        conn: sqlite3.Connection,
+        snapshot_id: str,
+        *,
+        scope_kind: str,
+        scope_identity: str,
+        scope_root: str,
+        scope_label: str,
+    ) -> tuple[str, str, str, str]:
+        if scope_identity and scope_root:
+            return (
+                scope_kind or "workspace",
+                scope_identity,
+                scope_root,
+                scope_label or scope_root,
+            )
+        snapshot = conn.execute(
+            "select workspace_identity, workspace_root from file_history_snapshots where id = ?",
+            (snapshot_id,),
+        ).fetchone()
+        if snapshot is None:
+            raise ValueError(f"文件快照不存在: {snapshot_id}")
+        identity = scope_identity or str(snapshot["workspace_identity"])
+        root = scope_root or str(snapshot["workspace_root"])
+        return (scope_kind or "workspace", identity, root, scope_label or root)
+
+    @staticmethod
+    def _ensure_snapshot_scope(
+        conn: sqlite3.Connection,
+        snapshot_id: str,
+        scope: tuple[str, str, str, str],
+    ) -> None:
+        conn.execute(
+            """
+            insert into file_history_snapshot_scopes (
+              snapshot_id, scope_kind, scope_identity, scope_root, scope_label
+            ) values (?, ?, ?, ?, ?)
+            on conflict(snapshot_id, scope_kind, scope_identity) do update set
+              scope_root=excluded.scope_root,
+              scope_label=excluded.scope_label
+            """,
+            (snapshot_id, *scope),
+        )
+
+    @staticmethod
+    def _session_scope(
+        conn: sqlite3.Connection,
+        session_id: str,
+        *,
+        scope_kind: str,
+        scope_identity: str,
+        scope_root: str,
+        scope_label: str,
+        fallback_identity: str = "",
+    ) -> tuple[str, str, str, str]:
+        if scope_identity and scope_root:
+            return (
+                scope_kind or "workspace",
+                scope_identity,
+                scope_root,
+                scope_label or scope_root,
+            )
+        snapshot = conn.execute(
+            """
+            select workspace_identity, workspace_root from file_history_snapshots
+            where session_id = ? order by sequence desc limit 1
+            """,
+            (session_id,),
+        ).fetchone()
+        identity = scope_identity or fallback_identity
+        root = scope_root
+        if snapshot is not None:
+            identity = identity or str(snapshot["workspace_identity"])
+            root = root or str(snapshot["workspace_root"])
+        identity = identity or f"legacy:{session_id}"
+        root = root or identity
+        return (scope_kind or "workspace", identity, root, scope_label or root)
 
     def get_session_state(
         self,
@@ -326,6 +425,16 @@ class FileHistoryRepository:
                     snapshot.updated_at,
                 ),
             )
+            self._ensure_snapshot_scope(
+                active,
+                snapshot.id,
+                (
+                    "workspace",
+                    snapshot.workspace_identity,
+                    snapshot.workspace_root,
+                    snapshot.workspace_root,
+                ),
+            )
             self.replace_snapshot_entries(snapshot.id, entries, conn=active)
             if set_active:
                 active.execute(
@@ -358,16 +467,34 @@ class FileHistoryRepository:
                 "delete from file_history_snapshot_entries where snapshot_id = ?",
                 (snapshot_id,),
             )
+            normalized = [
+                (
+                    entry,
+                    self._snapshot_scope(
+                        active,
+                        entry.snapshot_id,
+                        scope_kind=entry.scope_kind,
+                        scope_identity=entry.scope_identity,
+                        scope_root=entry.scope_root,
+                        scope_label=entry.scope_label,
+                    ),
+                )
+                for entry in entries
+            ]
+            for entry, scope in normalized:
+                self._ensure_snapshot_scope(active, entry.snapshot_id, scope)
             active.executemany(
                 """
                 insert into file_history_snapshot_entries (
-                  snapshot_id, canonical_path, display_path, state, backup_file_name,
+                  snapshot_id, scope_kind, scope_identity, scope_root, scope_label,
+                  canonical_path, display_path, state, backup_file_name,
                   version, backup_time, size, mode, content_hash
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
                         entry.snapshot_id,
+                        *scope,
                         entry.canonical_path,
                         entry.display_path,
                         entry.state,
@@ -378,7 +505,7 @@ class FileHistoryRepository:
                         entry.mode,
                         entry.content_hash,
                     )
-                    for entry in entries
+                    for entry, scope in normalized
                 ],
             )
 
@@ -389,13 +516,25 @@ class FileHistoryRepository:
         conn: sqlite3.Connection | None = None,
     ) -> None:
         with self._connection(conn) as active:
+            scope = self._snapshot_scope(
+                active,
+                entry.snapshot_id,
+                scope_kind=entry.scope_kind,
+                scope_identity=entry.scope_identity,
+                scope_root=entry.scope_root,
+                scope_label=entry.scope_label,
+            )
+            self._ensure_snapshot_scope(active, entry.snapshot_id, scope)
             active.execute(
                 """
                 insert into file_history_snapshot_entries (
-                  snapshot_id, canonical_path, display_path, state, backup_file_name,
+                  snapshot_id, scope_kind, scope_identity, scope_root, scope_label,
+                  canonical_path, display_path, state, backup_file_name,
                   version, backup_time, size, mode, content_hash
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                on conflict(snapshot_id, canonical_path) do update set
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(snapshot_id, scope_kind, scope_identity, canonical_path) do update set
+                  scope_root=excluded.scope_root,
+                  scope_label=excluded.scope_label,
                   display_path=excluded.display_path,
                   state=excluded.state,
                   backup_file_name=excluded.backup_file_name,
@@ -407,6 +546,7 @@ class FileHistoryRepository:
                 """,
                 (
                     entry.snapshot_id,
+                    *scope,
                     entry.canonical_path,
                     entry.display_path,
                     entry.state,
@@ -535,17 +675,40 @@ class FileHistoryRepository:
             rows = active.execute(
                 """
                 select * from file_history_snapshot_entries
-                where snapshot_id = ? order by canonical_path asc
+                where snapshot_id = ?
+                order by scope_kind asc, scope_identity asc, canonical_path asc
                 """,
                 (snapshot_id,),
             ).fetchall()
         return [_snapshot_entry(row) for row in rows]
+
+    def get_snapshot_entry(
+        self,
+        snapshot_id: str,
+        canonical_path: str,
+        *,
+        scope_kind: str,
+        scope_identity: str,
+        conn: sqlite3.Connection | None = None,
+    ) -> FileHistorySnapshotEntryRecord | None:
+        with self._connection(conn) as active:
+            row = active.execute(
+                """
+                select * from file_history_snapshot_entries
+                where snapshot_id = ? and scope_kind = ? and scope_identity = ?
+                  and canonical_path = ?
+                """,
+                (snapshot_id, scope_kind, scope_identity, canonical_path),
+            ).fetchone()
+        return _snapshot_entry(row) if row is not None else None
 
     def find_reusable_entry(
         self,
         session_id: str,
         canonical_path: str,
         *,
+        scope_kind: str = "workspace",
+        scope_identity: str | None = None,
         state: str,
         content_hash: str | None,
         mode: int | None,
@@ -558,9 +721,13 @@ class FileHistoryRepository:
             where snapshot.session_id = ?
               and snapshot.status = 'ready'
               and entry.canonical_path = ?
+              and entry.scope_kind = ?
               and entry.state = ?
         """
-        values: list[Any] = [session_id, canonical_path, state]
+        values: list[Any] = [session_id, canonical_path, scope_kind, state]
+        if scope_identity is not None:
+            query += " and entry.scope_identity = ?"
+            values.append(scope_identity)
         if state == "file":
             query += " and entry.content_hash = ? and entry.mode = ?"
             values.extend((content_hash, mode))
@@ -576,15 +743,26 @@ class FileHistoryRepository:
         conn: sqlite3.Connection | None = None,
     ) -> None:
         with self._connection(conn) as active:
+            scope = self._session_scope(
+                active,
+                record.session_id,
+                scope_kind=record.scope_kind,
+                scope_identity=record.scope_identity,
+                scope_root=record.scope_root,
+                scope_label=record.scope_label,
+            )
             active.execute(
                 """
                 insert into file_history_tracked_files (
-                  session_id, canonical_path, display_path, latest_version,
+                  session_id, scope_kind, scope_identity, scope_root, scope_label,
+                  canonical_path, display_path, latest_version,
                   first_snapshot_id, last_snapshot_id, last_observed_state,
                   last_observed_hash, last_observed_size, last_observed_mtime_ns,
                   last_observed_mode, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                on conflict(session_id, canonical_path) do update set
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(session_id, scope_kind, scope_identity, canonical_path) do update set
+                  scope_root=excluded.scope_root,
+                  scope_label=excluded.scope_label,
                   display_path=excluded.display_path,
                   latest_version=excluded.latest_version,
                   first_snapshot_id=coalesce(file_history_tracked_files.first_snapshot_id,
@@ -599,6 +777,7 @@ class FileHistoryRepository:
                 """,
                 (
                     record.session_id,
+                    *scope,
                     record.canonical_path,
                     record.display_path,
                     record.latest_version,
@@ -613,21 +792,33 @@ class FileHistoryRepository:
                     record.updated_at,
                 ),
             )
+            if record.scope_identity and not record.scope_identity.startswith("legacy:"):
+                active.execute(
+                    """
+                    delete from file_history_tracked_files
+                    where session_id = ? and canonical_path = ?
+                      and scope_identity like 'legacy:%'
+                    """,
+                    (record.session_id, record.canonical_path),
+                )
 
     def get_tracked_file(
         self,
         session_id: str,
         canonical_path: str,
         *,
+        scope_kind: str = "workspace",
+        scope_identity: str | None = None,
         conn: sqlite3.Connection | None = None,
     ) -> FileHistoryTrackedFileRecord | None:
         with self._connection(conn) as active:
             row = active.execute(
                 """
                 select * from file_history_tracked_files
-                where session_id = ? and canonical_path = ?
+                where session_id = ? and canonical_path = ? and scope_kind = ?
+                  and (? is null or scope_identity = ?)
                 """,
-                (session_id, canonical_path),
+                (session_id, canonical_path, scope_kind, scope_identity, scope_identity),
             ).fetchone()
         return _tracked_file(row) if row is not None else None
 
@@ -641,7 +832,8 @@ class FileHistoryRepository:
             rows = active.execute(
                 """
                 select * from file_history_tracked_files
-                where session_id = ? order by canonical_path asc
+                where session_id = ?
+                order by scope_kind asc, scope_identity asc, canonical_path asc
                 """,
                 (session_id,),
             ).fetchall()
@@ -654,14 +846,24 @@ class FileHistoryRepository:
         conn: sqlite3.Connection | None = None,
     ) -> FileHistoryMutationRecord:
         with self._connection(conn) as active:
+            scope = self._session_scope(
+                active,
+                record.session_id,
+                scope_kind=record.scope_kind,
+                scope_identity=record.scope_identity,
+                scope_root=record.scope_root,
+                scope_label=record.scope_label,
+                fallback_identity=record.workspace_identity,
+            )
             active.execute(
                 """
                 insert into file_history_mutations (
                   id, session_id, active_session_id, trace_id, turn_index, snapshot_id,
-                  workspace_identity, canonical_path, display_path, tool_name, tool_call_id,
+                  workspace_identity, scope_kind, scope_identity, scope_root, scope_label,
+                  canonical_path, display_path, tool_name, tool_call_id,
                   batch_id, mutation_kind, before_state, before_hash, after_state,
                   after_hash, status, error_code, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.id,
@@ -671,6 +873,7 @@ class FileHistoryRepository:
                     record.turn_index,
                     record.snapshot_id,
                     record.workspace_identity,
+                    *scope,
                     record.canonical_path,
                     record.display_path,
                     record.tool_name,
@@ -732,15 +935,18 @@ class FileHistoryRepository:
         snapshot_id: str,
         canonical_path: str,
         *,
+        scope_kind: str = "workspace",
+        scope_identity: str | None = None,
         conn: sqlite3.Connection | None = None,
     ) -> FileHistoryMutationRecord | None:
         with self._connection(conn) as active:
             row = active.execute(
                 """
                 select * from file_history_mutations
-                where snapshot_id = ? and canonical_path = ?
+                where snapshot_id = ? and canonical_path = ? and scope_kind = ?
+                  and (? is null or scope_identity = ?)
                 """,
-                (snapshot_id, canonical_path),
+                (snapshot_id, canonical_path, scope_kind, scope_identity, scope_identity),
             ).fetchone()
         return _mutation(row) if row is not None else None
 
@@ -765,7 +971,10 @@ class FileHistoryRepository:
         query = "select * from file_history_mutations"
         if clauses:
             query += " where " + " and ".join(clauses)
-        query += " order by created_at asc, canonical_path asc, id asc"
+        query += (
+            " order by created_at asc, scope_kind asc, scope_identity asc, "
+            "canonical_path asc, id asc"
+        )
         with self._connection(conn) as active:
             rows = active.execute(query, values).fetchall()
         return [_mutation(row) for row in rows]
@@ -775,17 +984,58 @@ class FileHistoryRepository:
         workspace_identity: str,
         canonical_path: str,
         *,
+        scope_kind: str = "workspace",
+        scope_identity: str | None = None,
         conn: sqlite3.Connection | None = None,
     ) -> FileHistoryPathHeadRecord | None:
         with self._connection(conn) as active:
             row = active.execute(
                 """
                 select * from file_history_path_heads
-                where workspace_identity = ? and canonical_path = ?
+                where canonical_path = ? and scope_kind = ? and scope_identity = ?
                 """,
-                (workspace_identity, canonical_path),
+                (canonical_path, scope_kind, scope_identity or workspace_identity),
             ).fetchone()
         return _path_head(row) if row is not None else None
+
+    def get_path_heads(
+        self,
+        resources: Sequence[tuple[str, str, str]],
+        *,
+        conn: sqlite3.Connection | None = None,
+    ) -> list[FileHistoryPathHeadRecord]:
+        """Load path heads for many resource identities using one connection.
+
+        SQLite commonly limits a statement to 999 bound variables, so the
+        composite resource keys are queried in bounded chunks.  This avoids
+        opening one database connection per file during large previews while
+        preserving the exact multi-scope identity lookup.
+        """
+
+        normalized = tuple(
+            dict.fromkeys(
+                (str(kind), str(identity), str(canonical_path))
+                for kind, identity, canonical_path in resources
+            )
+        )
+        if not normalized:
+            return []
+        rows: list[sqlite3.Row] = []
+        with self._connection(conn) as active:
+            for offset in range(0, len(normalized), 250):
+                chunk = normalized[offset : offset + 250]
+                predicates = " or ".join(
+                    "(scope_kind = ? and scope_identity = ? and canonical_path = ?)"
+                    for _ in chunk
+                )
+                values = [value for resource in chunk for value in resource]
+                rows.extend(
+                    active.execute(
+                        f"select * from file_history_path_heads where {predicates}",
+                        values,
+                    ).fetchall()
+                )
+        return [_path_head(row) for row in rows]
 
     def upsert_path_head(
         self,
@@ -794,13 +1044,26 @@ class FileHistoryRepository:
         conn: sqlite3.Connection | None = None,
     ) -> FileHistoryPathHeadRecord:
         with self._connection(conn) as active:
+            scope = self._session_scope(
+                active,
+                record.session_id,
+                scope_kind=record.scope_kind,
+                scope_identity=record.scope_identity,
+                scope_root=record.scope_root,
+                scope_label=record.scope_label,
+                fallback_identity=record.workspace_identity,
+            )
             active.execute(
                 """
                 insert into file_history_path_heads (
-                  workspace_identity, canonical_path, display_path, session_id, trace_id,
+                  workspace_identity, scope_kind, scope_identity, scope_root, scope_label,
+                  canonical_path, display_path, session_id, trace_id,
                   mutation_id, state, content_hash, revision, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                on conflict(workspace_identity, canonical_path) do update set
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(scope_kind, scope_identity, canonical_path) do update set
+                  workspace_identity=excluded.workspace_identity,
+                  scope_root=excluded.scope_root,
+                  scope_label=excluded.scope_label,
                   display_path=excluded.display_path,
                   session_id=excluded.session_id,
                   trace_id=excluded.trace_id,
@@ -812,6 +1075,7 @@ class FileHistoryRepository:
                 """,
                 (
                     record.workspace_identity,
+                    *scope,
                     record.canonical_path,
                     record.display_path,
                     record.session_id,
@@ -826,13 +1090,77 @@ class FileHistoryRepository:
             row = active.execute(
                 """
                 select * from file_history_path_heads
-                where workspace_identity = ? and canonical_path = ?
+                where scope_kind = ? and scope_identity = ? and canonical_path = ?
                 """,
-                (record.workspace_identity, record.canonical_path),
+                (scope[0], scope[1], record.canonical_path),
             ).fetchone()
         if row is None:
             raise RuntimeError("file history path head was not persisted")
         return _path_head(row)
+
+    def upsert_path_heads(
+        self,
+        records: Sequence[FileHistoryPathHeadRecord],
+        *,
+        conn: sqlite3.Connection | None = None,
+    ) -> None:
+        """Persist path heads as one batch without per-row readback."""
+
+        if not records:
+            return
+        with self._connection(conn) as active:
+            normalized = [
+                (
+                    record,
+                    self._session_scope(
+                        active,
+                        record.session_id,
+                        scope_kind=record.scope_kind,
+                        scope_identity=record.scope_identity,
+                        scope_root=record.scope_root,
+                        scope_label=record.scope_label,
+                        fallback_identity=record.workspace_identity,
+                    ),
+                )
+                for record in records
+            ]
+            active.executemany(
+                """
+                insert into file_history_path_heads (
+                  workspace_identity, scope_kind, scope_identity, scope_root, scope_label,
+                  canonical_path, display_path, session_id, trace_id,
+                  mutation_id, state, content_hash, revision, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(scope_kind, scope_identity, canonical_path) do update set
+                  workspace_identity=excluded.workspace_identity,
+                  scope_root=excluded.scope_root,
+                  scope_label=excluded.scope_label,
+                  display_path=excluded.display_path,
+                  session_id=excluded.session_id,
+                  trace_id=excluded.trace_id,
+                  mutation_id=excluded.mutation_id,
+                  state=excluded.state,
+                  content_hash=excluded.content_hash,
+                  revision=file_history_path_heads.revision + 1,
+                  updated_at=excluded.updated_at
+                """,
+                [
+                    (
+                        record.workspace_identity,
+                        *scope,
+                        record.canonical_path,
+                        record.display_path,
+                        record.session_id,
+                        record.trace_id,
+                        record.mutation_id,
+                        record.state,
+                        record.content_hash,
+                        max(1, record.revision),
+                        record.updated_at,
+                    )
+                    for record, scope in normalized
+                ],
+            )
 
     def create_operation(
         self,
@@ -896,19 +1224,42 @@ class FileHistoryRepository:
                 "delete from file_history_operation_files where operation_id = ?",
                 (operation_id,),
             )
+            operation = active.execute(
+                "select session_id, workspace_identity from file_history_operations where id = ?",
+                (operation_id,),
+            ).fetchone()
+            if operation is None:
+                raise ValueError(f"文件恢复操作不存在: {operation_id}")
+            normalized = [
+                (
+                    item,
+                    self._session_scope(
+                        active,
+                        str(operation["session_id"]),
+                        scope_kind=item.scope_kind,
+                        scope_identity=item.scope_identity,
+                        scope_root=item.scope_root,
+                        scope_label=item.scope_label,
+                        fallback_identity=str(operation["workspace_identity"] or ""),
+                    ),
+                )
+                for item in files
+            ]
             active.executemany(
                 """
                 insert into file_history_operation_files (
-                  operation_id, canonical_path, display_path, preview_current_state,
+                  operation_id, scope_kind, scope_identity, scope_root, scope_label,
+                  canonical_path, display_path, preview_current_state,
                   preview_current_hash, target_state, target_backup_file_name, target_hash,
                   target_size, target_mode, classification, reason_code, writer_session_id,
                   user_authorized, result_state, error_code, safety_state,
                   safety_backup_file_name, safety_hash, safety_size, safety_mode, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
                         item.operation_id,
+                        *scope,
                         item.canonical_path,
                         item.display_path,
                         item.preview_current_state,
@@ -931,7 +1282,7 @@ class FileHistoryRepository:
                         item.safety_mode,
                         item.updated_at,
                     )
-                    for item in files
+                    for item, scope in normalized
                 ],
             )
 
@@ -1190,7 +1541,8 @@ class FileHistoryRepository:
             rows = active.execute(
                 """
                 select * from file_history_operation_files
-                where operation_id = ? order by canonical_path asc
+                where operation_id = ?
+                order by scope_kind asc, scope_identity asc, canonical_path asc
                 """,
                 (operation_id,),
             ).fetchall()
@@ -1263,6 +1615,8 @@ class FileHistoryRepository:
         operation_id: str,
         canonical_path: str,
         *,
+        scope_kind: str = "workspace",
+        scope_identity: str | None = None,
         result_state: str | None = None,
         user_authorized: bool | None = None,
         error_code: str | None | object = ...,
@@ -1292,22 +1646,24 @@ class FileHistoryRepository:
             if value is not ...:
                 assignments.append(f"{column} = ?")
                 values.append(value)
-        values.extend((operation_id, canonical_path))
+        values.extend((operation_id, canonical_path, scope_kind, scope_identity, scope_identity))
         with self._connection(conn) as active:
             active.execute(
                 f"""
                 update file_history_operation_files
                    set {', '.join(assignments)}
-                 where operation_id = ? and canonical_path = ?
+                 where operation_id = ? and canonical_path = ? and scope_kind = ?
+                   and (? is null or scope_identity = ?)
                 """,
                 values,
             )
             row = active.execute(
                 """
                 select * from file_history_operation_files
-                where operation_id = ? and canonical_path = ?
+                where operation_id = ? and canonical_path = ? and scope_kind = ?
+                  and (? is null or scope_identity = ?)
                 """,
-                (operation_id, canonical_path),
+                (operation_id, canonical_path, scope_kind, scope_identity, scope_identity),
             ).fetchone()
         return _operation_file(row) if row is not None else None
 

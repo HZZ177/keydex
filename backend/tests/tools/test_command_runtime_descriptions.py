@@ -76,6 +76,26 @@ def test_system_prompt_describes_unconditional_trust_policy() -> None:
     assert "不会在执行前请求用户审批" in prompt
 
 
+def test_full_access_prompt_allows_external_cwd_without_promising_shell_history() -> None:
+    runtime = CommandRuntime(
+        shell="powershell",
+        tool_name="run_powershell",
+        shell_path=r"C:\Program Files\PowerShell\7\pwsh.exe",
+        shell_label="PowerShell 7+",
+    )
+    settings = CommandSettings(
+        selected_shell="powershell",
+        shell_path=runtime.shell_path,
+        shell_label=runtime.shell_label,
+        file_access_mode="full_access",
+    )
+
+    prompt = command_system_prompt_section(runtime, settings)
+
+    assert "任意本地目录" in prompt
+    assert "命令行产生的文件或其他副作用不保证纳入统一文件历史" in prompt
+
+
 def test_prompt_and_description_do_not_trust_path_like_shell_label() -> None:
     runtime = CommandRuntime(
         shell="powershell",

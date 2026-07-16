@@ -9,6 +9,7 @@ import { WorkspaceSelector } from "@/renderer/components/workspace";
 import styles from "./Titlebar.module.css";
 import { createWindowControls } from "./windowControls";
 import type { WindowControls } from "./windowControls";
+import { ProjectGitMenu, type ProjectGitMenuProps } from "./ProjectGitMenu";
 
 const APP_ICON_SRC = "/favicon-32.png";
 const APP_MODE_OPTIONS: Array<{ mode: AppMode; label: string }> = [
@@ -27,6 +28,7 @@ export interface TitlebarProps {
     onModeChange: (mode: AppMode) => void;
   };
   workbenchWorkspaceSelector?: WorkbenchWorkspaceSelectorProps;
+  projectGitMenu?: ProjectGitMenuProps;
 }
 
 export function Titlebar({
@@ -34,6 +36,7 @@ export function Titlebar({
   brandLabel,
   modeSwitch,
   workbenchWorkspaceSelector,
+  projectGitMenu,
   windowControls,
   onBrandClick,
 }: TitlebarProps) {
@@ -120,6 +123,7 @@ export function Titlebar({
         )}
         {brandLabel ? <span className={styles.brandLabel}>{brandLabel}</span> : null}
         {modeSwitch ? <ModeSwitch modeSwitch={modeSwitch} /> : null}
+        {projectGitMenu ? <ProjectGitMenu {...projectGitMenu} /> : null}
         {titlebarWorkspaceSelector ? (
           <div
             className={styles.workbenchWorkspaceSelector}

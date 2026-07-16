@@ -8,6 +8,7 @@ import {
   type KeyboardEvent,
   type CSSProperties,
   type ReactNode,
+  type SetStateAction,
   lazy,
   Suspense,
   useCallback,
@@ -111,6 +112,7 @@ export interface SendBoxProps {
   externalContextRequest?: SendBoxExternalContextRequest | null;
   selectedFiles?: SelectedFile[];
   selectedQuotes?: SelectedQuote[];
+  selectedImageAttachments?: SelectedImageAttachment[];
   leftHint?: ReactNode;
   allowBypassConversationSlashCommand?: boolean;
   allowGoalSlashCommand?: boolean;
@@ -120,6 +122,7 @@ export interface SendBoxProps {
   selectedSkill?: SkillSummary | null;
   onSelectedFilesChange?: (files: SelectedFile[]) => void;
   onSelectedQuotesChange?: (quotes: SelectedQuote[]) => void;
+  onSelectedImageAttachmentsChange?: (attachments: SelectedImageAttachment[]) => void;
   onSkillChange?: (skill: SkillSummary | null) => void;
   onChange: (value: string) => void;
   onSend: (
@@ -192,6 +195,7 @@ export function SendBox({
   externalContextRequest = null,
   selectedFiles: controlledSelectedFiles,
   selectedQuotes: controlledSelectedQuotes,
+  selectedImageAttachments: controlledImageAttachments,
   leftHint = null,
   allowBypassConversationSlashCommand = true,
   allowGoalSlashCommand = true,
@@ -201,6 +205,7 @@ export function SendBox({
   selectedSkill: controlledSelectedSkill,
   onSelectedFilesChange,
   onSelectedQuotesChange,
+  onSelectedImageAttachmentsChange,
   onSkillChange,
   onChange,
   onSend,
@@ -239,7 +244,7 @@ export function SendBox({
   const [atDirectoryResults, setAtDirectoryResults] = useState<WorkspaceSearchResult[]>([]);
   const [atDirectoryLoading, setAtDirectoryLoading] = useState(false);
   const [atDirectoryError, setAtDirectoryError] = useState<string | null>(null);
-  const [imageAttachments, setImageAttachments] = useState<SelectedImageAttachment[]>([]);
+  const [uncontrolledImageAttachments, setUncontrolledImageAttachments] = useState<SelectedImageAttachment[]>([]);
   const [attachmentLoading, setAttachmentLoading] = useState(false);
   const [activeImagePreview, setActiveImagePreview] = useState<SelectedImageAttachment | null>(null);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
@@ -268,6 +273,18 @@ export function SendBox({
     controlledSelectedQuotes === undefined
       ? uncontrolledQuoteSelection
       : { quotes: controlledSelectedQuotes };
+  const imageAttachments = controlledImageAttachments ?? uncontrolledImageAttachments;
+  const setImageAttachments = useCallback(
+    (update: SetStateAction<SelectedImageAttachment[]>) => {
+      if (controlledImageAttachments === undefined) {
+        setUncontrolledImageAttachments(update);
+        return;
+      }
+      const next = typeof update === "function" ? update(controlledImageAttachments) : update;
+      onSelectedImageAttachmentsChange?.(next);
+    },
+    [controlledImageAttachments, onSelectedImageAttachmentsChange],
+  );
   const dispatchFileSelection = useCallback(
     (action: FileSelectionAction) => {
       if (controlledSelectedFiles === undefined) {
@@ -583,23 +600,35 @@ export function SendBox({
     handledExternalContextRequestIdRef.current = externalContextRequest.requestId;
     const files = canUseFileContext ? externalContextRequest.files ?? [] : [];
     const quotes = externalContextRequest.quotes ?? [];
-    dispatchFileSelection({ type: "clear" });
-    dispatchQuoteSelection({ type: "clear" });
-    if (files.length) {
-      dispatchFileSelection(files.length === 1 ? { type: "add", file: files[0] } : { type: "addMany", files });
+    if (controlledSelectedFiles === undefined) {
+      dispatchFileSelection({ type: "clear" });
+      if (files.length) {
+        dispatchFileSelection(files.length === 1 ? { type: "add", file: files[0] } : { type: "addMany", files });
+      }
+    } else {
+      onSelectedFilesChange?.(files);
     }
-    if (quotes.length) {
-      dispatchQuoteSelection(quotes.length === 1 ? { type: "add", quote: quotes[0] } : { type: "addMany", quotes });
+    if (controlledSelectedQuotes === undefined) {
+      dispatchQuoteSelection({ type: "clear" });
+      if (quotes.length) {
+        dispatchQuoteSelection(quotes.length === 1 ? { type: "add", quote: quotes[0] } : { type: "addMany", quotes });
+      }
+    } else {
+      onSelectedQuotesChange?.(quotes);
     }
     replaceImageAttachments(externalContextRequest.attachments ?? []);
     onExternalContextRequestHandled?.(externalContextRequest.requestId);
     inputRef.current?.focus();
   }, [
     canUseFileContext,
+    controlledSelectedFiles,
+    controlledSelectedQuotes,
     dispatchFileSelection,
     dispatchQuoteSelection,
     externalContextRequest,
     onExternalContextRequestHandled,
+    onSelectedFilesChange,
+    onSelectedQuotesChange,
     replaceImageAttachments,
   ]);
 

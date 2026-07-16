@@ -1,0 +1,18 @@
+.root { display: grid; min-width: 0; gap: 7px; padding-top: 8px; border-top: 1px solid var(--color-border-2); }
+.root > header { display: flex; align-items: center; gap: 5px; font-size: 10px; }
+.root > header svg { color: var(--color-accent-1); }
+.controls { display: grid; min-width: 0; gap: 5px; }
+.controls label { display: grid; min-width: 0; gap: 2px; color: var(--color-text-3); font-size: 9px; }
+.controls input, .controls select { box-sizing: border-box; width: 100%; min-width: 0; height: 24px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); outline: 0; background: var(--surface-1); color: var(--color-text-2); font-size: 9px; }
+.controls input:focus, .controls select:focus { border-color: var(--color-accent-1); }
+.controls button { display: inline-flex; width: max-content; min-height: 24px; align-items: center; gap: 4px; padding: 0 7px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--surface-active); color: var(--color-text-2); cursor: pointer; font-size: 9px; }
+.controls button:disabled { cursor: default; opacity: .45; }
+.workingTarget { color: var(--color-text-3); font-size: 9px; }
+.result { display: grid; min-width: 0; gap: 5px; }
+.result dl { display: grid; gap: 3px; margin: 0; }
+.result dl > div { display: grid; min-width: 0; grid-template-columns: 48px minmax(0, 1fr); gap: 4px; font-size: 9px; }
+.result dt { color: var(--color-text-3); }.result dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }.result code { color: var(--color-text-3); font-size: 8px; }
+.result > header { display: flex; align-items: center; gap: 5px; font-size: 9px; }.result > header strong { margin-right: auto; }
+.additions { color: var(--color-success-1, #3a9d5d); }.deletions { color: var(--color-danger-1, #d14343); }
+.result ul { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.result li button { display: flex; width: 100%; min-width: 0; min-height: 22px; align-items: center; justify-content: space-between; gap: 4px; padding: 0 4px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-2); cursor: pointer; font-size: 9px; text-align: left; }.result li button[aria-pressed="true"], .result li button:hover { background: var(--surface-active); }.result li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.result li small { flex: 0 0 auto; color: var(--color-text-3); font-size: 8px; }

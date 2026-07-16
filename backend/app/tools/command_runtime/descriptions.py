@@ -61,11 +61,13 @@ def command_system_prompt_section(
     }[runtime.shell]
     environment = _public_shell_environment(runtime)
     approval = _approval_policy_text(settings)
+    cwd_policy = _cwd_policy_text(settings)
     return (
         "## 命令工具\n\n"
         f"当前仅有一个命令工具 `{runtime.tool_name}`，运行在用户本机 Windows 工作区，"
         f"命令解释器为 {environment}。命令必须使用{syntax}\n"
         f"{approval}\n"
+        f"{cwd_policy}\n"
         "执行形态：命令以前台阻塞、非交互方式运行；不支持后台任务、stdin、PTY、持久 shell state、"
         "交互式程序，也不会在运行时降级或切换到其他 shell。\n"
         "使用边界：读取文件、搜索文本、列目录、创建或修改文件、应用补丁时，优先使用对应的文件/搜索/编辑工具。"
@@ -76,6 +78,15 @@ def command_system_prompt_section(
         "如果命令工具返回 status=cancelled 且 cancel_reason=user，表示用户只终止了这一次工具调用，"
         "不是取消整轮对话。不要自动重跑同一命令；应基于已有输出继续推理，或说明为什么需要用户确认后重试。"
     )
+
+
+def _cwd_policy_text(settings: CommandSettings | None) -> str:
+    if settings is not None and settings.file_access_mode == "full_access":
+        return (
+            "目录边界：完全访问允许 cwd 指向当前用户有权限访问的任意本地目录；"
+            "命令行产生的文件或其他副作用不保证纳入统一文件历史，也不保证可回溯。"
+        )
+    return "目录边界：cwd 只能位于当前工作区内。"
 
 
 def _approval_policy_text(settings: CommandSettings | None) -> str:

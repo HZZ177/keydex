@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import type {
@@ -7,7 +8,7 @@ import type {
   SkillSummary,
 } from "@/runtime";
 import { HomePage } from "@/renderer/pages/home";
-import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
+import { ActiveProjectCoordinatorProvider } from "@/renderer/providers/ActiveProjectCoordinatorProvider";
 import type { AgentSession, ModelInfo, Workspace } from "@/types/protocol";
 
 describe("HomePage skill activation", () => {
@@ -16,7 +17,7 @@ describe("HomePage skill activation", () => {
     const runtime = fakeRuntime({ model: "qwen-coder", workspaceListSkills });
     const onNavigateToConversation = vi.fn();
 
-    render(
+    renderHome(
       <HomePage
         runtime={runtime}
         onNavigateToConversation={onNavigateToConversation}
@@ -88,7 +89,7 @@ describe("HomePage skill activation", () => {
     });
     const onNavigateToConversation = vi.fn();
 
-    render(
+    renderHome(
       <HomePage
         runtime={runtime}
         initialSessionType="chat"
@@ -141,7 +142,7 @@ describe("HomePage skill activation", () => {
     const systemListSkills = vi.fn().mockRejectedValue(new Error("system catalog unavailable"));
     const runtime = fakeRuntime({ model: "qwen-coder", systemListSkills });
 
-    render(
+    renderHome(
       <HomePage
         runtime={runtime}
         initialSessionType="chat"
@@ -166,7 +167,7 @@ describe("HomePage skill activation", () => {
     );
     const runtime = fakeRuntime({ model: "qwen-coder", systemListSkills, workspaceListSkills });
 
-    render(
+    renderHome(
       <HomePage
         runtime={runtime}
         onNavigateToConversation={vi.fn()}
@@ -185,7 +186,7 @@ describe("HomePage skill activation", () => {
     expect(screen.getByRole("option", { name: /project-review/u })).not.toBeNull();
   });
 
-  it("clears a selected project winner when chat resolves the same name from system", async () => {
+  it("keeps a selected project winner isolated in its workspace draft", async () => {
     const systemListSkills = vi.fn().mockResolvedValue(
       skillsResponse([skill("shared", "system")], "system_only"),
     );
@@ -194,14 +195,12 @@ describe("HomePage skill activation", () => {
     );
     const runtime = fakeRuntime({ model: "qwen-coder", systemListSkills, workspaceListSkills });
 
-    render(
-      <NotificationProvider>
-        <HomePage
-          runtime={runtime}
-          onNavigateToConversation={vi.fn()}
-          onOpenModelSettings={vi.fn()}
-        />
-      </NotificationProvider>,
+    renderHome(
+      <HomePage
+        runtime={runtime}
+        onNavigateToConversation={vi.fn()}
+        onOpenModelSettings={vi.fn()}
+      />,
     );
 
     await waitFor(() => expect(workspaceListSkills).toHaveBeenCalled());
@@ -213,11 +212,21 @@ describe("HomePage skill activation", () => {
 
     await waitFor(() => expect(systemListSkills).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByLabelText("删除 Skill /shared")).toBeNull());
-    expect(screen.getByTestId("notification-item").textContent).toContain(
-      "同名 Skill 的有效来源已变化",
-    );
+
+    fireEvent.click(screen.getByRole("button", { name: "选择工作区" }));
+    fireEvent.click(screen.getByRole("option", { name: /keydex/u }));
+
+    expect(await screen.findByLabelText("删除 Skill /shared")).not.toBeNull();
   });
 });
+
+function renderHome(element: ReactElement) {
+  return render(
+    <ActiveProjectCoordinatorProvider>
+      {element}
+    </ActiveProjectCoordinatorProvider>,
+  );
+}
 
 function selectFirstSkill(name: string) {
   typePrompt("/");

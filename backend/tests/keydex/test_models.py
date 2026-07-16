@@ -13,7 +13,7 @@ def test_keydex_diagnostic_serializes() -> None:
     diagnostic = KeydexDiagnostic(
         code="manifest_invalid",
         reason="invalid json",
-        path=".keydex/keydex.json",
+        path=".keydex/keydex.md",
         severity="error",
         details={"line": 1},
     )
@@ -21,9 +21,12 @@ def test_keydex_diagnostic_serializes() -> None:
     assert diagnostic.to_dict() == {
         "code": "manifest_invalid",
         "reason": "invalid json",
-        "path": ".keydex/keydex.json",
+        "path": ".keydex/keydex.md",
         "severity": "error",
         "details": {"line": 1},
+        "capability_id": None,
+        "scope": None,
+        "logical_path": ".keydex/keydex.md",
     }
 
 

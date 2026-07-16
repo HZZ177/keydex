@@ -252,6 +252,56 @@ describe("RuntimeWsClient", () => {
     expect(FakeWebSocket.instances[1].sent).toEqual([]);
   });
 
+  it("binds exact Git repository scopes and restores them after reconnect", () => {
+    vi.useFakeTimers();
+    const client = new RuntimeWsClient({
+      baseUrl: "ws://127.0.0.1:8765",
+      WebSocketImpl: FakeWebSocket,
+      reconnectDelayMs: 10,
+      onEvent: vi.fn(),
+    });
+    client.bindGitRepositoryWatch("ws-1", "D:/repo", "repo-1");
+    client.connect();
+    FakeWebSocket.instances[0].open();
+    FakeWebSocket.instances[0].serverClose();
+    vi.advanceTimersByTime(10);
+    FakeWebSocket.instances[1].open();
+
+    const expected = {
+      action: "bind_git_repository_watch",
+      data: {
+        workspace_id: "ws-1",
+        project_root: "D:/repo",
+        repository_id: "repo-1",
+      },
+    };
+    expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toContainEqual(expected);
+    expect(FakeWebSocket.instances[1].sent.map((item) => JSON.parse(item))).toEqual([expected]);
+  });
+
+  it("does not restore an explicitly unbound Git repository watch", () => {
+    vi.useFakeTimers();
+    const client = new RuntimeWsClient({
+      baseUrl: "ws://127.0.0.1:8765",
+      WebSocketImpl: FakeWebSocket,
+      reconnectDelayMs: 10,
+      onEvent: vi.fn(),
+    });
+    client.connect();
+    FakeWebSocket.instances[0].open();
+    client.bindGitRepositoryWatch("ws-1", "D:/repo", "repo-1");
+    client.unbindGitRepositoryWatch("repo-1");
+    FakeWebSocket.instances[0].serverClose();
+    vi.advanceTimersByTime(10);
+    FakeWebSocket.instances[1].open();
+
+    expect(FakeWebSocket.instances[0].sent.map((item) => JSON.parse(item))).toContainEqual({
+      action: "unbind_git_repository_watch",
+      data: { repository_id: "repo-1" },
+    });
+    expect(FakeWebSocket.instances[1].sent).toEqual([]);
+  });
+
   it("rebinds desired local file watches after reconnect", () => {
     vi.useFakeTimers();
     const client = new RuntimeWsClient({

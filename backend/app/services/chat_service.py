@@ -36,9 +36,15 @@ from backend.app.events import (
     PersistenceProjection,
     TurnCompletedAggregator,
 )
-from backend.app.keydex import KeydexRuntimeCache
+from backend.app.keydex import KeydexCapabilityRuntimeCache, KeydexRuntimeCache
+from backend.app.keydex.capabilities.skills.consumer import (
+    effective_capability_fingerprints,
+    effective_skill_catalog,
+)
+from backend.app.keydex.models import KeydexEffectiveSnapshot
+from backend.app.keydex.registry import KEYDEX_RUNTIME_REVISION
 from backend.app.keydex.runtime import KeydexEffectiveRuntimeSnapshot
-from backend.app.keydex.skills import EffectiveSkillCatalog
+from backend.app.keydex.skills import EffectiveSkillCatalog, SkillCatalog
 from backend.app.mcp.runtime import McpRuntimeSnapshotBuilder, McpRuntimeSnapshotContext
 from backend.app.mcp.tools import (
     McpActiveToolWindow,
@@ -79,6 +85,30 @@ from backend.app.web.service import WebService
 # infinite value. 99999 is intentionally used as a practical no-limit sentinel
 # for desktop agent runs.
 PRACTICAL_NO_RECURSION_LIMIT = 99_999
+
+KeydexTurnSnapshot = KeydexEffectiveSnapshot | KeydexEffectiveRuntimeSnapshot
+KeydexRuntimeCacheType = KeydexCapabilityRuntimeCache | KeydexRuntimeCache
+
+
+def _snapshot_skill_catalog(
+    snapshot: KeydexTurnSnapshot,
+) -> EffectiveSkillCatalog | SkillCatalog:
+    catalog = effective_skill_catalog(snapshot)
+    if catalog is None:
+        raise RuntimeError("Keydex snapshot is missing the Skills capability")
+    return catalog
+
+
+def _snapshot_scopes(snapshot: KeydexTurnSnapshot) -> list[str]:
+    if isinstance(snapshot, KeydexEffectiveSnapshot):
+        return [layer.scope for layer in snapshot.layers]
+    scopes = []
+    if snapshot.builtin_layer is not None:
+        scopes.append("builtin")
+    scopes.append("system")
+    if snapshot.workspace_layer is not None:
+        scopes.append("workspace")
+    return scopes
 
 
 class NullChatProjectionAdapter:
@@ -865,7 +895,7 @@ class ChatService:
         settings: AppSettings,
         repositories: StorageRepositories,
         agent_runner: AgentRunner,
-        keydex_runtime_cache: KeydexRuntimeCache | None = None,
+        keydex_runtime_cache: KeydexRuntimeCacheType | None = None,
         thread_task_service: ThreadTaskService | None = None,
         mcp_manager: McpToolExecutor | None = None,
         file_history_service: FileHistoryService | None = None,
@@ -874,7 +904,7 @@ class ChatService:
         self.settings = settings
         self.repositories = repositories
         self.agent_runner = agent_runner
-        self.keydex_runtime_cache = keydex_runtime_cache or KeydexRuntimeCache()
+        self.keydex_runtime_cache = keydex_runtime_cache or KeydexCapabilityRuntimeCache()
         self.message_event_service = MessageEventService(repositories.message_events)
         self.workspace_service = WorkspaceService(repositories.workspaces)
         self.thread_task_service = thread_task_service or ThreadTaskService(repositories)
@@ -949,7 +979,10 @@ class ChatService:
                 ),
                 *message_injection_items,
             ]
-        turn_keydex_snapshot = self._resolve_session_keydex_snapshot(session)
+        turn_keydex_snapshot = await asyncio.to_thread(
+            self._resolve_session_keydex_snapshot,
+            session,
+        )
         _, max_turn = self.repositories.message_events.get_max_seq_and_turn(session.id)
         turn_index = max_turn + 1
         trace_id = new_id()
@@ -971,8 +1004,13 @@ class ChatService:
         )
         runtime_metadata = {"runtime": "desktop", "agent_runtime": "langchain"}
         runtime_metadata["keydex"] = {
+            "runtime_revision": KEYDEX_RUNTIME_REVISION,
             "mode": turn_keydex_snapshot.mode,
             "fingerprint": turn_keydex_snapshot.fingerprint,
+            "capability_fingerprints": effective_capability_fingerprints(
+                turn_keydex_snapshot
+            ),
+            "scopes": _snapshot_scopes(turn_keydex_snapshot),
         }
         if thread_task_context:
             runtime_metadata["thread_task"] = thread_task_context
@@ -1392,7 +1430,7 @@ class ChatService:
         injected_runtime_messages: list[dict[str, Any]] | None = None,
         image_attachments: list[AttachmentRecord] | None = None,
         skill_activation: SkillActivationRequest | None = None,
-        keydex_snapshot: KeydexEffectiveRuntimeSnapshot | None = None,
+        keydex_snapshot: KeydexTurnSnapshot,
         input_file_snapshot_id: str | None = None,
     ) -> AgentLoopOutcome:
         active_session_id = session.active_session_id or session.id
@@ -1596,19 +1634,15 @@ class ChatService:
         session: SessionRecord,
         trace_id: str,
         turn_index: int,
-        keydex_snapshot: KeydexEffectiveRuntimeSnapshot | None = None,
+        keydex_snapshot: KeydexTurnSnapshot,
         input_file_snapshot_id: str | None = None,
     ) -> tuple[ToolExecutionContext, bool]:
         if session.session_type == "workspace":
             workspace_context = self.workspace_service.runtime_context_for_session(session)
-            resolved_keydex_snapshot = (
-                keydex_snapshot
-                or self.keydex_runtime_cache.get_workspace_snapshot(
-                    workspace_context.workspace.root_path,
-                )
-            )
+            resolved_keydex_snapshot = keydex_snapshot
+            skill_catalog = _snapshot_skill_catalog(resolved_keydex_snapshot)
             tool_capabilities = {ToolCapability.WORKSPACE}
-            if resolved_keydex_snapshot.skill_catalog.available:
+            if skill_catalog.available:
                 tool_capabilities.add(ToolCapability.SKILL)
             return (
                 ToolExecutionContext(
@@ -1630,23 +1664,20 @@ class ChatService:
                             str(root) for root in workspace_context.workspace_roots
                         ],
                         "keydex_snapshot": resolved_keydex_snapshot,
-                        "keydex_profile": resolved_keydex_snapshot.workspace_layer.profile,
-                        "skill_catalog": resolved_keydex_snapshot.skill_catalog,
                         "keydex_fingerprint": resolved_keydex_snapshot.fingerprint,
                         "keydex_mode": resolved_keydex_snapshot.mode,
                         "enable_workspace_tools": True,
-                        "enable_skill_tools": resolved_keydex_snapshot.skill_catalog.available,
+                        "enable_skill_tools": skill_catalog.available,
                         "tool_capabilities": frozenset(tool_capabilities),
                     },
                 ),
                 True,
             )
         if session.session_type == "chat":
-            resolved_keydex_snapshot = (
-                keydex_snapshot or self.keydex_runtime_cache.get_system_snapshot()
-            )
+            resolved_keydex_snapshot = keydex_snapshot
+            skill_catalog = _snapshot_skill_catalog(resolved_keydex_snapshot)
             tool_capabilities: set[ToolCapability] = set()
-            if resolved_keydex_snapshot.skill_catalog.available:
+            if skill_catalog.available:
                 tool_capabilities.add(ToolCapability.SKILL)
             return (
                 ToolExecutionContext(
@@ -1663,11 +1694,10 @@ class ChatService:
                     metadata={
                         "tools_enabled": False,
                         "keydex_snapshot": resolved_keydex_snapshot,
-                        "skill_catalog": resolved_keydex_snapshot.skill_catalog,
                         "keydex_fingerprint": resolved_keydex_snapshot.fingerprint,
                         "keydex_mode": resolved_keydex_snapshot.mode,
                         "enable_workspace_tools": False,
-                        "enable_skill_tools": resolved_keydex_snapshot.skill_catalog.available,
+                        "enable_skill_tools": skill_catalog.available,
                         "tool_capabilities": frozenset(tool_capabilities),
                     },
                 ),
@@ -1741,24 +1771,25 @@ class ChatService:
         activation: SkillActivationRequest | None,
         session: SessionRecord,
         *,
-        snapshot: KeydexEffectiveRuntimeSnapshot | None = None,
-    ) -> KeydexEffectiveRuntimeSnapshot:
+        snapshot: KeydexTurnSnapshot | None = None,
+    ) -> KeydexTurnSnapshot:
         resolved_snapshot = snapshot or self._resolve_session_keydex_snapshot(session)
+        skill_catalog = _snapshot_skill_catalog(resolved_snapshot)
         if activation is None:
             return resolved_snapshot
-        if not resolved_snapshot.skill_catalog.available:
+        if not skill_catalog.available:
             raise SkillActivationError(
                 "skill_layer_unavailable",
                 "当前 Skill 配置无效，请修复后重试",
                 {"mode": resolved_snapshot.mode},
             )
-        if activation.skill_name.casefold() in resolved_snapshot.skill_catalog.shadowed_names:
+        if activation.skill_name.casefold() in skill_catalog.shadowed_names:
             raise SkillActivationError(
                 "skill_shadow_barrier",
                 "同名项目 Skill 配置无效，已阻止继承系统 Skill",
                 {"skill_name": activation.skill_name},
             )
-        skill = resolved_snapshot.skill_catalog.skills.get(activation.skill_name)
+        skill = skill_catalog.skills.get(activation.skill_name)
         if skill is None:
             raise SkillActivationError(
                 "skill_not_found",
@@ -1780,7 +1811,7 @@ class ChatService:
     def _resolve_session_keydex_snapshot(
         self,
         session: SessionRecord,
-    ) -> KeydexEffectiveRuntimeSnapshot:
+    ) -> KeydexTurnSnapshot:
         if session.session_type == "chat":
             return self.keydex_runtime_cache.get_system_snapshot()
         if session.session_type == "workspace":
@@ -1797,16 +1828,15 @@ class ChatService:
         skill_activation: SkillActivationRequest | None,
         user_message: str | None = None,
     ):
-        skill_catalog = tool_context.metadata.get("skill_catalog")
-        if not isinstance(skill_catalog, EffectiveSkillCatalog):
-            skill_catalog = None
         keydex_snapshot = tool_context.metadata.get("keydex_snapshot")
-        if not isinstance(keydex_snapshot, KeydexEffectiveRuntimeSnapshot):
-            keydex_snapshot = None
+        if not isinstance(
+            keydex_snapshot,
+            (KeydexEffectiveSnapshot, KeydexEffectiveRuntimeSnapshot),
+        ):
+            raise RuntimeError("Agent runtime context requires a Keydex turn snapshot")
         return set_request_context(
             tool_call_preset=_build_skill_activation_preset(skill_activation),
             user_message=user_message,
-            skill_catalog=skill_catalog,
             keydex_snapshot=keydex_snapshot,
         )
 
@@ -1974,11 +2004,13 @@ class ChatService:
         root_node_id: str,
         turn_index: int,
         skill_activation: SkillActivationRequest | None,
-        keydex_snapshot: KeydexEffectiveRuntimeSnapshot | None,
+        keydex_snapshot: KeydexTurnSnapshot | None,
     ) -> None:
         if skill_activation is None or keydex_snapshot is None:
             return
-        skill = keydex_snapshot.skill_catalog.skills.get(skill_activation.skill_name)
+        skill = _snapshot_skill_catalog(keydex_snapshot).skills.get(
+            skill_activation.skill_name
+        )
         if skill is None:
             return
         label = f"/{skill.name}"

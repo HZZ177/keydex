@@ -1,0 +1,20 @@
+.root { display: grid; gap: 9px; margin: 10px; padding: 10px; border: 1px solid var(--color-border-2); border-radius: var(--radius-md); }
+.root header, .root header > div { display: flex; align-items: center; gap: 7px; }
+.root header > div { min-width: 0; flex: 1; justify-content: space-between; }
+.root header strong { font-size: 12px; }
+.root header span, .root p, .root small, .root dt, .root dd, .recursive { color: var(--color-text-3); font-size: 10px; }
+.root ul { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
+.root li { display: grid; gap: 5px; padding: 7px; border-radius: var(--radius-sm); background: var(--color-bg-2); }
+.root li > label { display: flex; align-items: center; gap: 6px; }
+.root li > label span { display: grid; min-width: 0; gap: 2px; }
+.root li > label strong { font-size: 11px; }
+.root dl { display: grid; gap: 3px; margin: 0 0 0 22px; }
+.root dl div { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 6px; }
+.root dd { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recursive { display: flex; align-items: center; gap: 5px; }
+.root aside { display: grid; gap: 3px; padding: 7px; border: 1px solid color-mix(in srgb, var(--color-warning-1, #b7791f) 40%, var(--color-border-2)); border-radius: var(--radius-sm); }
+.root aside strong { color: var(--color-warning-1, #b7791f); font-size: 10px; }
+.root aside span { color: var(--color-text-2); font-size: 10px; }
+.actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.actions button { display: inline-flex; min-height: 27px; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: transparent; color: var(--color-text-2); cursor: pointer; font-size: 10px; }
+.actions button:disabled { cursor: default; opacity: 0.45; }

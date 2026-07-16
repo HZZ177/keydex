@@ -2,6 +2,7 @@ import {
   FileDiff,
   FileText,
   Folder,
+  GitBranch,
   Maximize2,
   MessageSquare,
   Minimize2,
@@ -47,10 +48,13 @@ import {
   type ReviewPanelRequest,
 } from "@/renderer/providers/PreviewProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
+import { useOptionalActiveProjectState } from "@/renderer/providers/ActiveProjectProvider";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { ConnectionStatus } from "@/renderer/components/runtime";
 import { LoadingSkeleton } from "@/renderer/components/loading";
 import { FileReviewPanel } from "@/renderer/components/review/FileReviewDiff";
+import { GitToolWindow } from "@/renderer/features/git/components/GitToolWindow";
+import { useOptionalGitStore, useOptionalGitStoreSelector } from "@/renderer/providers/GitProvider";
 import { A2UIRenderSuspensionProvider } from "@/renderer/pages/conversation/messages/a2ui/A2UIRenderSuspensionContext";
 import type { SelectedQuote } from "@/renderer/components/chat/SendBox";
 import type { FileReviewChange } from "@/renderer/utils/fileReview";
@@ -63,6 +67,7 @@ import type { AgentSession } from "@/types/protocol";
 
 import { RightSidebarResizeHandle } from "./RightSidebarResizeHandle";
 import { RightSidebarInitialPage } from "./RightSidebarInitialPage";
+import { rightSidebarPanelRegistry } from "./rightSidebarRegistry";
 import {
   RightSidebarConversationContext,
   useOptionalRightSidebarConversation,
@@ -139,6 +144,11 @@ interface RightSidebarReviewPanelState {
   requestId: number;
 }
 
+interface RightSidebarToolPanelState {
+  id: string;
+  type: "git";
+}
+
 interface RightSidebarConversationQuoteRequest {
   requestId: number;
   quote: SelectedQuote;
@@ -153,6 +163,8 @@ interface RightSidebarScopePanelState {
   conversationPanels: Record<string, RightSidebarConversationPanelState>;
   reviewPanelIds: string[];
   reviewPanels: Record<string, RightSidebarReviewPanelState>;
+  toolPanelIds: string[];
+  toolPanels: Record<string, RightSidebarToolPanelState>;
   initialPanelIds: string[];
   nextPanelSeq: number;
 }
@@ -171,6 +183,8 @@ const EMPTY_RIGHT_SIDEBAR_SCOPE_STATE: RightSidebarScopePanelState = {
   conversationPanels: {},
   reviewPanelIds: [],
   reviewPanels: {},
+  toolPanelIds: [],
+  toolPanels: {},
   initialPanelIds: [],
   nextPanelSeq: 0,
 };
@@ -302,16 +316,19 @@ export function Layout({
   );
   const [sidebarResizeActive, setSidebarResizeActive] = useState(false);
   const [rightSidebarResizeActive, setRightSidebarResizeActive] = useState(false);
+  const [gitToolWindowRequestId, setGitToolWindowRequestId] = useState(0);
   const [rightSidebarPanelStateByScope, setRightSidebarPanelStateByScope] = useState<
     Record<string, RightSidebarScopePanelState>
   >(initialLayoutUiState?.rightSidebarPanelStateByScope ?? {});
   const [productShowcasePhase, setProductShowcasePhase] = useState<ProductShowcaseOverlayPhase | null>(null);
   const { state, actions } = useLayoutState();
   const runtimeConnection = useOptionalRuntimeConnection();
+  const activeProjectState = useOptionalActiveProjectState();
+  const gitStore = useOptionalGitStore();
   const notifications = useNotifications();
   const collapsed = state.sidebarCollapsed;
   const sidebarEnabled = appMode !== "project";
-  const globalRightSidebarEnabled = appMode === "agent";
+  const globalRightSidebarEnabled = true;
   const { sidebarMotion, toggleSidebar } = useSidebarCollapseMotion(actions.toggleSidebar);
   const {
     sidebarMotion: rightSidebarMotion,
@@ -606,6 +623,11 @@ export function Layout({
     actions.setRightSidebarOpen(true);
   }, [actions, globalRightSidebarEnabled, startRightSidebarMotion, state.rightSidebarOpen]);
 
+  const openGitToolWindow = useCallback(() => {
+    openRightSidebar();
+    setGitToolWindowRequestId((current) => current + 1);
+  }, [openRightSidebar]);
+
   const openConversationPanel = useCallback(
     (request: OpenRightSidebarConversationRequest) => {
       const session = request.session;
@@ -820,8 +842,14 @@ export function Layout({
       return;
     }
     lastRightSidebarResetKeyRef.current = resetRightSidebarKey;
+    const gitWorkspaceId = activeProjectState && activeProjectState.status !== "none"
+      ? activeProjectState.workspaceId
+      : null;
+    if (gitWorkspaceId && gitStore?.getState().uiByProject[gitWorkspaceId]?.toolWindowOpen) {
+      return;
+    }
     closeRightSidebar();
-  }, [closeRightSidebar, resetRightSidebarKey]);
+  }, [activeProjectState, closeRightSidebar, gitStore, resetRightSidebarKey]);
 
   const rightSidebarOpen = globalRightSidebarEnabled && state.rightSidebarOpen;
   const rightSidebarMaximized = rightSidebarOpen && rightSidebarMode === "maximized";
@@ -863,6 +891,7 @@ export function Layout({
             currentMode: appMode,
             onModeChange: switchAppMode,
           }}
+          projectGitMenu={{ onOpenToolWindow: openGitToolWindow }}
           workbenchWorkspaceSelector={workbenchWorkspaceSelector}
         />
 
@@ -945,6 +974,7 @@ export function Layout({
                   a2uiRenderSuspended={a2uiRenderSuspendedForLayoutResize}
                   panelStateByScope={rightSidebarPanelStateByScope}
                   setPanelStateByScope={setRightSidebarPanelStateByScope}
+                  gitOpenRequestId={gitToolWindowRequestId}
                   onNavigateToConversation={(sessionId) => onNavigate?.(resolveSessionPath(sessionId, getSessionPath))}
                   onOpenModelSettings={() => onNavigate?.("/settings/model-defaults")}
                   onClose={closeRightSidebar}
@@ -975,6 +1005,7 @@ function RightSidebarPanel({
   a2uiRenderSuspended,
   panelStateByScope,
   setPanelStateByScope,
+  gitOpenRequestId,
   onNavigateToConversation,
   onOpenModelSettings,
   onClose,
@@ -988,6 +1019,7 @@ function RightSidebarPanel({
   a2uiRenderSuspended: boolean;
   panelStateByScope: Record<string, RightSidebarScopePanelState>;
   setPanelStateByScope: Dispatch<SetStateAction<Record<string, RightSidebarScopePanelState>>>;
+  gitOpenRequestId: number;
   onNavigateToConversation?: (sessionId: string) => void;
   onOpenModelSettings?: () => void;
   onClose: () => void;
@@ -1000,8 +1032,12 @@ function RightSidebarPanel({
   const syncedPreviewOpenStampsRef = useRef<Set<string>>(new Set());
   const previousFilePanelScopeRef = useRef(activeScopeKey);
   const previousScopeHadFilePanelRef = useRef(false);
+  const previousGitPanelScopeRef = useRef(activeScopeKey);
+  const panelStateByScopeRef = useRef(panelStateByScope);
+  panelStateByScopeRef.current = panelStateByScope;
   const rightSidebarTabMenuRef = useRef<HTMLDivElement | null>(null);
   const [rightSidebarTabMenu, setRightSidebarTabMenu] = useState<RightSidebarTabMenuState | null>(null);
+  const [gitMaximizedByProject, setGitMaximizedByProject] = useState<Record<string, boolean>>({});
   const request = previewContext?.open ? previewContext.request : null;
   const renderContext = previewContext?.activeRenderContext;
   const rawFilePanelRequest = previewContext?.filePanelRequest ?? null;
@@ -1018,6 +1054,12 @@ function RightSidebarPanel({
   const entries = previewContext?.entries ?? [];
   const activeEntryId = previewContext?.activeEntryId ?? null;
   const hostContext = previewContext?.hostContext ?? null;
+  const activeProjectState = useOptionalActiveProjectState();
+  const gitStore = useOptionalGitStore();
+  const gitCapabilityUnavailable = useOptionalGitStoreSelector((state) => {
+    if (!activeProjectState || activeProjectState.status === "none") return false;
+    return state.projects[activeProjectState.workspaceId]?.capability?.available === false;
+  }) ?? false;
   const scopedPanelState = normalizeRightSidebarScopePanelState(panelStateByScope[activeScopeKey]);
   const activePanelId = scopedPanelState.activePanelId;
   const filePanelIds = scopedPanelState.filePanelIds;
@@ -1026,6 +1068,8 @@ function RightSidebarPanel({
   const conversationPanels = scopedPanelState.conversationPanels;
   const reviewPanelIds = scopedPanelState.reviewPanelIds;
   const reviewPanels = scopedPanelState.reviewPanels;
+  const toolPanelIds = scopedPanelState.toolPanelIds;
+  const toolPanels = scopedPanelState.toolPanels;
   const initialPanelIds = scopedPanelState.initialPanelIds;
   const entryIds = entries.map((entry) => entry.id);
   const orderedPanelIds = orderedRightSidebarPanelIds(scopedPanelState, entryIds);
@@ -1036,15 +1080,23 @@ function RightSidebarPanel({
   );
   const canOpenBtwConversation = Boolean(hostContext?.sessionId && hostContext.runtime);
   const canOpenReview = true;
+  const canOpenGit = activeProjectState !== null
+    && activeProjectState.status !== "none"
+    && !gitCapabilityUnavailable;
+  const activeGitWorkspaceId = activeProjectState && activeProjectState.status !== "none"
+    ? activeProjectState.workspaceId
+    : null;
   const resolvedActivePanelId = activePanelId ?? activeEntryId ?? orderedPanelIds[0] ?? null;
   const activeFilePanel = resolvedActivePanelId ? (filePanels[resolvedActivePanelId] ?? null) : null;
   const activeConversationPanel = resolvedActivePanelId ? (conversationPanels[resolvedActivePanelId] ?? null) : null;
   const activeReviewPanel = resolvedActivePanelId ? (reviewPanels[resolvedActivePanelId] ?? null) : null;
+  const activeToolPanel = resolvedActivePanelId ? (toolPanels[resolvedActivePanelId] ?? null) : null;
   const activePreviewEntry =
     resolvedActivePanelId &&
     !activeFilePanel &&
     !activeConversationPanel &&
     !activeReviewPanel &&
+    !activeToolPanel &&
     !initialPanelIds.includes(resolvedActivePanelId)
       ? entries.find((entry) => entry.id === resolvedActivePanelId) ?? null
       : null;
@@ -1080,12 +1132,14 @@ function RightSidebarPanel({
   const showFilesPanel = Boolean(activeFilePanel);
   const showConversationPanel = Boolean(activeConversationPanel);
   const showReviewPanel = Boolean(activeReviewPanel);
+  const showToolPanel = Boolean(activeToolPanel);
   const panelActivePreviewEntryId =
     open &&
     resolvedActivePanelId &&
     !activeFilePanel &&
     !activeConversationPanel &&
     !activeReviewPanel &&
+    !activeToolPanel &&
     !initialPanelIds.includes(resolvedActivePanelId)
       ? activePreviewEntry?.id ?? (resolvedActivePanelId === activeEntryId ? activeEntryId : null)
       : null;
@@ -1166,6 +1220,26 @@ function RightSidebarPanel({
   useEffect(() => {
     previewContext?.setPreviewPanelOpen(open, panelActivePreviewEntryId);
   }, [open, panelActivePreviewEntryId, previewContext]);
+
+  useEffect(() => {
+    const previousScopeKey = previousGitPanelScopeRef.current;
+    const scopeChanged = previousScopeKey !== activeScopeKey;
+    const gitPanelId = rightSidebarPanelRegistry.panelId("git");
+    const previousState = normalizeRightSidebarScopePanelState(panelStateByScopeRef.current[previousScopeKey]);
+    const previousGitWasActive = scopeChanged && previousState.activePanelId === gitPanelId;
+    previousGitPanelScopeRef.current = activeScopeKey;
+    const persistedOpen = activeGitWorkspaceId
+      ? gitStore?.getState().uiByProject[activeGitWorkspaceId]?.toolWindowOpen
+      : false;
+    const shouldKeepGitOpen = Boolean(canOpenGit && (
+      persistedOpen ?? previousState.toolPanels[gitPanelId]?.type === "git"
+    ));
+    updateActiveScopePanelState((current) => syncGitToolPanelForScope(
+      current,
+      shouldKeepGitOpen,
+      previousGitWasActive,
+    ));
+  }, [activeGitWorkspaceId, activeScopeKey, canOpenGit, gitStore, updateActiveScopePanelState]);
 
   useEffect(() => {
     const scopeChanged = previousFilePanelScopeRef.current !== activeScopeKey;
@@ -1272,6 +1346,40 @@ function RightSidebarPanel({
     );
   }, [activeScopeKey, updateActiveScopePanelState]);
 
+  const openGitPanel = useCallback(() => {
+    if (!canOpenGit) return;
+    const workspaceId = activeProjectState && "workspaceId" in activeProjectState
+      ? activeProjectState.workspaceId
+      : null;
+    const persistedMaximized = workspaceId
+      ? gitStore?.getState().uiByProject[workspaceId]?.toolWindowMaximized
+      : undefined;
+    const shouldMaximize = workspaceId ? persistedMaximized ?? gitMaximizedByProject[workspaceId] ?? true : true;
+    if (shouldMaximize) onMaximize();
+    else onRestore();
+    if (workspaceId) gitStore?.getState().updateProjectUi(workspaceId, { toolWindowOpen: true });
+    const panelId = rightSidebarPanelRegistry.panelId("git");
+    updateActiveScopePanelState((current) => {
+      if (current.toolPanels[panelId]) {
+        return { ...current, activePanelId: panelId };
+      }
+      return {
+        ...current,
+        activePanelId: panelId,
+        panelOrder: appendPanelOrder(current.panelOrder, panelId),
+        toolPanelIds: [...current.toolPanelIds, panelId],
+        toolPanels: { ...current.toolPanels, [panelId]: { id: panelId, type: "git" } },
+      };
+    });
+  }, [activeProjectState, canOpenGit, gitMaximizedByProject, gitStore, onMaximize, onRestore, updateActiveScopePanelState]);
+
+  const handledGitOpenRequestRef = useRef(0);
+  useEffect(() => {
+    if (gitOpenRequestId <= handledGitOpenRequestRef.current) return;
+    handledGitOpenRequestRef.current = gitOpenRequestId;
+    openGitPanel();
+  }, [gitOpenRequestId, openGitPanel]);
+
   const openBtwConversationFromHost = useCallback(() => {
     const sessionId = hostContext?.sessionId?.trim() ?? "";
     const hostRuntime = hostContext?.runtime;
@@ -1292,6 +1400,7 @@ function RightSidebarPanel({
         initialPanelIds.length === 0 &&
         conversationPanelIds.length === 0 &&
         reviewPanelIds.length === 0 &&
+        toolPanelIds.length === 0 &&
         remainingFilePanelIds.length === 0 &&
         resolvedActivePanelId === panelId;
       updateActiveScopePanelState((current) => {
@@ -1313,6 +1422,7 @@ function RightSidebarPanel({
             nextPanelId ??
             activeEntryId ??
             entries[0]?.id ??
+            current.toolPanelIds[0] ??
             current.reviewPanelIds[0] ??
             current.conversationPanelIds[0] ??
             null,
@@ -1334,6 +1444,7 @@ function RightSidebarPanel({
       onClose,
       resolvedActivePanelId,
       reviewPanelIds.length,
+      toolPanelIds.length,
       updateActiveScopePanelState,
     ],
   );
@@ -1348,6 +1459,7 @@ function RightSidebarPanel({
         filePanelIds.length === 0 &&
         conversationPanelIds.length === 0 &&
         reviewPanelIds.length === 0 &&
+        toolPanelIds.length === 0 &&
         initialPanelIds.length === 0 &&
         resolvedActivePanelId === entryId;
       previewContext?.closePreviewEntry(entryId);
@@ -1362,6 +1474,7 @@ function RightSidebarPanel({
           activePanelId:
             nextEntry?.id ??
             nextPanelIdAfterRemoval(current.panelOrder, entryId) ??
+            current.toolPanelIds[0] ??
             current.filePanelIds[0] ??
             current.reviewPanelIds[0] ??
             current.conversationPanelIds[0] ??
@@ -1382,6 +1495,7 @@ function RightSidebarPanel({
       previewContext,
       resolvedActivePanelId,
       reviewPanelIds.length,
+      toolPanelIds.length,
       updateActiveScopePanelState,
     ],
   );
@@ -1425,6 +1539,59 @@ function RightSidebarPanel({
     [updateActiveScopePanelState],
   );
 
+  const activateToolPanel = useCallback(
+    (panelId: string) => {
+      updateActiveScopePanelState((current) =>
+        current.toolPanels[panelId] ? { ...current, activePanelId: panelId } : current,
+      );
+    },
+    [updateActiveScopePanelState],
+  );
+
+  const closeToolPanel = useCallback(
+    (panelId: string) => {
+      const closingGit = toolPanels[panelId]?.type === "git";
+      if (closingGit && activeProjectState && activeProjectState.status !== "none") {
+        gitStore?.getState().updateProjectUi(activeProjectState.workspaceId, { toolWindowOpen: false });
+      }
+      const remainingToolPanelIds = toolPanelIds.filter((id) => id !== panelId);
+      const shouldCloseSidebar =
+        resolvedActivePanelId === panelId &&
+        remainingToolPanelIds.length === 0 &&
+        conversationPanelIds.length === 0 &&
+        filePanelIds.length === 0 &&
+        reviewPanelIds.length === 0 &&
+        initialPanelIds.length === 0 &&
+        entries.length === 0;
+      if (closingGit) {
+        setPanelStateByScope((current) => Object.fromEntries(
+          Object.entries(current).map(([scopeKey, state]) => [
+            scopeKey,
+            removeToolPanelFromScope(normalizeRightSidebarScopePanelState(state), panelId),
+          ]),
+        ));
+      } else {
+        updateActiveScopePanelState((current) => removeToolPanelFromScope(current, panelId));
+      }
+      if (shouldCloseSidebar) onClose();
+    },
+    [
+      conversationPanelIds.length,
+      entries.length,
+      filePanelIds.length,
+      initialPanelIds.length,
+      onClose,
+      resolvedActivePanelId,
+      reviewPanelIds.length,
+      toolPanelIds,
+      toolPanels,
+      updateActiveScopePanelState,
+      activeProjectState,
+      gitStore,
+      setPanelStateByScope,
+    ],
+  );
+
   const closeReviewPanel = useCallback(
     (panelId: string) => {
       const remainingReviewPanelIds = reviewPanelIds.filter((id) => id !== panelId);
@@ -1434,6 +1601,7 @@ function RightSidebarPanel({
         conversationPanelIds.length === 0 &&
         filePanelIds.length === 0 &&
         initialPanelIds.length === 0 &&
+        toolPanelIds.length === 0 &&
         entries.length === 0;
       updateActiveScopePanelState((current) => {
         const nextReviewPanelIds = current.reviewPanelIds.filter((id) => id !== panelId);
@@ -1454,6 +1622,7 @@ function RightSidebarPanel({
             nextPanelId ??
             activeEntryId ??
             entries[0]?.id ??
+            current.toolPanelIds[0] ??
             current.filePanelIds[0] ??
             nextReviewPanelIds[0] ??
             current.conversationPanelIds[0] ??
@@ -1476,6 +1645,7 @@ function RightSidebarPanel({
       onClose,
       resolvedActivePanelId,
       reviewPanelIds,
+      toolPanelIds.length,
       updateActiveScopePanelState,
     ],
   );
@@ -1489,6 +1659,7 @@ function RightSidebarPanel({
         filePanelIds.length === 0 &&
         reviewPanelIds.length === 0 &&
         initialPanelIds.length === 0 &&
+        toolPanelIds.length === 0 &&
         entries.length === 0;
       updateActiveScopePanelState((current) => {
         const nextConversationPanelIds = current.conversationPanelIds.filter((id) => id !== panelId);
@@ -1509,6 +1680,7 @@ function RightSidebarPanel({
             nextPanelId ??
             activeEntryId ??
             entries[0]?.id ??
+            current.toolPanelIds[0] ??
             current.filePanelIds[0] ??
             current.reviewPanelIds[0] ??
             null,
@@ -1530,6 +1702,7 @@ function RightSidebarPanel({
       onClose,
       resolvedActivePanelId,
       reviewPanelIds.length,
+      toolPanelIds.length,
       updateActiveScopePanelState,
     ],
   );
@@ -1564,6 +1737,7 @@ function RightSidebarPanel({
         filePanelIds.length === 0 &&
         conversationPanelIds.length === 0 &&
         reviewPanelIds.length === 0 &&
+        toolPanelIds.length === 0 &&
         entries.length === 0;
       updateActiveScopePanelState((current) => {
         const nextInitialPanelIds = current.initialPanelIds.filter((id) => id !== panelId);
@@ -1581,6 +1755,7 @@ function RightSidebarPanel({
             nextPanelId ??
             activeEntryId ??
             entries[0]?.id ??
+            current.toolPanelIds[0] ??
             current.filePanelIds[0] ??
             current.reviewPanelIds[0] ??
             current.conversationPanelIds[0] ??
@@ -1602,6 +1777,7 @@ function RightSidebarPanel({
       onClose,
       resolvedActivePanelId,
       reviewPanelIds.length,
+      toolPanelIds.length,
       updateActiveScopePanelState,
     ],
   );
@@ -1637,6 +1813,8 @@ function RightSidebarPanel({
           conversationPanels: omitRecordKeys(current.conversationPanels, closeSet),
           reviewPanelIds: current.reviewPanelIds.filter((panelId) => !closeSet.has(panelId)),
           reviewPanels: omitRecordKeys(current.reviewPanels, closeSet),
+          toolPanelIds: current.toolPanelIds.filter((panelId) => !closeSet.has(panelId)),
+          toolPanels: omitRecordKeys(current.toolPanels, closeSet),
           initialPanelIds: current.initialPanelIds.filter((panelId) => !closeSet.has(panelId)),
         };
       });
@@ -1760,13 +1938,27 @@ function RightSidebarPanel({
     [updateActiveScopePanelState],
   );
 
+  const rememberGitLayout = useCallback((nextMaximized: boolean) => {
+    if (activeToolPanel?.type === "git" && activeProjectState && activeProjectState.status !== "none") {
+      setGitMaximizedByProject((current) => ({ ...current, [activeProjectState.workspaceId]: nextMaximized }));
+      gitStore?.getState().updateProjectUi(activeProjectState.workspaceId, { toolWindowMaximized: nextMaximized });
+    }
+  }, [activeProjectState, activeToolPanel?.type, gitStore]);
+  const maximizePanel = useCallback(() => {
+    rememberGitLayout(true);
+    onMaximize();
+  }, [onMaximize, rememberGitLayout]);
+  const restorePanel = useCallback(() => {
+    rememberGitLayout(false);
+    onRestore();
+  }, [onRestore, rememberGitLayout]);
   const controls = (
     <RightSidebarControls
       maximized={maximized}
       placement={placement}
       onClose={onClose}
-      onMaximize={onMaximize}
-      onRestore={onRestore}
+      onMaximize={maximizePanel}
+      onRestore={restorePanel}
     />
   );
   const panelLabel = placement === "left" ? "左侧栏" : "右侧栏";
@@ -1882,6 +2074,42 @@ function RightSidebarPanel({
                           onClick={(event) => {
                             event.stopPropagation();
                             closeReviewPanel(panelId);
+                          }}
+                        >
+                          <X size={11} />
+                        </button>
+                      </div>
+                    );
+                  }
+                  const toolPanel = toolPanels[panelId];
+                  if (toolPanel?.type === "git") {
+                    const active = resolvedActivePanelId === panelId;
+                    return (
+                      <div
+                        className={styles.rightSidebarTab}
+                        data-active={active ? "true" : "false"}
+                        data-app-context-menu="local"
+                        data-menu-open={rightSidebarTabMenu?.panelId === panelId ? "true" : undefined}
+                        key={panelId}
+                        onContextMenu={(event) => openRightSidebarTabMenu(event, panelId)}
+                      >
+                        <button
+                          className={styles.rightSidebarTabMain}
+                          type="button"
+                          role="tab"
+                          aria-selected={active}
+                          onClick={() => activateToolPanel(panelId)}
+                        >
+                          <GitBranch size={12} />
+                          <span>Git</span>
+                        </button>
+                        <button
+                          className={styles.rightSidebarTabClose}
+                          type="button"
+                          aria-label="关闭侧边栏窗口 Git"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            closeToolPanel(panelId);
                           }}
                         >
                           <X size={11} />
@@ -2066,7 +2294,11 @@ function RightSidebarPanel({
             );
           })}
           {!showConversationPanel ? (
-            showReviewPanel && activeReviewPanel ? (
+            showToolPanel && activeToolPanel?.type === "git" ? (
+              <div className={styles.rightSidebarBody} data-content="git">
+                <GitToolWindow project={activeProjectState} maximized={maximized} />
+              </div>
+            ) : showReviewPanel && activeReviewPanel ? (
               <div className={styles.rightSidebarBody} data-content="review">
                 <FileReviewPanel
                   files={activeReviewPanel.files}
@@ -2132,9 +2364,11 @@ function RightSidebarPanel({
                   canOpenFiles={canOpenFiles}
                   canOpenBtwConversation={canOpenBtwConversation}
                   canOpenReview={canOpenReview}
+                  canOpenGit={canOpenGit}
                   onOpenFiles={openFilesPanel}
                   onOpenBtwConversation={openBtwConversationFromHost}
                   onOpenReview={openReviewPanel}
+                  onOpenGit={openGitPanel}
                 />
               </div>
             )
@@ -2172,9 +2406,11 @@ function sameRightSidebarScopePanelState(
     sameStringArray(left.filePanelIds, right.filePanelIds) &&
     sameStringArray(left.conversationPanelIds, right.conversationPanelIds) &&
     sameStringArray(left.reviewPanelIds, right.reviewPanelIds) &&
+    sameStringArray(left.toolPanelIds, right.toolPanelIds) &&
     sameFilePanels(left, right) &&
     sameConversationPanels(left, right) &&
     sameReviewPanels(left, right) &&
+    sameToolPanels(left, right) &&
     sameStringArray(left.initialPanelIds, right.initialPanelIds)
   );
 }
@@ -2225,15 +2461,24 @@ function normalizeRightSidebarScopePanelState(
   );
   const reviewPanelIds = state?.reviewPanelIds ?? [];
   const reviewPanels = { ...(state?.reviewPanels ?? {}) };
+  const toolPanelIds = state?.toolPanelIds ?? [];
+  const toolPanels = { ...(state?.toolPanels ?? {}) };
   const initialPanelIds = state?.initialPanelIds ?? [];
   const nextPanelSeq = Math.max(
     state?.nextPanelSeq ?? state?.initialPanelSeq ?? 0,
-    maxPanelSeq([...filePanelIds, ...conversationPanelIds, ...reviewPanelIds, ...initialPanelIds]),
+    maxPanelSeq([
+      ...filePanelIds,
+      ...conversationPanelIds,
+      ...reviewPanelIds,
+      ...toolPanelIds,
+      ...initialPanelIds,
+    ]),
   );
   const panelOrder = orderedUniquePanelIds(state?.panelOrder ?? [], [
     ...filePanelIds,
     ...conversationPanelIds,
     ...reviewPanelIds,
+    ...toolPanelIds,
     ...initialPanelIds,
   ]);
 
@@ -2247,8 +2492,49 @@ function normalizeRightSidebarScopePanelState(
     conversationPanels,
     reviewPanelIds,
     reviewPanels,
+    toolPanelIds,
+    toolPanels,
     initialPanelIds,
     nextPanelSeq,
+  };
+}
+
+export function syncGitToolPanelForScope(
+  state: RightSidebarScopePanelState,
+  shouldOpen: boolean,
+  activate: boolean,
+): RightSidebarScopePanelState {
+  const panelId = rightSidebarPanelRegistry.panelId("git");
+  if (!shouldOpen) return removeToolPanelFromScope(state, panelId);
+  if (state.toolPanels[panelId]) {
+    return activate && state.activePanelId !== panelId
+      ? { ...state, activePanelId: panelId }
+      : state;
+  }
+  return {
+    ...state,
+    activePanelId: activate ? panelId : state.activePanelId,
+    panelOrder: appendPanelOrder(state.panelOrder, panelId),
+    toolPanelIds: [...state.toolPanelIds, panelId],
+    toolPanels: { ...state.toolPanels, [panelId]: { id: panelId, type: "git" } },
+  };
+}
+
+function removeToolPanelFromScope(
+  state: RightSidebarScopePanelState,
+  panelId: string,
+): RightSidebarScopePanelState {
+  if (!state.toolPanels[panelId]) return state;
+  const nextToolPanels = { ...state.toolPanels };
+  delete nextToolPanels[panelId];
+  return {
+    ...state,
+    activePanelId: state.activePanelId === panelId
+      ? nextPanelIdAfterRemoval(state.panelOrder, panelId)
+      : state.activePanelId,
+    panelOrder: state.panelOrder.filter((id) => id !== panelId),
+    toolPanelIds: state.toolPanelIds.filter((id) => id !== panelId),
+    toolPanels: nextToolPanels,
   };
 }
 
@@ -2624,6 +2910,7 @@ function orderedRightSidebarPanelIds(state: RightSidebarScopePanelState, entryId
     ...state.filePanelIds,
     ...state.conversationPanelIds,
     ...state.reviewPanelIds,
+    ...state.toolPanelIds,
     ...state.initialPanelIds,
     ...entryIds,
   ]);
@@ -2770,6 +3057,14 @@ function sameReviewPanels(left: RightSidebarScopePanelState, right: RightSidebar
       leftPanel.requestId === rightPanel.requestId &&
       sameFileReviewChanges(leftPanel.files, rightPanel.files)
     );
+  });
+}
+
+function sameToolPanels(left: RightSidebarScopePanelState, right: RightSidebarScopePanelState): boolean {
+  return left.toolPanelIds.every((panelId) => {
+    const leftPanel = left.toolPanels[panelId];
+    const rightPanel = right.toolPanels[panelId];
+    return Boolean(leftPanel) && Boolean(rightPanel) && leftPanel.type === rightPanel.type;
   });
 }
 

@@ -228,7 +228,7 @@ def test_two_sessions_same_file_require_force_and_restore_writer_identity(tmp_pa
             decision=FileRestoreDecision.FORCE_CONFLICTS,
         ),
     )
-    assert forced.forced_files == ("shared.txt",)
+    assert forced.forced_files == (force_preview.files[0].resource_id,)
     assert not (tmp_path / "shared.txt").exists()
     workspace_identity = history.active_lineage("session-a")[-1].workspace_identity
     head = repositories.file_history.get_path_head(workspace_identity, "shared.txt")

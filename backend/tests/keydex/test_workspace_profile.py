@@ -1,9 +1,21 @@
 from pathlib import Path
 
-from backend.app.keydex import load_keydex_workspace_profile, merge_keydex_manifest
+from backend.app.keydex import (
+    build_keydex_workspace_effective_snapshot,
+    load_keydex_workspace_profile,
+)
 
 
-def test_load_profile_without_keydex_returns_default_disabled_workspace_layer(
+def _write_skill(root: Path, name: str, description: str) -> None:
+    skill_root = root / "skills" / name
+    skill_root.mkdir(parents=True, exist_ok=True)
+    (skill_root / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: {description}\n---\n\n# {name}\n",
+        encoding="utf-8",
+    )
+
+
+def test_kr04_missing_keydex_directory_is_a_valid_empty_workspace_layer(
     tmp_path: Path,
 ) -> None:
     workspace_root = tmp_path / "repo"
@@ -13,20 +25,14 @@ def test_load_profile_without_keydex_returns_default_disabled_workspace_layer(
 
     assert profile.workspace_root == workspace_root.resolve()
     assert profile.keydex_root == (workspace_root / ".keydex").resolve()
-    assert profile.active_layers[0].scope == "workspace"
     assert profile.active_layers[0].enabled is False
-    assert profile.active_layers[0].manifest == {
-        "schema_version": 1,
-        "skills": {"enabled": True, "inherit_system": True},
-    }
+    assert profile.active_layers[0].manifest == {}
     assert profile.skills_enabled is False
     assert profile.skills_root is None
     assert profile.diagnostics == []
 
 
-def test_load_profile_uses_default_manifest_when_keydex_json_is_absent(
-    tmp_path: Path,
-) -> None:
+def test_kr05_workspace_directory_is_loaded_without_a_manifest(tmp_path: Path) -> None:
     workspace_root = tmp_path / "repo"
     keydex_root = workspace_root / ".keydex"
     keydex_root.mkdir(parents=True)
@@ -34,127 +40,83 @@ def test_load_profile_uses_default_manifest_when_keydex_json_is_absent(
     profile = load_keydex_workspace_profile(workspace_root)
 
     assert profile.active_layers[0].enabled is True
-    assert profile.active_layers[0].manifest == {
-        "schema_version": 1,
-        "skills": {"enabled": True, "inherit_system": True},
-    }
+    assert profile.active_layers[0].manifest == {}
     assert profile.skills_enabled is True
     assert profile.skills_root == (keydex_root / "skills").resolve()
-    assert profile.diagnostics == []
 
 
-def test_load_profile_honors_skills_disabled_flag(tmp_path: Path) -> None:
+def test_kr06_keydex_json_content_type_and_lifecycle_are_ignored(tmp_path: Path) -> None:
+    system_root = tmp_path / "system"
     workspace_root = tmp_path / "repo"
-    keydex_root = workspace_root / ".keydex"
-    keydex_root.mkdir(parents=True)
-    (keydex_root / "keydex.json").write_text(
-        '{"schema_version": 1, "skills": {"enabled": false}}',
+    workspace_keydex = workspace_root / ".keydex"
+    _write_skill(system_root, "shared", "system")
+    _write_skill(workspace_keydex, "shared", "workspace")
+    before = build_keydex_workspace_effective_snapshot(
+        workspace_root,
+        system_root=system_root,
+    )
+
+    legacy = workspace_keydex / "keydex.md"
+    legacy.write_text('{"skills": {"enabled": false, "inherit_system": false}}')
+    configured = build_keydex_workspace_effective_snapshot(
+        workspace_root,
+        system_root=system_root,
+    )
+    legacy.write_text("{invalid", encoding="utf-8")
+    damaged = build_keydex_workspace_effective_snapshot(
+        workspace_root,
+        system_root=system_root,
+    )
+    legacy.unlink()
+    removed = build_keydex_workspace_effective_snapshot(
+        workspace_root,
+        system_root=system_root,
+    )
+
+    assert (
+        before.fingerprint
+        == configured.fingerprint
+        == damaged.fingerprint
+        == removed.fingerprint
+    )
+    assert configured.skill_catalog.skills["shared"].source == "workspace"
+    assert damaged.skill_catalog.skills["shared"].source == "workspace"
+
+
+def test_ks07_workspace_always_inherits_system_and_builtin(tmp_path: Path) -> None:
+    system_root = tmp_path / "system"
+    workspace_root = tmp_path / "repo"
+    _write_skill(system_root, "global", "system")
+    _write_skill(workspace_root / ".keydex", "local", "workspace")
+    (workspace_root / ".keydex" / "keydex.md").write_text(
+        '{"skills": {"inherit_system": false}}',
         encoding="utf-8",
     )
 
-    profile = load_keydex_workspace_profile(workspace_root)
-
-    assert profile.active_layers[0].manifest["skills"]["enabled"] is False
-    assert profile.skills_enabled is False
-    assert profile.skills_root is None
-    assert profile.diagnostics == []
-
-
-def test_load_profile_records_invalid_json_and_disables_skills(tmp_path: Path) -> None:
-    workspace_root = tmp_path / "repo"
-    keydex_root = workspace_root / ".keydex"
-    keydex_root.mkdir(parents=True)
-    (keydex_root / "keydex.json").write_text("{invalid", encoding="utf-8")
-
-    profile = load_keydex_workspace_profile(workspace_root)
-
-    assert profile.active_layers[0].enabled is False
-    assert profile.skills_enabled is False
-    assert profile.skills_root is None
-    assert len(profile.diagnostics) == 1
-    assert profile.diagnostics[0].code == "keydex_manifest_invalid"
-    assert profile.diagnostics[0].severity == "error"
-    assert profile.diagnostics[0].path == ".keydex/keydex.json"
-    assert profile.available is False
-
-
-def test_t14_workspace_manifest_defaults_to_inheriting_system(tmp_path: Path) -> None:
-    workspace_root = tmp_path / "repo"
-    (workspace_root / ".keydex").mkdir(parents=True)
-
-    profile = load_keydex_workspace_profile(workspace_root)
-
-    assert profile.inherit_system is True
-    assert profile.active_layers[0].inherit_system is True
-
-
-def test_t15_workspace_can_disable_system_inheritance(tmp_path: Path) -> None:
-    workspace_root = tmp_path / "repo"
-    keydex_root = workspace_root / ".keydex"
-    keydex_root.mkdir(parents=True)
-    (keydex_root / "keydex.json").write_text(
-        '{"schema_version": 1, "skills": {"inherit_system": false}}',
-        encoding="utf-8",
+    snapshot = build_keydex_workspace_effective_snapshot(
+        workspace_root,
+        system_root=system_root,
     )
 
-    profile = load_keydex_workspace_profile(workspace_root)
+    assert snapshot.skill_catalog.skills["global"].source == "system"
+    assert snapshot.skill_catalog.skills["local"].source == "workspace"
+    assert snapshot.skill_catalog.skills["keydex-guide"].source == "builtin"
 
-    assert profile.available is True
-    assert profile.inherit_system is False
 
-
-def test_t16_disabled_workspace_skills_can_still_inherit_system(tmp_path: Path) -> None:
+def test_kr07_non_directory_workspace_keydex_preserves_parent_layers(tmp_path: Path) -> None:
+    system_root = tmp_path / "system"
     workspace_root = tmp_path / "repo"
-    keydex_root = workspace_root / ".keydex"
-    keydex_root.mkdir(parents=True)
-    (keydex_root / "keydex.json").write_text(
-        '{"schema_version": 1, "skills": {"enabled": false, "inherit_system": true}}',
-        encoding="utf-8",
+    workspace_root.mkdir()
+    (workspace_root / ".keydex").write_text("not a directory", encoding="utf-8")
+    _write_skill(system_root, "global", "system")
+
+    snapshot = build_keydex_workspace_effective_snapshot(
+        workspace_root,
+        system_root=system_root,
     )
 
-    profile = load_keydex_workspace_profile(workspace_root)
-
-    assert profile.skills_enabled is False
-    assert profile.inherit_system is True
-    assert profile.available is True
-
-
-def test_t18_invalid_workspace_inherit_type_marks_profile_unavailable(
-    tmp_path: Path,
-) -> None:
-    workspace_root = tmp_path / "repo"
-    keydex_root = workspace_root / ".keydex"
-    keydex_root.mkdir(parents=True)
-    (keydex_root / "keydex.json").write_text(
-        '{"schema_version": 1, "skills": {"inherit_system": "yes"}}',
-        encoding="utf-8",
-    )
-
-    profile = load_keydex_workspace_profile(workspace_root)
-
-    assert profile.available is False
-    assert profile.skills_enabled is False
-    assert profile.diagnostics[0].code == "keydex_manifest_invalid"
-
-
-def test_merge_manifest_records_unknown_fields_as_warnings() -> None:
-    diagnostics = []
-
-    manifest = merge_keydex_manifest(
-        {
-            "schema_version": 1,
-            "future": True,
-            "skills": {"enabled": True, "mode": "workspace"},
-        },
-        diagnostics,
-    )
-
-    assert manifest == {
-        "schema_version": 1,
-        "skills": {"enabled": True, "inherit_system": True},
-    }
-    assert [diagnostic.severity for diagnostic in diagnostics] == ["warning", "warning"]
-    assert [diagnostic.details["field"] for diagnostic in diagnostics] == [
-        "future",
-        "skills.mode",
-    ]
+    assert snapshot.workspace_layer is not None
+    assert snapshot.workspace_layer.profile.available is False
+    assert snapshot.skill_catalog.skills["global"].source == "system"
+    assert snapshot.skill_catalog.skills["keydex-guide"].source == "builtin"
+    assert any(item.code == "keydex_root_invalid" for item in snapshot.diagnostics)

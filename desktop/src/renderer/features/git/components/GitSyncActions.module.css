@@ -1,0 +1,24 @@
+.root { display: grid; gap: 9px; padding: 12px; border-bottom: 1px solid var(--color-border-2); }
+.heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.heading > div { display: grid; gap: 2px; }
+.heading strong { font-size: 12px; }
+.heading span, .hint { color: var(--color-text-3); font-size: 11px; }
+.heading button { display: inline-flex; min-height: 28px; align-items: center; gap: 5px; padding: 0 9px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--surface-active); color: var(--color-text-1); cursor: pointer; font-size: 11px; }
+.heading button:disabled { cursor: default; opacity: 0.55; }
+.options { display: flex; flex-wrap: wrap; align-items: center; gap: 9px 14px; font-size: 11px; }
+.options label { display: inline-flex; align-items: center; gap: 6px; color: var(--color-text-2); }
+.options select, .options input[type="text"], .options input:not([type]) { min-height: 26px; padding: 0 7px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--color-bg-2); color: var(--color-text-1); }
+.check input { margin: 0; accent-color: var(--color-accent-1); }
+.hint { margin: 0; }
+.progress { max-height: 88px; overflow: auto; padding: 7px 8px; border-radius: var(--radius-sm); background: var(--color-bg-2); color: var(--color-text-2); font: 10px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; }
+.divider { height: 1px; margin: 2px 0; background: var(--color-border-2); }
+.preflight { color: var(--color-text-2); font-size: 11px; }
+.warning { margin: 0; color: var(--color-warning-1, #b56a00); font-size: 11px; line-height: 1.45; }
+.outcome { padding: 6px 8px; border-radius: var(--radius-sm); background: var(--color-bg-2); color: var(--color-text-2); font-size: 11px; }
+.outcome[data-status="conflict"] { color: var(--color-danger-1); }
+.commitPreview { display: grid; gap: 5px; padding: 7px 8px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--color-bg-2); font-size: 11px; }
+.commitPreview strong { color: var(--color-text-2); }
+.commitPreview ul { display: grid; gap: 3px; max-height: 112px; overflow: auto; margin: 0; padding: 0; list-style: none; }
+.commitPreview li { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 7px; color: var(--color-text-2); }
+.commitPreview code { color: var(--color-accent-1); font-size: 10px; }
+.commitPreview span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

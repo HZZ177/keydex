@@ -140,3 +140,27 @@ def test_restore_lease_rejects_blocked_session(tmp_path) -> None:
         ):
             pass
     assert error.value.code == "file_restore_blocked"
+
+
+def test_resource_lock_order_is_stable_and_does_not_collapse_unrelated_paths(tmp_path) -> None:
+    service, _, _ = _operation(tmp_path)
+    first = service._coordination_locks(
+        session_id="session-1",
+        workspace_identity="workspace-one",
+        resource_keys=("external\0d:\0same.txt", "workspace\0one\0same.txt"),
+    )
+    reversed_input = service._coordination_locks(
+        session_id="session-1",
+        workspace_identity="workspace-one",
+        resource_keys=("workspace\0one\0same.txt", "external\0d:\0same.txt"),
+    )
+    unrelated = service._coordination_locks(
+        session_id="session-2",
+        workspace_identity="workspace-two",
+        resource_keys=("external\0e:\0other.txt",),
+    )
+
+    assert [key for key, _ in first] == [key for key, _ in reversed_input]
+    assert {key for key, _ in first if key.startswith("resource:")}.isdisjoint(
+        {key for key, _ in unrelated if key.startswith("resource:")}
+    )

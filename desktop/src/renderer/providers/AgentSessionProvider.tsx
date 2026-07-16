@@ -55,6 +55,8 @@ export interface AgentSessionRuntimeContextValue {
   ping: () => void;
   bindWorkspaceWatch: (workspaceId: string) => void;
   unbindWorkspaceWatch: (workspaceId: string) => void;
+  bindGitRepositoryWatch: (workspaceId: string, projectRoot: string, repositoryId: string) => void;
+  unbindGitRepositoryWatch: (repositoryId: string) => void;
   bindLocalFileWatch: (watchId: string, path: string) => void;
   unbindLocalFileWatch: (watchId: string) => void;
 }
@@ -71,6 +73,9 @@ export function AgentSessionProvider({
   const channelRef = useRef<ChatChannel | null>(null);
   const pendingBindSessionIdsRef = useRef(new Set<string>());
   const desiredWorkspaceWatchIdsRef = useRef(new Set<string>());
+  const desiredGitRepositoryWatchesRef = useRef(
+    new Map<string, { workspaceId: string; projectRoot: string }>(),
+  );
   const desiredLocalFileWatchesRef = useRef(new Map<string, string>());
   const eventListenersRef = useRef(new Set<(event: AgentActionEnvelope) => void>());
   const requestedStatusRef = useRef(false);
@@ -134,6 +139,9 @@ export function AgentSessionProvider({
     channelRef.current = channel;
     for (const workspaceId of desiredWorkspaceWatchIdsRef.current) {
       channel.bindWorkspaceWatch?.(workspaceId);
+    }
+    for (const [repositoryId, scope] of desiredGitRepositoryWatchesRef.current) {
+      channel.bindGitRepositoryWatch?.(scope.workspaceId, scope.projectRoot, repositoryId);
     }
     for (const [watchId, path] of desiredLocalFileWatchesRef.current) {
       channel.bindLocalFileWatch?.(watchId, path);
@@ -287,6 +295,35 @@ export function AgentSessionProvider({
     channelRef.current?.unbindWorkspaceWatch?.(cleaned);
   }, []);
 
+  const bindGitRepositoryWatch = useCallback(
+    (workspaceId: string, projectRoot: string, repositoryId: string) => {
+      const scope = { workspaceId: workspaceId.trim(), projectRoot: projectRoot.trim() };
+      const cleanedRepositoryId = repositoryId.trim();
+      if (!scope.workspaceId || !scope.projectRoot || !cleanedRepositoryId) return;
+      const existing = desiredGitRepositoryWatchesRef.current.get(cleanedRepositoryId);
+      if (
+        existing &&
+        (existing.workspaceId !== scope.workspaceId || existing.projectRoot !== scope.projectRoot)
+      ) {
+        throw new Error("The same repository_id cannot be rebound to another project");
+      }
+      if (existing) return;
+      desiredGitRepositoryWatchesRef.current.set(cleanedRepositoryId, scope);
+      channelRef.current?.bindGitRepositoryWatch?.(
+        scope.workspaceId,
+        scope.projectRoot,
+        cleanedRepositoryId,
+      );
+    },
+    [],
+  );
+
+  const unbindGitRepositoryWatch = useCallback((repositoryId: string) => {
+    const cleaned = repositoryId.trim();
+    if (!desiredGitRepositoryWatchesRef.current.delete(cleaned)) return;
+    channelRef.current?.unbindGitRepositoryWatch?.(cleaned);
+  }, []);
+
   const bindLocalFileWatch = useCallback((watchId: string, path: string) => {
     const cleanedWatchId = watchId.trim();
     const cleanedPath = path.trim();
@@ -335,10 +372,12 @@ export function AgentSessionProvider({
       ping,
       bindWorkspaceWatch,
       unbindWorkspaceWatch,
+      bindGitRepositoryWatch,
+      unbindGitRepositoryWatch,
       bindLocalFileWatch,
       unbindLocalFileWatch,
     }),
-    [bindLocalFileWatch, bindSession, bindWorkspaceWatch, cancel, cancelA2UI, cancelPendingInput, chat, ping, reorderPendingInputs, resolveMcpElicitation, resumePendingInputs, runtime, runtimeDetail, state, submitA2UI, subscribeEvent, terminateCommand, unbindLocalFileWatch, unbindWorkspaceWatch, updatePendingInput, wsStatus],
+    [bindGitRepositoryWatch, bindLocalFileWatch, bindSession, bindWorkspaceWatch, cancel, cancelA2UI, cancelPendingInput, chat, ping, reorderPendingInputs, resolveMcpElicitation, resumePendingInputs, runtime, runtimeDetail, state, submitA2UI, subscribeEvent, terminateCommand, unbindGitRepositoryWatch, unbindLocalFileWatch, unbindWorkspaceWatch, updatePendingInput, wsStatus],
   );
 
   return (

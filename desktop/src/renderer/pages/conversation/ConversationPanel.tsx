@@ -117,6 +117,7 @@ export function ConversationPanel({
           onCancel={model.cancelReverseFromMessage}
           onConfirm={model.confirmReverseFromMessage}
           onSelectMode={model.selectReverseMode}
+          onExternalConfirmationChange={model.confirmExternalReversePaths}
           onDecision={model.decideReverseFailure}
           onRetryPreview={model.retryReversePreview}
         />

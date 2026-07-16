@@ -1,0 +1,8 @@
+.root { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--color-border-2); background: color-mix(in srgb, var(--color-warning-1, #b7791f) 7%, var(--color-bg-1)); }
+.root > div:first-child { display: grid; flex: 1 1 220px; gap: 2px; }
+.root strong { color: var(--color-text-1); font-size: 12px; }
+.root span { color: var(--color-text-3); font-size: 11px; }
+.actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.actions button { min-height: 27px; padding: 0 8px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--surface-active); color: var(--color-text-1); cursor: pointer; font-size: 11px; }
+.actions button:disabled { cursor: default; opacity: .5; }
+.confirmation { display: grid; width: 100%; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px; padding-top: 8px; border-top: 1px solid var(--color-border-2); }.confirmation strong, .confirmation span { grid-column: 1; }.confirmation button { grid-row: 1 / span 2; min-height: 27px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--surface-active); color: var(--color-text-1); cursor: pointer; }.confirmation button:first-of-type { grid-column: 2; }.confirmation button:last-of-type { grid-column: 3; }

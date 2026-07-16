@@ -4,6 +4,9 @@ from collections.abc import Collection, Mapping
 from enum import StrEnum
 from typing import Any
 
+from backend.app.keydex.capabilities.skills.consumer import effective_skill_catalog
+from backend.app.keydex.skills import EffectiveSkillCatalog, SkillCatalog
+
 
 class ToolCapability(StrEnum):
     """Turn-scoped tool groups understood by the agent assembly seam."""
@@ -70,6 +73,25 @@ def capability_for_runtime_tool(tool_name: str) -> ToolCapability:
     if tool_name in {"web_search", "web_fetch"}:
         return ToolCapability.WEB
     return ToolCapability.WORKSPACE
+
+
+def resolve_skill_catalog(
+    metadata: Mapping[str, Any],
+) -> EffectiveSkillCatalog | SkillCatalog | None:
+    """Resolve Skills through the typed Keydex snapshot consumer seam.
+
+    Legacy snapshot/catalog fallbacks remain centralized here while callers are
+    migrated; AgentRunner never interprets raw Keydex payload metadata itself.
+    """
+
+    snapshot_catalog = effective_skill_catalog(metadata.get("keydex_snapshot"))
+    if snapshot_catalog is not None:
+        return snapshot_catalog
+
+    legacy_catalog = metadata.get("skill_catalog")
+    if isinstance(legacy_catalog, (EffectiveSkillCatalog, SkillCatalog)):
+        return legacy_catalog
+    return None
 
 
 def _optional_bool(value: Any) -> bool | None:

@@ -132,6 +132,44 @@
   color: color-mix(in srgb, var(--color-warning) 80%, var(--color-text-secondary));
 }
 
+.externalConfirmation {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-warning) 7%, transparent);
+  cursor: pointer;
+  padding: 12px 18px;
+}
+
+.externalConfirmation input {
+  margin-top: 3px;
+}
+
+.externalConfirmation span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.externalConfirmation strong {
+  font-size: 11px;
+}
+
+.externalConfirmation small {
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+}
+
+.externalConfirmation code {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .fileList {
   display: flex;
   min-height: 0;
@@ -142,6 +180,42 @@
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-gutter: stable;
+}
+
+.scopeGroup {
+  display: grid;
+  gap: 6px;
+}
+
+.scopeGroup + .scopeGroup {
+  border-top: 1px solid var(--color-border-subtle);
+  padding-top: 10px;
+}
+
+.scopeHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--color-text-secondary);
+  font-size: 10px;
+}
+
+.scopeHeading strong {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scopeHeading span {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+}
+
+.scopeFiles {
+  display: grid;
+  gap: 6px;
 }
 
 .fileSection {
@@ -278,6 +352,15 @@
   border-top: 1px solid var(--color-border-subtle);
 }
 
+.externalPath {
+  overflow: hidden;
+  border-top: 1px solid var(--color-border-subtle);
+  padding: 6px 10px;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .fileExpanded > p {
   margin: 0;
   padding: 10px 12px;
@@ -355,6 +438,25 @@
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.resultFiles li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.resultFiles li code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resultFiles li small {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
 }
 
 .result[data-status="partial"] > strong,

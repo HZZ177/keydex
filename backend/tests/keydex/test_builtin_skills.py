@@ -11,6 +11,16 @@ from backend.app.keydex.builtin_skills import (
     load_and_validate_builtin_skill_catalog,
     load_builtin_skill_layer_profile,
 )
+from backend.app.keydex.capabilities.skills import (
+    SKILLS_CAPABILITY_KEY,
+    EffectiveSkillsPayload,
+    SkillsCapability,
+)
+from backend.app.keydex.capabilities.skills.consumer import effective_skill_catalog
+from backend.app.keydex.composer import KeydexEffectiveComposer
+from backend.app.keydex.loader import KeydexLayerLoader
+from backend.app.keydex.models import KeydexLayerDescriptor
+from backend.app.keydex.registry import KeydexCapabilityRegistry
 from backend.app.keydex.runtime import build_keydex_layer_fingerprint
 from backend.app.main import create_app
 
@@ -30,6 +40,7 @@ EXPECTED_KEYDEX_GUIDE_REFERENCES = {
     "file-and-directory-references.md",
     "fork-export-file-review-and-reverse.md",
     "general-appearance-and-app-updates.md",
+    "git-workbench.md",
     "goals-plans-and-context-compression.md",
     "home-project-and-model-selection.md",
     "keydex-scope-priority-and-config.md",
@@ -212,14 +223,142 @@ def test_builtin_startup_does_not_create_user_system_keydex_root(tmp_path: Path)
 
     snapshot = app.state.keydex_runtime_cache.get_system_snapshot()
 
-    assert snapshot.skill_catalog.skills["keydex-guide"].source == "builtin"
+    catalog = effective_skill_catalog(snapshot)
+    assert catalog is not None
+    assert catalog.skills["keydex-guide"].source == "builtin"
     assert not system_root.exists()
+
+
+def test_builtin_bundle_flows_through_static_skills_capability_without_user_writes(
+    tmp_path: Path,
+) -> None:
+    system_root = tmp_path / "user-home" / ".keydex"
+
+    snapshot = _capability_runtime(
+        builtin_root=BUILTIN_SKILLS_ROOT,
+        system_root=system_root,
+    )
+    payload = snapshot.require(SKILLS_CAPABILITY_KEY)
+    guide = payload.catalog.skills["keydex-guide"]
+
+    assert isinstance(payload, EffectiveSkillsPayload)
+    assert guide.source == "builtin"
+    assert guide.name == "keydex-guide"
+    assert "Keydex" in guide.description
+    assert "当用户询问 Keydex 产品本身时必须使用" in payload.read_skill_text_resource(
+        guide,
+        "SKILL.md",
+    ).content
+    assert "Skill" in payload.read_skill_text_resource(
+        guide,
+        "references/skill-selection-and-activation.md",
+    ).content
+    assert not system_root.exists()
+
+
+def test_builtin_skills_capability_ignores_keydex_markdown_and_removed_manifest(
+    tmp_path: Path,
+) -> None:
+    bundle = _copy_production_bundle(tmp_path)
+    registry = KeydexCapabilityRegistry((SkillsCapability(),))
+    before = build_keydex_layer_fingerprint("builtin", bundle, registry=registry)
+
+    (bundle / "keydex.md").write_text("must not be loaded by Skills\n", encoding="utf-8")
+    (bundle / "keydex.md").write_text('{"skills": false}\n', encoding="utf-8")
+    after = build_keydex_layer_fingerprint("builtin", bundle, registry=registry)
+    payload = _capability_runtime(
+        builtin_root=bundle,
+        system_root=tmp_path / "missing-system",
+    ).require(SKILLS_CAPABILITY_KEY)
+
+    assert after.digest() == before.digest()
+    assert payload.catalog.skills["keydex-guide"].source == "builtin"
+    assert all("keydex.md" not in path for path in payload.catalog.skills["keydex-guide"].resources)
+
+
+def test_builtin_override_deletion_reveals_lower_layers_in_capability_runtime(
+    tmp_path: Path,
+) -> None:
+    system_root = tmp_path / "system"
+    workspace_root = tmp_path / "workspace"
+    _write_skill(system_root / "skills", "keydex-guide", "system override")
+    _write_skill(
+        workspace_root / ".keydex" / "skills",
+        "keydex-guide",
+        "workspace override",
+    )
+
+    workspace = _capability_runtime(
+        builtin_root=BUILTIN_SKILLS_ROOT,
+        system_root=system_root,
+        workspace_root=workspace_root,
+    ).require(SKILLS_CAPABILITY_KEY)
+    assert workspace.catalog.skills["keydex-guide"].source == "workspace"
+
+    shutil.rmtree(workspace_root / ".keydex" / "skills" / "keydex-guide")
+    system = _capability_runtime(
+        builtin_root=BUILTIN_SKILLS_ROOT,
+        system_root=system_root,
+        workspace_root=workspace_root,
+    ).require(SKILLS_CAPABILITY_KEY)
+    assert system.catalog.skills["keydex-guide"].source == "system"
+
+    shutil.rmtree(system_root / "skills" / "keydex-guide")
+    builtin = _capability_runtime(
+        builtin_root=BUILTIN_SKILLS_ROOT,
+        system_root=system_root,
+        workspace_root=workspace_root,
+    ).require(SKILLS_CAPABILITY_KEY)
+    assert builtin.catalog.skills["keydex-guide"].source == "builtin"
 
 
 def _copy_production_bundle(tmp_path: Path) -> Path:
     bundle = tmp_path / "builtin_skills"
     shutil.copytree(BUILTIN_SKILLS_ROOT, bundle, ignore=shutil.ignore_patterns("__pycache__"))
     return bundle
+
+
+def _capability_runtime(
+    *,
+    builtin_root: Path,
+    system_root: Path,
+    workspace_root: Path | None = None,
+):
+    registry = KeydexCapabilityRegistry((SkillsCapability(),))
+    loader = KeydexLayerLoader(registry=registry)
+    layers = [
+        loader.load(
+            KeydexLayerDescriptor(
+                scope="builtin",
+                root=builtin_root,
+                logical_root="builtin",
+            )
+        ),
+        loader.load(
+            KeydexLayerDescriptor(
+                scope="system",
+                root=system_root,
+                logical_root=".keydex",
+            )
+        ),
+    ]
+    mode = "system_only"
+    if workspace_root is not None:
+        layers.append(
+            loader.load(
+                KeydexLayerDescriptor(
+                    scope="workspace",
+                    root=workspace_root / ".keydex",
+                    logical_root=".keydex",
+                )
+            )
+        )
+        mode = "workspace_effective"
+    return KeydexEffectiveComposer(registry=registry).compose(
+        mode=mode,  # type: ignore[arg-type]
+        layers=tuple(layers),
+        workspace_root=workspace_root,
+    )
 
 
 def _write_skill(skills_root: Path, name: str, description: str) -> Path:

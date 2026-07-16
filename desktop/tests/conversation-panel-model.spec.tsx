@@ -348,6 +348,47 @@ describe("useConversationPanelModel", () => {
     });
   });
 
+  it("refreshes Conversation Skills only for matching Skills capability events", async () => {
+    const runtime = fakeRuntime();
+    const controller = fakeController({
+      session: agentSession({ session_type: "workspace", workspace_id: "ws-1" }),
+    });
+    const { result } = renderHook(
+      () => useConversationPanelModel({ runtime, sessionId: "ses-1", controller }),
+      { wrapper: Providers },
+    );
+    await waitFor(() => expect(runtime.skills.listSession).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      result.current.handleRuntimeEventSideEffects({
+        action: "keydexWorkspaceChanged",
+        data: {
+          session_id: "ses-1",
+          changed_capabilities: ["keydex_markdown"],
+          capability_fingerprints: { keydex_markdown: "markdown-2" },
+        },
+      });
+    });
+    expect(runtime.skills.listSession).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      result.current.handleRuntimeEventSideEffects({
+        action: "keydexWorkspaceChanged",
+        data: {
+          session_id: "ses-1",
+          changed_capabilities: ["skills"],
+          capability_fingerprints: { skills: "skills-2" },
+        },
+      });
+    });
+    await waitFor(() => {
+      expect(runtime.skills.listSession).toHaveBeenCalledWith(
+        "ses-1",
+        expect.objectContaining({ forceReload: true }),
+      );
+    });
+  });
+
   it("previews and executes code-only rewind without reloading conversation", async () => {
     const runtime = fakeRuntime();
     const reloadHistory = vi.fn().mockResolvedValue(undefined);
@@ -371,6 +412,49 @@ describe("useConversationPanelModel", () => {
     );
     expect(reloadHistory).not.toHaveBeenCalled();
     expect(restoreComposerDraft).not.toHaveBeenCalled();
+  });
+
+  it("requires explicit external confirmation and forwards it to execution", async () => {
+    const runtime = fakeRuntime();
+    vi.mocked(runtime.conversation.previewSessionReverse).mockResolvedValueOnce({
+      ...reversePreview(),
+      requires_external_confirmation: true,
+      external_paths: ["D:/outside/file.txt"],
+      files: [{
+        resource_id: "resource-external",
+        scope_kind: "external",
+        scope_identity: "external:d",
+        scope_label: "D: external",
+        display_path: "file.txt",
+        absolute_path: "D:/outside/file.txt",
+        requires_full_access: true,
+        path: "file.txt",
+        current_state: "file",
+        target_state: "file",
+        classification: "ready",
+        binary: false,
+        truncated: false,
+        insertions: 1,
+        deletions: 1,
+      }],
+    });
+    const { result } = renderHook(
+      () => useConversationPanelModel({ runtime, sessionId: "ses-1", controller: fakeController() }),
+      { wrapper: Providers },
+    );
+
+    act(() => result.current.reverseFromMessage(reverseMessage()));
+    await waitFor(() => expect(result.current.reverseConfirmation?.preview).not.toBeNull());
+    act(() => result.current.confirmReverseFromMessage());
+    expect(runtime.conversation.executeSessionReverse).not.toHaveBeenCalled();
+
+    act(() => result.current.confirmExternalReversePaths(true));
+    act(() => result.current.confirmReverseFromMessage());
+    await waitFor(() => expect(runtime.conversation.executeSessionReverse).toHaveBeenCalledTimes(1));
+    expect(runtime.conversation.executeSessionReverse).toHaveBeenCalledWith(
+      "ses-1",
+      expect.objectContaining({ confirm_external_paths: true }),
+    );
   });
 
   it("drops a late preview response after switching sessions", async () => {
@@ -571,6 +655,16 @@ function fakeController(overrides: Partial<AgentSessionController> = {}): AgentS
     pendingApproval: null,
     draft: "",
     setDraft: vi.fn(),
+    composerDraft: {
+      text: "",
+      selectedSkill: null,
+      files: [],
+      quotes: [],
+      attachments: [],
+      updatedAt: 0,
+    },
+    setComposerDraft: vi.fn(),
+    clearComposerDraft: vi.fn(),
     selectedSkill: null,
     setSelectedSkill: vi.fn(),
     fileChipRequest: null,
@@ -726,6 +820,8 @@ function reversePreview() {
     insertions: 0,
     deletions: 0,
     warnings: [],
+    requires_external_confirmation: false,
+    external_paths: [],
   };
 }
 

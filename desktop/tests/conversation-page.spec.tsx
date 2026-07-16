@@ -9,6 +9,8 @@ import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider
 import { ConversationPage } from "@/renderer/pages/conversation";
 import { clearQuickChatSendQueue, queueQuickChatSend } from "@/renderer/pages/conversation/quickSend";
 import { AgentSessionProvider, useAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
+import { ActiveProjectCoordinatorProvider } from "@/renderer/providers/ActiveProjectCoordinatorProvider";
+import { ComposerDraftProvider } from "@/renderer/features/composer";
 import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
 import { ThemeProvider } from "@/renderer/providers/ThemeProvider";
@@ -184,6 +186,47 @@ describe("ConversationPage", () => {
     });
   });
 
+  it("isolates composer drafts by session and restores them when switching back", async () => {
+    const sessionA = agentSession({ id: "ses-a", title: "会话 A" });
+    const sessionB = agentSession({ id: "ses-b", title: "会话 B" });
+    const loadHistory = vi.fn((sessionId: string) =>
+      Promise.resolve(historyResponse(sessionId === "ses-b" ? sessionB : sessionA, [])),
+    );
+    const { runtime } = fakeRuntime({ session: sessionA, loadHistory });
+    const conversation = (sessionId: string) => (
+      <ComposerDraftProvider storage={null}>
+        <ActiveProjectCoordinatorProvider>
+          <AgentSessionProvider runtime={runtime}>
+            <PreviewProvider>
+              <ConversationPage threadId={sessionId} runtime={runtime} />
+            </PreviewProvider>
+          </AgentSessionProvider>
+        </ActiveProjectCoordinatorProvider>
+      </ComposerDraftProvider>
+    );
+    const view = render(conversation("ses-a"));
+
+    await readyComposer();
+    const sessionAComposer = typeComposer("会话 A 的未发送内容");
+    expect(sessionAComposer.textContent).toBe("会话 A 的未发送内容");
+
+    view.rerender(conversation("ses-b"));
+    await waitFor(() => {
+      expect(screen.getByRole("textbox").textContent).toBe("");
+    });
+    typeComposer("会话 B 的未发送内容");
+
+    view.rerender(conversation("ses-a"));
+    await waitFor(() => {
+      expect(screen.getByRole("textbox").textContent).toBe("会话 A 的未发送内容");
+    });
+
+    view.rerender(conversation("ses-b"));
+    await waitFor(() => {
+      expect(screen.getByRole("textbox").textContent).toBe("会话 B 的未发送内容");
+    });
+  });
+
   it("restores context window usage when switching from an empty session to a hydrated session", async () => {
     const sessionA = agentSession({
       id: "ses-a",
@@ -311,9 +354,10 @@ describe("ConversationPage", () => {
     });
 
     act(() => {
-      emit(agentEvent("keydexSkillsChanged", {
+      emit(agentEvent("keydexWorkspaceChanged", {
         session_id: "ses-1",
-        fingerprint: "changed-fingerprint",
+        changed_capabilities: ["skills"],
+        capability_fingerprints: { skills: "changed-fingerprint" },
       }));
     });
 

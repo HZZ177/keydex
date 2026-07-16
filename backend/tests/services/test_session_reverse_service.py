@@ -240,7 +240,7 @@ def test_full_rejects_conflict_and_force_is_explicitly_audited(tmp_path) -> None
     result = service.execute(session_id="session-1", workspace_root=tmp_path, request=force)
 
     assert result.status == "full"
-    assert result.forced_files == ("created.txt",)
+    assert result.forced_files == (force_preview.files[0].resource_id,)
     assert not (tmp_path / "created.txt").exists()
     file_result = repositories.file_history.list_operation_files(force_preview.operation_id)[0]
     assert file_result.user_authorized is True
@@ -287,8 +287,9 @@ def test_safe_partial_restores_ready_file_and_skips_conflict(tmp_path) -> None:
     )
 
     assert result.status == "partial"
-    assert result.restored_files == ("ready.txt",)
-    assert result.skipped_files == ("created.txt",)
+    preview_by_path = {item.path: item.resource_id for item in preview.files}
+    assert result.restored_files == (preview_by_path["ready.txt"],)
+    assert result.skipped_files == (preview_by_path["created.txt"],)
     assert not (tmp_path / "ready.txt").exists()
     assert (tmp_path / "created.txt").read_text(encoding="utf-8") == "external\n"
 

@@ -44,11 +44,13 @@ export interface ConversationComposerProps {
   allowContextCompressionSlashCommand?: boolean;
   selectedFiles?: SelectedFile[];
   selectedQuotes?: SelectedQuote[];
+  selectedImageAttachments?: SelectedImageAttachment[];
   onSearchWorkspace?: (query: string, options?: { signal?: AbortSignal }) => Promise<WorkspaceSearchResult[]>;
   onListWorkspaceDirectory?: (path: string) => Promise<WorkspaceSearchResult[]>;
   onOpenModelSettings?: () => void;
   onSelectedFilesChange?: (files: SelectedFile[]) => void;
   onSelectedQuotesChange?: (quotes: SelectedQuote[]) => void;
+  onSelectedImageAttachmentsChange?: (attachments: SelectedImageAttachment[]) => void;
   onChange: (value: string) => void;
   onSkillChange: (skill: SkillSummary | null) => void;
   onSend: (
@@ -100,11 +102,13 @@ export function ConversationComposer({
   allowContextCompressionSlashCommand = true,
   selectedFiles,
   selectedQuotes,
+  selectedImageAttachments,
   onSearchWorkspace,
   onListWorkspaceDirectory,
   onOpenModelSettings,
   onSelectedFilesChange,
   onSelectedQuotesChange,
+  onSelectedImageAttachmentsChange,
   onChange,
   onSkillChange,
   onSend,
@@ -169,9 +173,11 @@ export function ConversationComposer({
       allowContextCompressionSlashCommand={allowContextCompressionSlashCommand}
       selectedFiles={selectedFiles}
       selectedQuotes={selectedQuotes}
+      selectedImageAttachments={selectedImageAttachments}
       selectedSkill={selectedSkill}
       onSelectedFilesChange={onSelectedFilesChange}
       onSelectedQuotesChange={onSelectedQuotesChange}
+      onSelectedImageAttachmentsChange={onSelectedImageAttachmentsChange}
       onSkillChange={onSkillChange}
       onSend={onSend}
       onStop={onStop}

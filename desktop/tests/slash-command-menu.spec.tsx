@@ -122,8 +122,8 @@ describe("SlashCommandMenu", () => {
         skills={[]}
         skillDiagnostics={[{
           code: "keydex_manifest_invalid",
-          reason: "keydex.json is not valid JSON",
-          path: "keydex.json",
+          reason: "keydex.md is not valid JSON",
+          path: "keydex.md",
           severity: "error",
           details: {},
         }]}
@@ -140,7 +140,7 @@ describe("SlashCommandMenu", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     expect(screen.getByRole("alert").textContent).toContain(
-      "Skill 配置错误：keydex.json is not valid JSON",
+      "Skill 配置错误：keydex.md is not valid JSON",
     );
     expect(screen.getByTestId("skill-diagnostic").getAttribute("data-diagnostic-code")).toBe(
       "keydex_manifest_invalid",

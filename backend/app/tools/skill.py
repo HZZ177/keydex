@@ -1,26 +1,42 @@
 from __future__ import annotations
 
 import json
-from typing import Annotated, Any
+from typing import Annotated, Any, Protocol
 
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import InjectedToolCallId, tool
 from langgraph.types import Command
 
 from backend.app.core.logger import logger
-from backend.app.core.request_context import get_keydex_snapshot, get_skill_catalog
+from backend.app.core.request_context import (
+    get_keydex_capability,
+    get_keydex_snapshot,
+    get_skill_catalog,
+)
+from backend.app.keydex.capabilities.skills import (
+    SKILLS_CAPABILITY_KEY,
+    EffectiveSkillsPayload,
+)
+from backend.app.keydex.capabilities.skills.consumer import effective_skill_catalog
 from backend.app.keydex.runtime import KeydexEffectiveRuntimeSnapshot
 from backend.app.keydex.skills import (
-    KEYDEX_SKILL_MAX_ENTRY_BYTES,
     EffectiveSkillCatalog,
     SkillCatalog,
     SkillDefinition,
     SkillResourcePathError,
-    read_skill_text_resource,
+    SkillTextResource,
 )
 from backend.app.tools.skill_activation_messages import build_skill_activation_content
 
 LOAD_SKILL_TOOL_NAME = "load_skill"
+
+
+class _FrozenSkillsSnapshot(Protocol):
+    def read_skill_text_resource(
+        self,
+        skill: SkillDefinition,
+        resource_path: str,
+    ) -> SkillTextResource: ...
 
 
 @tool
@@ -69,19 +85,33 @@ async def run_load_skill(
             tool_call_id,
         )
 
-    catalog = get_skill_catalog()
-    if not isinstance(catalog, (EffectiveSkillCatalog, SkillCatalog)):
+    skills_snapshot = _resolve_frozen_skills_snapshot()
+    if skills_snapshot is None:
+        legacy_catalog = get_skill_catalog()
+        snapshot_missing = isinstance(
+            legacy_catalog,
+            (EffectiveSkillCatalog, SkillCatalog),
+        )
         return _tool_response(
             {
                 "skill_name": requested_skill,
                 "found": False,
                 "loaded": False,
                 "injected": False,
-                "code": "skill_catalog_missing",
-                "message": "No effective skill catalog is available for this request.",
+                "code": (
+                    "skill_snapshot_missing"
+                    if snapshot_missing
+                    else "skill_catalog_missing"
+                ),
+                "message": (
+                    "The effective Skills snapshot is unavailable for this request."
+                    if snapshot_missing
+                    else "No effective skill catalog is available for this request."
+                ),
             },
             tool_call_id,
         )
+    catalog = _catalog_for_frozen_snapshot(skills_snapshot)
 
     skill = catalog.skills.get(requested_skill)
     if skill is None:
@@ -111,24 +141,17 @@ async def run_load_skill(
             tool_call_id,
         )
 
-    keydex_snapshot = get_keydex_snapshot()
-    if not (
-        isinstance(keydex_snapshot, KeydexEffectiveRuntimeSnapshot)
-        and keydex_snapshot.skill_catalog is catalog
-    ):
-        keydex_snapshot = None
-
     if resource_path_text:
         return _load_skill_resource(
             skill=skill,
-            keydex_snapshot=keydex_snapshot,
+            skills_snapshot=skills_snapshot,
             requested_skill=requested_skill,
             resource_path=resource_path_text,
             tool_call_id=tool_call_id,
         )
 
     try:
-        skill_md_content = _read_skill_entry(skill, keydex_snapshot=keydex_snapshot)
+        skill_md_content = _read_skill_entry(skill, skills_snapshot=skills_snapshot)
     except FileNotFoundError:
         return _tool_response(
             {
@@ -204,14 +227,10 @@ async def run_load_skill(
 def _read_skill_entry(
     skill: SkillDefinition,
     *,
-    keydex_snapshot: KeydexEffectiveRuntimeSnapshot | None = None,
+    skills_snapshot: _FrozenSkillsSnapshot,
 ) -> str:
     try:
-        if keydex_snapshot is not None:
-            return keydex_snapshot.read_skill_text_resource(skill, "SKILL.md").content
-        return read_skill_text_resource(
-            skill, "SKILL.md", max_bytes=KEYDEX_SKILL_MAX_ENTRY_BYTES
-        ).content
+        return skills_snapshot.read_skill_text_resource(skill, "SKILL.md").content
     except SkillResourcePathError as exc:
         if exc.code == "skill_resource_not_found":
             raise FileNotFoundError(str(skill.entry_file)) from exc
@@ -226,17 +245,13 @@ def _read_skill_entry(
 def _load_skill_resource(
     *,
     skill: SkillDefinition,
-    keydex_snapshot: KeydexEffectiveRuntimeSnapshot | None,
+    skills_snapshot: _FrozenSkillsSnapshot,
     requested_skill: str,
     resource_path: str,
     tool_call_id: str,
 ) -> Command:
     try:
-        resource = (
-            keydex_snapshot.read_skill_text_resource(skill, resource_path)
-            if keydex_snapshot is not None
-            else read_skill_text_resource(skill, resource_path)
-        )
+        resource = skills_snapshot.read_skill_text_resource(skill, resource_path)
     except SkillResourcePathError as exc:
         return _tool_response(
             {
@@ -269,6 +284,29 @@ def _load_skill_resource(
         },
         tool_call_id,
     )
+
+
+def _resolve_frozen_skills_snapshot() -> _FrozenSkillsSnapshot | None:
+    payload = get_keydex_capability(SKILLS_CAPABILITY_KEY)
+    if isinstance(payload, EffectiveSkillsPayload):
+        return payload
+
+    snapshot = get_keydex_snapshot()
+    if isinstance(snapshot, KeydexEffectiveRuntimeSnapshot):
+        return snapshot
+    return None
+
+
+def _catalog_for_frozen_snapshot(
+    snapshot: _FrozenSkillsSnapshot,
+) -> EffectiveSkillCatalog | SkillCatalog:
+    if isinstance(snapshot, EffectiveSkillsPayload):
+        return snapshot.catalog
+    if isinstance(snapshot, KeydexEffectiveRuntimeSnapshot):
+        catalog = effective_skill_catalog(snapshot)
+        if catalog is not None:
+            return catalog
+    raise TypeError("unsupported frozen Skills snapshot")
 
 
 def _build_activation_content(skill: SkillDefinition, skill_md_content: str) -> str:

@@ -1,5 +1,4 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { createHash } from "node:crypto";
 import { mkdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import * as path from "node:path";
@@ -19,12 +18,20 @@ export interface KeydexE2EFixture {
   runDir: string;
   systemRoot: string;
   workspaceRoot: string;
+  workspaceId: string;
   api<T>(requestPath: string, init?: RequestInit): Promise<T>;
   configurePage(page: Page): Promise<void>;
   createChatSession(title?: string): Promise<KeydexSession>;
   createWorkspaceSession(title?: string): Promise<KeydexSession>;
-  writeSystemManifest(value?: unknown): Promise<void>;
-  writeWorkspaceManifest(inheritSystem: boolean): Promise<void>;
+  createAdditionalWorkspace(name: string): Promise<KeydexAdditionalWorkspace>;
+  waitForModelRequest(message: string, occurrence?: number): Promise<void>;
+  writeLegacyKeydexJson(source: "system" | "workspace", value: unknown): Promise<void>;
+  writeSystemKeydexMarkdown(content: string | Uint8Array): Promise<void>;
+  writeWorkspaceKeydexMarkdown(content: string | Uint8Array): Promise<void>;
+  removeSystemKeydexMarkdown(): Promise<void>;
+  removeWorkspaceKeydexMarkdown(): Promise<void>;
+  renameSystemKeydexMarkdown(targetName: string): Promise<void>;
+  renameWorkspaceKeydexMarkdown(targetName: string): Promise<void>;
   writeSkill(
     source: "system" | "workspace",
     name: string,
@@ -41,7 +48,6 @@ export interface KeydexE2EFixture {
     marker: string,
   ): Promise<void>;
   removeSkill(source: "system" | "workspace", name: string): Promise<void>;
-  removeWorkspaceManifest(): Promise<void>;
   evidence(page: Page, name: string, metadata?: Record<string, unknown>): Promise<void>;
   stop(): Promise<void>;
 }
@@ -53,20 +59,42 @@ export interface KeydexSession {
   [key: string]: unknown;
 }
 
-export async function startKeydexE2EFixture(name: string): Promise<KeydexE2EFixture> {
+export interface KeydexAdditionalWorkspace {
+  id: string;
+  rootPath: string;
+  createSession(title?: string): Promise<KeydexSession>;
+  writeKeydexMarkdown(content: string | Uint8Array): Promise<void>;
+  removeKeydexMarkdown(): Promise<void>;
+}
+
+export interface KeydexE2EFixtureOptions {
+  runRoot?: string;
+  cleanupRunDir?: boolean;
+}
+
+export async function startKeydexE2EFixture(
+  name: string,
+  options: KeydexE2EFixtureOptions = {},
+): Promise<KeydexE2EFixture> {
   const port = await availablePort();
   const safeName = name.replace(/[^a-z0-9-]+/gi, "-").toLowerCase();
+  const runRoot = options.runRoot
+    ? path.resolve(options.runRoot)
+    : path.join(REPO_ROOT, ".dev", "test", "system-workspace-keydex-hierarchy");
   const runDir = path.join(
-    REPO_ROOT,
-    ".dev",
-    "test",
-    "system-workspace-keydex-hierarchy",
+    runRoot,
     `${safeName}-${process.pid}-${Date.now()}`,
   );
   const dataDir = path.join(runDir, "data");
   const systemRoot = path.join(runDir, "system-keydex");
   const workspaceRoot = path.join(runDir, "workspace");
-  const evidenceDir = path.join(runDir, "evidence");
+  const evidenceDir = path.join(
+    REPO_ROOT,
+    ".dev",
+    "e2e",
+    "evidence",
+    "2026-07-15_21-52-18-keydex-workspace-capability-runtime",
+  );
   await Promise.all([
     mkdir(dataDir, { recursive: true }),
     mkdir(systemRoot, { recursive: true }),
@@ -132,6 +160,23 @@ export async function startKeydexE2EFixture(name: string): Promise<KeydexE2EFixt
 
   const skillRoot = (source: "system" | "workspace") =>
     source === "system" ? systemRoot : path.join(workspaceRoot, ".keydex");
+  const markdownPath = (source: "system" | "workspace") =>
+    path.join(skillRoot(source), "keydex.md");
+  const writeMarkdown = async (source: "system" | "workspace", content: string | Uint8Array) => {
+    await mkdir(skillRoot(source), { recursive: true });
+    await writeFile(markdownPath(source), content);
+    await settleWatcher();
+  };
+  const removeMarkdown = async (source: "system" | "workspace") => {
+    await unlink(markdownPath(source)).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+    await settleWatcher();
+  };
+  const renameMarkdown = async (source: "system" | "workspace", targetName: string) => {
+    await rename(markdownPath(source), path.join(skillRoot(source), targetName));
+    await settleWatcher();
+  };
   const writeSkill = async (
     source: "system" | "workspace",
     skillName: string,
@@ -153,6 +198,7 @@ export async function startKeydexE2EFixture(name: string): Promise<KeydexE2EFixt
         await writeFile(target, content, "utf8");
       }),
     );
+    await settleWatcher();
   };
 
   return {
@@ -163,6 +209,7 @@ export async function startKeydexE2EFixture(name: string): Promise<KeydexE2EFixt
     runDir,
     systemRoot,
     workspaceRoot,
+    workspaceId: workspace.id,
     api,
     async configurePage(page) {
       await page.addInitScript((agentBaseUrl) => {
@@ -187,26 +234,76 @@ export async function startKeydexE2EFixture(name: string): Promise<KeydexE2EFixt
       });
       return response.session;
     },
-    async writeSystemManifest(value = { schema_version: 1, skills: { enabled: true } }) {
-      await mkdir(systemRoot, { recursive: true });
+    async waitForModelRequest(message, occurrence = 1) {
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline) {
+        const payload = await api<{ observations: Array<{ last_user: string }> }>(
+          "/api/e2e/model-observations",
+        );
+        if (
+          payload.observations.filter((observation) => observation.last_user === message).length >=
+          occurrence
+        ) {
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      throw new Error(`Timed out waiting for model request: ${message} #${occurrence}`);
+    },
+    async createAdditionalWorkspace(name) {
+      const safeWorkspaceName = name.replace(/[^a-z0-9-]+/gi, "-").toLowerCase();
+      const rootPath = path.join(runDir, `workspace-${safeWorkspaceName}`);
+      await mkdir(rootPath, { recursive: true });
+      await writeFile(path.join(rootPath, "README.md"), `# ${name}\n`, "utf8");
+      const created = await api<{ workspace: { id: string } }>("/api/workspaces", {
+        method: "POST",
+        body: JSON.stringify({ root_path: rootPath, name }),
+      });
+      const keydexRoot = path.join(rootPath, ".keydex");
+      const keydexMarkdown = path.join(keydexRoot, "keydex.md");
+      return {
+        id: created.workspace.id,
+        rootPath,
+        async createSession(title = `${name} E2E Workspace`) {
+          const response = await api<{ session: KeydexSession }>("/api/sessions", {
+            method: "POST",
+            body: JSON.stringify({
+              title,
+              session_type: "workspace",
+              workspace_id: created.workspace.id,
+            }),
+          });
+          return response.session;
+        },
+        async writeKeydexMarkdown(content) {
+          await mkdir(keydexRoot, { recursive: true });
+          await writeFile(keydexMarkdown, content);
+          await settleWatcher();
+        },
+        async removeKeydexMarkdown() {
+          await unlink(keydexMarkdown).catch((error: NodeJS.ErrnoException) => {
+            if (error.code !== "ENOENT") throw error;
+          });
+          await settleWatcher();
+        },
+      };
+    },
+    async writeLegacyKeydexJson(source, value) {
+      const keydexRoot = skillRoot(source);
+      await mkdir(keydexRoot, { recursive: true });
       await writeFile(
-        path.join(systemRoot, "keydex.json"),
+        path.join(keydexRoot, "keydex.md"),
         typeof value === "string" ? value : JSON.stringify(value),
         "utf8",
       );
+      await settleWatcher();
     },
-    async writeWorkspaceManifest(inheritSystem) {
-      const keydexRoot = skillRoot("workspace");
-      await mkdir(keydexRoot, { recursive: true });
-      await writeFile(
-        path.join(keydexRoot, "keydex.json"),
-        JSON.stringify({
-          schema_version: 1,
-          skills: { enabled: true, inherit_system: inheritSystem },
-        }),
-        "utf8",
-      );
-    },
+    writeSystemKeydexMarkdown: (content) => writeMarkdown("system", content),
+    writeWorkspaceKeydexMarkdown: (content) => writeMarkdown("workspace", content),
+    removeSystemKeydexMarkdown: () => removeMarkdown("system"),
+    removeWorkspaceKeydexMarkdown: () => removeMarkdown("workspace"),
+    renameSystemKeydexMarkdown: (targetName) => renameMarkdown("system", targetName),
+    renameWorkspaceKeydexMarkdown: (targetName) => renameMarkdown("workspace", targetName),
     writeSkill,
     async writeInvalidSkill(source, skillName) {
       const root = path.join(skillRoot(source), "skills", skillName);
@@ -216,6 +313,7 @@ export async function startKeydexE2EFixture(name: string): Promise<KeydexE2EFixt
         `---\nname: ${skillName}\n---\n\ninvalid candidate\n`,
         "utf8",
       );
+      await settleWatcher();
     },
     async renameSkill(source, fromName, toName, description, marker) {
       const sourceRoot = path.join(skillRoot(source), "skills", fromName);
@@ -226,43 +324,34 @@ export async function startKeydexE2EFixture(name: string): Promise<KeydexE2EFixt
         `---\nname: ${toName}\ndescription: ${description}\n---\n\n# ${toName}\n\n${marker}\n`,
         "utf8",
       );
+      await settleWatcher();
     },
     async removeSkill(source, skillName) {
       await rm(path.join(skillRoot(source), "skills", skillName), { recursive: true, force: true });
+      await settleWatcher();
     },
-    async removeWorkspaceManifest() {
-      await unlink(path.join(skillRoot("workspace"), "keydex.json")).catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== "ENOENT") throw error;
-      });
-    },
-    async evidence(page, evidenceName, metadata = {}) {
+    async evidence(page, evidenceName, _metadata = {}) {
       const safeEvidenceName = evidenceName.replace(/[^a-z0-9-]+/gi, "-").toLowerCase();
       const screenshotPath = path.join(evidenceDir, `${safeEvidenceName}.png`);
       await page.screenshot({ path: screenshotPath, fullPage: true });
-      const [systemFingerprint, workspaceFingerprint] = await Promise.all([
-        treeFingerprint(systemRoot),
-        treeFingerprint(path.join(workspaceRoot, ".keydex")),
-      ]);
-      await writeFile(
-        path.join(evidenceDir, `${safeEvidenceName}.json`),
-        JSON.stringify(
-          {
-            ...metadata,
-            system_fingerprint: systemFingerprint,
-            workspace_fingerprint: workspaceFingerprint,
-            backend_base_url: baseUrl,
-          },
-          null,
-          2,
-        ),
-        "utf8",
-      );
     },
     async stop() {
       await stopChild(child);
       await writeFile(path.join(runDir, "backend.log"), processLog.join(""), "utf8");
+      if (options.cleanupRunDir) {
+        const normalizedRunRoot = path.resolve(runRoot);
+        const normalizedRunDir = path.resolve(runDir);
+        if (!normalizedRunDir.startsWith(`${normalizedRunRoot}${path.sep}`)) {
+          throw new Error(`Refusing to clean E2E path outside its run root: ${normalizedRunDir}`);
+        }
+        await rm(normalizedRunDir, { recursive: true, force: true, maxRetries: 12, retryDelay: 200 });
+      }
     },
   };
+}
+
+async function settleWatcher(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 160));
 }
 
 async function availablePort(): Promise<number> {
@@ -326,22 +415,4 @@ function appendProcessLog(log: string[], chunk: string) {
 
 function normalizedPath(value: string): string {
   return value.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-}
-
-async function treeFingerprint(root: string): Promise<string> {
-  const hash = createHash("sha256");
-  const { readdir, readFile } = await import("node:fs/promises");
-  const visit = async (current: string, relative: string) => {
-    const entries = await readdir(current, { withFileTypes: true }).catch(() => []);
-    entries.sort((left, right) => left.name.localeCompare(right.name));
-    for (const entry of entries) {
-      const childRelative = relative ? `${relative}/${entry.name}` : entry.name;
-      const childPath = path.join(current, entry.name);
-      hash.update(childRelative);
-      if (entry.isDirectory()) await visit(childPath, childRelative);
-      else if (entry.isFile()) hash.update(await readFile(childPath));
-    }
-  };
-  await visit(root, "");
-  return hash.digest("hex");
 }

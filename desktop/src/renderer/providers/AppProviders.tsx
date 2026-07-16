@@ -13,6 +13,7 @@ import { RuntimeConnectionProvider, type RuntimeConnectionProviderProps } from "
 import { WindowClosePreferenceController } from "./WindowClosePreferenceController";
 import { APP_FIND_SHORTCUT_EVENT, isFindShortcutEvent } from "@/renderer/events/findShortcut";
 import { AppTooltipLayer } from "@/renderer/components/tooltip";
+import { ComposerDraftProvider } from "@/renderer/features/composer";
 import { runtimeBridge, type RuntimeBridge } from "@/runtime";
 
 export interface AppProvidersProps extends PropsWithChildren {
@@ -36,13 +37,15 @@ export function AppProviders({
               <WindowClosePreferenceController runtime={runtime} />
               <AppTooltipLayer scopeSelector="body" targetMode="native-interactive-title" />
               <FontProvider>
-                <AgentSessionProvider runtime={runtime}>
-                  <FileChangeProvider>
-                    <PreviewProvider>
-                      <HashRouter>{children}</HashRouter>
-                    </PreviewProvider>
-                  </FileChangeProvider>
-                </AgentSessionProvider>
+                <ComposerDraftProvider>
+                  <AgentSessionProvider runtime={runtime}>
+                    <FileChangeProvider>
+                      <PreviewProvider>
+                        <HashRouter>{children}</HashRouter>
+                      </PreviewProvider>
+                    </FileChangeProvider>
+                  </AgentSessionProvider>
+                </ComposerDraftProvider>
               </FontProvider>
             </RuntimeConnectionProvider>
           </AppContextMenuProvider>

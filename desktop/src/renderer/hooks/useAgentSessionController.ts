@@ -18,6 +18,12 @@ import {
   type SelectedQuote,
 } from "@/renderer/components/chat/SendBox";
 import { subscribeAddWorkspaceFileToChat } from "@/renderer/events/workspaceFileContext";
+import {
+  composerSessionDraftScope,
+  useComposerDraft,
+  type ComposerDraft,
+  type ComposerDraftUpdate,
+} from "@/renderer/features/composer";
 import { buildA2UICancelPayload, buildA2UISubmitPayload } from "@/renderer/pages/conversation/messages/a2ui";
 import type { RuntimeSelectedModel } from "@/renderer/components/model";
 import { emitSessionEventsFromRuntimeEvent, emitSessionUpdated } from "@/renderer/events/sessionEvents";
@@ -93,6 +99,7 @@ export interface UseAgentSessionControllerOptions {
   onAfterSend?: () => void;
   syncThreadTasks?: boolean;
   conversationSendDefaultMode?: PendingInputMode;
+  composerDraftScopeKey?: string | null;
   ensureSession?: (request: AgentSessionControllerEnsureSessionRequest) => Promise<AgentSessionControllerEnsureSessionResult>;
 }
 
@@ -110,6 +117,9 @@ export interface AgentSessionController {
   pendingApproval: CommandApprovalRequest | null;
   draft: string;
   setDraft: (value: string | ((current: string) => string)) => void;
+  composerDraft: ComposerDraft;
+  setComposerDraft: (update: ComposerDraftUpdate) => void;
+  clearComposerDraft: () => void;
   selectedSkill: SkillSummary | null;
   setSelectedSkill: (skill: SkillSummary | null) => void;
   restoreComposerDraft: (draft: AgentSessionControllerComposerDraft) => void;
@@ -195,16 +205,32 @@ export function useAgentSessionController({
   onAfterSend,
   syncThreadTasks = true,
   conversationSendDefaultMode = "steer",
+  composerDraftScopeKey,
   ensureSession,
 }: UseAgentSessionControllerOptions): AgentSessionController {
   const optionalAgentRuntime = useOptionalAgentSessionRuntime();
   const sharedRuntimeContext = optionalAgentRuntime?.runtime === runtime ? optionalAgentRuntime : null;
   const [localState, localDispatch] = useReducer(agentConversationReducer, createInitialAgentConversationState());
-  const [draft, setDraft] = useState("");
+  const resolvedComposerDraftScopeKey =
+    composerDraftScopeKey === undefined
+      ? sessionId
+        ? composerSessionDraftScope(sessionId)
+        : null
+      : composerDraftScopeKey;
+  const composerDraftBinding = useComposerDraft(resolvedComposerDraftScopeKey);
+  const composerDraft = composerDraftBinding.draft;
+  const draft = composerDraft.text;
+  const setDraft = composerDraftBinding.setText;
+  const setComposerDraft = composerDraftBinding.setDraft;
+  const clearComposerDraft = composerDraftBinding.clearDraft;
+  const selectedSkill = composerDraft.selectedSkill;
+  const setSelectedSkill = useCallback(
+    (skill: SkillSummary | null) => setComposerDraft({ selectedSkill: skill }),
+    [setComposerDraft],
+  );
   const [fileChipRequest, setFileChipRequest] = useState<SendBoxExternalFileRequest | null>(null);
   const [quoteChipRequest, setQuoteChipRequest] = useState<SendBoxExternalQuoteRequest | null>(null);
   const [composerContextRequest, setComposerContextRequest] = useState<SendBoxExternalContextRequest | null>(null);
-  const [selectedSkill, setSelectedSkill] = useState<SkillSummary | null>(null);
   const [requestState, setRequestState] = useState<AgentSessionRuntimeState | null>(null);
   const [localRuntimeDetail, setLocalRuntimeDetail] = useState<string | null>(null);
   const [localWsStatus, setLocalWsStatus] = useState<WsConnectionStatus>("idle");
@@ -569,15 +595,20 @@ export function useAgentSessionController({
   }, [session?.workspace_id, sessionId]);
 
   const restoreComposerDraft = useCallback((nextDraft: AgentSessionControllerComposerDraft) => {
-    setDraft(nextDraft.value);
-    setSelectedSkill(nextDraft.selectedSkill ?? null);
+    setComposerDraft({
+      text: nextDraft.value,
+      selectedSkill: nextDraft.selectedSkill ?? null,
+      files: nextDraft.files ?? [],
+      quotes: nextDraft.quotes ?? [],
+      attachments: nextDraft.attachments ?? [],
+    });
     setComposerContextRequest((current) => ({
       requestId: (current?.requestId ?? 0) + 1,
       files: nextDraft.files ?? [],
       quotes: nextDraft.quotes ?? [],
       attachments: nextDraft.attachments ?? [],
     }));
-  }, []);
+  }, [setComposerDraft]);
 
   const resolveSessionId = useCallback(
     async (message: string, contextItems: AgentContextItem[], model: RuntimeSelectedModel | null) => {
@@ -662,6 +693,10 @@ export function useAgentSessionController({
       if (!targetSessionId) {
         return false;
       }
+      const targetDraftScopeKey = composerSessionDraftScope(targetSessionId);
+      if (!sessionId && composerDraftBinding.scopeKey && composerDraftBinding.scopeKey !== targetDraftScopeKey) {
+        composerDraftBinding.copyTo(targetDraftScopeKey);
+      }
 
       setRuntimeDetail(null);
       try {
@@ -709,7 +744,10 @@ export function useAgentSessionController({
         emitSessionUpdated({ id: targetSessionId, updated_at: new Date().toISOString() });
         onAfterSend?.();
         if (options.clearDraft) {
-          setDraft("");
+          clearComposerDraft();
+          if (composerDraftBinding.scopeKey !== targetDraftScopeKey) {
+            composerDraftBinding.clearScope(targetDraftScopeKey);
+          }
         }
         return true;
       } catch (reason) {
@@ -732,6 +770,10 @@ export function useAgentSessionController({
       setRuntimeDetail,
       sharedRuntimeContext,
       conversationSendDefaultMode,
+      clearComposerDraft,
+      composerDraftBinding.clearScope,
+      composerDraftBinding.copyTo,
+      composerDraftBinding.scopeKey,
       wsStatus,
     ],
   );
@@ -1096,6 +1138,9 @@ export function useAgentSessionController({
       pendingApproval,
       draft,
       setDraft,
+      composerDraft,
+      setComposerDraft,
+      clearComposerDraft,
       selectedSkill,
       setSelectedSkill,
       restoreComposerDraft,
@@ -1143,6 +1188,7 @@ export function useAgentSessionController({
       connectionReady,
       dispatch,
       draft,
+      composerDraft,
       editPendingInput,
       fileChipRequest,
       composerContextRequest,
@@ -1160,6 +1206,8 @@ export function useAgentSessionController({
       reorderPendingInputs,
       restoreComposerDraft,
       selectedSkill,
+      setComposerDraft,
+      clearComposerDraft,
       send,
       sendText,
       session,

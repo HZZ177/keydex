@@ -29,7 +29,6 @@ def resolve_system_skill_catalog(
         skills=_sorted_skill_map(skills),
         diagnostics=tuple(diagnostics),
         available=system.available or bool(builtin is not None and builtin.available),
-        inherit_system=True,
         shadowed_names=frozenset(shadowed_names),
     )
 
@@ -40,40 +39,31 @@ def resolve_workspace_skill_catalog(
     *,
     builtin: SkillLayerCatalog | None = None,
 ) -> EffectiveSkillCatalog:
-    inherit_system = workspace.profile.inherit_system
-    diagnostics = [*(builtin.diagnostics if builtin is not None else ())]
-    if inherit_system:
-        diagnostics.extend(system.diagnostics)
-    diagnostics.extend(workspace.diagnostics)
-    if not workspace.available:
-        return EffectiveSkillCatalog(
-            mode="workspace_effective",
-            skills={},
-            diagnostics=tuple(diagnostics),
-            available=False,
-            inherit_system=workspace.profile.inherit_system,
-        )
+    diagnostics = [
+        *(builtin.diagnostics if builtin is not None else ()),
+        *system.diagnostics,
+        *workspace.diagnostics,
+    ]
 
     result: dict[str, SkillDefinition] = {}
     if builtin is not None and builtin.available:
         result.update(builtin.skills)
 
     shadowed_names: set[str] = set()
-    if inherit_system:
-        shadowed_names.update(
-            _overlay_layer(
-                result,
-                system,
-                diagnostics=diagnostics,
-                inherited_sources=("builtin",),
-            )
+    shadowed_names.update(
+        _overlay_layer(
+            result,
+            system,
+            diagnostics=diagnostics,
+            inherited_sources=("builtin",),
         )
+    )
     shadowed_names.update(
         _overlay_layer(
             result,
             workspace,
             diagnostics=diagnostics,
-            inherited_sources=("system", "builtin") if inherit_system else ("builtin",),
+            inherited_sources=("system", "builtin"),
         )
     )
 
@@ -81,8 +71,11 @@ def resolve_workspace_skill_catalog(
         mode="workspace_effective",
         skills=_sorted_skill_map(result),
         diagnostics=tuple(diagnostics),
-        available=True,
-        inherit_system=inherit_system,
+        available=bool(
+            workspace.available
+            or system.available
+            or (builtin is not None and builtin.available)
+        ),
         shadowed_names=frozenset(shadowed_names),
     )
 

@@ -120,6 +120,13 @@ export type SessionReverseOperationStatus =
   | "blocked";
 
 export interface SessionReverseFilePreview {
+  resource_id: string;
+  scope_kind: "workspace" | "external";
+  scope_identity: string;
+  scope_label: string;
+  display_path: string;
+  absolute_path: string;
+  requires_full_access: boolean;
   path: string;
   current_state: string;
   target_state: string;
@@ -147,6 +154,8 @@ export interface SessionReversePreview {
   insertions: number;
   deletions: number;
   warnings: string[];
+  requires_external_confirmation: boolean;
+  external_paths: string[];
 }
 
 export interface SessionReverseExecutePayload {
@@ -156,6 +165,7 @@ export interface SessionReverseExecutePayload {
   request_id: string;
   mode: SessionReverseMode;
   decision: SessionReverseDecision;
+  confirm_external_paths?: boolean;
 }
 
 export interface SessionReverseResult {
@@ -241,6 +251,8 @@ export interface ChatChannel {
   ping(): void;
   bindWorkspaceWatch?(workspaceId: string): void;
   unbindWorkspaceWatch?(workspaceId: string): void;
+  bindGitRepositoryWatch?(workspaceId: string, projectRoot: string, repositoryId: string): void;
+  unbindGitRepositoryWatch?(repositoryId: string): void;
   bindLocalFileWatch?(watchId: string, path: string): void;
   unbindLocalFileWatch?(watchId: string): void;
 }
@@ -504,6 +516,9 @@ export function createConversationRuntime(
         ping: () => client.ping(),
         bindWorkspaceWatch: (workspaceId) => client.bindWorkspaceWatch(workspaceId),
         unbindWorkspaceWatch: (workspaceId) => client.unbindWorkspaceWatch(workspaceId),
+        bindGitRepositoryWatch: (workspaceId, projectRoot, repositoryId) =>
+          client.bindGitRepositoryWatch(workspaceId, projectRoot, repositoryId),
+        unbindGitRepositoryWatch: (repositoryId) => client.unbindGitRepositoryWatch(repositoryId),
         bindLocalFileWatch: (watchId, path) => client.bindLocalFileWatch(watchId, path),
         unbindLocalFileWatch: (watchId) => client.unbindLocalFileWatch(watchId),
       };

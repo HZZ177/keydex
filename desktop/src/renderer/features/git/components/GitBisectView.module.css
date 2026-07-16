@@ -1,0 +1,19 @@
+.root { display: grid; gap: 9px; margin: 10px; padding: 10px; border: 1px solid var(--color-border-2); border-radius: var(--radius-md); }
+.root header, .culprit, .actions, .summary, .root form { display: flex; align-items: center; gap: 8px; }
+.root header > div { display: grid; gap: 2px; }
+.root header strong { font-size: 12px; }
+.root header span, .root p, .candidates > span { color: var(--color-text-3); font-size: 10px; }
+.root form, .actions, .summary { flex-wrap: wrap; }
+.root form label { display: grid; gap: 3px; color: var(--color-text-3); font-size: 10px; }
+.root input { width: 180px; min-height: 28px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--color-bg-1); color: var(--color-text-1); }
+.root button { display: inline-flex; min-height: 28px; align-items: center; gap: 5px; padding: 0 9px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: transparent; color: var(--color-text-2); cursor: pointer; font-size: 10px; }
+.root button:disabled { cursor: default; opacity: 0.45; }
+.summary span { padding: 5px 7px; border-radius: var(--radius-sm); background: var(--color-bg-2); color: var(--color-text-2); font-size: 10px; }
+.culprit { padding: 8px; border: 1px solid color-mix(in srgb, var(--color-warning-1, #b7791f) 40%, var(--color-border-2)); border-radius: var(--radius-sm); color: var(--color-warning-1, #b7791f); }
+.culprit span { flex: 1; font-size: 10px; }
+.candidates { display: grid; gap: 5px; }
+.candidates > strong { color: var(--color-text-3); font-size: 10px; }
+.candidates ol { display: grid; max-height: 130px; margin: 0; padding-left: 24px; overflow: auto; color: var(--color-text-3); font-size: 10px; }
+.candidates li[data-current="true"] { color: var(--color-accent-1); font-weight: 600; }
+.reset { justify-self: start; }
+.confirmation { display: grid; grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px; padding: 8px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); font-size: 9px; }.confirmation strong, .confirmation span { grid-column: 1; }.confirmation span { color: var(--color-text-3); }.confirmation button { grid-row: 1 / span 2; }.confirmation button:first-of-type { grid-column: 2; }.confirmation button:last-of-type { grid-column: 3; }

@@ -8,10 +8,18 @@ from backend.app.keydex.builtin_skills import (
     load_builtin_skill_layer_profile,
 )
 from backend.app.keydex.models import (
+    CapabilityLayerSnapshot,
+    EffectiveCapabilitySnapshot,
+    KeydexCapabilityLookupError,
+    KeydexCapabilityMissingError,
+    KeydexCapabilityTypeError,
     KeydexDiagnostic,
     KeydexEffectiveProfile,
+    KeydexEffectiveSnapshot,
     KeydexLayer,
+    KeydexLayerDescriptor,
     KeydexLayerProfile,
+    KeydexLayerSnapshot,
     KeydexRuntimeMode,
     KeydexScope,
     KeydexWorkspaceProfile,
@@ -27,14 +35,17 @@ from backend.app.keydex.presets import (
     provision_bundled_presets,
 )
 from backend.app.keydex.profile import (
-    KeydexManifestError,
-    default_keydex_manifest,
     load_keydex_layer_profile,
     load_keydex_system_profile,
     load_keydex_workspace_profile,
-    merge_keydex_manifest,
+)
+from backend.app.keydex.registry import (
+    DEFAULT_KEYDEX_CAPABILITY_REGISTRY,
+    KEYDEX_RUNTIME_REVISION,
+    KeydexCapabilityRegistry,
 )
 from backend.app.keydex.runtime import (
+    KeydexCapabilityFingerprint,
     KeydexEffectiveRuntimeSnapshot,
     KeydexLayerFingerprint,
     KeydexLayerRuntimeSnapshot,
@@ -52,9 +63,21 @@ from backend.app.keydex.runtime import (
     build_keydex_workspace_runtime_snapshot,
     compose_keydex_effective_runtime_snapshot,
 )
-from backend.app.keydex.runtime_cache import KeydexRuntimeCache, KeydexWorkspaceRuntimeCache
+from backend.app.keydex.runtime_cache import (
+    KeydexCapabilityRuntimeCache,
+    KeydexRuntimeCache,
+    KeydexWorkspaceRuntimeCache,
+)
 
 __all__ = [
+    "KeydexCapabilityRuntimeCache",
+    "KeydexCapabilityFingerprint",
+    "CapabilityLayerSnapshot",
+    "EffectiveCapabilitySnapshot",
+    "KeydexCapabilityLookupError",
+    "KeydexCapabilityMissingError",
+    "KeydexCapabilityRegistry",
+    "KeydexCapabilityTypeError",
     "KeydexWorkspaceRuntimeCache",
     "KeydexRuntimeCache",
     "KeydexEffectiveRuntimeSnapshot",
@@ -63,15 +86,19 @@ __all__ = [
     "KeydexSnapshotUnstableError",
     "KeydexWorkspaceFingerprint",
     "KeydexWorkspaceRuntimeSnapshot",
-    "KeydexManifestError",
     "KeydexDiagnostic",
+    "KeydexEffectiveSnapshot",
     "KeydexEffectiveProfile",
     "KeydexLayer",
+    "KeydexLayerDescriptor",
     "KeydexLayerProfile",
+    "KeydexLayerSnapshot",
     "KeydexRuntimeMode",
     "KeydexScope",
     "KeydexWorkspaceProfile",
     "BUILTIN_SKILL_CATALOG_SCHEMA_VERSION",
+    "DEFAULT_KEYDEX_CAPABILITY_REGISTRY",
+    "KEYDEX_RUNTIME_REVISION",
     "BUILTIN_SKILLS_ROOT",
     "BuiltinSkill",
     "BuiltinSkillCatalog",
@@ -90,11 +117,9 @@ __all__ = [
     "build_keydex_workspace_layer_runtime_snapshot",
     "build_keydex_workspace_runtime_snapshot",
     "compose_keydex_effective_runtime_snapshot",
-    "default_keydex_manifest",
     "load_keydex_layer_profile",
     "load_keydex_system_profile",
     "load_keydex_workspace_profile",
-    "merge_keydex_manifest",
     "deterministic_tree_sha256",
     "load_and_validate_preset_catalog",
     "load_and_validate_builtin_skill_catalog",

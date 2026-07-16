@@ -312,7 +312,7 @@ def test_t39_invalid_workspace_override_blocks_inherited_system_activation(
     assert exc_info.value.details == {"skill_name": "shared"}
 
 
-def test_t39_inherit_disabled_project_cannot_activate_system_skill(tmp_path: Path) -> None:
+def test_removed_inherit_manifest_cannot_disable_system_skill(tmp_path: Path) -> None:
     service, repositories = _service(tmp_path)
     system_skill = tmp_path / "system-keydex" / "skills" / "shared"
     system_skill.mkdir(parents=True)
@@ -322,7 +322,7 @@ def test_t39_inherit_disabled_project_cannot_activate_system_skill(tmp_path: Pat
     workspace_root = tmp_path / "repo"
     keydex_root = workspace_root / ".keydex"
     keydex_root.mkdir(parents=True)
-    (keydex_root / "keydex.json").write_text(
+    (keydex_root / "keydex.md").write_text(
         '{"skills": {"inherit_system": false}}', encoding="utf-8"
     )
     workspace = repositories.workspaces.create(
@@ -338,10 +338,9 @@ def test_t39_inherit_disabled_project_cannot_activate_system_skill(tmp_path: Pat
         workspace_roots=[str(workspace_root)],
     )
 
-    with pytest.raises(SkillActivationError) as exc_info:
-        service._validate_skill_activation(
-            SkillActivationRequest(skill_name="shared", source="system"),
-            session,
-        )
+    snapshot = service._validate_skill_activation(
+        SkillActivationRequest(skill_name="shared", source="system"),
+        session,
+    )
 
-    assert exc_info.value.code == "skill_not_found"
+    assert snapshot.skill_catalog.skills["shared"].source == "system"

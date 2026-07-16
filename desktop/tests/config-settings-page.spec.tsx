@@ -200,6 +200,9 @@ describe("ConfigSettingsPage", () => {
     expect(screen.getByRole("option", { name: /工作区内只读/ })).not.toBeNull();
     expect(screen.getByRole("option", { name: /工作区内信任/ })).not.toBeNull();
     expect(screen.getByRole("option", { name: /完全访问/ })).not.toBeNull();
+    expect(screen.getByRole("option", { name: /完全访问/ }).textContent).toContain(
+      "跨项目和外部文件变更支持统一历史与回溯",
+    );
     fireEvent.click(screen.getByRole("option", { name: /工作区内只读/ }));
 
     await waitFor(() => {

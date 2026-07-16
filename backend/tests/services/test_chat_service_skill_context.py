@@ -12,7 +12,14 @@ from backend.app.core.request_context import (
     reset_request_context,
 )
 from backend.app.core.time import to_iso_z, utc_now
-from backend.app.keydex import KeydexRuntimeCache
+from backend.app.keydex import KeydexCapabilityRuntimeCache, KeydexRuntimeCache
+from backend.app.keydex.capabilities.skills import SkillsCapability
+from backend.app.keydex.capabilities.skills.consumer import (
+    effective_capability_fingerprints,
+    effective_skill_catalog,
+)
+from backend.app.keydex.models import KeydexEffectiveSnapshot
+from backend.app.keydex.registry import KeydexCapabilityRegistry
 from backend.app.services import ChatRequest, ChatService
 from backend.app.services.chat_service import (
     SkillActivationRequest,
@@ -121,7 +128,8 @@ def test_tool_context_uses_validated_keydex_snapshot(tmp_path: Path) -> None:
 
     assert enable_tools is True
     assert tool_context.metadata["keydex_snapshot"] is snapshot
-    assert tool_context.metadata["skill_catalog"] is snapshot.skill_catalog
+    assert "skill_catalog" not in tool_context.metadata
+    assert effective_skill_catalog(snapshot) is snapshot.skill_catalog
     assert tool_context.metadata["keydex_mode"] == "workspace_effective"
     assert tool_context.metadata["workspace_name"] == "repo"
     assert tool_context.metadata["workspace_primary_root"] == str(workspace_root.resolve())
@@ -188,10 +196,73 @@ def test_chat_tool_context_uses_system_snapshot_without_enabling_workspace_tools
 
     assert enable_tools is False
     assert tool_context.metadata["keydex_snapshot"] is snapshot
-    assert tool_context.metadata["skill_catalog"].skills["global"].source == "system"
+    assert effective_skill_catalog(snapshot).skills["global"].source == "system"
     assert tool_context.metadata["enable_workspace_tools"] is False
     assert tool_context.metadata["enable_skill_tools"] is True
     assert tool_context.workspace_root == service.settings.data_dir
+
+
+def test_generic_turn_snapshot_is_resolved_once_and_bound_everywhere(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repositories = StorageRepositories(init_database(tmp_path / "generic.db"))
+    _configure_model_default(repositories)
+    workspace_root = tmp_path / "generic-repo"
+    _write_skill(workspace_root, "typed-skill")
+    workspace = repositories.workspaces.create(
+        workspace_id="ws-generic",
+        root_path=workspace_root,
+    )
+    session = repositories.sessions.create(
+        session_id="ses-generic",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        session_type="workspace",
+        workspace_id=workspace.id,
+        cwd=str(workspace_root),
+        workspace_roots=[str(workspace_root)],
+    )
+    cache = KeydexCapabilityRuntimeCache(
+        system_root=tmp_path / "generic-system",
+        registry=KeydexCapabilityRegistry((SkillsCapability(),)),
+    )
+    service = ChatService(
+        settings=AppSettings(data_dir=tmp_path / "data", workspace_root=tmp_path),
+        repositories=repositories,
+        agent_runner=object(),
+        keydex_runtime_cache=cache,
+    )
+
+    snapshot = service._resolve_session_keydex_snapshot(session)
+    assert isinstance(snapshot, KeydexEffectiveSnapshot)
+    monkeypatch.setattr(
+        cache,
+        "get_workspace_snapshot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("tool context must not resolve a second snapshot")
+        ),
+    )
+    tool_context, enable_tools = service._build_tool_context(
+        request=ChatRequest(session_id=session.id, message="use typed skill"),
+        session=session,
+        trace_id="trace-generic",
+        turn_index=1,
+        keydex_snapshot=snapshot,
+    )
+    token = service._set_agent_runtime_context(
+        tool_context=tool_context,
+        skill_activation=SkillActivationRequest(skill_name="typed-skill"),
+    )
+    try:
+        assert enable_tools is True
+        assert tool_context.metadata["keydex_snapshot"] is snapshot
+        assert get_keydex_snapshot() is snapshot
+        assert get_skill_catalog() is effective_skill_catalog(snapshot)
+        assert get_skill_catalog().skills["typed-skill"].source == "workspace"
+        assert set(effective_capability_fingerprints(snapshot)) == {"skills"}
+    finally:
+        reset_request_context(token)
 
 
 @pytest.mark.asyncio

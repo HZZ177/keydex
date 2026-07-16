@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ChatChannel, EffectiveSkillsResponse, RuntimeBridge, WsConnectionStatus } from "@/runtime";
 import { ConversationPage } from "@/renderer/pages/conversation";
+import { ActiveProjectCoordinatorProvider } from "@/renderer/providers/ActiveProjectCoordinatorProvider";
 import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
 import type { AgentActionEnvelope, AgentHistoryResponse, AgentSession, Workspace } from "@/types/protocol";
 
@@ -117,10 +118,12 @@ describe("ConversationPage skill activation", () => {
 
 function renderConversation(ui: ReactElement) {
   return render(
-    <PreviewProvider>
-      {ui}
-      <PreviewRequestProbe />
-    </PreviewProvider>,
+    <ActiveProjectCoordinatorProvider>
+      <PreviewProvider>
+        {ui}
+        <PreviewRequestProbe />
+      </PreviewProvider>
+    </ActiveProjectCoordinatorProvider>,
   );
 }
 

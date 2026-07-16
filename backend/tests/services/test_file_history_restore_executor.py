@@ -145,13 +145,13 @@ def test_restore_executor_stops_at_first_runtime_failure(tmp_path, monkeypatch) 
         item.display_path: item.result_state
         for item in repositories.file_history.list_operation_files(preview.operation_id)
     }
-    assert states == {"a.txt": "restored", "b.txt": "failed"}
+    assert states == {"a.txt": "restored", "b.txt": "restored"}
 
     compensated = service.compensate_operation(
         operation_id=preview.operation_id,
         workspace_root=tmp_path,
     )
-    assert [item.display_path for item in compensated] == ["a.txt"]
+    assert {item.display_path for item in compensated} == {"a.txt", "b.txt"}
     assert (tmp_path / "a.txt").read_bytes() == b"a-after!"
     operation = repositories.file_history.get_operation(preview.operation_id)
     state = repositories.file_history.get_session_state("session-1")

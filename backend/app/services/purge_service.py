@@ -82,6 +82,13 @@ class PurgePlanner:
             ("session_id", "active_session_id"),
         ),
         (
+            "file_history_snapshot_scopes",
+            "snapshot_id",
+            "file_history_snapshots",
+            "id",
+            ("session_id", "active_session_id"),
+        ),
+        (
             "file_history_operation_files",
             "operation_id",
             "file_history_operations",
@@ -684,6 +691,16 @@ class PurgeDatabaseExecutor:
         counts["file_history_snapshot_entries"] = conn.execute(
             f"""
             delete from file_history_snapshot_entries
+            where snapshot_id in (
+              select id from file_history_snapshots
+              where {snapshot_predicate} or {snapshot_active_predicate}
+            )
+            """,
+            [*snapshot_params, *snapshot_active_params],
+        ).rowcount
+        counts["file_history_snapshot_scopes"] = conn.execute(
+            f"""
+            delete from file_history_snapshot_scopes
             where snapshot_id in (
               select id from file_history_snapshots
               where {snapshot_predicate} or {snapshot_active_predicate}

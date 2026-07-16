@@ -53,6 +53,7 @@ def test_init_database_creates_core_tables_idempotently(tmp_path) -> None:
         "trace_event_log",
         "file_history_session_state",
         "file_history_snapshots",
+        "file_history_snapshot_scopes",
         "file_history_snapshot_entries",
         "file_history_tracked_files",
         "file_history_mutations",
@@ -63,6 +64,63 @@ def test_init_database_creates_core_tables_idempotently(tmp_path) -> None:
     }
     assert expected.issubset(first)
     assert expected.issubset(second)
+
+
+def test_new_file_history_schema_distinguishes_same_path_across_scopes(tmp_path) -> None:
+    db = init_database(tmp_path / "multiscope.db")
+    now = "2026-07-15T00:00:00Z"
+    with db.connect() as conn:
+        conn.execute(
+            "insert into sessions (id, user_id, scene_id, status, created_at, updated_at) "
+            "values ('session-1', 'user-1', 'scene-1', 'active', ?, ?)",
+            (now, now),
+        )
+        conn.execute(
+            """
+            insert into file_history_snapshots (
+              id, session_id, kind, sequence, workspace_root, workspace_identity,
+              status, created_at, updated_at
+            ) values ('snapshot-1', 'session-1', 'input', 1, 'C:/one', 'one',
+                      'ready', ?, ?)
+            """,
+            (now, now),
+        )
+        conn.executemany(
+            """
+            insert into file_history_snapshot_scopes (
+              snapshot_id, scope_kind, scope_identity, scope_root, scope_label
+            ) values ('snapshot-1', ?, ?, ?, ?)
+            """,
+            (
+                ("workspace", "workspace-one", "C:/one", "One"),
+                ("external", "d:", "D:/", "External D"),
+            ),
+        )
+        conn.executemany(
+            """
+            insert into file_history_snapshot_entries (
+              snapshot_id, scope_kind, scope_identity, scope_root, scope_label,
+              canonical_path, display_path, state, backup_file_name, version,
+              backup_time, size, mode, content_hash
+            ) values ('snapshot-1', ?, ?, ?, ?, 'same.txt', 'same.txt',
+                      'file', ?, 1, ?, 1, 420, ?)
+            """,
+            (
+                ("workspace", "workspace-one", "C:/one", "One", "one@v1", now, "a"),
+                ("external", "d:", "D:/", "External D", "two@v1", now, "b"),
+            ),
+        )
+        rows = conn.execute(
+            "select scope_kind, scope_identity from file_history_snapshot_entries "
+            "where snapshot_id = 'snapshot-1' and canonical_path = 'same.txt'"
+        ).fetchall()
+        foreign_keys = conn.execute("pragma foreign_key_check").fetchall()
+
+    assert {(row["scope_kind"], row["scope_identity"]) for row in rows} == {
+        ("workspace", "workspace-one"),
+        ("external", "d:"),
+    }
+    assert foreign_keys == []
 
 
 def test_init_database_creates_default_web_settings_idempotently(tmp_path) -> None:

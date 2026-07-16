@@ -117,13 +117,13 @@ def test_t50_system_invalidation_rebuilds_inherited_effective_snapshot(tmp_path:
     assert second.skill_catalog.skills["global"].description == "two"
 
 
-def test_t51_inherit_false_effective_cache_does_not_depend_on_system(tmp_path: Path) -> None:
+def test_t51_keydex_json_cannot_disable_fixed_system_inheritance(tmp_path: Path) -> None:
     system_root = tmp_path / "system"
     workspace_root = tmp_path / "workspace"
     _write_skill(system_root, "global", "one")
     keydex_root = workspace_root / ".keydex"
     keydex_root.mkdir(parents=True)
-    (keydex_root / "keydex.json").write_text(
+    (keydex_root / "keydex.md").write_text(
         '{"skills": {"inherit_system": false}}',
         encoding="utf-8",
     )
@@ -134,9 +134,9 @@ def test_t51_inherit_false_effective_cache_does_not_depend_on_system(tmp_path: P
     cache.invalidate_system()
     second = cache.get_workspace_snapshot(workspace_root)
 
-    assert second is first
-    assert list(second.skill_catalog.skills) == ["keydex-guide"]
-    assert second.skill_catalog.skills["keydex-guide"].source == "builtin"
+    assert second is not first
+    assert second.skill_catalog.skills["global"].source == "system"
+    assert second.skill_catalog.skills["global"].description == "two"
 
 
 @pytest.mark.asyncio

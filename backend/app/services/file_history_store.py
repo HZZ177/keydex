@@ -38,17 +38,20 @@ class FileHistoryStore:
         self.root = Path(data_dir).expanduser().resolve() / "file-history"
 
     @staticmethod
-    def backup_file_name(canonical_path: str, version: int) -> str:
+    def backup_file_name(resource_key: str, version: int) -> str:
         if version < 1:
             raise ValueError("file history version must be positive")
-        digest = hashlib.sha256(canonical_path.encode("utf-8")).hexdigest()[:16]
+        if not resource_key:
+            raise ValueError("file history resource key must not be empty")
+        digest = hashlib.sha256(resource_key.encode("utf-8")).hexdigest()[:16]
         return f"{digest}@v{version}"
 
     def create_backup(
         self,
         *,
         session_id: str,
-        canonical_path: str,
+        canonical_path: str | None = None,
+        resource_key: str | None = None,
         source_path: Path,
         version: int,
     ) -> FileHistoryBackup:
@@ -76,7 +79,7 @@ class FileHistoryStore:
                 "文件回溯只支持普通文件",
             )
 
-        backup_name = self.backup_file_name(canonical_path, version)
+        backup_name = self.backup_file_name(resource_key or canonical_path or "", version)
         destination = self.resolve_backup_path(session_id, backup_name)
         digest, copied_size = self._copy_immutable(source_path, destination)
         try:
@@ -117,7 +120,8 @@ class FileHistoryStore:
         self,
         *,
         operation_id: str,
-        canonical_path: str,
+        canonical_path: str | None = None,
+        resource_key: str | None = None,
         source_path: Path,
     ) -> FileHistoryBackup:
         now = to_iso_z(utc_now())
@@ -135,7 +139,10 @@ class FileHistoryStore:
                 "safety_source_not_regular_file",
                 "恢复前目标不是普通文件",
             )
-        path_hash = hashlib.sha256(canonical_path.encode("utf-8")).hexdigest()
+        resolved_resource_key = resource_key or canonical_path or ""
+        if not resolved_resource_key:
+            raise ValueError("file history resource key must not be empty")
+        path_hash = hashlib.sha256(resolved_resource_key.encode("utf-8")).hexdigest()
         relative_name = f"operations/{self._safe_component(operation_id)}/safety/{path_hash}"
         destination = self.root / Path(relative_name)
         digest, copied_size = self._copy_immutable(source_path, destination)

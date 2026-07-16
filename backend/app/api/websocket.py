@@ -29,6 +29,7 @@ from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
 from backend.app.core.request_context import trace_id_var
 from backend.app.events import ChatProjection, EventDispatcher, PersistenceProjection
+from backend.app.git.models import GitApiError, GitRepositoryRequest
 from backend.app.mcp.elicitation import McpElicitationError
 from backend.app.model import ModelSelectionError, resolve_model_selection
 from backend.app.services.chat_service import PRACTICAL_NO_RECURSION_LIMIT
@@ -78,8 +79,9 @@ async def chat_websocket(websocket: WebSocket) -> None:
     connection_trace_id = websocket.headers.get("x-trace-id") or new_id()
     trace_token = trace_id_var.set(connection_trace_id)
     runtime = websocket.app.state.runtime
-    keydex_watcher = getattr(websocket.app.state, "keydex_skills_watcher", None)
+    keydex_watcher = getattr(websocket.app.state, "keydex_workspace_watcher", None)
     file_change_hub = getattr(websocket.app.state, "file_change_hub", None)
+    git_metadata_events = getattr(websocket.app.state, "git_metadata_event_service", None)
     settings = runtime.settings
     repositories = runtime.repositories
     stream_manager = runtime.chat_stream_manager
@@ -91,6 +93,7 @@ async def chat_websocket(websocket: WebSocket) -> None:
     adapter = WebSocketChannelAdapter(websocket)
     bound_session_id = str(websocket.query_params.get("session_id") or "").strip() or None
     bound_session_ids: set[str] = set()
+    bound_git_repository_ids: set[str] = set()
     if bound_session_id:
         bound_session_ids.add(bound_session_id)
         await stream_manager.subscribe(bound_session_id, adapter)
@@ -173,6 +176,48 @@ async def chat_websocket(websocket: WebSocket) -> None:
                             "resync_required": True,
                         },
                     )
+                    continue
+
+                if action == "bind_git_repository_watch":
+                    workspace_id = str(payload.get("workspace_id") or "").strip()
+                    project_root = str(payload.get("project_root") or "").strip()
+                    repository_id = str(payload.get("repository_id") or "").strip()
+                    query_service = getattr(websocket.app.state, "git_query_service", None)
+                    if not workspace_id or not project_root or not repository_id:
+                        await send_error("git_invalid_request", "Git watch scope is incomplete")
+                        continue
+                    if query_service is None or git_metadata_events is None:
+                        await send_error("git_unavailable", "Git metadata watch is unavailable")
+                        continue
+                    try:
+                        repository = query_service.repository(
+                            GitRepositoryRequest(
+                                workspace_id=workspace_id,
+                                project_root=project_root,
+                                repository_id=repository_id,
+                            )
+                        )
+                        sequence = await git_metadata_events.subscribe(repository, adapter)
+                    except (GitApiError, ValueError, OSError) as exc:
+                        await send_error("git_access_denied", str(exc))
+                        continue
+                    bound_git_repository_ids.add(repository_id)
+                    await send(
+                        "gitRepositoryWatchBound",
+                        {
+                            "repository_id": repository_id,
+                            "sequence": sequence,
+                            "resync_required": True,
+                        },
+                    )
+                    continue
+
+                if action == "unbind_git_repository_watch":
+                    repository_id = str(payload.get("repository_id") or "").strip()
+                    if git_metadata_events is not None and repository_id:
+                        await git_metadata_events.unsubscribe(repository_id, adapter)
+                    bound_git_repository_ids.discard(repository_id)
+                    await send("gitRepositoryWatchUnbound", {"repository_id": repository_id})
                     continue
 
                 if action == "unbind_workspace_watch":
@@ -676,6 +721,9 @@ async def chat_websocket(websocket: WebSocket) -> None:
         await stream_manager.unsubscribe_all(adapter)
         if file_change_hub is not None:
             await file_change_hub.unsubscribe_all(adapter)
+        if git_metadata_events is not None:
+            for repository_id in list(bound_git_repository_ids):
+                await git_metadata_events.unsubscribe(repository_id, adapter)
         for session_id in list(bound_session_ids):
             if not await stream_manager.has_subscribers(session_id):
                 await _unregister_keydex_watcher(keydex_watcher, session_id)
@@ -763,11 +811,16 @@ async def _build_a2ui_resume_service(
             provider_id=provider_id,
             model=model,
         )
+        keydex_snapshot = await asyncio.to_thread(
+            chat_service._resolve_session_keydex_snapshot,
+            session,
+        )
         tool_context, enable_tools = chat_service._build_tool_context(
             request=request,
             session=session,
             trace_id=snapshot.trace_id or "",
             turn_index=snapshot.turn_index,
+            keydex_snapshot=keydex_snapshot,
         )
         tool_context.metadata["repositories"] = repositories
         tool_context.metadata["thread_task_service"] = chat_service.thread_task_service

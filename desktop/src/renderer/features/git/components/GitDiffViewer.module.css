@@ -1,0 +1,26 @@
+.root { display: grid; min-width: 0; min-height: 0; height: 100%; grid-template-rows: auto auto minmax(0, 1fr); background: var(--color-bg-1); }
+.root:not(:has(.stageBar)) { grid-template-rows: auto minmax(0, 1fr); }
+.header { display: flex; min-width: 0; min-height: 34px; align-items: center; gap: 7px; padding: 0 7px; border-bottom: 1px solid var(--color-border-2); }
+.header strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.stat { margin-left: auto; color: var(--color-text-3); font-size: 10px; }
+.controls { display: flex; gap: 2px; }
+.controls button { display: grid; width: 25px; height: 25px; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-3); cursor: pointer; }
+.controls button:hover, .controls button:focus-visible, .controls button[aria-pressed="true"] { background: var(--surface-hover); color: var(--color-text-1); }
+.stageBar { display: flex; gap: 3px; padding: 4px 6px; overflow-x: auto; border-bottom: 1px solid var(--color-border-2); scrollbar-width: thin; }
+.stageBar button { min-height: 24px; flex: 0 0 auto; padding: 0 7px; border: 0; border-radius: var(--radius-sm); background: var(--surface-active); color: var(--color-text-2); cursor: pointer; font-size: 9px; }
+.stageBar button:disabled { cursor: default; opacity: 0.45; }
+.lines, .splitLines { min-height: 0; overflow: auto; font-family: var(--font-mono); font-size: 10px; line-height: 1.55; scrollbar-width: thin; }
+.line { display: grid; min-width: max-content; grid-template-columns: 42px 42px 18px minmax(0, 1fr); }
+.line > *, .splitLine > * { min-height: 18px; padding: 0 5px; }
+.number { border-right: 1px solid var(--color-border-2); color: var(--color-text-3); text-align: right; user-select: none; }
+.sign { color: var(--color-text-3); text-align: center; user-select: none; }
+.sign input { width: 11px; height: 11px; margin: 3px 0 0; }
+.line code, .splitLine code { white-space: pre; }
+.root[data-wrap="true"] code { overflow-wrap: anywhere; white-space: pre-wrap; }
+.line[data-kind="add"], .splitLine[data-kind="add"] { background: color-mix(in srgb, #2b8a57 12%, transparent); }
+.line[data-kind="delete"], .splitLine[data-kind="delete"] { background: color-mix(in srgb, #d14343 11%, transparent); }
+.splitLine { display: grid; min-width: max-content; grid-template-columns: 42px minmax(220px, 1fr) 42px minmax(220px, 1fr); }
+.splitLine > :nth-child(2) { border-right: 1px solid var(--color-border-2); }
+.state { display: grid; min-height: 140px; place-content: center; justify-items: center; gap: 6px; padding: 16px; color: var(--color-text-3); font-size: 11px; text-align: center; }
+.state strong { color: var(--color-text-1); }
+.state button { min-height: 28px; padding: 0 10px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--surface-active); color: var(--color-text-1); cursor: pointer; }

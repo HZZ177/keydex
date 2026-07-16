@@ -6,6 +6,9 @@ import httpx
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents.middleware import AgentMiddleware
 
+from backend.app.agent.keydex_markdown_context_middleware import (
+    KeydexMarkdownContextMiddleware,
+)
 from backend.app.agent.middleware.auto_title import AutoTitleMiddleware
 from backend.app.agent.middleware.context_compression import ContextCompressionMiddleware
 from backend.app.agent.middleware.duplicate_tool_call_guard import (
@@ -65,6 +68,7 @@ def build_default_middleware(
                     http_transport=model_http_transport,
                 )
             )
+    middlewares.append(KeydexMarkdownContextMiddleware())
     if settings.auto_title.enabled:
         if repositories is None or dispatcher is None:
             logger.warning("[AgentMiddleware] 自动标题已启用但缺少运行时依赖，跳过装配")

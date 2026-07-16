@@ -23,7 +23,6 @@ def discover_workspace_skills(profile: KeydexWorkspaceProfile) -> SkillCatalog:
             root=profile.keydex_root,
             enabled=profile.skills_enabled,
             available=profile.available,
-            inherit_system=profile.inherit_system,
             diagnostics=tuple(profile.diagnostics),
         )
     )

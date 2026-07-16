@@ -1,0 +1,193 @@
+.root {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
+.root > header {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 9px;
+  border-bottom: 1px solid var(--color-border-2);
+  color: var(--color-text-3);
+  font-size: 10px;
+}
+
+.root > header button,
+.more,
+.filters button {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 7px;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-2);
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.filters {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 6px;
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--color-border-2);
+  background: color-mix(in srgb, var(--surface-1) 88%, transparent);
+}
+
+.filters label {
+  display: grid;
+  gap: 3px;
+  color: var(--color-text-3);
+  font-size: 9px;
+}
+
+.filters input,
+.filters select {
+  box-sizing: border-box;
+  height: 25px;
+  min-width: 86px;
+  max-width: 150px;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--radius-sm);
+  outline: 0;
+  background: var(--surface-1);
+  color: var(--color-text-2);
+  font: inherit;
+  font-size: 10px;
+}
+
+.filters input:focus,
+.filters select:focus {
+  border-color: var(--color-accent-1);
+}
+
+.filters button:disabled {
+  cursor: default;
+  opacity: .45;
+}
+
+.filters .searchField {
+  position: relative;
+  display: flex;
+  min-width: 160px;
+  align-items: center;
+  align-self: end;
+}
+
+.searchField > svg {
+  position: absolute;
+  left: 7px;
+  color: var(--color-text-3);
+}
+
+.filters .searchField input {
+  width: 100%;
+  max-width: none;
+  padding-left: 24px;
+}
+
+.filters .check {
+  display: flex;
+  height: 25px;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.filters .check input {
+  width: 13px;
+  min-width: 13px;
+  height: 13px;
+  margin: 0;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.scroller {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.canvas {
+  position: relative;
+  min-width: 720px;
+}
+
+.row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: grid;
+  width: 100%;
+  height: 36px;
+  grid-template-columns: minmax(30px, auto) minmax(180px, 1fr) minmax(70px, .45fr) 110px 145px 72px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-2) 62%, transparent);
+  background: transparent;
+  color: var(--color-text-2);
+  cursor: pointer;
+  font-size: 11px;
+  text-align: left;
+}
+
+.row:hover,
+.row[aria-selected="true"] {
+  background: var(--surface-active);
+  color: var(--color-text-1);
+}
+
+.row > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graph { display: block; overflow: visible; }
+.graph path { fill: none; stroke-width: 1.5; }
+.graph circle { stroke-width: 2; }
+.filterError { align-self: center; color: var(--color-danger-1); font-size: 10px; }
+
+.subject { color: inherit; }
+.refs { color: var(--color-accent-1); }
+
+.author,
+.row time,
+.row code {
+  color: var(--color-text-3);
+  font-size: 10px;
+}
+
+.more { margin: 5px 8px; }
+
+.empty {
+  display: grid;
+  min-height: 120px;
+  place-items: center;
+  color: var(--color-text-3);
+  font-size: 11px;
+}

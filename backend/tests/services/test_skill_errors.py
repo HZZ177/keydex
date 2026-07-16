@@ -8,9 +8,7 @@ import pytest
 from backend.app.core.config import AppSettings
 from backend.app.core.request_context import reset_request_context, set_request_context
 from backend.app.core.time import to_iso_z, utc_now
-from backend.app.keydex import KeydexRuntimeCache
-from backend.app.keydex.models import KeydexWorkspaceProfile
-from backend.app.keydex.skills import discover_workspace_skills
+from backend.app.keydex import KeydexCapabilityRuntimeCache
 from backend.app.services import ChatRequest, ChatService
 from backend.app.services.chat_service import (
     SkillActivationError,
@@ -33,7 +31,10 @@ def _service(tmp_path: Path) -> tuple[ChatService, StorageRepositories]:
         settings=AppSettings(data_dir=tmp_path / "data", workspace_root=tmp_path),
         repositories=repositories,
         agent_runner=object(),
-        keydex_runtime_cache=KeydexRuntimeCache(system_root=tmp_path / "system-keydex"),
+        keydex_runtime_cache=KeydexCapabilityRuntimeCache(
+            builtin_root=tmp_path / "builtin-keydex",
+            system_root=tmp_path / "system-keydex",
+        ),
     )
     return service, repositories
 
@@ -98,16 +99,6 @@ def _write_layer_skill(layer_root: Path, name: str) -> Path:
     return skill_dir
 
 
-def _catalog(workspace: Path):
-    return discover_workspace_skills(
-        KeydexWorkspaceProfile(
-            workspace_root=workspace,
-            keydex_root=workspace / ".keydex",
-            skills_root=workspace / ".keydex" / "skills",
-        )
-    )
-
-
 def test_skill_activation_parser_exposes_stable_error_codes() -> None:
     with pytest.raises(SkillActivationError) as invalid_shape:
         _build_skill_activation_request({"skill_activation": "dev-plan"})
@@ -120,12 +111,14 @@ def test_skill_activation_parser_exposes_stable_error_codes() -> None:
     assert unsupported_source.value.code == "skill_source_unsupported"
 
 
-def test_invalid_workspace_layer_uses_specific_activation_error(tmp_path: Path) -> None:
+def test_unavailable_workspace_layer_preserves_parent_catalog_and_reports_not_found(
+    tmp_path: Path,
+) -> None:
     service, repositories = _service(tmp_path)
     workspace_root = tmp_path / "repo-invalid"
+    workspace_root.mkdir()
     keydex_root = workspace_root / ".keydex"
-    keydex_root.mkdir(parents=True)
-    (keydex_root / "keydex.json").write_text("{invalid", encoding="utf-8")
+    keydex_root.write_text("not a directory", encoding="utf-8")
     workspace = repositories.workspaces.create(
         workspace_id="ws-invalid",
         root_path=workspace_root,
@@ -148,8 +141,8 @@ def test_invalid_workspace_layer_uses_specific_activation_error(tmp_path: Path) 
             snapshot=snapshot,
         )
 
-    assert exc_info.value.code == "skill_layer_unavailable"
-    assert exc_info.value.details == {"mode": "workspace_effective"}
+    assert exc_info.value.code == "skill_not_found"
+    assert exc_info.value.details == {"skill_name": "shared"}
 
 
 def test_shadow_barrier_uses_specific_activation_error(tmp_path: Path) -> None:
@@ -223,7 +216,11 @@ async def test_missing_skill_turn_failure_uses_stable_code_without_absolute_path
 @pytest.mark.asyncio
 async def test_load_skill_resource_security_error_is_structured(tmp_path: Path) -> None:
     _write_skill(tmp_path)
-    token = set_request_context(skill_catalog=_catalog(tmp_path))
+    snapshot = KeydexCapabilityRuntimeCache(
+        builtin_root=tmp_path / "builtin-keydex",
+        system_root=tmp_path / "system-keydex",
+    ).get_workspace_snapshot(tmp_path)
+    token = set_request_context(keydex_snapshot=snapshot)
     try:
         command = await run_load_skill(
             skill_name="dev-plan",

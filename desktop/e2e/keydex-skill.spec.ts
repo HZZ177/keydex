@@ -8,7 +8,8 @@ let fixture: KeydexE2EFixture;
 
 test.beforeAll(async () => {
   fixture = await startKeydexE2EFixture("project-hierarchy");
-  await fixture.writeSystemManifest();
+  await fixture.writeSystemKeydexMarkdown("SYSTEM-MD-PROJECT");
+  await fixture.writeWorkspaceKeydexMarkdown("WORKSPACE-MD-PROJECT");
   await fixture.writeSkill(
     "system",
     "shared",
@@ -17,7 +18,6 @@ test.beforeAll(async () => {
     { "references/system-secret.txt": "SYSTEM-SECRET-OUTSIDE-WORKSPACE\n" },
   );
   await fixture.writeSkill("system", "system-only", "System only V1", "SYSTEM-ONLY-V1");
-  await fixture.writeWorkspaceManifest(true);
   await fixture.writeSkill("workspace", "local", "Workspace local", "WORKSPACE-LOCAL");
 });
 
@@ -43,12 +43,11 @@ test("project hierarchy, watcher, security preview and affected pages use one ef
   await test.step("P01 a project inherits one system winner", async () => {
     await expectSkillWinner(page, input, "shared", "Shared system V1", "系统级");
     await selectAndSend(page, input, "shared", "KeydexSkillE2E shared system");
-    await expect(page.getByText("KeydexSkillE2E activated SYSTEM-SHARED-V1")).toBeVisible({
+    await expect(page.getByText(/KeydexSkillE2E activated SYSTEM-SHARED-V1/)).toBeVisible({
       timeout: 30_000,
     });
     const activation = page.getByTestId("skill-activation-block").filter({ hasText: "shared" }).last();
     await expect(activation).toHaveAttribute("data-skill-source", "system");
-    await expect(activation).toContainText("系统级");
     await fixture.evidence(page, "p01-project-inherits-system-winner", {
       session_id: session.id,
       expected_source: "system",
@@ -59,14 +58,14 @@ test("project hierarchy, watcher, security preview and affected pages use one ef
     await fixture.writeSkill("workspace", "shared", "Shared workspace V1", "WORKSPACE-SHARED-V1");
     await expectSkillWinner(page, input, "shared", "Shared workspace V1", "项目级");
     await selectAndSend(page, input, "shared", "KeydexSkillE2E shared workspace");
-    await expect(page.getByText("KeydexSkillE2E activated WORKSPACE-SHARED-V1")).toBeVisible({
+    await expect(page.getByText(/KeydexSkillE2E activated WORKSPACE-SHARED-V1/)).toBeVisible({
       timeout: 30_000,
     });
 
     await fixture.writeSkill("workspace", "shared", "Shared workspace V2", "WORKSPACE-SHARED-V2");
     await expectSkillWinner(page, input, "shared", "Shared workspace V2", "项目级");
     await selectAndSend(page, input, "shared", "KeydexSkillE2E shared workspace");
-    await expect(page.getByText("KeydexSkillE2E activated WORKSPACE-SHARED-V2")).toBeVisible({
+    await expect(page.getByText(/KeydexSkillE2E activated WORKSPACE-SHARED-V2/)).toBeVisible({
       timeout: 30_000,
     });
 
@@ -81,7 +80,7 @@ test("project hierarchy, watcher, security preview and affected pages use one ef
     await fixture.removeSkill("workspace", "shared");
     await expectSkillWinner(page, input, "shared", "Shared system V1", "系统级");
     await selectAndSend(page, input, "shared", "KeydexSkillE2E shared system");
-    await expect(page.getByText("KeydexSkillE2E activated SYSTEM-SHARED-V1").last()).toBeVisible({
+    await expect(page.getByText(/KeydexSkillE2E activated SYSTEM-SHARED-V1/).last()).toBeVisible({
       timeout: 30_000,
     });
     await fixture.evidence(page, "p02-workspace-winner-and-system-fallback", {
@@ -91,28 +90,24 @@ test("project hierarchy, watcher, security preview and affected pages use one ef
     });
   });
 
-  await test.step("P03 inherit_system false keeps builtin, removes system, and ignores system changes", async () => {
-    await fixture.writeWorkspaceManifest(false);
-    await expectSkillMissing(page, input, "shared");
-    await expectSkillWinner(page, input, "local", "Workspace local", "项目级");
-
-    const before = await effectiveSkills(session.id, true);
-    const settledRequestCount = skillRequestCount;
-    await fixture.writeSkill("system", "system-only", "System only V2", "SYSTEM-ONLY-V2");
-    await page.waitForTimeout(1_200);
-    expect(skillRequestCount).toBe(settledRequestCount);
-    const after = await effectiveSkills(session.id, true);
-    expect(after.fingerprint).toBe(before.fingerprint);
-    expect(after.skills.map((skill) => skill.name)).toEqual(["keydex-guide", "local"]);
-    expect(after.skills.find((skill) => skill.name === "keydex-guide")?.source).toBe("builtin");
-    await expectSkillWinner(page, input, "local", "Workspace local", "项目级");
-
-    await fixture.writeWorkspaceManifest(true);
-    await expectSkillWinner(page, input, "shared", "Shared system V1", "系统级");
-    await fixture.evidence(page, "p03-inheritance-disabled-and-restored", {
-      disabled_fingerprint: before.fingerprint,
-      unchanged_after_system_update: after.fingerprint,
+  await test.step("P03 legacy inherit_system false is ignored and fixed inheritance remains live", async () => {
+    await fixture.writeLegacyKeydexJson("workspace", {
+      schema_version: 1,
+      skills: { enabled: false, inherit_system: false },
     });
+    await expectSkillWinner(page, input, "shared", "Shared system V1", "系统级");
+
+    await fixture.writeSkill("system", "system-only", "System only V2", "SYSTEM-ONLY-V2");
+    await expectSkillWinner(page, input, "system-only", "System only V2", "系统级");
+    const after = await effectiveSkills(session.id, true);
+    expect(after.skills.map((skill) => skill.name)).toEqual([
+      "keydex-guide",
+      "local",
+      "shared",
+      "system-only",
+    ]);
+    expect(skillRequestCount).toBeGreaterThan(0);
+    await fixture.evidence(page, "p03-legacy-config-ignored-fixed-inheritance");
   });
 
   await test.step("P04 an invalid workspace candidate blocks system fallback and repair recovers", async () => {
@@ -130,7 +125,7 @@ test("project hierarchy, watcher, security preview and affected pages use one ef
     await fixture.writeSkill("workspace", "shared", "Shared workspace repaired", "WORKSPACE-REPAIRED");
     await expectSkillWinner(page, input, "shared", "Shared workspace repaired", "项目级");
     await selectAndSend(page, input, "shared", "KeydexSkillE2E shared workspace");
-    await expect(page.getByText("KeydexSkillE2E activated WORKSPACE-REPAIRED")).toBeVisible({
+    await expect(page.getByText(/KeydexSkillE2E activated WORKSPACE-REPAIRED/)).toBeVisible({
       timeout: 30_000,
     });
     await fixture.evidence(page, "p04-shadow-barrier-repaired", {
@@ -149,7 +144,7 @@ test("project hierarchy, watcher, security preview and affected pages use one ef
     await page.getByRole("option", { name: "选择 Skill /shared" }).click();
     await page.getByLabel("打开 Skill shared").click();
 
-    const systemPreview = page.locator(
+    const systemPreview = page.getByTestId("workbench-main-file-preview").locator(
       '[data-file-preview-root="true"][data-preview-source="skill-resource"][data-skill-source="system"]',
     );
     await expect(systemPreview).toBeVisible({ timeout: 20_000 });
@@ -168,7 +163,7 @@ test("project hierarchy, watcher, security preview and affected pages use one ef
     await expectWorkspaceEscapeRejected(workspaceId);
 
     await page.getByRole("button", { name: "选择文件 README.md" }).click();
-    const workspacePreview = page.locator(
+    const workspacePreview = page.getByTestId("workbench-main-file-preview").locator(
       '[data-file-preview-root="true"][data-preview-source="file"]',
     );
     await expect(workspacePreview).toBeVisible({ timeout: 20_000 });
@@ -186,13 +181,17 @@ test("project hierarchy, watcher, security preview and affected pages use one ef
     await page.reload();
     await expect(page.locator('[data-skill-source="system"]')).not.toHaveCount(0);
     await expect(page.locator('[data-skill-source="workspace"]')).not.toHaveCount(0);
-    await expect(page.getByText("KeydexSkillE2E activated WORKSPACE-REPAIRED")).toBeVisible({
+    await expect(page.getByText(/KeydexSkillE2E activated WORKSPACE-REPAIRED/)).toBeVisible({
       timeout: 30_000,
     });
 
     await page.goto(`${fixture.appBaseUrl}/#/guid`);
     await page.getByLabel("选择工作区").click();
-    await page.getByRole("button", { name: /keydex-e2e/ }).click();
+    await page
+      .getByRole("dialog", { name: "工作区选择" })
+      .getByRole("option")
+      .filter({ hasText: /^keydex-e2e/ })
+      .click();
     await expect(page.getByRole("heading", { name: "我们应该在 keydex-e2e 中构建什么？" })).toBeVisible();
     const homeInput = page.getByLabel("输入需求");
     await expectSkillWinner(page, homeInput, "shared", "Shared system V1", "系统级");

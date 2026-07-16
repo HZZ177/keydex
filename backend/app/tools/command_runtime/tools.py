@@ -70,7 +70,9 @@ def command_tool_schema() -> dict[str, Any]:
             },
             "cwd": {
                 "type": "string",
-                "description": "工作区内执行目录，默认工作区根目录。",
+                "description": (
+                    "执行目录，默认工作区根目录；完全访问时可使用当前用户有权限访问的任意本地目录。"
+                ),
                 "default": ".",
             },
             "timeout_seconds": {
@@ -115,7 +117,11 @@ async def run_configured_command_tool(
             error=validation.error or "当前命令环境不可用",
         )
 
-    cwd = _resolve_cwd(tool_args.cwd, context)
+    cwd = _resolve_cwd(
+        tool_args.cwd,
+        context,
+        file_access_mode=settings.file_access_mode,
+    )
     cwd_label = _relative(cwd, context)
     command_id = new_id()
     run_id = _metadata_text(context, "run_id")
@@ -446,19 +452,32 @@ def _rejected_result(
     )
 
 
-def _resolve_cwd(raw_path: str, context: ToolExecutionContext) -> Path:
-    try:
-        cwd = resolve_workspace_path(
-            raw_path or ".",
-            cwd=context.workspace_root,
-            workspace_roots=[context.workspace_root],
-        )
-    except WorkspacePathError as exc:
-        raise ToolExecutionError(
-            str(exc),
-            code="workspace_path_forbidden",
-            details={"cwd": raw_path},
-        ) from exc
+def _resolve_cwd(
+    raw_path: str,
+    context: ToolExecutionContext,
+    *,
+    file_access_mode: str | None = None,
+) -> Path:
+    if file_access_mode == "full_access":
+        candidate = Path(raw_path or ".").expanduser()
+        cwd = (
+            candidate
+            if candidate.is_absolute()
+            else Path(context.workspace_root) / candidate
+        ).resolve(strict=False)
+    else:
+        try:
+            cwd = resolve_workspace_path(
+                raw_path or ".",
+                cwd=context.workspace_root,
+                workspace_roots=[context.workspace_root],
+            )
+        except WorkspacePathError as exc:
+            raise ToolExecutionError(
+                str(exc),
+                code="workspace_path_forbidden",
+                details={"cwd": raw_path},
+            ) from exc
     if not cwd.exists():
         raise ToolExecutionError("cwd 不存在", code="cwd_not_found", details={"cwd": raw_path})
     if not cwd.is_dir():
@@ -471,7 +490,11 @@ def _resolve_cwd(raw_path: str, context: ToolExecutionContext) -> Path:
 
 
 def _relative(path: Path, context: ToolExecutionContext) -> str:
-    rel = path.resolve().relative_to(context.workspace_root).as_posix()
+    resolved = path.resolve()
+    try:
+        rel = resolved.relative_to(Path(context.workspace_root).resolve()).as_posix()
+    except ValueError:
+        return str(resolved)
     return rel or "."
 
 

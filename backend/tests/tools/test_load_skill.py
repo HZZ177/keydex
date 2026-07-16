@@ -6,7 +6,11 @@ from pathlib import Path
 import pytest
 
 from backend.app.core.request_context import reset_request_context, set_request_context
+from backend.app.keydex import KeydexRuntimeCache
+from backend.app.keydex.capabilities.skills import SkillsCapability
 from backend.app.keydex.models import KeydexWorkspaceProfile
+from backend.app.keydex.registry import KeydexCapabilityRegistry
+from backend.app.keydex.runtime_cache import KeydexCapabilityRuntimeCache
 from backend.app.keydex.skills import discover_workspace_skills
 from backend.app.tools import skill as skill_tool_module
 from backend.app.tools.skill import load_skill, run_load_skill
@@ -42,6 +46,12 @@ def _catalog(workspace: Path):
     return discover_workspace_skills(profile)
 
 
+def _snapshot(workspace: Path):
+    return KeydexRuntimeCache(
+        system_root=workspace / "missing-system",
+    ).get_workspace_snapshot(workspace)
+
+
 def _tool_payload(command) -> dict:
     tool_message = command.update["messages"][0]
     return json.loads(tool_message.content)
@@ -60,8 +70,8 @@ async def test_load_skill_activation_writes_pending_skill_activation(tmp_path: P
     (skill_dir / "references" / "guide.md").write_text("guide", encoding="utf-8")
     (skill_dir / "scripts").mkdir()
     (skill_dir / "scripts" / "run.ps1").write_text("Write-Output ok", encoding="utf-8")
-    catalog = _catalog(tmp_path)
-    token = set_request_context(skill_catalog=catalog)
+    snapshot = _snapshot(tmp_path)
+    token = set_request_context(keydex_snapshot=snapshot)
 
     try:
         command = await run_load_skill(skill_name="dev-plan", tool_call_id="call_1")
@@ -106,9 +116,9 @@ async def test_load_skill_activation_writes_pending_skill_activation(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_load_skill_reads_updated_entry_with_existing_catalog(tmp_path: Path) -> None:
+async def test_load_skill_keeps_frozen_entry_after_disk_update(tmp_path: Path) -> None:
     skill_md = _write_skill(tmp_path)
-    catalog = _catalog(tmp_path)
+    snapshot = _snapshot(tmp_path)
     skill_md.write_text(
         "\n".join(
             [
@@ -123,7 +133,7 @@ async def test_load_skill_reads_updated_entry_with_existing_catalog(tmp_path: Pa
         ),
         encoding="utf-8",
     )
-    token = set_request_context(skill_catalog=catalog)
+    token = set_request_context(keydex_snapshot=snapshot)
 
     try:
         command = await run_load_skill(skill_name="dev-plan", tool_call_id="call_1")
@@ -131,8 +141,47 @@ async def test_load_skill_reads_updated_entry_with_existing_catalog(tmp_path: Pa
         reset_request_context(token)
 
     pending = command.update["pending_skill_activations"]
-    assert "Updated marker 1215215." in pending[0]["content"]
-    assert "Follow the project planning workflow." not in pending[0]["content"]
+    assert "Updated marker 1215215." not in pending[0]["content"]
+    assert "Follow the project planning workflow." in pending[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_load_skill_uses_generic_typed_snapshot_without_filesystem_fallback(
+    tmp_path: Path,
+) -> None:
+    skill_md = _write_skill(tmp_path)
+    resource = skill_md.parent / "guide.md"
+    resource.write_text("RESOURCE V1", encoding="utf-8")
+    registry = KeydexCapabilityRegistry((SkillsCapability(),))
+    snapshot = KeydexCapabilityRuntimeCache(
+        system_root=tmp_path / "missing-system",
+        registry=registry,
+    ).get_workspace_snapshot(tmp_path)
+    skill_md.write_text(
+        "---\nname: dev-plan\ndescription: changed\n---\n\nENTRY V2\n",
+        encoding="utf-8",
+    )
+    resource.write_text("RESOURCE V2", encoding="utf-8")
+    token = set_request_context(keydex_snapshot=snapshot)
+
+    try:
+        activation = await run_load_skill(
+            skill_name="dev-plan",
+            tool_call_id="call-entry",
+        )
+        loaded_resource = await run_load_skill(
+            skill_name="dev-plan",
+            resource_path="guide.md",
+            tool_call_id="call-resource",
+        )
+    finally:
+        reset_request_context(token)
+
+    assert "Follow the project planning workflow." in activation.update[
+        "pending_skill_activations"
+    ][0]["content"]
+    assert "ENTRY V2" not in activation.update["pending_skill_activations"][0]["content"]
+    assert _tool_payload(loaded_resource)["content"] == "RESOURCE V1"
 
 
 @pytest.mark.asyncio
@@ -141,13 +190,13 @@ async def test_load_skill_activation_failure_returns_loaded_not_injected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_skill(tmp_path)
-    catalog = _catalog(tmp_path)
+    snapshot = _snapshot(tmp_path)
 
     def fail_activation(*args, **kwargs):
         raise RuntimeError("activation build failed")
 
     monkeypatch.setattr(skill_tool_module, "_build_activation_content", fail_activation)
-    token = set_request_context(skill_catalog=catalog)
+    token = set_request_context(keydex_snapshot=snapshot)
 
     try:
         command = await run_load_skill(skill_name="dev-plan", tool_call_id="call_1")
@@ -181,8 +230,8 @@ async def test_load_skill_without_catalog_returns_failure() -> None:
 @pytest.mark.asyncio
 async def test_load_skill_not_found_returns_failure(tmp_path: Path) -> None:
     _write_skill(tmp_path, "other-skill")
-    catalog = _catalog(tmp_path)
-    token = set_request_context(skill_catalog=catalog)
+    snapshot = _snapshot(tmp_path)
+    token = set_request_context(keydex_snapshot=snapshot)
 
     try:
         command = await run_load_skill(skill_name="dev-plan", tool_call_id="call_1")
@@ -196,7 +245,9 @@ async def test_load_skill_not_found_returns_failure(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_load_skill_missing_entry_returns_failure(tmp_path: Path) -> None:
+async def test_load_skill_raw_catalog_without_snapshot_never_reads_entry(
+    tmp_path: Path,
+) -> None:
     skill_md = _write_skill(tmp_path)
     catalog = _catalog(tmp_path)
     skill_md.unlink()
@@ -208,7 +259,7 @@ async def test_load_skill_missing_entry_returns_failure(tmp_path: Path) -> None:
         reset_request_context(token)
 
     payload = _tool_payload(command)
-    assert payload["code"] == "skill_entry_missing"
-    assert payload["found"] is True
+    assert payload["code"] == "skill_snapshot_missing"
+    assert payload["found"] is False
     assert payload["loaded"] is False
     assert "pending_skill_activations" not in command.update

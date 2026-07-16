@@ -3,7 +3,9 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from backend.app.core.config import AppSettings
-from backend.app.keydex import KeydexRuntimeCache
+from backend.app.keydex import KeydexCapabilityRuntimeCache, KeydexRuntimeCache
+from backend.app.keydex.capabilities.skills import SkillsCapability
+from backend.app.keydex.registry import KeydexCapabilityRegistry
 from backend.app.main import create_app
 
 
@@ -147,3 +149,60 @@ def test_workspace_skills_api_returns_diagnostics(tmp_path) -> None:
     ]
     assert payload["diagnostics"][0]["code"] == "skill_frontmatter_missing_description"
     assert payload["diagnostics"][0]["path"] == ".keydex/skills/broken/SKILL.md"
+
+
+def test_generic_runtime_preserves_list_and_resource_api_contracts(tmp_path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    skill_root = root / ".keydex" / "skills" / "typed-skill"
+    _write_skill(skill_root, name="typed-skill")
+    (skill_root / "guide.md").write_text("typed guide", encoding="utf-8")
+    cache = KeydexCapabilityRuntimeCache(
+        system_root=tmp_path / "generic-system",
+        registry=KeydexCapabilityRegistry((SkillsCapability(),)),
+    )
+
+    with TestClient(_app(tmp_path, runtime_cache=cache)) as client:
+        session = _create_workspace_session(client, root)
+        listed = client.get(f"/api/sessions/{session['id']}/skills")
+        resource = client.post(
+            f"/api/sessions/{session['id']}/skills/read",
+            json={
+                "skill_name": "typed-skill",
+                "source": "workspace",
+                "resource_path": "guide.md",
+            },
+        )
+
+    assert listed.status_code == 200
+    payload = listed.json()
+    assert set(payload) == {
+        "mode",
+        "workspace_root",
+        "fingerprint",
+        "loaded_at",
+        "skills",
+        "diagnostics",
+    }
+    typed = next(item for item in payload["skills"] if item["name"] == "typed-skill")
+    assert typed == {
+        "name": "typed-skill",
+        "description": "Use this skill.",
+        "source": "workspace",
+        "label": "/typed-skill",
+        "locator": ".keydex/skills/typed-skill/SKILL.md",
+    }
+    assert resource.status_code == 200
+    resource_payload = resource.json()
+    assert set(resource_payload) == {
+        "skill_name",
+        "source",
+        "resource_path",
+        "locator",
+        "content",
+        "encoding",
+        "revision",
+        "fingerprint",
+    }
+    assert resource_payload["content"] == "typed guide"
+    assert resource_payload["fingerprint"] == payload["fingerprint"]

@@ -54,6 +54,7 @@ READ_FILE_DESCRIPTION = (
 
 CREATE_FILE_DESCRIPTION = (
     "在文件访问权限允许范围内创建新的 UTF-8 文本文件，并返回文件变更 diff。"
+    "完全访问下，跨项目和外部文件变更也会纳入统一文件历史与回溯。"
     "目标文件已存在时会失败；修改已有文件请使用 edit_file，"
     "删除或移动已有文件请使用 delete_file/move_file。"
 )

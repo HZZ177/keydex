@@ -206,8 +206,9 @@ async def test_backup_failure_prevents_create_and_records_no_mutation(
         raise FileHistoryStoreError("injected", "backup failed")
 
     monkeypatch.setattr(service.store, "create_backup", fail_backup)
-    with pytest.raises(ToolExecutionError):
+    with pytest.raises(ToolExecutionError) as error:
         await write_file_tool({"path": "blocked.txt", "content": "no"}, context)
+    assert error.value.code == "file_history_preflight_failed"
     assert not (tmp_path / "blocked.txt").exists()
     assert repositories.file_history.list_mutations(snapshot_id=snapshot.id) == []
 
@@ -225,7 +226,7 @@ async def test_apply_patch_write_failure_rolls_back_all_files(tmp_path, monkeypa
         return original_write_text(path, data, *args, **kwargs)
 
     monkeypatch.setattr(type(first), "write_text", fail_second)
-    with pytest.raises(ToolExecutionError):
+    with pytest.raises(ToolExecutionError) as error:
         await apply_patch_tool(
             {
                 "patch": (
@@ -242,11 +243,67 @@ async def test_apply_patch_write_failure_rolls_back_all_files(tmp_path, monkeypa
             context,
         )
 
+    assert error.value.code == "file_operation_failed_compensated"
+    assert error.value.details["compensated"] is True
+    assert error.value.details["reason"] == "OSError"
     assert first.read_text(encoding="utf-8") == "old\n"
     assert not (tmp_path / "b.txt").exists()
     mutations = repositories.file_history.list_mutations(snapshot_id=snapshot.id)
     assert len(mutations) == 2
     assert all(item.status == "aborted" for item in mutations)
+    assert all(item.error_code == "file_operation_failed_compensated" for item in mutations)
+
+
+@pytest.mark.asyncio
+async def test_create_permission_failure_reports_compensated_state_and_real_cause(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    context, _, repositories, snapshot = _context(tmp_path)
+    target = tmp_path / "external-user" / "Desktop" / "test.md"
+    original_write_text = type(target).write_text
+
+    def deny_target(path, data, *args, **kwargs):
+        if path == target:
+            raise PermissionError(13, "access denied", str(path))
+        return original_write_text(path, data, *args, **kwargs)
+
+    monkeypatch.setattr(type(target), "write_text", deny_target)
+    with pytest.raises(ToolExecutionError) as error:
+        await write_file_tool({"path": str(target), "content": "test"}, context)
+
+    assert error.value.code == "file_operation_failed_compensated"
+    assert "权限不足" in str(error.value)
+    assert error.value.details["compensated"] is True
+    assert error.value.details["reason"] == "PermissionError"
+    assert error.value.details["paths"] == [str(target)]
+    assert not target.exists()
+    mutations = repositories.file_history.list_mutations(snapshot_id=snapshot.id)
+    assert len(mutations) == 1
+    assert mutations[0].status == "aborted"
+    assert mutations[0].error_code == "file_operation_failed_compensated"
+
+
+@pytest.mark.asyncio
+async def test_history_commit_failure_restores_file_and_reports_compensated_contract(
+    tmp_path, monkeypatch
+) -> None:
+    context, service, repositories, snapshot = _context(tmp_path)
+    target = tmp_path / "created.txt"
+
+    def fail_commit(*args, **kwargs):
+        raise RuntimeError("injected commit failure")
+
+    monkeypatch.setattr(service, "commit_writes", fail_commit)
+    with pytest.raises(ToolExecutionError) as error:
+        await write_file_tool({"path": "created.txt", "content": "written"}, context)
+
+    assert error.value.code == "file_history_commit_compensated"
+    assert not target.exists()
+    mutations = repositories.file_history.list_mutations(snapshot_id=snapshot.id)
+    assert len(mutations) == 1
+    assert mutations[0].status == "aborted"
+    assert mutations[0].error_code == "file_history_commit_compensated"
 
 
 def test_tool_006_double_prepare_commit_abort_keeps_terminal_state_monotonic(tmp_path) -> None:

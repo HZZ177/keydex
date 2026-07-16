@@ -34,11 +34,11 @@ def test_discovery_returns_empty_catalog_when_skills_dir_is_missing(tmp_path: Pa
     assert catalog.diagnostics == []
 
 
-def test_discovery_respects_skills_disabled_manifest_flag(tmp_path: Path) -> None:
+def test_discovery_ignores_legacy_skills_disabled_manifest_flag(tmp_path: Path) -> None:
     workspace_root = tmp_path / "repo"
     keydex_root = workspace_root / ".keydex"
     keydex_root.mkdir(parents=True)
-    (keydex_root / "keydex.json").write_text(
+    (keydex_root / "keydex.md").write_text(
         '{"schema_version": 1, "skills": {"enabled": false}}',
         encoding="utf-8",
     )
@@ -47,7 +47,8 @@ def test_discovery_respects_skills_disabled_manifest_flag(tmp_path: Path) -> Non
 
     catalog = discover_workspace_skills(profile)
 
-    assert catalog.skills == {}
+    assert list(catalog.skills) == ["dev-plan"]
+    assert catalog.skills["dev-plan"].source == "workspace"
     assert catalog.diagnostics == []
 
 

@@ -313,22 +313,33 @@ def _insert_all_session_relation_rows(conn, *, session_id: str, prefix: str) -> 
     )
     conn.execute(
         """
-        insert into file_history_snapshot_entries (
-          snapshot_id, canonical_path, display_path, state, version, backup_time
-        ) values (?, ?, ?, 'missing', 1, ?)
+        insert into file_history_snapshot_scopes (
+          snapshot_id, scope_kind, scope_identity, scope_root, scope_label
+        ) values (?, 'workspace', ?, 'D:/inventory', 'inventory')
         """,
-        (snapshot_id, canonical_path, canonical_path, now),
+        (snapshot_id, workspace_identity),
+    )
+    conn.execute(
+        """
+        insert into file_history_snapshot_entries (
+          snapshot_id, scope_kind, scope_identity, scope_root, scope_label,
+          canonical_path, display_path, state, version, backup_time
+        ) values (?, 'workspace', ?, 'D:/inventory', 'inventory', ?, ?, 'missing', 1, ?)
+        """,
+        (snapshot_id, workspace_identity, canonical_path, canonical_path, now),
     )
     conn.execute(
         """
         insert into file_history_tracked_files (
-          session_id, canonical_path, display_path, latest_version,
+          session_id, scope_kind, scope_identity, scope_root, scope_label,
+          canonical_path, display_path, latest_version,
           first_snapshot_id, last_snapshot_id, last_observed_state,
           created_at, updated_at
-        ) values (?, ?, ?, 1, ?, ?, 'missing', ?, ?)
+        ) values (?, 'workspace', ?, 'D:/inventory', 'inventory', ?, ?, 1, ?, ?, 'missing', ?, ?)
         """,
         (
             session_id,
+            workspace_identity,
             canonical_path,
             canonical_path,
             snapshot_id,
@@ -342,9 +353,10 @@ def _insert_all_session_relation_rows(conn, *, session_id: str, prefix: str) -> 
         """
         insert into file_history_mutations (
           id, session_id, active_session_id, snapshot_id, workspace_identity,
+          scope_kind, scope_identity, scope_root, scope_label,
           canonical_path, display_path, mutation_kind, before_state,
           after_state, status, created_at, updated_at
-        ) values (?, ?, ?, ?, ?, ?, ?, 'update', 'missing', 'missing',
+        ) values (?, ?, ?, ?, ?, 'workspace', ?, 'D:/inventory', 'inventory', ?, ?, 'update', 'missing', 'missing',
                   'committed', ?, ?)
         """,
         (
@@ -352,6 +364,7 @@ def _insert_all_session_relation_rows(conn, *, session_id: str, prefix: str) -> 
             session_id,
             session_id,
             snapshot_id,
+            workspace_identity,
             workspace_identity,
             canonical_path,
             canonical_path,
@@ -362,11 +375,13 @@ def _insert_all_session_relation_rows(conn, *, session_id: str, prefix: str) -> 
     conn.execute(
         """
         insert into file_history_path_heads (
-          workspace_identity, canonical_path, display_path, session_id,
+          workspace_identity, scope_kind, scope_identity, scope_root, scope_label,
+          canonical_path, display_path, session_id,
           mutation_id, state, updated_at
-        ) values (?, ?, ?, ?, ?, 'missing', ?)
+        ) values (?, 'workspace', ?, 'D:/inventory', 'inventory', ?, ?, ?, ?, 'missing', ?)
         """,
         (
+            workspace_identity,
             workspace_identity,
             canonical_path,
             canonical_path,
@@ -397,11 +412,19 @@ def _insert_all_session_relation_rows(conn, *, session_id: str, prefix: str) -> 
     conn.execute(
         """
         insert into file_history_operation_files (
-          operation_id, canonical_path, display_path, preview_current_state,
+          operation_id, scope_kind, scope_identity, scope_root, scope_label,
+          canonical_path, display_path, preview_current_state,
           target_state, classification, writer_session_id, updated_at
-        ) values (?, ?, ?, 'missing', 'missing', 'ready', ?, ?)
+        ) values (?, 'workspace', ?, 'D:/inventory', 'inventory', ?, ?, 'missing', 'missing', 'ready', ?, ?)
         """,
-        (operation_id, canonical_path, canonical_path, session_id, now),
+        (
+            operation_id,
+            workspace_identity,
+            canonical_path,
+            canonical_path,
+            session_id,
+            now,
+        ),
     )
     conn.execute(
         """

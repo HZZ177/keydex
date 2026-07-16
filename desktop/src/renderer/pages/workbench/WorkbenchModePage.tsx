@@ -24,6 +24,7 @@ import {
 } from "@/renderer/components/workspace";
 import { evictFileMarkdownRuntimeEntry } from "@/renderer/components/workspace/fileMarkdownRuntime";
 import { emitSessionCreated } from "@/renderer/events/sessionEvents";
+import { composerNewWorkspaceDraftScope } from "@/renderer/features/composer";
 import { useLayoutState } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { clampWorkbenchAssistantDrawerWidth } from "@/renderer/hooks/layout/layoutStore";
 import {
@@ -351,6 +352,11 @@ export function WorkbenchModePage({
     runtime,
     sessionId: selectedSessionId ?? "",
     enabled: backendReady,
+    composerDraftScopeKey: selectedSessionId
+      ? undefined
+      : workspaceId
+        ? composerNewWorkspaceDraftScope(workspaceId)
+        : null,
     ensureSession: ensureWorkbenchSession,
     conversationSendDefaultMode,
   });

@@ -689,10 +689,28 @@ describe("RuntimeBridge", () => {
       default_mode: "both",
       snapshot_id: "snapshot 1",
       preview_token: "token 1",
-      files: [],
+      files: [{
+        resource_id: "resource-1",
+        scope_kind: "external",
+        scope_identity: "external:D:",
+        scope_label: "D:",
+        display_path: "outside/a.ts",
+        absolute_path: "D:/outside/a.ts",
+        requires_full_access: true,
+        path: "outside/a.ts",
+        current_state: "file",
+        target_state: "file",
+        classification: "ready",
+        binary: false,
+        truncated: false,
+        insertions: 1,
+        deletions: 1,
+      }],
       insertions: 0,
       deletions: 0,
       warnings: [],
+      requires_external_confirmation: true,
+      external_paths: ["D:/outside/a.ts"],
     };
     const result = {
       operation_id: "operation 1",
@@ -735,6 +753,7 @@ describe("RuntimeBridge", () => {
       request_id: "request 1",
       mode: "code",
       decision: "full",
+      confirm_external_paths: true,
     })).resolves.toEqual(result);
     await expect(runtime.conversation.getSessionReverseStatus("session 1", "operation 1")).resolves.toMatchObject({
       operation_id: "operation 1",
@@ -761,6 +780,7 @@ describe("RuntimeBridge", () => {
           request_id: "request 1",
           mode: "code",
           decision: "full",
+          confirm_external_paths: true,
         }),
       }),
     );

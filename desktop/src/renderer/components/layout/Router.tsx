@@ -24,6 +24,12 @@ import { createLifecycleEventGate, subscribeLifecycleEvents } from "@/renderer/e
 import { queueQuickChatSend } from "@/renderer/pages/conversation/quickSend";
 import { LayoutStateProvider, useLayoutState } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
+import {
+  ActiveProjectCoordinatorProvider,
+  activeProjectDiscoveryFromWorkspace,
+  usePublishActiveProjectDiscovery,
+} from "@/renderer/providers/ActiveProjectCoordinatorProvider";
+import { GitProvider } from "@/renderer/providers/GitProvider";
 import type { WorkspaceSelection } from "@/renderer/components/workspace";
 import type { AgentSession, Workspace } from "@/types/protocol";
 
@@ -137,7 +143,11 @@ export interface AppRouterProps {
 export function AppRouter({ runtime = runtimeBridge, associatedFileOpen }: AppRouterProps = {}) {
   return (
     <LayoutStateProvider>
-      <AppRoutes runtime={runtime} associatedFileOpen={associatedFileOpen} />
+      <ActiveProjectCoordinatorProvider>
+        <GitProvider runtime={runtime.git}>
+          <AppRoutes runtime={runtime} associatedFileOpen={associatedFileOpen} />
+        </GitProvider>
+      </ActiveProjectCoordinatorProvider>
     </LayoutStateProvider>
   );
 }
@@ -597,6 +607,11 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
     () => workspaces.find((workspace) => workspace.id === decodedWorkspaceId) ?? null,
     [decodedWorkspaceId, workspaces],
   );
+  const activeProjectDiscovery = useMemo(
+    () => activeProjectDiscoveryFromWorkspace(selectedWorkspace, workspaceLoading),
+    [selectedWorkspace, workspaceLoading],
+  );
+  usePublishActiveProjectDiscovery("workbench-route", activeProjectDiscovery);
   useEffect(() => {
     if (!externalPreviewPath || decodedWorkspaceId || workspaceLoading || workspaces.length === 0) {
       return;

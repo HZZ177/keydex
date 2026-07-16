@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import shutil
+import uuid
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
@@ -346,7 +349,7 @@ async def move_file_tool(
         changes=((source, "move_source"), (destination, "move_destination")),
     ):
         destination.parent.mkdir(parents=True, exist_ok=True)
-        source.replace(destination)
+        _safe_move_file(source, destination)
         store = ensure_file_snapshot_store(context)
         store.discard(source)
         if before is not None:
@@ -384,6 +387,44 @@ async def move_file_tool(
         **change,
         "files": [change],
     }
+
+
+def _safe_move_file(source: Path, destination: Path) -> None:
+    """Move a regular file without relying on cross-volume rename semantics."""
+
+    if _same_volume(source, destination):
+        source.replace(destination)
+        return
+    metadata = source.stat()
+    temp = destination.parent / f".{destination.name}.keydex-move-{uuid.uuid4().hex}.tmp"
+    installed = False
+    try:
+        with source.open("rb") as reader, temp.open("xb") as writer:
+            shutil.copyfileobj(reader, writer, length=1024 * 1024)
+            writer.flush()
+            os.fsync(writer.fileno())
+        os.chmod(temp, metadata.st_mode)
+        os.replace(temp, destination)
+        installed = True
+        try:
+            source.unlink()
+        except Exception:
+            destination.unlink(missing_ok=True)
+            installed = False
+            raise
+    finally:
+        temp.unlink(missing_ok=True)
+        if installed and source.exists():
+            destination.unlink(missing_ok=True)
+
+
+def _same_volume(source: Path, destination: Path) -> bool:
+    if os.name == "nt":
+        return source.anchor.casefold() == destination.anchor.casefold()
+    try:
+        return source.stat().st_dev == destination.parent.stat().st_dev
+    except OSError:
+        return True
 
 
 def _read_structural_file(

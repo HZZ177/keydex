@@ -21,6 +21,7 @@ from backend.app.agent.runtime_settings import (
 from backend.app.agent.state import KeydexAgentState
 from backend.app.agent.system_prompt import (
     DEFAULT_SYSTEM_PROMPT,
+    KEYDEX_MARKDOWN_SYSTEM_PROMPT,
     PLAN_PROGRESS_PROMPT,
     build_file_edit_prompt_section,
     build_web_source_prompt_section,
@@ -29,11 +30,16 @@ from backend.app.agent.system_prompt import (
 from backend.app.agent.tool_capabilities import (
     ToolCapability,
     capability_for_runtime_tool,
+    resolve_skill_catalog,
     resolve_tool_capabilities,
 )
 from backend.app.command_approval import load_command_settings
 from backend.app.core.logger import logger
-from backend.app.keydex.skills import EffectiveSkillCatalog, SkillCatalog, build_skill_index
+from backend.app.keydex.capabilities.keydex_markdown import (
+    KEYDEX_MARKDOWN_CAPABILITY_KEY,
+)
+from backend.app.keydex.models import KeydexEffectiveSnapshot
+from backend.app.keydex.skills import build_skill_index
 from backend.app.model import ModelSettings
 from backend.app.tools import LocalTool, ToolExecutionContext, ToolRegistry
 from backend.app.tools.command_runtime.descriptions import command_system_prompt_section
@@ -122,7 +128,7 @@ class AgentRunner:
             legacy_skill_override=enable_skill_tools,
         )
         workspace_tools_enabled = ToolCapability.WORKSPACE in capabilities
-        catalog = tool_context.metadata.get("skill_catalog")
+        catalog = resolve_skill_catalog(tool_context.metadata)
         skill_tools_enabled = ToolCapability.SKILL in capabilities
         if workspace_tools_enabled:
             visible_local_tools = visible_tools_for_file_edit_style(
@@ -186,14 +192,18 @@ class AgentRunner:
                     context_factory=lambda: tool_context,
                 )
             )
-        if skill_tools_enabled and isinstance(
-            catalog, (EffectiveSkillCatalog, SkillCatalog)
-        ):
+        if skill_tools_enabled and catalog is not None:
             tools.append(load_skill)
         resolved_system_prompt = (
             system_prompt if system_prompt is not None else self.default_system_prompt
         )
         prompt = resolved_system_prompt.strip() if resolved_system_prompt else ""
+        if _has_keydex_markdown_instructions(tool_context):
+            prompt = (
+                f"{prompt}\n\n{KEYDEX_MARKDOWN_SYSTEM_PROMPT}"
+                if prompt
+                else KEYDEX_MARKDOWN_SYSTEM_PROMPT
+            )
         if workspace_tools_enabled:
             raw_workspace_roots = tool_context.metadata.get("workspace_roots")
             workspace_roots = (
@@ -284,11 +294,10 @@ class AgentRunner:
 
     @staticmethod
     def _skill_index_from_context(tool_context: ToolExecutionContext) -> str:
-        catalog = tool_context.metadata.get("skill_catalog")
-        if not isinstance(catalog, (EffectiveSkillCatalog, SkillCatalog)):
+        catalog = resolve_skill_catalog(tool_context.metadata)
+        if catalog is None:
             return ""
         return build_skill_index(catalog)
-
     async def get_latest_checkpoint_config(
         self,
         *,
@@ -316,3 +325,13 @@ class AgentRunner:
             "checkpoint_id": configurable.get("checkpoint_id"),
             "checkpoint_ns": configurable.get("checkpoint_ns", checkpoint_ns) or "",
         }
+
+
+def _has_keydex_markdown_instructions(
+    tool_context: ToolExecutionContext,
+) -> bool:
+    snapshot = tool_context.metadata.get("keydex_snapshot")
+    if not isinstance(snapshot, KeydexEffectiveSnapshot):
+        return False
+    effective = snapshot.get(KEYDEX_MARKDOWN_CAPABILITY_KEY)
+    return bool(effective is not None and effective.documents)

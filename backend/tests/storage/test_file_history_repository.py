@@ -8,6 +8,8 @@ import pytest
 from backend.app.storage import (
     FileHistoryOperationFileRecord,
     FileHistoryOperationRecord,
+    FileHistoryMutationRecord,
+    FileHistoryPathHeadRecord,
     FileHistorySnapshotEntryRecord,
     FileHistorySnapshotRecord,
     FileHistoryTrackedFileRecord,
@@ -67,6 +69,10 @@ def test_file_history_repository_round_trip_and_stable_order(tmp_path) -> None:
         size=3,
         mode=0o644,
         content_hash="aaa",
+        scope_kind="workspace",
+        scope_identity="c:/workspace",
+        scope_root="C:/workspace",
+        scope_label="C:/workspace",
     )
     repo.create_snapshot(_snapshot(1), [first_entry], set_active=True)
     repo.create_snapshot(_snapshot(2, kind="restore_result"), [], set_active=True)
@@ -153,11 +159,115 @@ def test_file_history_repository_external_transaction_and_operation_mapping(tmp_
         safety_size=None,
         safety_mode=None,
         updated_at=NOW,
+        scope_kind="workspace",
+        scope_identity="c:/workspace",
+        scope_root="c:/workspace",
+        scope_label="c:/workspace",
     )
     repo.create_operation(operation, [operation_file])
 
     assert repo.get_operation_by_request("session-1", "request-1") == operation
     assert repo.list_operation_files("operation-1") == [operation_file]
+
+
+def test_file_history_repository_keeps_same_canonical_path_separate_by_scope(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    repo = repositories.file_history
+    repo.ensure_session_state("session-1")
+    repo.create_snapshot(_snapshot(1), [], set_active=True)
+    common = dict(
+        snapshot_id="snapshot-1",
+        canonical_path="same.txt",
+        display_path="same.txt",
+        state="missing",
+        backup_file_name=None,
+        version=1,
+        backup_time=NOW,
+        size=None,
+        mode=None,
+        content_hash=None,
+    )
+    workspace_entry = FileHistorySnapshotEntryRecord(
+        **common,
+        scope_kind="workspace",
+        scope_identity="workspace-one",
+        scope_root="C:/one",
+        scope_label="One",
+    )
+    external_entry = FileHistorySnapshotEntryRecord(
+        **common,
+        scope_kind="external",
+        scope_identity="d:",
+        scope_root="D:/",
+        scope_label="External D",
+    )
+    repo.upsert_snapshot_entry(workspace_entry)
+    repo.upsert_snapshot_entry(external_entry)
+
+    for index, entry in enumerate((workspace_entry, external_entry), start=1):
+        mutation = FileHistoryMutationRecord(
+            id=f"mutation-{index}",
+            session_id="session-1",
+            active_session_id="session-1",
+            trace_id="trace-1",
+            turn_index=1,
+            snapshot_id="snapshot-1",
+            workspace_identity=entry.scope_identity,
+            canonical_path=entry.canonical_path,
+            display_path=entry.display_path,
+            tool_name="edit_file",
+            tool_call_id=f"call-{index}",
+            batch_id="batch-1",
+            mutation_kind="update",
+            before_state="missing",
+            before_hash=None,
+            after_state="file",
+            after_hash=f"hash-{index}",
+            status="committed",
+            error_code=None,
+            created_at=NOW,
+            updated_at=NOW,
+            scope_kind=entry.scope_kind,
+            scope_identity=entry.scope_identity,
+            scope_root=entry.scope_root,
+            scope_label=entry.scope_label,
+        )
+        repo.create_mutation(mutation)
+        repo.upsert_path_head(
+            FileHistoryPathHeadRecord(
+                workspace_identity=entry.scope_identity,
+                canonical_path=entry.canonical_path,
+                display_path=entry.display_path,
+                session_id="session-1",
+                trace_id="trace-1",
+                mutation_id=mutation.id,
+                state="file",
+                content_hash=f"hash-{index}",
+                revision=1,
+                updated_at=NOW,
+                scope_kind=entry.scope_kind,
+                scope_identity=entry.scope_identity,
+                scope_root=entry.scope_root,
+                scope_label=entry.scope_label,
+            )
+        )
+
+    entries = repo.list_snapshot_entries("snapshot-1")
+    mutations = repo.list_mutations(snapshot_id="snapshot-1")
+    workspace_head = repo.get_path_head(
+        "workspace-one", "same.txt", scope_kind="workspace", scope_identity="workspace-one"
+    )
+    external_head = repo.get_path_head(
+        "d:", "same.txt", scope_kind="external", scope_identity="d:"
+    )
+
+    assert {(item.scope_kind, item.scope_identity) for item in entries} == {
+        ("workspace", "workspace-one"),
+        ("external", "d:"),
+    }
+    assert len(mutations) == 2
+    assert workspace_head is not None and workspace_head.content_hash == "hash-1"
+    assert external_head is not None and external_head.content_hash == "hash-2"
 
 
 def test_file_history_repository_enforces_foreign_keys_unique_keys_and_cursor_cas(tmp_path) -> None:

@@ -257,9 +257,13 @@ class FileChangeHub:
         *,
         watch_factory: WatchFactory | None = None,
         start_tasks: bool = True,
+        ignored_roots: Iterable[str | Path] = (),
     ) -> None:
         self._watch_factory = watch_factory or _default_watch_factory
         self._start_tasks = start_tasks
+        self._ignored_root_keys = tuple(
+            _path_key(_resolve_path(root)).rstrip("/") for root in ignored_roots
+        )
         self._roots: dict[str, _RootWatch] = {}
         self._workspace_subscribers: dict[
             str, set[FileChangeSubscriber]
@@ -493,6 +497,8 @@ class FileChangeHub:
             write_ids_by_path: dict[str, str] = {}
             for raw_kind, raw_path in raw:
                 try:
+                    if self._is_ignored_workspace_target(raw_path):
+                        continue
                     relative = normalize_workspace_change_path(root, raw_path)
                     kind = _normalize_change_kind(raw_kind)
                 except (ValueError, OSError):
@@ -534,6 +540,13 @@ class FileChangeHub:
                     failed.add(subscription.subscriber)
         for subscriber in failed:
             await self.unsubscribe_all(subscriber)
+
+    def _is_ignored_workspace_target(self, path: str | Path) -> bool:
+        target_key = _path_key(_resolve_path(path))
+        return any(
+            target_key == root_key or target_key.startswith(f"{root_key}/")
+            for root_key in self._ignored_root_keys
+        )
 
     async def broadcast_root_resync(self, workspace_root: str | Path) -> None:
         root_key = _path_key(_resolve_path(workspace_root))

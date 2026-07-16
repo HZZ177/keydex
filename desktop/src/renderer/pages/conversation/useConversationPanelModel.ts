@@ -110,6 +110,7 @@ export interface ReverseDialogState {
   loading: boolean;
   executing: boolean;
   mode: SessionReverseMode;
+  externalPathsConfirmed: boolean;
   preview: SessionReversePreview | null;
   result: SessionReverseResult | null;
   error: string | null;
@@ -191,6 +192,7 @@ export function useConversationPanelModel({
   );
   const {
     state: effectiveSkillsState,
+    isCurrentScope: isCurrentEffectiveSkillScope,
     refresh: refreshEffectiveSkills,
     handleSkillsChanged,
   } = useEffectiveSkills({
@@ -198,7 +200,7 @@ export function useConversationPanelModel({
     scope: effectiveSkillScope,
     enabled: backendReady && effectiveSkillScope !== null,
   });
-  const effectiveSkills = effectiveSkillsState.skills;
+  const effectiveSkills = isCurrentEffectiveSkillScope ? effectiveSkillsState.skills : [];
 
   useEffect(() => {
     if (contextWindowSessionIdRef.current !== sessionId) {
@@ -328,7 +330,7 @@ export function useConversationPanelModel({
           }
         }
       }
-      if (event.action === "keydexSkillsChanged") {
+      if (event.action === "keydexWorkspaceChanged") {
         handleSkillsChanged(event.data);
       }
       if (event.action === "error") {
@@ -367,7 +369,7 @@ export function useConversationPanelModel({
       controller.setSelectedSkill(null);
       return;
     }
-    if (effectiveSkillsState.status !== "ready") {
+    if (!isCurrentEffectiveSkillScope || effectiveSkillsState.status !== "ready") {
       return;
     }
     const status = skillSelectionStatus(controller.selectedSkill, effectiveSkills);
@@ -380,7 +382,15 @@ export function useConversationPanelModel({
         ? "同名 Skill 的有效来源已变化，请重新选择"
         : "所选 Skill 已不可用，请重新选择",
     );
-  }, [controller, effectiveSkillScope, effectiveSkills, effectiveSkillsState.status, notifications, validateSelectedSkill]);
+  }, [
+    controller,
+    effectiveSkillScope,
+    effectiveSkills,
+    effectiveSkillsState.status,
+    isCurrentEffectiveSkillScope,
+    notifications,
+    validateSelectedSkill,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -615,6 +625,7 @@ export function useConversationPanelModel({
         loading: true,
         executing: false,
         mode: "both",
+        externalPathsConfirmed: false,
         preview: null,
         result: null,
         error: null,
@@ -660,6 +671,9 @@ export function useConversationPanelModel({
         !preview ||
         state.loading ||
         state.executing ||
+        (state.mode !== "conversation" &&
+          preview.requires_external_confirmation &&
+          !state.externalPathsConfirmed) ||
         reverseExecuteInFlightRef.current
       ) {
         return;
@@ -676,6 +690,8 @@ export function useConversationPanelModel({
           request_id: requestId,
           mode: state.mode,
           decision,
+          confirm_external_paths:
+            state.mode !== "conversation" && state.externalPathsConfirmed,
         })
         .then(async (result) => {
           if (reverseRequestGenerationRef.current !== generation || state.sessionId !== sessionId) {
@@ -812,6 +828,14 @@ export function useConversationPanelModel({
   const selectReverseMode = useCallback((mode: SessionReverseMode) => {
     setReverseState((current) =>
       current && current.phase !== "result" ? { ...current, mode, phase: "preview" } : current,
+    );
+  }, []);
+
+  const confirmExternalReversePaths = useCallback((confirmed: boolean) => {
+    setReverseState((current) =>
+      current && current.phase !== "result"
+        ? { ...current, externalPathsConfirmed: confirmed }
+        : current,
     );
   }, []);
 
@@ -958,7 +982,7 @@ export function useConversationPanelModel({
     workspaceUnavailable,
     workspaceLabel,
     effectiveSkills,
-    effectiveSkillDiagnostics: effectiveSkillsState.diagnostics,
+    effectiveSkillDiagnostics: isCurrentEffectiveSkillScope ? effectiveSkillsState.diagnostics : [],
     refreshEffectiveSkills,
     searchWorkspace,
     listWorkspaceDirectory,
@@ -987,6 +1011,7 @@ export function useConversationPanelModel({
     cancelReverseFromMessage,
     confirmReverseFromMessage,
     selectReverseMode,
+    confirmExternalReversePaths,
     decideReverseFailure,
     retryReversePreview,
     updateThreadTask,

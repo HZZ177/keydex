@@ -43,7 +43,17 @@ from backend.app.core.ripgrep import (
     open_ripgrep_process,
     resolve_ripgrep_binary,
 )
-from backend.app.keydex.schemas import EffectiveSkillsResponse, effective_skills_response
+from backend.app.keydex.capabilities.skills.consumer import (
+    effective_skill_catalog,
+    effective_skills_fingerprint,
+    read_effective_skill_text_resource,
+)
+from backend.app.keydex.schemas import (
+    EffectiveSkillsResponse,
+    RuntimeOverviewResponse,
+    effective_skills_response,
+    runtime_overview_response,
+)
 from backend.app.keydex.skills import SkillResourcePathError
 from backend.app.security.workspace import WorkspacePathError, resolve_workspace_path
 from backend.app.services.file_change_hub import FileChangeHub
@@ -306,6 +316,22 @@ async def read_system_skill_resource(
 
 
 @router.get(
+    "/api/keydex/runtime",
+    response_model=RuntimeOverviewResponse,
+    response_model_exclude_none=True,
+)
+async def read_system_keydex_runtime(
+    request: Request,
+    force_reload: bool = False,
+) -> RuntimeOverviewResponse:
+    snapshot = await asyncio.to_thread(
+        request.app.state.keydex_runtime_cache.get_system_snapshot,
+        force_reload=force_reload,
+    )
+    return runtime_overview_response(snapshot)
+
+
+@router.get(
     "/api/workspaces/{workspace_id}/skills",
     response_model=EffectiveSkillsResponse,
 )
@@ -335,6 +361,26 @@ async def read_workspace_skill_resource(
         scope.workspace.root_path,
     )
     return _read_skill_resource(snapshot, payload)
+
+
+@router.get(
+    "/api/workspaces/{workspace_id}/keydex/runtime",
+    response_model=RuntimeOverviewResponse,
+    response_model_exclude_none=True,
+)
+async def read_workspace_keydex_runtime(
+    workspace_id: str,
+    request: Request,
+    force_reload: bool = False,
+    repositories: StorageRepositories = RepositoriesDep,
+) -> RuntimeOverviewResponse:
+    scope = _workspace_scope(repositories, workspace_id)
+    snapshot = await asyncio.to_thread(
+        request.app.state.keydex_runtime_cache.get_workspace_snapshot,
+        scope.workspace.root_path,
+        force_reload=force_reload,
+    )
+    return runtime_overview_response(snapshot)
 
 
 @router.get("/api/sessions/{session_id}/workspace/tree", response_model=WorkspaceTreeResponse)
@@ -466,6 +512,45 @@ async def list_session_skills(
     return await _workspace_skills_response(request, scope, force_reload=force_reload)
 
 
+@router.get(
+    "/api/sessions/{session_id}/keydex/runtime",
+    response_model=RuntimeOverviewResponse,
+    response_model_exclude_none=True,
+)
+async def read_session_keydex_runtime(
+    session_id: str,
+    request: Request,
+    force_reload: bool = False,
+    repositories: StorageRepositories = RepositoriesDep,
+) -> RuntimeOverviewResponse:
+    session = repositories.sessions.get(session_id)
+    if session is None:
+        raise _workspace_error(
+            status.HTTP_404_NOT_FOUND,
+            "session_not_found",
+            f"会话不存在: {session_id}",
+        )
+    if session.session_type == "chat":
+        snapshot = await asyncio.to_thread(
+            request.app.state.keydex_runtime_cache.get_system_snapshot,
+            force_reload=force_reload,
+        )
+        return runtime_overview_response(snapshot)
+    if session.session_type != "workspace":
+        raise _workspace_error(
+            status.HTTP_400_BAD_REQUEST,
+            "session_type_unsupported",
+            f"不支持的会话类型: {session.session_type}",
+        )
+    scope = _session_workspace_scope(repositories, session_id)
+    snapshot = await asyncio.to_thread(
+        request.app.state.keydex_runtime_cache.get_workspace_snapshot,
+        scope.workspace.root_path,
+        force_reload=force_reload,
+    )
+    return runtime_overview_response(snapshot)
+
+
 @router.post(
     "/api/sessions/{session_id}/skills/read",
     response_model=SkillResourceReadResponse,
@@ -516,7 +601,14 @@ async def _workspace_skills_response(
 
 
 def _read_skill_resource(snapshot, payload: SkillResourceReadRequest) -> SkillResourceReadResponse:
-    skill = snapshot.skill_catalog.skills.get(payload.skill_name)
+    catalog = effective_skill_catalog(snapshot)
+    if catalog is None:
+        raise _workspace_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "skill_snapshot_missing",
+            "Skills Runtime 暂不可用",
+        )
+    skill = catalog.skills.get(payload.skill_name)
     if skill is None:
         raise _workspace_error(
             status.HTTP_404_NOT_FOUND,
@@ -530,7 +622,11 @@ def _read_skill_resource(snapshot, payload: SkillResourceReadRequest) -> SkillRe
             "Skill 来源已变化，请刷新后重试",
         )
     try:
-        resource = snapshot.read_skill_text_resource(skill, payload.resource_path)
+        resource = read_effective_skill_text_resource(
+            snapshot,
+            skill,
+            payload.resource_path,
+        )
     except SkillResourcePathError as exc:
         status_code = (
             status.HTTP_404_NOT_FOUND
@@ -548,7 +644,7 @@ def _read_skill_resource(snapshot, payload: SkillResourceReadRequest) -> SkillRe
         content=resource.content,
         encoding="utf-8",
         revision=resource.revision,
-        fingerprint=snapshot.fingerprint,
+        fingerprint=effective_skills_fingerprint(snapshot),
     )
 
 

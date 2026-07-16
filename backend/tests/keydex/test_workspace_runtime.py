@@ -41,7 +41,7 @@ def test_runtime_snapshot_contains_profile_catalog_fingerprint_loaded_at_and_dia
     assert snapshot.diagnostics == []
 
 
-def test_fingerprint_changes_for_manifest_and_skill_entry_changes(tmp_path: Path) -> None:
+def test_keydex_json_is_ignored_while_skill_entry_changes_fingerprint(tmp_path: Path) -> None:
     workspace_root = tmp_path / "repo"
     keydex_root = workspace_root / ".keydex"
     keydex_root.mkdir(parents=True)
@@ -52,7 +52,7 @@ def test_fingerprint_changes_for_manifest_and_skill_entry_changes(tmp_path: Path
         encoding="utf-8",
     )
     second = _digest(workspace_root)
-    assert second != first
+    assert second == first
 
     skill_dir = keydex_root / "skills" / "dev-plan"
     _write_skill(skill_dir, name="dev-plan")

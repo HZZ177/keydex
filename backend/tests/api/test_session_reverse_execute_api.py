@@ -187,7 +187,7 @@ def test_code_only_restores_files_without_truncating_conversation(tmp_path) -> N
     assert response.status_code == 200
     assert response.json()["status"] == "full"
     assert response.json()["conversation_rewound"] is False
-    assert response.json()["restored_files"] == ["created.txt"]
+    assert response.json()["restored_files"] == [preview["files"][0]["resource_id"]]
     assert not (project / "created.txt").exists()
     assert client.app.state.repositories.message_events.get("message-1") is not None
 
@@ -512,7 +512,7 @@ def test_conversation_rewind_then_new_write_code_rewind_anchors_kept_disk(tmp_pa
     assert client.app.state.repositories.message_events.get(second_message) is not None
 
 
-def test_blocked_operation_status_exposes_relative_paths_and_operation_id(tmp_path) -> None:
+def test_blocked_operation_status_exposes_resource_ids_and_operation_id(tmp_path) -> None:
     client, project, session = _case(tmp_path)
     preview = _preview(client, session["id"])
     repositories = client.app.state.repositories
@@ -543,5 +543,5 @@ def test_blocked_operation_status_exposes_relative_paths_and_operation_id(tmp_pa
     payload = status.json()
     assert payload["operation_id"] == preview["operation_id"]
     assert payload["status"] == "compensation_failed"
-    assert payload["blocked_paths"] == ["created.txt"]
-    assert all(not path.startswith(("/", "C:")) for path in payload["blocked_paths"])
+    assert payload["blocked_paths"] == [preview["files"][0]["resource_id"]]
+    assert all(resource_id.startswith("fr1_") for resource_id in payload["blocked_paths"])

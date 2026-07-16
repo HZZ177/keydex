@@ -116,7 +116,6 @@ class EffectiveSkillCatalog:
     skills: dict[str, SkillDefinition] = field(default_factory=dict)
     diagnostics: tuple[KeydexDiagnostic, ...] = field(default_factory=tuple)
     available: bool = True
-    inherit_system: bool = True
     shadowed_names: frozenset[str] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:

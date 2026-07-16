@@ -1,0 +1,298 @@
+import type { SkillSummary } from "@/runtime";
+import type { SelectedFile } from "@/renderer/components/chat/SendBox/fileSelection";
+import type { SelectedImageAttachment } from "@/renderer/components/chat/SendBox/imageAttachments";
+import type { SelectedQuote } from "@/renderer/components/chat/SendBox/quoteSelection";
+
+export const COMPOSER_DRAFT_STORAGE_KEY = "keydex.composer-drafts.v1";
+export const COMPOSER_DRAFT_SCHEMA_VERSION = 1;
+
+const DEFAULT_PERSIST_DELAY_MS = 250;
+const MAX_PERSISTED_DRAFTS = 100;
+const DRAFT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+export interface ComposerDraft {
+  text: string;
+  selectedSkill: SkillSummary | null;
+  files: SelectedFile[];
+  quotes: SelectedQuote[];
+  attachments: SelectedImageAttachment[];
+  updatedAt: number;
+}
+
+export type ComposerDraftUpdate =
+  | Partial<Omit<ComposerDraft, "updatedAt">>
+  | ((current: ComposerDraft) => Partial<Omit<ComposerDraft, "updatedAt">> | ComposerDraft);
+
+export interface ComposerDraftStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+}
+
+export interface ComposerDraftStoreOptions {
+  storage?: ComposerDraftStorage | null;
+  persistDelayMs?: number;
+  now?: () => number;
+}
+
+export interface ComposerDraftStore {
+  getDraft(scopeKey: string): ComposerDraft;
+  subscribe(listener: () => void): () => void;
+  updateDraft(scopeKey: string, update: ComposerDraftUpdate): void;
+  replaceDraft(scopeKey: string, draft: ComposerDraft): void;
+  copyDraft(sourceScopeKey: string, targetScopeKey: string): void;
+  clearDraft(scopeKey: string): void;
+  flush(): void;
+  dispose(): void;
+}
+
+export const EMPTY_COMPOSER_DRAFT: ComposerDraft = Object.freeze({
+  text: "",
+  selectedSkill: null,
+  files: [],
+  quotes: [],
+  attachments: [],
+  updatedAt: 0,
+});
+
+export function composerSessionDraftScope(sessionId: string): string {
+  return `session:${sessionId.trim()}`;
+}
+
+export function composerNewWorkspaceDraftScope(workspaceId: string): string {
+  return `new-workspace:${workspaceId.trim()}`;
+}
+
+export function composerPendingWorkspaceDraftScope(rootPath: string): string {
+  return `new-workspace-path:${rootPath.trim()}`;
+}
+
+export const COMPOSER_NEW_CHAT_DRAFT_SCOPE = "new-chat";
+
+export function createComposerDraftStore(options: ComposerDraftStoreOptions = {}): ComposerDraftStore {
+  const storage = options.storage ?? null;
+  const persistDelayMs = Math.max(0, options.persistDelayMs ?? DEFAULT_PERSIST_DELAY_MS);
+  const now = options.now ?? Date.now;
+  let drafts = readPersistedDrafts(storage, now());
+  let persistTimer: ReturnType<typeof setTimeout> | null = null;
+  const listeners = new Set<() => void>();
+
+  const publish = () => listeners.forEach((listener) => listener());
+  const schedulePersist = () => {
+    if (!storage || persistTimer !== null) {
+      return;
+    }
+    if (persistDelayMs === 0) {
+      writePersistedDrafts(storage, drafts, now());
+      return;
+    }
+    persistTimer = setTimeout(() => {
+      persistTimer = null;
+      writePersistedDrafts(storage, drafts, now());
+    }, persistDelayMs);
+  };
+  const commit = (scopeKey: string, draft: ComposerDraft) => {
+    const normalizedScopeKey = scopeKey.trim();
+    if (!normalizedScopeKey) {
+      return;
+    }
+    const normalized = normalizeDraft(draft, now());
+    if (!composerDraftHasContent(normalized)) {
+      if (!(normalizedScopeKey in drafts)) {
+        return;
+      }
+      const next = { ...drafts };
+      delete next[normalizedScopeKey];
+      drafts = next;
+    } else {
+      drafts = { ...drafts, [normalizedScopeKey]: normalized };
+    }
+    publish();
+    schedulePersist();
+  };
+
+  const store: ComposerDraftStore = {
+    getDraft(scopeKey) {
+      return drafts[scopeKey.trim()] ?? EMPTY_COMPOSER_DRAFT;
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    updateDraft(scopeKey, update) {
+      const current = store.getDraft(scopeKey);
+      const patch = typeof update === "function" ? update(current) : update;
+      commit(scopeKey, { ...current, ...patch, updatedAt: now() });
+    },
+    replaceDraft(scopeKey, draft) {
+      commit(scopeKey, draft);
+    },
+    copyDraft(sourceScopeKey, targetScopeKey) {
+      const source = store.getDraft(sourceScopeKey);
+      if (source === EMPTY_COMPOSER_DRAFT || sourceScopeKey.trim() === targetScopeKey.trim()) {
+        return;
+      }
+      commit(targetScopeKey, source);
+    },
+    clearDraft(scopeKey) {
+      commit(scopeKey, EMPTY_COMPOSER_DRAFT);
+    },
+    flush() {
+      if (persistTimer !== null) {
+        clearTimeout(persistTimer);
+        persistTimer = null;
+      }
+      if (storage) {
+        writePersistedDrafts(storage, drafts, now());
+      }
+    },
+    dispose() {
+      store.flush();
+      listeners.clear();
+    },
+  };
+  return store;
+}
+
+export function composerDraftHasContent(draft: ComposerDraft): boolean {
+  return Boolean(
+    draft.text ||
+      draft.selectedSkill ||
+      draft.files.length ||
+      draft.quotes.length ||
+      draft.attachments.length,
+  );
+}
+
+function readPersistedDrafts(
+  storage: ComposerDraftStorage | null,
+  currentTime: number,
+): Record<string, ComposerDraft> {
+  if (!storage) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(storage.getItem(COMPOSER_DRAFT_STORAGE_KEY) ?? "null") as unknown;
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+    const record = parsed as { version?: unknown; drafts?: unknown };
+    if (record.version !== COMPOSER_DRAFT_SCHEMA_VERSION || !record.drafts || typeof record.drafts !== "object") {
+      return {};
+    }
+    return Object.fromEntries(
+      Object.entries(record.drafts as Record<string, unknown>)
+        .flatMap(([scopeKey, value]) => {
+          const draft = decodeDraft(value);
+          if (!scopeKey.trim() || !draft || currentTime - draft.updatedAt > DRAFT_TTL_MS) {
+            return [];
+          }
+          return [[scopeKey, draft] as const];
+        })
+        .sort((left, right) => right[1].updatedAt - left[1].updatedAt)
+        .slice(0, MAX_PERSISTED_DRAFTS),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writePersistedDrafts(
+  storage: ComposerDraftStorage,
+  drafts: Record<string, ComposerDraft>,
+  currentTime: number,
+) {
+  const entries = Object.entries(drafts)
+    .filter(([, draft]) => currentTime - draft.updatedAt <= DRAFT_TTL_MS && composerDraftHasContent(draft))
+    .sort((left, right) => right[1].updatedAt - left[1].updatedAt)
+    .slice(0, MAX_PERSISTED_DRAFTS);
+  try {
+    if (!entries.length) {
+      storage.removeItem(COMPOSER_DRAFT_STORAGE_KEY);
+      return;
+    }
+    storage.setItem(
+      COMPOSER_DRAFT_STORAGE_KEY,
+      JSON.stringify({
+        version: COMPOSER_DRAFT_SCHEMA_VERSION,
+        drafts: Object.fromEntries(entries.map(([scopeKey, draft]) => [scopeKey, persistableDraft(draft)])),
+      }),
+    );
+  } catch {
+    // Runtime draft state remains available even when browser storage is unavailable or full.
+  }
+}
+
+function normalizeDraft(draft: ComposerDraft, updatedAt: number): ComposerDraft {
+  return {
+    text: typeof draft.text === "string" ? draft.text : "",
+    selectedSkill: normalizeSkill(draft.selectedSkill),
+    files: recordArray<SelectedFile>(draft.files),
+    quotes: recordArray<SelectedQuote>(draft.quotes),
+    attachments: recordArray<SelectedImageAttachment>(draft.attachments).map(normalizeRuntimeAttachment),
+    updatedAt,
+  };
+}
+
+function decodeDraft(value: unknown): ComposerDraft | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const raw = value as Partial<ComposerDraft>;
+  const updatedAt = typeof raw.updatedAt === "number" && Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0;
+  if (!updatedAt) {
+    return null;
+  }
+  return {
+    text: typeof raw.text === "string" ? raw.text : "",
+    selectedSkill: normalizeSkill(raw.selectedSkill),
+    files: recordArray<SelectedFile>(raw.files),
+    quotes: recordArray<SelectedQuote>(raw.quotes),
+    attachments: recordArray<SelectedImageAttachment>(raw.attachments).map(stripAttachmentPreview),
+    updatedAt,
+  };
+}
+
+function persistableDraft(draft: ComposerDraft): ComposerDraft {
+  return {
+    ...draft,
+    files: draft.files.map((file) => ({ ...file })),
+    quotes: draft.quotes.map((quote) => ({ ...quote })),
+    attachments: draft.attachments.map(stripAttachmentPreview),
+  };
+}
+
+function stripAttachmentPreview(attachment: SelectedImageAttachment): SelectedImageAttachment {
+  const { previewUrl: _previewUrl, ...persisted } = attachment;
+  return { ...persisted, previewUrl: null };
+}
+
+function normalizeRuntimeAttachment(attachment: SelectedImageAttachment): SelectedImageAttachment {
+  return {
+    ...attachment,
+    previewUrl: attachment.previewUrl?.startsWith("blob:") ? null : attachment.previewUrl ?? null,
+  };
+}
+
+function normalizeSkill(value: unknown): SkillSummary | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const raw = value as Partial<SkillSummary>;
+  if (
+    typeof raw.name !== "string" ||
+    typeof raw.description !== "string" ||
+    typeof raw.source !== "string" ||
+    typeof raw.label !== "string" ||
+    typeof raw.locator !== "string"
+  ) {
+    return null;
+  }
+  return raw as SkillSummary;
+}
+
+function recordArray<T extends object>(value: unknown): T[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is T => Boolean(item && typeof item === "object")).map((item) => ({ ...item }))
+    : [];
+}

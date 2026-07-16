@@ -1,0 +1,37 @@
+.root { display: grid; align-content: start; gap: 14px; padding: 14px; }
+.root header { display: flex; align-items: center; gap: 7px; }
+.root header span { margin-left: auto; color: var(--color-text-3); font-size: 11px; }
+.create { display: grid; gap: 6px; }
+.create label, .checkout span { color: var(--color-text-2); font-size: 11px; }
+.create > div { display: flex; gap: 6px; }
+.create input { min-width: 0; height: 30px; flex: 1; padding: 0 8px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); outline: 0; background: var(--color-bg-1); color: var(--color-text-1); }
+.create input:focus { border-color: var(--color-accent-1); }
+.create button, .checkout button, .dirty button { display: inline-flex; min-height: 29px; align-items: center; gap: 4px; padding: 0 9px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--surface-active); color: var(--color-text-1); cursor: pointer; font-size: 10px; }
+.create button:disabled, .checkout button:disabled { cursor: default; opacity: .45; }
+.create small { color: var(--color-text-3); font-size: 10px; }
+.create small[data-valid="false"] { color: var(--color-danger, #d14343); }
+.checkout { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 10px; border-top: 1px solid var(--color-border-2); }
+.dirty { display: grid; gap: 7px; padding: 10px; border: 1px solid color-mix(in srgb, var(--color-warning, #c78318) 40%, transparent); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--color-warning, #c78318) 8%, transparent); }
+.dirty span { color: var(--color-text-2); font-size: 11px; line-height: 1.45; }
+.dirty > div { display: flex; flex-wrap: wrap; gap: 5px; }
+.manage { display: flex; gap: 6px; padding-top: 10px; border-top: 1px solid var(--color-border-2); }
+.manage input { min-width: 0; height: 29px; flex: 1; padding: 0 8px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--color-bg-1); color: var(--color-text-1); }
+.manage button, .deleteZone button { min-height: 29px; padding: 0 9px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--surface-active); color: var(--color-text-1); cursor: pointer; font-size: 10px; }
+.manage button:disabled, .deleteZone button:disabled { cursor: default; opacity: .45; }
+.deleteZone { display: flex; align-items: center; gap: 6px; padding: 9px; border: 1px solid color-mix(in srgb, var(--color-danger, #d14343) 28%, transparent); border-radius: var(--radius-sm); }
+.deleteZone span { min-width: 0; flex: 1; overflow: hidden; color: var(--color-text-2); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.deleteZone[data-risk="protected"] { background: color-mix(in srgb, var(--color-danger, #d14343) 7%, transparent); }
+.tagForm { display: grid; grid-template-columns: minmax(110px, 1fr) auto auto auto; align-items: center; gap: 6px; padding-top: 11px; border-top: 1px solid var(--color-border-2); }
+.tagForm strong { grid-column: 1 / -1; font-size: 11px; }
+.tagForm > input { min-width: 0; height: 29px; padding: 0 7px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--color-bg-1); color: var(--color-text-1); }
+.tagForm label { display: inline-flex; align-items: center; gap: 3px; color: var(--color-text-2); font-size: 10px; }
+.tagForm button, .tagDetails button { min-height: 29px; padding: 0 8px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--surface-active); color: var(--color-text-1); cursor: pointer; font-size: 10px; }
+.tagDetails { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 5px 8px; padding: 9px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); }
+.tagDetails span { color: var(--color-text-3); font-size: 10px; }
+.tagDetails label { display: flex; align-items: center; gap: 5px; color: var(--color-text-3); font-size: 10px; }
+.tagDetails input { min-width: 70px; width: 90px; height: 26px; padding: 0 6px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--color-bg-1); color: var(--color-text-1); }
+.upstream { display: grid; grid-template-columns: minmax(110px, 1fr) minmax(120px, 1fr) auto auto; align-items: center; gap: 5px; }
+.upstream span { color: var(--color-text-3); font-size: 10px; }
+.upstream select { min-width: 0; height: 28px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--color-bg-1); color: var(--color-text-1); font-size: 10px; }
+.upstream button { min-height: 28px; padding: 0 7px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--surface-active); color: var(--color-text-1); cursor: pointer; font-size: 10px; }
+.upstream button:disabled { cursor: default; opacity: .45; }

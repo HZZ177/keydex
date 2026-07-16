@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from backend.app.api.dependencies import get_repositories
+from backend.app.command_approval import load_command_settings
 from backend.app.core.config import AppSettings, get_settings
 from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
@@ -21,6 +22,7 @@ from backend.app.services.file_history_service import (
     FileRestoreDecision,
     FileRestoreMode,
 )
+from backend.app.services.file_resources import FileResourceIdentity
 from backend.app.services.manual_context_compression_service import (
     ManualContextCompressionResult,
     ManualContextCompressionService,
@@ -109,6 +111,7 @@ class SessionReverseRequest(BaseModel):
     checkpoint_ns: str | None = None
     trace_id: str | None = None
     turn_index: int | None = None
+    confirm_external_paths: bool = False
 
 
 class SessionReverseFileResponse(BaseModel):
@@ -127,6 +130,13 @@ class SessionReverseFileResponse(BaseModel):
     insertions: int = 0
     deletions: int = 0
     diff: str | None = None
+    resource_id: str
+    scope_kind: str
+    scope_identity: str
+    scope_label: str
+    display_path: str
+    absolute_path: str
+    requires_full_access: bool = False
 
     @field_validator("path")
     @classmethod
@@ -153,6 +163,8 @@ class SessionReversePreviewResponse(BaseModel):
     insertions: int = 0
     deletions: int = 0
     warnings: list[str] = Field(default_factory=list)
+    requires_external_confirmation: bool = False
+    external_paths: list[str] = Field(default_factory=list)
 
 
 class SessionReverseResponse(BaseModel):
@@ -212,6 +224,7 @@ def preview_session_reverse(
             message_event_id=payload.message_event_id,
             workspace_root=workspace.cwd,
             source=source.to_dict(),
+            file_access_mode=load_command_settings(repositories).file_access_mode,
         )
         return SessionReversePreviewResponse(**preview.to_dict())
     except FileHistoryError as exc:
@@ -484,6 +497,8 @@ async def reverse_session(
                 message_event_id=payload.message_event_id,
                 mode=payload.mode,
                 decision=payload.decision,
+                file_access_mode=load_command_settings(repositories).file_access_mode,
+                confirm_external_paths=payload.confirm_external_paths,
             ),
         )
     except FileHistoryError as exc:
@@ -549,7 +564,11 @@ def get_session_reverse_status(
         FileOperationStatus.BLOCKED,
     }:
         blocked_paths = [
-            item.display_path
+            FileResourceIdentity(
+                item.scope_kind,
+                item.scope_identity,
+                item.canonical_path,
+            ).resource_id
             for item in repositories.file_history.list_operation_files(operation_id)
             if item.error_code
         ]

@@ -79,7 +79,13 @@ describe("agentSessionStore reducer", () => {
       "pending_input_paused",
       "pending_input_resumed",
       "pending_input_failed",
-      "keydexSkillsChanged",
+      "keydexWorkspaceChanged",
+      "workspaceWatchBound",
+      "workspaceWatchUnbound",
+      "workspaceFilesChanged",
+      "localFileWatchBound",
+      "localFileWatchUnbound",
+      "localFileChanged",
       "approval_requested",
       "approval_resolved",
       "mcp_server_status_changed",
@@ -93,15 +99,32 @@ describe("agentSessionStore reducer", () => {
     expect([...coveredActions].sort()).toEqual([...AGENT_CHAT_ACTIONS].sort());
   });
 
-  it("keeps keydex skill refresh notifications out of session state", () => {
+  it("keeps keydex workspace refresh notifications out of session state", () => {
     const state = createInitialAgentConversationState();
 
     const next = reduceAgentWsEvent(state, {
-      action: "keydexSkillsChanged",
+      action: "keydexWorkspaceChanged",
       data: {
         session_id: "ses-1",
         session_scope: "system",
-        fingerprint: "fp-2",
+        effective_fingerprint: "fp-2",
+        changed_capabilities: ["skills"],
+        capability_fingerprints: { skills: "skills-fp-2" },
+      },
+    });
+
+    expect(next).toBe(state);
+  });
+
+  it("ignores malformed or unknown keydex capability fields without crashing", () => {
+    const state = createInitialAgentConversationState();
+
+    const next = reduceAgentWsEvent(state, {
+      action: "keydexWorkspaceChanged",
+      data: {
+        session_id: "ses-1",
+        changedCapabilities: "not-an-array",
+        capabilityFingerprints: { future_capability: 123 },
       },
     });
 

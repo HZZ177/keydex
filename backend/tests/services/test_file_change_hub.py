@@ -531,10 +531,42 @@ async def test_explicit_local_file_watch_bypasses_workspace_ignore(tmp_path: Pat
     await hub.subscribe_local_file("local-1", target, local_subscriber)
 
     await hub.handle_raw_changes(tmp_path, {(Change.modified, target)})
+    await hub.handle_raw_changes(target.parent, {(Change.modified, target)})
     await hub.handle_raw_changes(ignored_root, {(Change.modified, target)})
 
     assert workspace_subscriber.events == []
     assert local_subscriber.events[0][0] == "localFileChanged"
+    await hub.close()
+
+
+@pytest.mark.asyncio
+async def test_runtime_data_root_is_ignored_only_for_workspace_events(
+    tmp_path: Path,
+) -> None:
+    runtime_root = tmp_path / "backend" / "app" / ".data"
+    target = _make_file(runtime_root / "logs" / "keydex.log")
+    workspace_subscriber = RecordingSubscriber()
+    local_subscriber = RecordingSubscriber()
+    hub = FileChangeHub(start_tasks=False, ignored_roots=(runtime_root,))
+    await hub.subscribe_workspace("workspace-1", tmp_path, workspace_subscriber)
+    await hub.subscribe_local_file("local-1", target, local_subscriber)
+
+    await hub.handle_raw_changes(tmp_path, {(Change.modified, target)})
+    await hub.handle_raw_changes(target.parent, {(Change.modified, target)})
+
+    assert workspace_subscriber.events == []
+    assert local_subscriber.events == [
+        (
+            "localFileChanged",
+            {
+                "watch_id": "local-1",
+                "path": str(target),
+                "sequence": 1,
+                "resync_required": False,
+                "changes": [{"kind": "modified", "path": str(target)}],
+            },
+        )
+    ]
     await hub.close()
 
 

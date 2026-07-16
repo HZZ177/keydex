@@ -28,6 +28,10 @@ import { emitSessionCreated, emitSessionUpdated } from "@/renderer/events/sessio
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { useWorkspaceFileWatchScope } from "@/renderer/providers/FileChangeProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
+import {
+  activeProjectDiscoveryFromSession,
+  usePublishActiveProjectDiscovery,
+} from "@/renderer/providers/ActiveProjectCoordinatorProvider";
 import { prepareComposerMessage } from "@/renderer/utils/messageInjection";
 import {
   buildSessionMarkdown,
@@ -161,6 +165,7 @@ export function ConversationSessionSurface({
   });
   const draft = controller.draft;
   const setDraft = controller.setDraft;
+  const composerDraft = controller.composerDraft;
   const composerContextRequest = controller.composerContextRequest;
   const fileChipRequest = controller.fileChipRequest;
   const quoteChipRequest = controller.quoteChipRequest;
@@ -168,6 +173,11 @@ export function ConversationSessionSurface({
   const setSelectedSkill = controller.setSelectedSkill;
   const loading = controller.loading;
   const session = controller.session;
+  const activeProjectDiscovery = useMemo(
+    () => activeProjectDiscoveryFromSession(session, loading),
+    [loading, session],
+  );
+  usePublishActiveProjectDiscovery(`conversation:${threadId}`, activeProjectDiscovery, !isSidecar);
   useWorkspaceFileWatchScope(session?.workspace_id);
   const pendingApproval = controller.pendingApproval;
   const agentMessages = controller.agentMessages;
@@ -850,6 +860,9 @@ export function ConversationSessionSurface({
         allowGoalSlashCommand={!isSidecar}
         allowContextCompressionSlashCommand={!isSidecar}
         selectedSkill={selectedSkill}
+        selectedFiles={composerDraft.files}
+        selectedQuotes={composerDraft.quotes}
+        selectedImageAttachments={composerDraft.attachments}
         runtime={runtime}
         sessionId={threadId}
         fileAccessMode={fileAccessMode}
@@ -858,6 +871,9 @@ export function ConversationSessionSurface({
         onSearchWorkspace={panelModel.searchWorkspace}
         onOpenModelSettings={onOpenModelSettings}
         onChange={handleDraftChange}
+        onSelectedFilesChange={(files) => controller.setComposerDraft({ files })}
+        onSelectedQuotesChange={(quotes) => controller.setComposerDraft({ quotes })}
+        onSelectedImageAttachmentsChange={(attachments) => controller.setComposerDraft({ attachments })}
         onSkillChange={setSelectedSkill}
         onSend={sendFromComposer}
         onStop={controller.stop}

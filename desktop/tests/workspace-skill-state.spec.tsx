@@ -135,7 +135,7 @@ describe("useEffectiveSkills", () => {
     expect(result.current.state.skills).toEqual([skill("review", "system")]);
   });
 
-  it("refreshes only matching watcher events and ignores duplicate fingerprints", async () => {
+  it("refreshes only matching Skills capability events and ignores duplicates", async () => {
     const listSession = vi
       .fn()
       .mockResolvedValueOnce(response("fp-1"))
@@ -153,15 +153,36 @@ describe("useEffectiveSkills", () => {
     act(() => {
       expect(result.current.handleSkillsChanged({
         session_id: "ses-other",
-        fingerprint: "fp-other",
+        changed_capabilities: ["skills"],
+        capability_fingerprints: { skills: "skills-other" },
       })).toBe(false);
       expect(result.current.handleSkillsChanged({
         session_id: "ses-1",
-        fingerprint: "fp-2",
+        changed_capabilities: ["keydex_markdown"],
+        capability_fingerprints: { keydex_markdown: "markdown-2" },
+        effective_fingerprint: "effective-markdown-2",
+      })).toBe(false);
+      expect(result.current.handleSkillsChanged({
+        session_id: "ses-1",
+        changed_capabilities: ["skills"],
+        capability_fingerprints: { skills: "skills-2" },
+        effective_fingerprint: "effective-2",
       })).toBe(true);
       expect(result.current.handleSkillsChanged({
         session_id: "ses-1",
-        fingerprint: "fp-2",
+        changed_capabilities: ["skills", "keydex_markdown"],
+        capability_fingerprints: {
+          skills: "skills-2",
+          keydex_markdown: "markdown-3",
+        },
+        effective_fingerprint: "effective-3",
+      })).toBe(false);
+      expect(result.current.handleSkillsChanged({
+        session_id: "ses-1",
+        changedCapabilities: "skills",
+      })).toBe(false);
+      expect(result.current.handleSkillsChanged({
+        session_id: "ses-1",
       })).toBe(false);
     });
     await waitFor(() => expect(result.current.state.fingerprint).toBe("fp-2"));

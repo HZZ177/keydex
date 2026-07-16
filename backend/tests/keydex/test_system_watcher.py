@@ -8,19 +8,30 @@ from typing import Any
 
 import pytest
 
-from backend.app.keydex import KeydexRuntimeCache
+from backend.app.keydex import KeydexCapabilityRuntimeCache, KeydexRuntimeCache
+from backend.app.keydex.capabilities.keydex_markdown import (
+    KEYDEX_MARKDOWN_CAPABILITY_KEY,
+)
 from backend.app.keydex.runtime import build_keydex_layer_fingerprint
-from backend.app.keydex.watcher import KeydexSkillsWatcher, is_keydex_layer_watch_target
+from backend.app.keydex.watcher import (
+    KeydexSkillsWatcher,
+    KeydexWorkspaceWatcher,
+    is_keydex_layer_watch_target,
+)
 
 
 @pytest.mark.asyncio
-async def test_t50_t55_system_change_notifies_chat_and_inheriting_workspace_only(
+async def test_kr20_system_change_notifies_chat_and_all_fixed_inheritance_workspaces(
     tmp_path: Path,
 ) -> None:
     system_root = tmp_path / "system"
     workspace_inherit = tmp_path / "inherit"
     workspace_closed = tmp_path / "closed"
-    write_workspace_manifest(workspace_closed, inherit_system=False)
+    (workspace_closed / ".keydex").mkdir(parents=True)
+    (workspace_closed / ".keydex" / "keydex.md").write_text(
+        '{"skills": {"inherit_system": false}}',
+        encoding="utf-8",
+    )
     events: list[tuple[str, dict[str, Any]]] = []
 
     async def notify(session_id: str, payload: dict[str, Any]) -> bool:
@@ -40,10 +51,11 @@ async def test_t50_t55_system_change_notifies_chat_and_inheriting_workspace_only
     handled = await watcher.handle_system_path_change(entry)
 
     assert handled is True
-    assert [session_id for session_id, _ in events] == ["chat", "inherit"]
+    assert [session_id for session_id, _ in events] == ["chat", "closed", "inherit"]
     for _, payload in events:
         assert payload["changed_scope"] == "system"
         assert payload["changed_path"] == "skills/global/SKILL.md"
+        assert payload["changedCapabilities"] == ["skills"]
         assert str(system_root.resolve()) not in json.dumps(payload)
         assert len(payload["effective_fingerprint"]) == 64
 
@@ -55,11 +67,14 @@ async def test_t51_t52_workspace_resource_change_is_isolated_and_duplicate_is_ig
     system_root = tmp_path / "system"
     workspace_a = tmp_path / "a"
     workspace_b = tmp_path / "b"
-    resource = write_skill(
-        workspace_a / ".keydex" / "skills" / "local",
-        "local",
-        resource="one",
-    ).parent / "notes.txt"
+    resource = (
+        write_skill(
+            workspace_a / ".keydex" / "skills" / "local",
+            "local",
+            resource="one",
+        ).parent
+        / "notes.txt"
+    )
     events: list[tuple[str, dict[str, Any]]] = []
 
     async def notify(session_id: str, payload: dict[str, Any]) -> bool:
@@ -85,7 +100,7 @@ async def test_t51_t52_workspace_resource_change_is_isolated_and_duplicate_is_ig
 
 
 @pytest.mark.asyncio
-async def test_t52_system_manifest_skill_and_resource_add_rename_delete_refresh(
+async def test_kr11_system_markdown_skill_and_resource_lifecycle_refresh(
     tmp_path: Path,
 ) -> None:
     system_root = tmp_path / "system"
@@ -103,9 +118,14 @@ async def test_t52_system_manifest_skill_and_resource_add_rename_delete_refresh(
     await watcher.register_session("chat", None)
 
     system_root.mkdir()
-    manifest = system_root / "keydex.json"
-    manifest.write_text('{"schema_version": 1}', encoding="utf-8")
-    assert await watcher.handle_system_path_change(manifest) is True
+    legacy_manifest = system_root / "keydex.md"
+    legacy_manifest.write_text("{invalid", encoding="utf-8")
+    assert await watcher.handle_system_path_change(legacy_manifest) is False
+
+    markdown = system_root / "keydex.md"
+    markdown.write_text("system-v1", encoding="utf-8")
+    assert await watcher.handle_system_path_change(markdown) is True
+    assert events[-1]["changedCapabilities"] == ["keydex_markdown"]
 
     entry = write_skill(system_root / "skills" / "global", "global", body="v1")
     assert await watcher.handle_system_path_change(entry) is True
@@ -123,7 +143,7 @@ async def test_t52_system_manifest_skill_and_resource_add_rename_delete_refresh(
     assert await watcher.handle_system_path_change(entry) is True
 
     assert [event["changed_path"] for event in events] == [
-        "keydex.json",
+        "keydex.md",
         "skills/global/SKILL.md",
         "skills/global/notes.txt",
         "skills/global/guide.txt",
@@ -131,6 +151,49 @@ async def test_t52_system_manifest_skill_and_resource_add_rename_delete_refresh(
         "skills/global/SKILL.md",
     ]
     assert all(event["changed_scope"] == "system" for event in events)
+    serialized = json.dumps(events, ensure_ascii=False)
+    assert "system-v1" not in serialized
+    assert str(system_root.resolve()) not in serialized
+
+
+@pytest.mark.asyncio
+async def test_ki19_invalid_markdown_repairs_on_next_watcher_refresh(
+    tmp_path: Path,
+) -> None:
+    system_root = tmp_path / "system"
+    system_root.mkdir()
+    markdown = system_root / "keydex.md"
+    markdown.write_bytes(b"\xff\xfe")
+    events: list[dict[str, Any]] = []
+
+    async def notify(_session_id: str, payload: dict[str, Any]) -> bool:
+        events.append(payload)
+        return True
+
+    cache = KeydexCapabilityRuntimeCache(
+        builtin_root=tmp_path / "builtin",
+        system_root=system_root,
+    )
+    watcher = KeydexWorkspaceWatcher(
+        runtime_cache=cache,
+        notifier=notify,
+        start_tasks=False,
+    )
+    await watcher.register_session("chat", None)
+    before = cache.get_system_snapshot()
+    before_markdown = before.capabilities[KEYDEX_MARKDOWN_CAPABILITY_KEY.name]
+    assert before_markdown.available is True
+    assert before_markdown.diagnostics[0].code == "keydex_markdown_not_text"
+    assert before.require(KEYDEX_MARKDOWN_CAPABILITY_KEY).documents == ()
+
+    markdown.write_text("REPAIRED-GUIDANCE", encoding="utf-8")
+    assert await watcher.handle_system_path_change(markdown) is True
+
+    after = cache.get_system_snapshot()
+    effective = after.require(KEYDEX_MARKDOWN_CAPABILITY_KEY)
+    assert [document.content for document in effective.documents] == ["REPAIRED-GUIDANCE"]
+    assert events[-1]["changedCapabilities"] == ["keydex_markdown"]
+    assert "REPAIRED-GUIDANCE" not in json.dumps(events, ensure_ascii=False)
 
 
 @pytest.mark.asyncio
@@ -159,9 +222,12 @@ async def test_t55_transient_invalid_system_skill_recovers_without_partial_snaps
     assert await watcher.handle_system_path_change(entry) is True
     recovered_snapshot = cache.get_system_snapshot()
     assert recovered_snapshot.skill_catalog.skills["global"].source == "system"
-    assert "v2" in recovered_snapshot.read_skill_text_resource(
-        recovered_snapshot.skill_catalog.skills["global"], "SKILL.md"
-    ).content
+    assert (
+        "v2"
+        in recovered_snapshot.read_skill_text_resource(
+            recovered_snapshot.skill_catalog.skills["global"], "SKILL.md"
+        ).content
+    )
     assert len(events) == 2
 
 
@@ -188,12 +254,18 @@ async def test_t43_watcher_refresh_keeps_current_request_snapshot_pinned(
     next_request_snapshot = cache.get_system_snapshot()
 
     assert current_request_snapshot is not next_request_snapshot
-    assert "old turn" in current_request_snapshot.read_skill_text_resource(
-        current_request_skill, "SKILL.md"
-    ).content
-    assert "next turn" in next_request_snapshot.read_skill_text_resource(
-        next_request_snapshot.skill_catalog.skills["global"], "SKILL.md"
-    ).content
+    assert (
+        "old turn"
+        in current_request_snapshot.read_skill_text_resource(
+            current_request_skill, "SKILL.md"
+        ).content
+    )
+    assert (
+        "next turn"
+        in next_request_snapshot.read_skill_text_resource(
+            next_request_snapshot.skill_catalog.skills["global"], "SKILL.md"
+        ).content
+    )
     assert len(events) == 1
 
 
@@ -219,15 +291,47 @@ async def test_t56_concurrent_duplicate_system_events_rebuild_and_notify_once(
     observed = build_keydex_layer_fingerprint("system", system_root).digest()
 
     results = await asyncio.gather(
-        *(
-            watcher.handle_system_path_change(entry, observed_fingerprint=observed)
-            for _ in range(8)
-        )
+        *(watcher.handle_system_path_change(entry, observed_fingerprint=observed) for _ in range(8))
     )
 
     assert results.count(True) == 1
     assert results.count(False) == 7
     assert len(events) == 1
+
+
+@pytest.mark.asyncio
+async def test_kr18_rename_and_simultaneous_sources_report_exact_capabilities(
+    tmp_path: Path,
+) -> None:
+    system_root = tmp_path / "system"
+    markdown = system_root / "keydex.md"
+    system_root.mkdir()
+    markdown.write_text("v1", encoding="utf-8")
+    entry = write_skill(system_root / "skills" / "global", "global", body="v1")
+    events: list[dict[str, Any]] = []
+
+    async def notify(_session_id: str, payload: dict[str, Any]) -> bool:
+        events.append(payload)
+        return True
+
+    watcher = KeydexSkillsWatcher(
+        runtime_cache=KeydexRuntimeCache(system_root=system_root),
+        notifier=notify,
+        start_tasks=False,
+    )
+    await watcher.register_session("chat", None)
+    renamed = markdown.with_suffix(".old")
+    markdown.rename(renamed)
+    entry.write_text(skill_text("global", body="v2"), encoding="utf-8")
+
+    handled = await watcher.handle_system_path_change(
+        renamed,
+        previous_path=markdown,
+    )
+
+    assert handled is True
+    assert events[0]["changedCapabilities"] == ["skills", "keydex_markdown"]
+    assert events[0]["changedPaths"] == ["keydex.md"]
 
 
 @pytest.mark.asyncio
@@ -313,27 +417,14 @@ def test_t53_watch_targets_include_system_and_workspace_resource_trees(tmp_path:
     system_root = tmp_path / "system"
     workspace_root = tmp_path / "workspace"
 
-    assert is_keydex_layer_watch_target("system", system_root, "keydex.json")
+    assert is_keydex_layer_watch_target("system", system_root, "keydex.md")
+    assert not is_keydex_layer_watch_target("system", system_root, "keydex.md")
     assert is_keydex_layer_watch_target("system", system_root, "skills/a/assets/icon.png")
     assert is_keydex_layer_watch_target(
         "workspace", workspace_root, ".keydex/skills/a/references/guide.md"
     )
     assert not is_keydex_layer_watch_target(
         "workspace", workspace_root, ".agents/skills/a/SKILL.md"
-    )
-
-
-def write_workspace_manifest(workspace_root: Path, *, inherit_system: bool) -> None:
-    keydex_root = workspace_root / ".keydex"
-    keydex_root.mkdir(parents=True)
-    (keydex_root / "keydex.json").write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "skills": {"enabled": True, "inherit_system": inherit_system},
-            }
-        ),
-        encoding="utf-8",
     )
 
 

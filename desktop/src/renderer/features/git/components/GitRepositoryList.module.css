@@ -1,0 +1,13 @@
+.root { display: grid; gap: 6px; }
+.summary { display: grid; gap: 2px; margin: 0 4px; color: var(--color-text-2); }
+.summary strong { font-size: 11px; }
+.summary small { color: var(--color-text-3); font-size: 10px; }
+.list { display: grid; gap: 2px; }
+.list button { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-2); padding-block: 6px; padding-inline-end: 7px; text-align: left; }
+.list button:hover, .list button:focus-visible { background: var(--surface-hover); color: var(--color-text-1); }
+.list button[data-active="true"] { background: var(--surface-active); color: var(--color-accent-1); }
+.list button span { display: grid; min-width: 0; gap: 1px; }
+.list button strong, .list button small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list button strong { font-size: 11px; font-weight: 500; }
+.list button small { color: var(--color-text-3); font-size: 9px; }
+.list button em { min-width: 16px; border-radius: 8px; background: var(--surface-raised); color: var(--color-text-3); font-size: 9px; font-style: normal; line-height: 16px; text-align: center; }

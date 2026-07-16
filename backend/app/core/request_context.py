@@ -2,16 +2,20 @@ from __future__ import annotations
 
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 if TYPE_CHECKING:
     from backend.app.agent.tool_call_preset import ToolCallPreset
     from backend.app.events import EventDispatcher
+    from backend.app.keydex.capabilities.base import CapabilityKey
+    from backend.app.keydex.models import KeydexEffectiveSnapshot
     from backend.app.keydex.runtime import (
         KeydexEffectiveRuntimeSnapshot,
         KeydexWorkspaceRuntimeSnapshot,
     )
     from backend.app.keydex.skills import EffectiveSkillCatalog, SkillCatalog
+
+CapabilityPayloadT = TypeVar("CapabilityPayloadT")
 
 trace_id_var: ContextVar[str] = ContextVar("trace_id", default="")
 session_id_var: ContextVar[str] = ContextVar("session_id", default="")
@@ -65,7 +69,12 @@ def set_request_context(
     user_message: str | None = None,
     tool_call_preset: ToolCallPreset | None = None,
     skill_catalog: EffectiveSkillCatalog | SkillCatalog | None = None,
-    keydex_snapshot: KeydexEffectiveRuntimeSnapshot | KeydexWorkspaceRuntimeSnapshot | None = None,
+    keydex_snapshot: (
+        KeydexEffectiveSnapshot
+        | KeydexEffectiveRuntimeSnapshot
+        | KeydexWorkspaceRuntimeSnapshot
+        | None
+    ) = None,
     event_dispatcher: EventDispatcher | None = None,
 ) -> RequestContextToken:
     should_reset_a2ui_context = trace_id is not None or session_id is not None
@@ -175,11 +184,26 @@ def consume_tool_call_preset() -> ToolCallPreset | None:
 
 
 def get_skill_catalog() -> EffectiveSkillCatalog | SkillCatalog | None:
+    from backend.app.keydex.capabilities.skills.consumer import effective_skill_catalog
+
+    snapshot_catalog = effective_skill_catalog(keydex_snapshot_var.get())
+    if snapshot_catalog is not None:
+        return snapshot_catalog
     return skill_catalog_var.get()
 
 
-def get_keydex_snapshot() -> KeydexEffectiveRuntimeSnapshot | KeydexWorkspaceRuntimeSnapshot | None:
+def get_keydex_snapshot() -> (
+    KeydexEffectiveSnapshot | KeydexEffectiveRuntimeSnapshot | KeydexWorkspaceRuntimeSnapshot | None
+):
     return keydex_snapshot_var.get()
+
+
+def get_keydex_capability(key: CapabilityKey[CapabilityPayloadT]) -> CapabilityPayloadT | None:
+    snapshot = keydex_snapshot_var.get()
+    getter = getattr(snapshot, "get", None)
+    if not callable(getter):
+        return None
+    return getter(key)
 
 
 def get_event_dispatcher() -> EventDispatcher | None:

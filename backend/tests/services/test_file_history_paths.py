@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import unicodedata
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,10 @@ import pytest
 from backend.app.services.file_history_service import (
     FileHistoryPathError,
     FileHistoryPathResolver,
+    FileResourceIdentity,
+    FileResourceScope,
+    FileResourceScopeCatalog,
+    FileResourceScopeKind,
 )
 
 
@@ -89,3 +94,110 @@ def test_file_history_path_resolver_keeps_unicode_and_long_relative_identity(tmp
     if os.name == "nt":
         expected = expected.casefold()
     assert resolved.canonical_path == expected
+
+
+def test_file_resource_identity_round_trips_without_trusting_absolute_path() -> None:
+    identity = FileResourceIdentity(
+        FileResourceScopeKind.EXTERNAL,
+        "//server/share",
+        "目录/File.txt",
+    )
+
+    restored = FileResourceIdentity.from_resource_id(identity.resource_id)
+
+    assert restored == identity
+    assert "absolute_path" not in identity.to_dict()
+    assert restored.resource_key != FileResourceIdentity(
+        FileResourceScopeKind.WORKSPACE,
+        "//server/share",
+        "目录/File.txt",
+    ).resource_key
+
+
+def test_file_resource_scope_rejects_empty_identity_and_invalid_kind(tmp_path) -> None:
+    with pytest.raises(FileHistoryPathError) as empty:
+        FileResourceScope("workspace", "", tmp_path, "project")
+    assert empty.value.code == "scope_identity_empty"
+
+    with pytest.raises(FileHistoryPathError) as invalid:
+        FileResourceScope("machine", "machine", tmp_path, "machine")
+    assert invalid.value.code == "scope_kind_invalid"
+
+
+def test_file_history_path_resolver_prefers_longest_registered_workspace(tmp_path) -> None:
+    primary = tmp_path / "primary"
+    parent = tmp_path / "projects"
+    nested = parent / "nested"
+    primary.mkdir()
+    nested.mkdir(parents=True)
+    target = nested / "same.txt"
+    target.write_text("nested", encoding="utf-8")
+    resolver = FileHistoryPathResolver(
+        primary,
+        workspace_scopes=(
+            ("workspace-parent", parent, "parent"),
+            ("workspace-nested", nested, "nested"),
+        ),
+        allow_external=True,
+    )
+
+    resolved = resolver.resolve(target)
+
+    assert resolved.scope_kind == FileResourceScopeKind.WORKSPACE
+    assert resolved.scope_identity == "workspace-nested"
+    assert resolved.canonical_path == "same.txt"
+    assert resolved.scope_label == "nested"
+
+
+def test_file_history_path_resolver_classifies_unregistered_path_as_external(tmp_path) -> None:
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside" / "same.txt"
+    workspace.mkdir()
+    outside.parent.mkdir()
+    outside.write_text("external", encoding="utf-8")
+    resolver = FileHistoryPathResolver(workspace, allow_external=True)
+
+    external = resolver.resolve(outside)
+    local = resolver.resolve(workspace / "same.txt")
+
+    assert external.scope_kind == FileResourceScopeKind.EXTERNAL
+    assert external.requires_full_access is True
+    assert external.resource_id != local.resource_id
+    assert external.absolute_path == outside.resolve()
+
+
+def test_scope_catalog_builds_from_registered_projects_and_round_trips_locator(tmp_path) -> None:
+    @dataclass
+    class Workspace:
+        id: str
+        name: str
+        root_path: str
+
+    primary = tmp_path / "primary"
+    other = tmp_path / "other"
+    primary.mkdir()
+    other.mkdir()
+    target = other / "folder" / "file.txt"
+    target.parent.mkdir()
+    target.write_text("content", encoding="utf-8")
+    catalog = FileResourceScopeCatalog.from_workspaces(
+        (
+            Workspace("workspace-primary", "Primary", str(primary)),
+            Workspace("workspace-other", "Other", str(other)),
+        )
+    )
+    resolver = catalog.resolver(primary, allow_external=True)
+
+    resolved = resolver.resolve(target)
+    rebuilt = resolver.resolve_stored(
+        resolved.display_path,
+        resolved.canonical_path,
+        scope_kind=resolved.scope_kind,
+        scope_identity=resolved.scope_identity,
+        scope_root=resolved.scope_root,
+        scope_label=resolved.scope_label,
+    )
+
+    assert resolved.scope_identity == "workspace-other"
+    assert rebuilt.identity == resolved.identity
+    assert rebuilt.absolute_path == target.resolve()

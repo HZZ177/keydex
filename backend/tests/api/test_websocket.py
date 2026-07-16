@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -56,6 +57,31 @@ class RecordingKeydexWatcher:
 
     async def unregister_session(self, session_id: str) -> None:
         self.unregistered.append(session_id)
+
+    async def close(self) -> None:
+        return None
+
+
+class RecordingGitQueryService:
+    def __init__(self) -> None:
+        self.requests: list[Any] = []
+
+    def repository(self, request: Any) -> Any:
+        self.requests.append(request)
+        return SimpleNamespace(id=request.repository_id)
+
+
+class RecordingGitMetadataEvents:
+    def __init__(self) -> None:
+        self.subscribed: list[tuple[str, Any]] = []
+        self.unsubscribed: list[tuple[str, Any]] = []
+
+    async def subscribe(self, repository: Any, subscriber: Any) -> int:
+        self.subscribed.append((repository.id, subscriber))
+        return 7
+
+    async def unsubscribe(self, repository_id: str, subscriber: Any) -> None:
+        self.unsubscribed.append((repository_id, subscriber))
 
     async def close(self) -> None:
         return None
@@ -152,10 +178,78 @@ def test_websocket_create_bind_and_ping(tmp_path) -> None:
     assert isinstance(pong["data"]["timestamp"], int)
 
 
+def test_websocket_binds_exact_git_repository_watch_and_unbinds(tmp_path) -> None:
+    client = _client(tmp_path)
+    query_service = RecordingGitQueryService()
+    metadata_events = RecordingGitMetadataEvents()
+    client.app.state.git_query_service = query_service
+    client.app.state.git_metadata_event_service = metadata_events
+
+    with client.websocket_connect("/agent-base/ws/chat") as ws:
+        ws.send_json(
+            {
+                "action": "bind_git_repository_watch",
+                "data": {
+                    "workspace_id": "workspace-1",
+                    "project_root": str(tmp_path),
+                    "repository_id": "repo-1",
+                },
+            }
+        )
+        assert ws.receive_json() == {
+            "action": "gitRepositoryWatchBound",
+            "data": {
+                "repository_id": "repo-1",
+                "sequence": 7,
+                "resync_required": True,
+            },
+        }
+        ws.send_json(
+            {
+                "action": "unbind_git_repository_watch",
+                "data": {"repository_id": "repo-1"},
+            }
+        )
+        assert ws.receive_json() == {
+            "action": "gitRepositoryWatchUnbound",
+            "data": {"repository_id": "repo-1"},
+        }
+
+    assert len(query_service.requests) == 1
+    request = query_service.requests[0]
+    assert request.workspace_id == "workspace-1"
+    assert request.project_root == str(tmp_path)
+    assert request.repository_id == "repo-1"
+    assert [item[0] for item in metadata_events.subscribed] == ["repo-1"]
+    assert [item[0] for item in metadata_events.unsubscribed] == ["repo-1"]
+
+
+def test_websocket_cleans_git_repository_watch_on_disconnect(tmp_path) -> None:
+    client = _client(tmp_path)
+    client.app.state.git_query_service = RecordingGitQueryService()
+    metadata_events = RecordingGitMetadataEvents()
+    client.app.state.git_metadata_event_service = metadata_events
+
+    with client.websocket_connect("/agent-base/ws/chat") as ws:
+        ws.send_json(
+            {
+                "action": "bind_git_repository_watch",
+                "data": {
+                    "workspace_id": "workspace-1",
+                    "project_root": str(tmp_path),
+                    "repository_id": "repo-1",
+                },
+            }
+        )
+        assert ws.receive_json()["action"] == "gitRepositoryWatchBound"
+
+    assert [item[0] for item in metadata_events.unsubscribed] == ["repo-1"]
+
+
 def test_websocket_registers_chat_scope_and_cleans_last_connection_only(tmp_path) -> None:
     client = _client(tmp_path)
     watcher = RecordingKeydexWatcher()
-    client.app.state.keydex_skills_watcher = watcher
+    client.app.state.keydex_workspace_watcher = watcher
     created = client.post("/api/sessions", json={}).json()["session"]
     session_id = created["id"]
 
@@ -171,7 +265,7 @@ def test_websocket_registers_chat_scope_and_cleans_last_connection_only(tmp_path
 def test_websocket_registers_workspace_scope_and_unbinds_dependency(tmp_path) -> None:
     client = _client(tmp_path)
     watcher = RecordingKeydexWatcher()
-    client.app.state.keydex_skills_watcher = watcher
+    client.app.state.keydex_workspace_watcher = watcher
     project = tmp_path / "watch-project"
     project.mkdir()
     workspace = client.post(
@@ -228,7 +322,7 @@ def test_t60_t61_websocket_delivers_exact_system_and_workspace_skill_refresh(
             )
             assert client.portal is not None
             assert client.portal.call(
-                client.app.state.keydex_skills_watcher.handle_system_path_change,
+                client.app.state.keydex_workspace_watcher.handle_system_path_change,
                 system_entry,
             ) is True
             chat_event = chat_ws.receive_json()
@@ -241,13 +335,13 @@ def test_t60_t61_websocket_delivers_exact_system_and_workspace_skill_refresh(
                 encoding="utf-8",
             )
             assert client.portal.call(
-                client.app.state.keydex_skills_watcher.handle_workspace_path_change,
+                client.app.state.keydex_workspace_watcher.handle_workspace_path_change,
                 project,
                 workspace_entry,
             ) is True
             project_workspace_event = project_ws.receive_json()
 
-    assert chat_event["action"] == "keydexSkillsChanged"
+    assert chat_event["action"] == "keydexWorkspaceChanged"
     chat_data = chat_event["data"]
     assert chat_data == {
         "session_id": chat["id"],
@@ -260,15 +354,23 @@ def test_t60_t61_websocket_delivers_exact_system_and_workspace_skill_refresh(
         "changedScope": "system",
         "changed_path": "skills/global/SKILL.md",
         "changedPath": "skills/global/SKILL.md",
+        "changed_paths": ["skills/global/SKILL.md"],
+        "changedPaths": ["skills/global/SKILL.md"],
+        "changed_capabilities": ["skills"],
+        "changedCapabilities": ["skills"],
+        "capability_fingerprints": chat_data["capability_fingerprints"],
+        "capabilityFingerprints": chat_data["capability_fingerprints"],
         "effective_fingerprint": chat_data["effective_fingerprint"],
         "effectiveFingerprint": chat_data["effective_fingerprint"],
         "fingerprint": chat_data["effective_fingerprint"],
     }
     assert len(chat_data["effective_fingerprint"]) == 64
-    assert project_system_event["action"] == "keydexSkillsChanged"
+    assert set(chat_data["capability_fingerprints"]) == {"skills", "keydex_markdown"}
+    assert all(len(value) == 64 for value in chat_data["capability_fingerprints"].values())
+    assert project_system_event["action"] == "keydexWorkspaceChanged"
     assert project_system_event["data"]["changed_scope"] == "system"
     assert project_system_event["data"]["session_id"] == project_session["id"]
-    assert project_workspace_event["action"] == "keydexSkillsChanged"
+    assert project_workspace_event["action"] == "keydexWorkspaceChanged"
     workspace_data = project_workspace_event["data"]
     assert workspace_data == {
         "session_id": project_session["id"],
@@ -281,6 +383,12 @@ def test_t60_t61_websocket_delivers_exact_system_and_workspace_skill_refresh(
         "changedScope": "workspace",
         "changed_path": ".keydex/skills/local/SKILL.md",
         "changedPath": ".keydex/skills/local/SKILL.md",
+        "changed_paths": [".keydex/skills/local/SKILL.md"],
+        "changedPaths": [".keydex/skills/local/SKILL.md"],
+        "changed_capabilities": ["skills"],
+        "changedCapabilities": ["skills"],
+        "capability_fingerprints": workspace_data["capability_fingerprints"],
+        "capabilityFingerprints": workspace_data["capability_fingerprints"],
         "effective_fingerprint": workspace_data["effective_fingerprint"],
         "effectiveFingerprint": workspace_data["effective_fingerprint"],
         "fingerprint": workspace_data["effective_fingerprint"],

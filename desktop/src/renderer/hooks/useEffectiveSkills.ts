@@ -15,6 +15,7 @@ export type EffectiveSkillScope =
 export type EffectiveSkillLoadStatus = "idle" | "loading" | "ready" | "error";
 
 export interface EffectiveSkillState {
+  scopeKey: string | null;
   mode: EffectiveSkillsMode | null;
   workspaceRoot: string | null;
   skills: SkillSummary[];
@@ -67,6 +68,7 @@ export function useEffectiveSkills({
       abortRef.current = controller;
       setState((previous) => ({
         ...(reset ? idleEffectiveSkillState() : previous),
+        scopeKey,
         status: "loading",
         error: null,
       }));
@@ -82,6 +84,7 @@ export function useEffectiveSkills({
           return;
         }
         const nextState: EffectiveSkillState = {
+          scopeKey,
           mode: response.mode,
           workspaceRoot: response.workspace_root || null,
           skills: Array.isArray(response.skills) ? response.skills : [],
@@ -121,7 +124,16 @@ export function useEffectiveSkills({
       if (!enabled || !scope || !matchesEffectiveSkillScope(scope, data)) {
         return false;
       }
-      const eventFingerprint = stringValue(
+      const changedCapabilities = stringArray(
+        data.changed_capabilities ?? data.changedCapabilities,
+      );
+      if (!changedCapabilities?.includes("skills")) {
+        return false;
+      }
+      const capabilityFingerprints = stringRecord(
+        data.capability_fingerprints ?? data.capabilityFingerprints,
+      );
+      const eventFingerprint = capabilityFingerprints?.skills || stringValue(
         data.effective_fingerprint ?? data.effectiveFingerprint ?? data.fingerprint,
       );
       if (
@@ -149,7 +161,12 @@ export function useEffectiveSkills({
     };
   }, [refresh]);
 
-  return { state, refresh, handleSkillsChanged };
+  return {
+    state,
+    isCurrentScope: state.scopeKey === scopeKey,
+    refresh,
+    handleSkillsChanged,
+  };
 }
 
 export function skillSelectionStatus(
@@ -194,6 +211,7 @@ function effectiveSkillScopeKey(scope: EffectiveSkillScope | null): string {
 
 function idleEffectiveSkillState(): EffectiveSkillState {
   return {
+    scopeKey: null,
     mode: null,
     workspaceRoot: null,
     skills: [],
@@ -208,6 +226,24 @@ function idleEffectiveSkillState(): EffectiveSkillState {
 function loadedAtMs(value: string): number {
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? timestamp : Date.now();
+}
+
+function stringArray(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    return null;
+  }
+  return value;
+}
+
+function stringRecord(value: unknown): Record<string, string> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const entries = Object.entries(value);
+  if (entries.some(([, item]) => typeof item !== "string")) {
+    return null;
+  }
+  return Object.fromEntries(entries) as Record<string, string>;
 }
 
 function stringValue(value: unknown): string {

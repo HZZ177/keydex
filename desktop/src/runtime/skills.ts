@@ -80,6 +80,62 @@ export interface SkillRuntime {
   ): Promise<SkillResourceReadResponse>;
 }
 
+export interface KeydexRuntimeDiagnostic {
+  code: string;
+  reason: string;
+  severity: "warning" | "error";
+  details: Record<string, unknown>;
+  capability_id?: string | null;
+  scope?: SkillSource | null;
+  logical_path?: string | null;
+}
+
+export interface KeydexLayerCapabilityOverview {
+  supported: boolean;
+  available: boolean;
+  state: "loaded" | "empty" | "failed" | "unsupported";
+  fingerprint: string;
+  sources: string[];
+  diagnostics: KeydexRuntimeDiagnostic[];
+}
+
+export interface KeydexLayerOverview {
+  scope: SkillSource;
+  fingerprint: string;
+  capabilities: Record<string, KeydexLayerCapabilityOverview>;
+}
+
+export interface KeydexCapabilityOverview {
+  available: boolean;
+  fingerprint: string;
+  sources: string[];
+  diagnostics: KeydexRuntimeDiagnostic[];
+  count?: number;
+  document_count?: number;
+  total_bytes?: number;
+}
+
+export interface RuntimeOverviewResponse {
+  mode: EffectiveSkillsMode;
+  fingerprint: string;
+  loaded_at: string;
+  layers: KeydexLayerOverview[];
+  capabilities: Record<string, KeydexCapabilityOverview>;
+  diagnostics: KeydexRuntimeDiagnostic[];
+}
+
+export interface KeydexRuntime {
+  listSystem(options?: SkillListOptions): Promise<RuntimeOverviewResponse>;
+  listWorkspace(
+    workspaceId: string,
+    options?: SkillListOptions,
+  ): Promise<RuntimeOverviewResponse>;
+  listSession(
+    sessionId: string,
+    options?: SkillListOptions,
+  ): Promise<RuntimeOverviewResponse>;
+}
+
 export function createSkillRuntime(http: HttpClient): SkillRuntime {
   return {
     listSystem(options = {}) {
@@ -121,6 +177,28 @@ export function createSkillRuntime(http: HttpClient): SkillRuntime {
   };
 }
 
+export function createKeydexRuntime(http: HttpClient): KeydexRuntime {
+  return {
+    listSystem(options = {}) {
+      return listRuntime(http, "/api/keydex/runtime", options);
+    },
+    listWorkspace(workspaceId, options = {}) {
+      return listRuntime(
+        http,
+        `/api/workspaces/${encodeURIComponent(workspaceId)}/keydex/runtime`,
+        options,
+      );
+    },
+    listSession(sessionId, options = {}) {
+      return listRuntime(
+        http,
+        `/api/sessions/${encodeURIComponent(sessionId)}/keydex/runtime`,
+        options,
+      );
+    },
+  };
+}
+
 function list(
   http: HttpClient,
   path: string,
@@ -141,6 +219,17 @@ function read(
   return http.request<SkillResourceReadResponse>(path, {
     method: "POST",
     body: request,
+    signal: options.signal,
+  });
+}
+
+function listRuntime(
+  http: HttpClient,
+  path: string,
+  options: SkillListOptions,
+): Promise<RuntimeOverviewResponse> {
+  const query = options.forceReload ? "?force_reload=true" : "";
+  return http.request<RuntimeOverviewResponse>(`${path}${query}`, {
     signal: options.signal,
   });
 }

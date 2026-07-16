@@ -6,6 +6,8 @@ import type { RuntimeBridge, WorkspaceEntry, WorkspaceTreeResponse } from "@/run
 import { Layout, resetLayoutUiStateCacheForTests } from "@/renderer/components/layout/Layout";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { HomePage } from "@/renderer/pages/home";
+import { ComposerDraftProvider } from "@/renderer/features/composer";
+import { ActiveProjectCoordinatorProvider } from "@/renderer/providers/ActiveProjectCoordinatorProvider";
 import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import { PreviewProvider } from "@/renderer/providers/PreviewProvider";
 import { RuntimeConnectionProvider } from "@/renderer/providers/RuntimeConnectionProvider";
@@ -18,6 +20,33 @@ describe("HomePage", () => {
     resetLayoutUiStateCacheForTests();
     localStorage.clear();
     sessionStorage.clear();
+  });
+
+  it("restores an unsent new-chat draft after the page and provider are recreated", async () => {
+    const runtime = fakeRuntime({ model: "qwen-coder" });
+    const home = () => (
+      <ComposerDraftProvider>
+        <ActiveProjectCoordinatorProvider>
+          <HomePage
+            runtime={runtime}
+            initialSessionType="chat"
+            onNavigateToConversation={vi.fn()}
+            onOpenModelSettings={vi.fn()}
+          />
+        </ActiveProjectCoordinatorProvider>
+      </ComposerDraftProvider>
+    );
+    const first = render(home());
+
+    await screen.findByRole("textbox");
+    enterPrompt("首页未发送草稿");
+    first.unmount();
+
+    render(home());
+
+    await waitFor(() => {
+      expect(screen.getByRole("textbox").textContent).toBe("首页未发送草稿");
+    });
   });
 
   it("creates a session from the centered quick chat prompt", async () => {
