@@ -20,6 +20,12 @@ describe("GitRefsTree", () => {
 
     expect(screen.getByRole("treeitem", { name: "HEAD main" })).not.toBeNull();
     expect(screen.getByText("↑2↓1")).not.toBeNull();
+    const tagGroup = screen.getByRole("treeitem", { name: /^标签/ });
+    expect(tagGroup.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("treeitem", { name: /v1\.0\.0/ })).toBeNull();
+    fireEvent.click(tagGroup);
+    expect(tagGroup.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("treeitem", { name: /v1\.0\.0/ })).not.toBeNull();
     fireEvent.click(screen.getByRole("treeitem", { name: /^远程/ }));
     expect(screen.queryByRole("treeitem", { name: /origin\/main/ })).toBeNull();
     fireEvent.click(screen.getByRole("treeitem", { name: /^远程/ }));

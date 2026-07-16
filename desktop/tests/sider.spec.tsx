@@ -52,6 +52,7 @@ describe("Sider", () => {
 
     expect(screen.getByText("新对话")).not.toBeNull();
     expect(screen.getByText("搜索")).not.toBeNull();
+    expect(screen.getByText("Git")).not.toBeNull();
     expect(screen.getByText("keydex")).not.toBeNull();
     expect(screen.getByText("研读文档与 Keydex 源码")).not.toBeNull();
     expect(screen.getByText("设置")).not.toBeNull();
@@ -65,15 +66,19 @@ describe("Sider", () => {
 
   it("emits navigation requests and toggles theme", () => {
     const onNavigate = vi.fn();
+    const onOpenGit = vi.fn();
     renderSider(
       <Sider
         activePath="/conversation/thread-1"
         conversations={[{ id: "thread-1", title: "会话 A" }]}
+        gitEnabled
+        onOpenGit={onOpenGit}
         onNavigate={onNavigate}
       />,
     );
 
     fireEvent.click(screen.getByText("新对话"));
+    fireEvent.click(screen.getByRole("button", { name: "Git" }));
     fireEvent.click(screen.getByText("会话 A"));
     fireEvent.click(screen.getByText("设置"));
     fireEvent.click(screen.getByLabelText("切换主题"));
@@ -81,6 +86,7 @@ describe("Sider", () => {
     expect(onNavigate).toHaveBeenNthCalledWith(1, "/guid?focus=prompt");
     expect(onNavigate).toHaveBeenNthCalledWith(2, "/conversation/thread-1");
     expect(onNavigate).toHaveBeenNthCalledWith(3, "/settings/general");
+    expect(onOpenGit).toHaveBeenCalledTimes(1);
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(screen.getByRole("button", { name: "会话 A" }).getAttribute("aria-current")).toBe("page");
   });
@@ -220,6 +226,7 @@ describe("Sider", () => {
 
     expect(screen.getByTitle("新对话")).not.toBeNull();
     expect(screen.getByTitle("搜索")).not.toBeNull();
+    expect(screen.getByTitle("Git")).not.toBeNull();
     expect(screen.getByTitle("切换主题")).not.toBeNull();
     expect(screen.getByTitle("设置")).not.toBeNull();
   });

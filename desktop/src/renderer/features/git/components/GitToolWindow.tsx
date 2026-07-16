@@ -566,7 +566,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
   };
 
   if (!resolvedProject || resolvedProject.status === "none") {
-    return <GitToolWindowState kind="empty" title="未加载项目" detail="加载项目后即可使用 Git 工具窗。" />;
+    return <GitToolWindowState kind="empty" title="未加载项目" detail="加载项目后即可使用 Git 面板。" />;
   }
   if (resolvedProject.status === "loading") {
     return <GitToolWindowState kind="loading" title="正在读取 Git 仓库" detail={resolvedProject.projectPath} />;
@@ -2394,7 +2394,7 @@ export function GitToolWindow({ project, maximized, initialView = "changes" }: G
         {resolvedProject.status === "multi_repo" ? <span className={styles.repoCount}>{resolvedProject.repoRoots.length} 个仓库</span> : null}
       </header>
 
-      <nav className={styles.tabs} role="tablist" aria-label="Git 工具窗视图">
+      <nav className={styles.tabs} role="tablist" aria-label="Git 面板视图">
         {VIEWS.map((candidate) => {
           const Icon = candidate.icon;
           return (

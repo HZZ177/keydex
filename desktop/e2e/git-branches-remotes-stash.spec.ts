@@ -28,8 +28,8 @@ test("stash, refs, remotes, fetch, push and update use a local bare remote", asy
     expect((await fixture.git(["stash", "list"])).stdout.trim()).toBe("");
 
     await page.reload();
-    if (!(await page.getByRole("tablist", { name: "Git 工具窗视图" }).isVisible().catch(() => false))) await openGitToolWindow(page);
-    await expect(page.getByRole("tablist", { name: "Git 工具窗视图" })).toBeVisible({ timeout: 10_000 });
+    if (!(await page.getByRole("tablist", { name: "Git 面板视图" }).isVisible().catch(() => false))) await openGitToolWindow(page);
+    await expect(page.getByRole("tablist", { name: "Git 面板视图" })).toBeVisible({ timeout: 10_000 });
     await page.getByRole("tab", { name: "分支" }).click();
     const branches = page.getByRole("region", { name: "Branch actions" });
     await branches.getByLabel("New branch from main").fill("feature/e2e");
@@ -172,7 +172,7 @@ test("dirty checkout, defensive local deletion and annotated tag remote lifecycl
 
     await page.reload();
     await expect(page.getByRole("button", { name: /Git：target\/dirty/ })).toBeEnabled({ timeout: 20_000 });
-    if (!(await page.getByRole("tablist", { name: "Git 工具窗视图" }).isVisible().catch(() => false))) {
+    if (!(await page.getByRole("tablist", { name: "Git 面板视图" }).isVisible().catch(() => false))) {
       await openGitToolWindow(page);
     }
     await page.getByRole("tab", { name: "分支" }).click();
@@ -213,8 +213,8 @@ async function openGitToolWindow(page: Page): Promise<void> {
   const trigger = page.getByRole("button", { name: /Git：/ });
   await expect(trigger).toBeEnabled({ timeout: 10_000 });
   await trigger.click();
-  await page.getByRole("menuitem", { name: "打开 Git 工具窗" }).click();
-  await expect(page.getByRole("tablist", { name: "Git 工具窗视图" })).toBeVisible();
+  await page.getByRole("menuitem", { name: "打开 Git 面板" }).click();
+  await expect(page.getByRole("tablist", { name: "Git 面板视图" })).toBeVisible();
 }
 
 async function fileExists(target: string): Promise<boolean> {

@@ -45,7 +45,7 @@ export function GitHelpDialog({ onClose }: { onClose: () => void }) {
         <div className={styles.helpBody}>
           <section>
             <h3>两个入口，同一项目状态</h3>
-            <p>顶部菜单用于更新、提交、推送、切换分支等高频动作；侧边栏 Git 工具窗用于改动、历史、分支、远程、冲突和高级操作。所有命令只作用于当前项目中选定的 Git 根。</p>
+            <p>顶部菜单用于更新、提交、推送、切换分支等高频动作；左侧 Git 入口会在主内容区打开完整面板，用于改动、历史、分支、远程、冲突和高级操作。所有命令只作用于当前项目中选定的 Git 根。</p>
           </section>
           <section>
             <h3><ShieldCheck size={14} /> 风险与确认</h3>

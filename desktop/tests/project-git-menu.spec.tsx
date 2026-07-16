@@ -88,6 +88,11 @@ describe("ProjectGitMenu", () => {
     expect(screen.getByRole("treeitem", { name: /^本地/ }).getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByRole("treeitem", { name: "main（本地）" })).not.toBeNull();
     expect(screen.getByRole("treeitem", { name: "origin/main（远程）" })).not.toBeNull();
+    const tagGroup = screen.getByRole("treeitem", { name: /^标签/ });
+    expect(tagGroup.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("treeitem", { name: "v1.0.0（标签）" })).toBeNull();
+    fireEvent.click(tagGroup);
+    expect(screen.getByRole("treeitem", { name: "v1.0.0（标签）" })).not.toBeNull();
 
     fireEvent.change(search, { target: { value: "feature" } });
     expect(screen.getByRole("treeitem", { name: "feature/git-menu（本地）" })).not.toBeNull();
@@ -102,7 +107,7 @@ describe("ProjectGitMenu", () => {
     await waitFor(() => expect(runtime.update).toHaveBeenCalledTimes(1));
 
     fireEvent.click(screen.getByRole("button", { name: "Git：main" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "打开 Git 工具窗" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "打开 Git 面板" }));
     expect(onOpenToolWindow).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Git：main" }));

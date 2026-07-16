@@ -74,7 +74,7 @@ describe("theme tokens", () => {
     expect(approvalCard).toContain("background: var(--composer-frame, var(--composer-bg))");
   });
 
-  it("keeps titlebar and composer capsules flat without reflective edge shadows", () => {
+  it("keeps composer capsules flat while giving the titlebar mode slider restrained glass depth", () => {
     const titlebar = readFileSync(resolve(rendererDir, "components/layout/Titlebar/Titlebar.module.css"), "utf8");
     const workspaceSelector = readFileSync(
       resolve(rendererDir, "components/workspace/WorkspaceSelector.module.css"),
@@ -85,8 +85,9 @@ describe("theme tokens", () => {
       "utf8",
     );
 
-    expect(titlebar).toMatch(/\.modeSwitch\s*{[^}]*background:\s*var\(--control-pill-bg\)[^}]*box-shadow:\s*var\(--control-pill-shadow\)/s);
-    expect(titlebar).toMatch(/\.modeSwitch::before\s*{[^}]*background:\s*var\(--control-pill-active-bg\)[^}]*box-shadow:\s*none/s);
+    expect(titlebar).toMatch(/\.modeSwitch\s*{[^}]*background:\s*color-mix\([^}]*var\(--control-pill-bg\)[^}]*box-shadow:[^}]*inset 0 1px 0[^}]*backdrop-filter:\s*blur\(12px\)/s);
+    expect(titlebar).toMatch(/\.modeSwitch::before\s*{[^}]*background:\s*color-mix\([^}]*var\(--control-pill-active-bg\)[^}]*box-shadow:[^}]*0 3px 10px[^}]*inset 0 1px 0/s);
+    expect(titlebar).not.toContain("linear-gradient");
     expect(workspaceSelector).toMatch(/\.root\[data-variant="titlebar"\] \.trigger\s*{[^}]*background:\s*var\(--control-pill-bg\)[^}]*box-shadow:\s*var\(--control-pill-shadow\)/s);
     expect(composerAccessory).toMatch(/\.accessoryShell\s*{[^}]*background:\s*var\(--control-pill-bg\)[^}]*box-shadow:\s*var\(--control-pill-shadow\)/s);
   });

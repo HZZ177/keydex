@@ -125,12 +125,12 @@ test("titlebar Git menu supports branch checkout and opening the tool window wit
 
     await page.keyboard.press("ArrowDown");
     await search.fill("打开");
-    const openToolWindow = page.getByRole("menuitem", { name: "打开 Git 工具窗" });
+    const openToolWindow = page.getByRole("menuitem", { name: "打开 Git 面板" });
     await expect(openToolWindow).toBeVisible();
     await search.press("ArrowDown");
     await expect(openToolWindow).toBeFocused();
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("tablist", { name: "Git 工具窗视图" })).toBeVisible();
+    await expect(page.getByRole("tablist", { name: "Git 面板视图" })).toBeVisible();
     await fixture.screenshot(page, "e2e-078-keyboard-titlebar");
   } finally {
     await fixture.cleanup();
@@ -145,8 +145,8 @@ async function openGitToolWindow(page: Page): Promise<void> {
   const trigger = gitTrigger(page);
   await expect(trigger).toBeEnabled({ timeout: 20_000 });
   await trigger.click();
-  await page.getByRole("menuitem", { name: "打开 Git 工具窗" }).click();
-  await expect(page.getByRole("tablist", { name: "Git 工具窗视图" })).toBeVisible();
+  await page.getByRole("menuitem", { name: "打开 Git 面板" }).click();
+  await expect(page.getByRole("tablist", { name: "Git 面板视图" })).toBeVisible();
 }
 
 async function assertInsideViewport(locator: Locator, viewportWidth: number): Promise<void> {

@@ -638,8 +638,9 @@ describe("WorkbenchAssistantSurface", () => {
     expect(surface.getAttribute("data-visual-mode")).toBe("dock-out-morph");
     expect(surface.getAttribute("data-geometry-mode")).toBe("capsule");
     expect(surface.getAttribute("data-dock-transition")).toBe("dock-out");
-    expect(screen.getByTestId("workbench-assistant-capsule").getAttribute("data-compose-open")).toBe("true");
+    expect(screen.getByTestId("workbench-assistant-capsule").getAttribute("data-compose-open")).toBe("false");
     expect(screen.getByTestId("workbench-assistant-capsule").getAttribute("data-compose-collapsing")).toBe("true");
+    expect(screen.getByTestId("workbench-assistant-input-surface").getAttribute("data-compose-open")).toBe("false");
     expect(screen.getByLabelText("工作台助手输入")).not.toBeNull();
     expect(screen.queryByRole("button", { name: "展开工作台输入框" })).toBeNull();
     expect(screen.getByTestId("workbench-assistant-composer-frame").getAttribute("data-mini-navigator-visible")).toBe(

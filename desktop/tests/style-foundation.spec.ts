@@ -367,9 +367,9 @@ describe("style foundation", () => {
       /\.modeSwitch\s*{[^}]*width:\s*max\(\s*248px,\s*var\(--titlebar-mode-switch-width\)\s*\)/s,
     );
     expect(titlebar).toMatch(
-      /\.modeSwitch\s*{[^}]*background:\s*var\(--control-pill-bg\)/s,
+      /\.modeSwitch\s*{[^}]*background:\s*color-mix\([^}]*var\(--control-pill-bg\)/s,
     );
-    expect(titlebar).toMatch(/\.modeSwitch::before\s*{[^}]*box-shadow:\s*none/s);
+    expect(titlebar).toMatch(/\.modeSwitch::before\s*{[^}]*box-shadow:[^}]*0 3px 10px[^}]*inset 0 1px 0/s);
     expect(workspaceSelector).toMatch(
       /\.root\[data-variant="titlebar"\]\s+\.trigger\s*{[^}]*background:\s*var\(--control-pill-bg\)/s,
     );

@@ -1,129 +1,154 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useEffect } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { Layout, resetLayoutUiStateCacheForTests, syncGitToolPanelForScope } from "@/renderer/components/layout/Layout";
+import { Layout, resetLayoutUiStateCacheForTests } from "@/renderer/components/layout/Layout";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { ActiveProjectProvider } from "@/renderer/providers/ActiveProjectProvider";
+import {
+  ActiveProjectCoordinatorProvider,
+  usePublishActiveProjectDiscovery,
+} from "@/renderer/providers/ActiveProjectCoordinatorProvider";
 import { ThemeProvider } from "@/renderer/providers/ThemeProvider";
+
+vi.mock("@/renderer/features/git/components/GitToolWindow", () => ({
+  GitToolWindow: ({ maximized }: { maximized?: boolean }) => (
+    <div data-testid="git-tool-window" data-layout={maximized ? "maximized" : "split"}>Git panel</div>
+  ),
+}));
 
 afterEach(() => {
   cleanup();
   resetLayoutUiStateCacheForTests();
 });
 
-describe("Git right sidebar tool window host", () => {
-  it("carries the singleton Git panel into a new route scope and removes it globally on close", () => {
-    const blank = {
-      activePanelId: null,
-      panelOrder: [],
-      filePanelIds: [],
-      filePanels: {},
-      conversationPanelIds: [],
-      conversationPanels: {},
-      reviewPanelIds: [],
-      reviewPanels: {},
-      toolPanelIds: [],
-      toolPanels: {},
-      initialPanelIds: [],
-      nextPanelSeq: 0,
-    };
-    const opened = syncGitToolPanelForScope(blank, true, true);
-    expect(opened.activePanelId).toBe("right-sidebar:git:singleton");
-    expect(opened.toolPanelIds).toEqual(["right-sidebar:git:singleton"]);
-
-    const migrated = syncGitToolPanelForScope({ ...blank }, true, true);
-    expect(migrated.toolPanels["right-sidebar:git:singleton"]).toMatchObject({ type: "git" });
-    expect(syncGitToolPanelForScope(migrated, false, false).toolPanelIds).toEqual([]);
-  });
-
-  it("opens one project-scoped Git tab and reuses the singleton", () => {
-    render(
-      <ThemeProvider>
-        <LayoutStateProvider>
-          <ActiveProjectProvider
-            discovery={{
-              project: { workspaceId: "workspace-1", projectPath: "D:/repo", name: "repo" },
-              repoRoots: [
-                {
-                  id: "repo-1",
-                  rootPath: "D:/repo",
-                  displayPath: ".",
-                  kind: "workspace",
-                },
-              ],
-            }}
-          >
-            <Layout contentMode="full">
-              <div>content</div>
-            </Layout>
-          </ActiveProjectProvider>
-        </LayoutStateProvider>
-      </ThemeProvider>,
+describe("Git primary content host", () => {
+  it("places Git directly after Search and opens it as the exclusive primary surface", () => {
+    const onNavigate = vi.fn();
+    const onContentUnmount = vi.fn();
+    renderLoadedProject(
+      <Layout contentMode="full" conversations={[]} onNavigate={onNavigate}>
+        <ContentLifecycleSentinel onUnmount={onContentUnmount} />
+      </Layout>,
     );
 
-    fireEvent.click(screen.getByLabelText("展开右侧栏"));
-    fireEvent.click(within(screen.getByTestId("right-sidebar-initial-page")).getByRole("button", { name: "Git" }));
+    const navigation = screen.getByRole("navigation", { name: "主导航" });
+    const buttons = within(navigation).getAllByRole("button");
+    const searchIndex = buttons.findIndex((button) => button.textContent === "搜索");
+    const gitIndex = buttons.findIndex((button) => button.textContent === "Git");
+    expect(gitIndex).toBe(searchIndex + 1);
 
-    expect(screen.getAllByRole("tab", { name: "Git" })).toHaveLength(1);
-    expect(screen.getByRole("tab", { name: "Git" }).getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByTestId("app-shell").dataset.rightSidebarMode).toBe("maximized");
+    const gitEntry = within(navigation).getByRole("button", { name: "Git" });
+    expect(gitEntry.hasAttribute("disabled")).toBe(false);
+    expect(gitEntry.querySelectorAll("circle")).toHaveLength(3);
+    fireEvent.click(gitEntry);
+
+    const shell = screen.getByTestId("app-shell");
+    expect(shell.dataset.primarySurface).toBe("git");
+    expect(shell.dataset.rightSidebar).toBe("closed");
+    expect(shell.dataset.rightSidebarEnabled).toBe("false");
+    expect(gitEntry.getAttribute("data-active")).toBe("true");
     expect(screen.getByTestId("git-tool-window").dataset.layout).toBe("maximized");
+    expect(screen.getByText("conversation content").closest("[hidden]")).not.toBeNull();
+    expect(onContentUnmount).not.toHaveBeenCalled();
+    expect(screen.queryByRole("tab", { name: "Git" })).toBeNull();
 
-    fireEvent.click(document.querySelector<HTMLButtonElement>('button[data-icon="minimize-2"]')!);
-    expect(screen.getByTestId("app-shell").dataset.rightSidebarMode).toBe("split");
-
-    fireEvent.click(screen.getByRole("button", { name: "关闭侧边栏窗口 Git" }));
-    fireEvent.click(screen.getByLabelText("展开右侧栏"));
-    fireEvent.click(within(screen.getByTestId("right-sidebar-initial-page")).getByRole("button", { name: "Git" }));
-    expect(screen.getByTestId("app-shell").dataset.rightSidebarMode).toBe("split");
-
-    fireEvent.click(screen.getByRole("button", { name: "新建侧边栏页面" }));
-    fireEvent.click(within(screen.getByTestId("right-sidebar-initial-page")).getByRole("button", { name: "Git" }));
-
-    expect(screen.getAllByRole("tab", { name: "Git" })).toHaveLength(1);
-    expect(screen.getByRole("tab", { name: "Git" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(within(navigation).getByRole("button", { name: "新对话" }));
+    expect(shell.dataset.primarySurface).toBe("content");
+    expect(screen.getByText("conversation content")).not.toBeNull();
+    expect(screen.getByText("conversation content").closest("[hidden]")).toBeNull();
+    expect(onContentUnmount).not.toHaveBeenCalled();
+    expect(onNavigate).toHaveBeenCalledWith("/guid?focus=prompt");
   });
 
-  it("keeps Git unavailable when no project is loaded", () => {
+  it("keeps the system Git entry visible but disabled without a loaded project", () => {
     render(
       <ThemeProvider>
         <LayoutStateProvider>
           <ActiveProjectProvider discovery={{ project: null }}>
-            <Layout contentMode="full">
-              <div>content</div>
+            <Layout contentMode="full" conversations={[]}>
+              <div>conversation content</div>
             </Layout>
           </ActiveProjectProvider>
         </LayoutStateProvider>
       </ThemeProvider>,
     );
 
-    fireEvent.click(screen.getByLabelText("展开右侧栏"));
-    expect(within(screen.getByTestId("right-sidebar-initial-page")).queryByRole("button", { name: "Git" })).toBeNull();
+    const gitEntry = screen.getByRole("button", { name: "Git" });
+    expect(gitEntry.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(gitEntry);
+    expect(screen.getByTestId("app-shell").dataset.primarySurface).toBe("content");
+    expect(screen.getByText("conversation content")).not.toBeNull();
   });
 
-  it("opens the same Git tool window from the global titlebar in workbench mode", () => {
+  it("keeps the Agent project publisher mounted while Git owns the visible content area", async () => {
+    const onContentUnmount = vi.fn();
     render(
       <ThemeProvider>
         <LayoutStateProvider>
-          <ActiveProjectProvider
-            discovery={{
-              project: { workspaceId: "workspace-1", projectPath: "D:/repo", name: "repo" },
-              repoRoots: [{ id: "repo-1", rootPath: "D:/repo", displayPath: ".", kind: "workspace" }],
-            }}
-          >
-            <Layout appMode="workbench" contentMode="full">
-              <div>content</div>
+          <ActiveProjectCoordinatorProvider>
+            <Layout appMode="agent" contentMode="full" conversations={[]}>
+              <AgentProjectPublisher onUnmount={onContentUnmount} />
             </Layout>
-          </ActiveProjectProvider>
+          </ActiveProjectCoordinatorProvider>
         </LayoutStateProvider>
       </ThemeProvider>,
     );
 
-    expect(screen.getByTestId("app-shell").dataset.rightSidebarEnabled).toBe("true");
-    fireEvent.click(screen.getByRole("button", { name: "Git：读取中" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "打开 Git 工具窗" }));
+    const gitEntry = screen.getByRole("button", { name: "Git" });
+    await waitFor(() => expect(gitEntry.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(gitEntry);
 
-    expect(screen.getByTestId("app-shell").dataset.rightSidebar).toBe("open");
-    expect(screen.getAllByRole("tab", { name: "Git" })).toHaveLength(1);
+    await waitFor(() => expect(screen.getByTestId("app-shell").dataset.primarySurface).toBe("git"));
+    expect(screen.getByText("agent project publisher").closest("[hidden]")).not.toBeNull();
+    expect(onContentUnmount).not.toHaveBeenCalled();
+  });
+
+  it("routes the titlebar shortcut to the same primary Git surface", () => {
+    renderLoadedProject(
+      <Layout appMode="workbench" contentMode="full" conversations={[]}>
+        <div>conversation content</div>
+      </Layout>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Git：读取中" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "打开 Git 面板" }));
+
+    expect(screen.getByTestId("app-shell").dataset.primarySurface).toBe("git");
+    expect(screen.getByTestId("git-tool-window")).not.toBeNull();
+    expect(screen.queryByRole("tab", { name: "Git" })).toBeNull();
   });
 });
+
+function renderLoadedProject(ui: React.ReactElement) {
+  return render(
+    <ThemeProvider>
+      <LayoutStateProvider>
+        <ActiveProjectProvider
+          discovery={{
+            project: { workspaceId: "workspace-1", projectPath: "D:/repo", name: "repo" },
+            repoRoots: [{ id: "repo-1", rootPath: "D:/repo", displayPath: ".", kind: "workspace" }],
+          }}
+        >
+          {ui}
+        </ActiveProjectProvider>
+      </LayoutStateProvider>
+    </ThemeProvider>,
+  );
+}
+
+function ContentLifecycleSentinel({ onUnmount }: { onUnmount: () => void }) {
+  useEffect(() => onUnmount, [onUnmount]);
+  return <div>conversation content</div>;
+}
+
+const AGENT_PROJECT_DISCOVERY = {
+  project: { workspaceId: "workspace-agent", projectPath: "D:/agent-repo", name: "agent-repo" },
+  repoRoots: [{ id: "repo-agent", rootPath: "D:/agent-repo", displayPath: ".", kind: "workspace" as const }],
+};
+
+function AgentProjectPublisher({ onUnmount }: { onUnmount: () => void }) {
+  usePublishActiveProjectDiscovery("agent-test", AGENT_PROJECT_DISCOVERY);
+  useEffect(() => onUnmount, [onUnmount]);
+  return <div>agent project publisher</div>;
+}

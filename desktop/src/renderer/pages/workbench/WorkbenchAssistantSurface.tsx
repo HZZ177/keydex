@@ -595,7 +595,7 @@ export function WorkbenchAssistantSurface({
     dockTransitionPhase === "dock-out"
       ? WORKBENCH_ASSISTANT_DOCK_OUT_MOTION_TRANSITION
       : WORKBENCH_ASSISTANT_MOTION_TRANSITION;
-  const visualComposeOpen = composeOpen || dockOutCollapsingToCapsule;
+  const visualComposeOpen = composeOpen && !dockOutCollapsingToCapsule;
   const enableDockChildLayout = !reducedMotion && dockTransitionPhase === null && !drawerResize.dragging;
   const geometryMode: AssistantSurfaceMode =
     dockTransitionPhase === "dock-in"

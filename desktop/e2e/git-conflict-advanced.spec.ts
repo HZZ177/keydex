@@ -439,8 +439,8 @@ async function openGitToolWindow(page: Page): Promise<void> {
   const trigger = page.getByRole("button", { name: /Git：/ });
   await expect(trigger).toBeEnabled({ timeout: 20_000 });
   await trigger.click();
-  await page.getByRole("menuitem", { name: "打开 Git 工具窗" }).click();
-  await expect(page.getByRole("tablist", { name: "Git 工具窗视图" })).toBeVisible();
+  await page.getByRole("menuitem", { name: "打开 Git 面板" }).click();
+  await expect(page.getByRole("tablist", { name: "Git 面板视图" })).toBeVisible();
 }
 
 async function startConflictingRebase(page: Page): Promise<void> {

@@ -1,9 +1,9 @@
-export type RightSidebarRegisteredPanelType = "files" | "conversation" | "review" | "git";
+export type RightSidebarRegisteredPanelType = "files" | "conversation" | "review";
 
 export interface RightSidebarPanelDefinition {
   type: RightSidebarRegisteredPanelType;
   label: string;
-  icon: "folder" | "message" | "review" | "git";
+  icon: "folder" | "message" | "review";
   order: number;
   multiplicity: "multiple" | "singleton";
   idPrefix: string;
@@ -74,13 +74,5 @@ export const rightSidebarPanelRegistry = new RightSidebarPanelRegistry([
     order: 30,
     multiplicity: "multiple",
     idPrefix: "right-sidebar:review:",
-  },
-  {
-    type: "git",
-    label: "Git",
-    icon: "git",
-    order: 40,
-    multiplicity: "singleton",
-    idPrefix: "right-sidebar:git:",
   },
 ]);

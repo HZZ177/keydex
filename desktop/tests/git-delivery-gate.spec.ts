@@ -6,15 +6,16 @@ import { describe, expect, it } from "vitest";
 const repositoryRoot = resolve(process.cwd(), "..");
 
 describe("Git workbench delivery gate", () => {
-  it("keeps exactly the titlebar menu and singleton sidebar panel as product entrances", () => {
+  it("keeps exactly the titlebar menu and the primary system navigation button as product entrances", () => {
     const titlebar = source("desktop/src/renderer/components/layout/Titlebar/Titlebar.tsx");
+    const sider = source("desktop/src/renderer/components/layout/Sider/Sider.tsx");
     const initialSidebar = source("desktop/src/renderer/components/layout/RightSidebarInitialPage.tsx");
     const registry = source("desktop/src/renderer/components/layout/rightSidebarRegistry.ts");
 
     expect(titlebar.match(/<ProjectGitMenu\b/g)).toHaveLength(1);
-    expect(initialSidebar.match(/onClick=\{onOpenGit\}/g)).toHaveLength(1);
-    expect(registry.match(/type: "git"/g)).toHaveLength(1);
-    expect(registry).toContain('multiplicity: "singleton"');
+    expect(sider.match(/data-system-entry="git"/g)).toHaveLength(1);
+    expect(initialSidebar).not.toContain("onOpenGit");
+    expect(registry).not.toContain('type: "git"');
 
     const rendererRoot = resolve(repositoryRoot, "desktop/src/renderer");
     const unexpected = walk(rendererRoot)
@@ -23,6 +24,7 @@ describe("Git workbench delivery gate", () => {
       .filter((path) => !path.endsWith("ProjectGitMenu.tsx"))
       .filter((path) => !path.endsWith("Titlebar.tsx"))
       .filter((path) => !path.endsWith("Layout.tsx"))
+      .filter((path) => !path.endsWith("Sider.tsx"))
       .filter((path) => !path.endsWith("RightSidebarInitialPage.tsx"))
       .filter((path) => !path.endsWith("rightSidebarRegistry.ts"))
       .filter((path) => /onOpenGit|<ProjectGitMenu\b/.test(readFileSync(path, "utf8")));

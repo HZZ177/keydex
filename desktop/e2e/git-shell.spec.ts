@@ -71,16 +71,18 @@ test("all three modes share one real-repository Git menu and one tool window", a
     await expect(page.getByRole("menuitem", { name: /更新项目/ })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: /提交/ })).toBeEnabled();
     await expect(page.getByRole("menuitem", { name: /推送/ })).toBeVisible();
-    await page.getByRole("menuitem", { name: "打开 Git 工具窗" }).click();
+    await page.getByRole("menuitem", { name: "打开 Git 面板" }).click();
 
-    await expect(page.getByRole("tab", { name: "Git" })).toHaveCount(1);
-    await expect(page.getByRole("tablist", { name: "Git 工具窗视图" })).toBeVisible();
+    await expect(page.getByTestId("app-shell")).toHaveAttribute("data-primary-surface", "git");
+    await expect(page.getByTestId("git-tool-window")).toHaveCount(1);
+    await expect(page.getByRole("tab", { name: "Git" })).toHaveCount(0);
+    await expect(page.getByRole("tablist", { name: "Git 面板视图" })).toBeVisible();
     await expect(page.getByRole("tree", { name: "本地改动" })).toContainText("dirty.txt");
     await fixture.screenshot(page, "e2e-005-git-shell");
 
     await trigger.click();
-    await page.getByRole("menuitem", { name: "打开 Git 工具窗" }).click();
-    await expect(page.getByRole("tab", { name: "Git" })).toHaveCount(1);
+    await page.getByRole("menuitem", { name: "打开 Git 面板" }).click();
+    await expect(page.getByTestId("git-tool-window")).toHaveCount(1);
 
     await trigger.click();
     await page.getByRole("menuitem", { name: "Git 帮助与风险说明" }).click();
@@ -99,7 +101,7 @@ test("all three modes share one real-repository Git menu and one tool window", a
   }
 });
 
-test("unavailable system Git disables both entry surfaces and exposes installation guidance", async ({ page }) => {
+test("unavailable system Git disables the shortcut while keeping the primary panel reachable", async ({ page }) => {
   const fixture = await startGitBaseE2EFixture("e2e-git-unavailable");
   const capability = {
     available: false,
@@ -129,9 +131,11 @@ test("unavailable system Git disables both entry surfaces and exposes installati
     await expect(trigger).toBeVisible({ timeout: 15_000 });
     await expect(trigger).toBeDisabled();
     await expect(trigger).toHaveAttribute("title", /请安装或修复系统 Git/);
-    await page.getByRole("button", { name: "展开右侧栏" }).click();
-    const sidebar = page.getByRole("complementary", { name: "右侧栏" });
-    await expect(sidebar.getByRole("button", { name: "Git", exact: true })).toHaveCount(0);
+    const primaryEntry = page.getByRole("button", { name: "Git", exact: true });
+    await expect(primaryEntry).toBeVisible();
+    await expect(primaryEntry).toBeEnabled();
+    await primaryEntry.click();
+    await expect(page.getByTestId("app-shell")).toHaveAttribute("data-primary-surface", "git");
     await expect(page.getByRole("tab", { name: "Git", exact: true })).toHaveCount(0);
     await page.screenshot({ path: `${fixture.runDir}/e2e-012-git-unavailable.png`, fullPage: true });
   } finally {
@@ -149,7 +153,7 @@ test("a damaged HEAD becomes a diagnostic error and retry restores the repositor
     const trigger = page.getByRole("button", { name: /Git：不可用/ });
     await expect(trigger).toBeEnabled({ timeout: 20_000 });
     await trigger.click();
-    await page.getByRole("menuitem", { name: "打开 Git 工具窗" }).click();
+    await page.getByRole("menuitem", { name: "打开 Git 面板" }).click();
     const diagnostic = page.getByRole("alert");
     await expect(diagnostic).toContainText("Git 仓库加载失败", { timeout: 20_000 });
     await expect(diagnostic).toContainText(/HEAD|metadata|parse|malformed|invalid/i);
@@ -157,7 +161,7 @@ test("a damaged HEAD becomes a diagnostic error and retry restores the repositor
 
     await fixture.write(".git/HEAD", "ref: refs/heads/main\n");
     await diagnostic.getByRole("button", { name: "重试" }).click();
-    await expect(page.getByRole("tablist", { name: "Git 工具窗视图" })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole("tablist", { name: "Git 面板视图" })).toBeVisible({ timeout: 20_000 });
     await expect(page.getByRole("button", { name: /Git：main/ })).toBeEnabled();
     await fixture.screenshot(page, "e2e-011-damaged-head-retry");
   } finally {

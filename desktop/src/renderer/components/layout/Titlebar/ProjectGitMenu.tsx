@@ -56,7 +56,7 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
   const snapshot = useOptionalGitStoreSelector(selectMenuSnapshot);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<GitRef["kind"]>>(new Set());
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<GitRef["kind"]>>(() => new Set(["tag"]));
   const [commandForm, setCommandForm] = useState<"branch" | "checkout" | null>(null);
   const [commandValue, setCommandValue] = useState("");
   const [busyAction, setBusyAction] = useState<GitQuickActionId | "checkout" | "init" | null>(null);
@@ -126,7 +126,7 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
       const upstream = snapshot?.status?.branch.upstream ?? null;
       const separator = upstream?.indexOf("/") ?? -1;
       if (!upstream || separator <= 0 || separator === upstream.length - 1) {
-        throw new Error(`当前分支没有可用的 upstream，请先在 Git 工具窗设置后再${action === "update" ? "更新" : "推送"}。`);
+        throw new Error(`当前分支没有可用的 upstream，请先在 Git 面板设置后再${action === "update" ? "更新" : "推送"}。`);
       }
       const remote = upstream.slice(0, separator);
       const branch = upstream.slice(separator + 1);
@@ -427,7 +427,7 @@ export function projectGitQuickActions(
     { id: "push", label: "推送…", shortcut: shortcuts.push.label, risk: "remote", enabled: repositoryReady, icon: Send },
     { id: "create_branch", label: "新建分支…", shortcut: shortcuts.create_branch.label, risk: "write", enabled: repositoryReady, icon: Plus },
     { id: "checkout", label: "签出标记或修订…", shortcut: null, risk: "write", enabled: repositoryReady, icon: GitBranch },
-    { id: "open", label: "打开 Git 工具窗", shortcut: null, risk: "read", enabled: model.enabled, icon: Wrench },
+    { id: "open", label: "打开 Git 面板", shortcut: null, risk: "read", enabled: model.enabled, icon: Wrench },
     { id: "help", label: "Git 帮助与风险说明", shortcut: null, risk: "read", enabled: model.enabled, icon: CircleHelp },
   ];
 }

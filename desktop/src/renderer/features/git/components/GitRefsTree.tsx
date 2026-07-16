@@ -28,7 +28,7 @@ const GROUPS: readonly { kind: GitRef["kind"]; label: string; icon: typeof GitBr
 
 export function GitRefsTree({ refs, selectedRef, onSelect, onAction }: GitRefsTreeProps) {
   const groups = useMemo(() => buildGitRefTree(refs), [refs]);
-  const [collapsed, setCollapsed] = useState<Set<GitRef["kind"]>>(new Set());
+  const [collapsed, setCollapsed] = useState<Set<GitRef["kind"]>>(() => new Set(["tag"]));
   const [menuRef, setMenuRef] = useState<GitRef | null>(null);
   const head = refs.find((ref) => ref.current) ?? null;
   const [focusedKey, setFocusedKey] = useState(head ? "head" : `group:${groups[0]?.kind ?? "local"}`);

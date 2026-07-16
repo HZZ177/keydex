@@ -95,6 +95,8 @@
 .scroller {
   height: 100%;
   min-height: 0;
+  box-sizing: border-box;
+  padding-inline: var(--message-list-inline-padding);
   overflow-anchor: none;
   overflow-x: hidden;
   overflow-y: auto;
@@ -220,7 +222,7 @@
 
 .list {
   display: block;
-  width: min(var(--composer-width), calc(100% - (var(--message-list-inline-padding) * 2)));
+  width: min(var(--composer-width), 100%);
   min-width: 0;
   max-width: var(--message-list-max-width);
   box-sizing: border-box;
@@ -586,7 +588,7 @@
 }
 
 .empty {
-  width: min(540px, calc(100% - (var(--message-list-inline-padding) * 2)));
+  width: min(540px, 100%);
   max-width: 540px;
   margin: 0 auto;
   color: var(--color-text-tertiary);
@@ -619,7 +621,7 @@
 }
 
 .skeletonWrap {
-  width: min(var(--message-list-max-width), calc(100% - (var(--message-list-inline-padding) * 2)));
+  width: min(var(--message-list-max-width), 100%);
   min-width: 0;
   min-height: 100%;
   box-sizing: border-box;
@@ -632,7 +634,7 @@
   .list,
   .empty,
   .skeletonWrap {
-    width: min(var(--composer-width), calc(100% - (var(--message-list-inline-padding) * 2)));
+    width: min(var(--composer-width), 100%);
   }
 }
 

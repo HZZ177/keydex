@@ -10,6 +10,10 @@ describe("conversation message density CSS contract", () => {
 
     expect(messageListCss).toContain('.root[data-message-list-variant="compact"]');
     expect(messageListCss).toContain('.root[data-message-list-variant="overlay"]');
+    expect(cssRule(messageListCss, ".scroller")).toContain(
+      "padding-inline: var(--message-list-inline-padding)",
+    );
+    expect(cssRule(messageListCss, ".list")).toContain("width: min(var(--composer-width), 100%)");
     expect(messageListCss).toContain("--message-user-bubble-max-width");
     expect(messageListCss).toContain("--message-tool-detail-width");
     expect(messageTextCss).toContain("var(--message-user-bubble-max-width");

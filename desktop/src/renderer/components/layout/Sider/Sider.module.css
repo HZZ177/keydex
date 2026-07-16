@@ -551,6 +551,16 @@ button.sectionTitle[data-kind="pinned"]:focus-visible,
   box-shadow: var(--sidebar-pill-ring);
 }
 
+.navItem:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.navItem:disabled:hover {
+  background: transparent;
+  color: var(--color-text-2);
+}
+
 .historyRow[data-menu-open="true"] {
   z-index: 2;
 }
