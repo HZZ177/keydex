@@ -216,26 +216,7 @@ export function MessageList({
   const [timelineScroller, setTimelineScroller] = useState<HTMLElement | null>(null);
   const visibleMessages = useMemo(() => messages.filter((message) => message.kind !== "plan"), [messages]);
   const processedMessages = useMemo(() => processMessages(visibleMessages), [visibleMessages]);
-  const pendingAssistantMessage = useMemo(
-    () =>
-      isProcessing && shouldShowPendingAssistantCursor(visibleMessages)
-        ? createPendingAssistantMessage(visibleMessages)
-        : null,
-    [isProcessing, visibleMessages],
-  );
-  const displayItems = useMemo<ProcessedMessageItem[]>(() => {
-    if (!pendingAssistantMessage) {
-      return processedMessages;
-    }
-    return [
-      ...processedMessages,
-      {
-        type: "message",
-        id: pendingAssistantMessage.id,
-        message: pendingAssistantMessage,
-      },
-    ];
-  }, [pendingAssistantMessage, processedMessages]);
+  const displayItems = processedMessages;
   const timeline = useMemo(() => buildConversationTimeline(displayItems), [displayItems]);
   const displayBlocks = timeline.blocks;
   const displayTurns = timeline.turns;
@@ -2703,34 +2684,13 @@ function collectTurnEndStreamingCursor(
   if (!isProcessing) {
     return empty;
   }
-  const activeTurn = [...turns]
-    .reverse()
-    .find((turn) => turn.items.flatMap(messagesFromProcessedItem).some((message) => isStreamingStatus(message.status)));
+  const activeTurn = turns.at(-1);
   if (!activeTurn) {
     return empty;
   }
   const activeTurnMessages = activeTurn.items.flatMap(messagesFromProcessedItem);
-  const streamingAssistantIndex = activeTurnMessages.findLastIndex(
-    (message) => message.kind === "assistant" && isStreamingStatus(message.status),
-  );
-  if (streamingAssistantIndex < 0) {
-    return empty;
-  }
-  const itemIdByMessageId = mapMessageIdsToDisplayItems(activeTurn.items);
-  const laterDisplayMessages = activeTurnMessages
-    .slice(streamingAssistantIndex + 1)
-    .filter(
-      (message) =>
-        message.kind !== "thread_task_status" &&
-        message.kind !== "turn_marker" &&
-        itemIdByMessageId.has(message.id),
-    );
-  if (!laterDisplayMessages.length) {
-    return empty;
-  }
-  const lastDisplayMessage = laterDisplayMessages[laterDisplayMessages.length - 1];
-  const lastItemId = itemIdByMessageId.get(lastDisplayMessage.id);
-  if (!lastItemId) {
+  const anchorItemId = lastFooterAnchorItemId(activeTurn.items);
+  if (!anchorItemId) {
     return empty;
   }
   return {
@@ -2739,7 +2699,7 @@ function collectTurnEndStreamingCursor(
         .filter((message) => message.kind === "assistant" && isStreamingStatus(message.status))
         .map((message) => message.id),
     ),
-    cursorAfterItemIds: new Set([lastItemId]),
+    cursorAfterItemIds: new Set([anchorItemId]),
   };
 }
 
@@ -2758,48 +2718,6 @@ function lastFooterAnchorItemId(items: readonly ProcessedMessageItem[]): string 
     return item.id;
   }
   return null;
-}
-
-function mapMessageIdsToDisplayItems(displayItems: readonly ProcessedMessageItem[]): Map<string, string> {
-  const itemIdByMessageId = new Map<string, string>();
-  displayItems.forEach((item) => {
-    if (item.type === "message") {
-      itemIdByMessageId.set(item.message.id, item.id);
-      return;
-    }
-    item.sourceMessageIds.forEach((messageId) => itemIdByMessageId.set(messageId, item.id));
-  });
-  return itemIdByMessageId;
-}
-
-function shouldShowPendingAssistantCursor(messages: ConversationMessage[]): boolean {
-  const last = messages[messages.length - 1];
-  if (!last) {
-    return false;
-  }
-  if (isStreamingStatus(last.status)) {
-    return false;
-  }
-  const activeTurnStart = messages.findLastIndex((message) => message.kind === "user") + 1;
-  const activeTurnMessages = messages.slice(activeTurnStart);
-  return !activeTurnMessages.some((message) => message.kind === "assistant" && isStreamingStatus(message.status));
-}
-
-function createPendingAssistantMessage(messages: ConversationMessage[]): ConversationMessage {
-  const last = messages[messages.length - 1];
-  const now = last?.updatedAt ?? new Date(0).toISOString();
-  return {
-    id: "pending-assistant-cursor",
-    threadId: last?.threadId ?? "",
-    turnId: last?.turnId ?? null,
-    itemId: null,
-    kind: "assistant",
-    status: "running",
-    content: "",
-    payload: {},
-    createdAt: now,
-    updatedAt: now,
-  };
 }
 
 function isStreamingStatus(status: ConversationMessage["status"]): boolean {

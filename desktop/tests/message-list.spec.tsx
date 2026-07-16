@@ -1451,11 +1451,13 @@ describe("MessageList", () => {
   });
 
   it("shows a pending assistant cursor while processing before the next stream chunk", () => {
-    const { rerender } = render(<MessageList messages={[message("m1", "user", "开始")]} isProcessing />);
+    const { container, rerender } = render(<MessageList messages={[message("m1", "user", "开始")]} isProcessing />);
 
     const pendingCursor = screen.getByTestId("streaming-cursor");
     expect(pendingCursor.hidden).toBe(false);
     expect(pendingCursor.querySelectorAll('[data-streaming-cursor-dot="true"]')).toHaveLength(3);
+    expect(container.querySelector('[data-conversation-unit-id="unit:assistant-markdown:pending-assistant-cursor"]')).toBeNull();
+    expect(pendingCursor.closest('[data-testid="message-turn-footer"]')).not.toBeNull();
 
     rerender(
       <MessageList
@@ -1467,6 +1469,7 @@ describe("MessageList", () => {
       />,
     );
     expect(screen.getAllByTestId("streaming-cursor")).toHaveLength(1);
+    expect(screen.getByTestId("streaming-cursor").closest('[data-testid="message-turn-footer"]')).not.toBeNull();
 
     rerender(
       <MessageList
