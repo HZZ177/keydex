@@ -132,6 +132,41 @@ async def test_search_text_returns_empty_results(tmp_path) -> None:
 
     assert result.ok is True
     assert result.result["results"] == []
+    assert result.result["regex"] is False
+    assert "hint" not in result.result
+
+
+async def test_search_text_explains_literal_pipe_query_and_supports_regex_alternation(
+    tmp_path,
+) -> None:
+    (tmp_path / "main.py").write_text(
+        "context_compression\ncreate_branch\n",
+        encoding="utf-8",
+    )
+
+    literal = await _run(
+        "search_text",
+        {"query": "context_compression|create_branch", "include": ["*.py"]},
+        tmp_path,
+    )
+    regex = await _run(
+        "search_text",
+        {
+            "query": "context_compression|create_branch",
+            "regex": True,
+            "include": ["*.py"],
+        },
+        tmp_path,
+    )
+
+    assert literal.ok is True
+    assert literal.result["results"] == []
+    assert literal.result["regex"] is False
+    assert "regex=true" in literal.result["hint"]
+    assert regex.ok is True
+    assert regex.result["regex"] is True
+    assert [item["line"] for item in regex.result["results"]] == [1, 2]
+    assert "hint" not in regex.result
 
 
 async def test_search_text_reports_invalid_regex(tmp_path) -> None:

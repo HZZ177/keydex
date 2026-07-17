@@ -16,12 +16,16 @@ describe("MessageThinking", () => {
     expect(screen.getByTestId("message-thinking-content").getAttribute("aria-hidden")).toBe("true");
   });
 
-  it("keeps live reasoning expanded through completion so the timeline height stays stable", () => {
+  it("collapses live reasoning when it completes and allows reopening it", () => {
     const { rerender } = render(<MessageThinking message={thinking("running", "正在分析代码路径")} />);
 
     expect(screen.getByText("正在分析代码路径")).not.toBeNull();
 
     rerender(<MessageThinking message={thinking("completed", "正在分析代码路径")} />);
+    expect(screen.getByRole("button", { name: /已完成思考/ }).getAttribute("aria-expanded")).toBe("false");
+    expect(screen.getByTestId("message-thinking-content").getAttribute("aria-hidden")).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: /已完成思考/ }));
     expect(screen.getByRole("button", { name: /已完成思考/ }).getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByTestId("message-thinking-content").getAttribute("aria-hidden")).toBe("false");
   });

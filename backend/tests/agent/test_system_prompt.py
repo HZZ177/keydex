@@ -33,6 +33,10 @@ def test_default_prompt_does_not_hardcode_patch_edit_file_contract() -> None:
     assert "文件编辑工具风格" in DEFAULT_SYSTEM_PROMPT
 
 
+def test_default_prompt_requires_explicit_search_text_regex_mode() -> None:
+    assert "等正则语法时必须显式设置 `regex=true`" in DEFAULT_SYSTEM_PROMPT
+
+
 def test_plan_progress_prompt_defines_usage_and_lifecycle() -> None:
     assert "至少 3 个有意义的动作" in PLAN_PROGRESS_PROMPT
     assert "不要创建计划" in PLAN_PROGRESS_PROMPT

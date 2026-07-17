@@ -195,6 +195,7 @@ def test_default_tool_registry_exposes_phase_one_tool_contracts(tmp_path) -> Non
     assert "有界目录树" in specs["list_dir"].description
     assert "不搜索文件内容" in specs["search_files"].description
     assert "发现候选文件" in specs["grep_files"].description
+    assert "必须显式设置 regex=true" in specs["search_text"].description
     assert "old_string" in specs["edit_file"].parameters["properties"]
     assert "删除文件访问权限允许范围内已有 UTF-8 文本文件" in specs["delete_file"].description
     assert "移动或重命名文件访问权限允许范围内已有 UTF-8 文本文件" in specs["move_file"].description

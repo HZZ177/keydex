@@ -25,18 +25,22 @@ export function MessageThinking({ message }: MessageThinkingProps) {
   const content = useMemo(() => normalizeMessageContent(message.content), [message.content]);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const followLatestRef = useRef(true);
+  const previousStatusRef = useRef(status);
   const contentMotion = useDeferredUnmount<HTMLDivElement>(expanded, 180, 220);
 
   useEffect(() => {
     if (!touched && defaultExpanded) {
-      // A reasoning block that was already visible must not collapse while the
-      // active turn is still appending tools or assistant text. Its animated
-      // height shrink feeds the follow-bottom loop and moves the whole
-      // conversation viewport. Completed history still mounts collapsed via
-      // the initial state; a live block stays open until the user closes it.
       setExpanded(true);
     }
   }, [defaultExpanded, touched]);
+
+  useEffect(() => {
+    const previousStatus = previousStatusRef.current;
+    previousStatusRef.current = status;
+    if (previousStatus !== "completed" && status === "completed") {
+      setExpanded(false);
+    }
+  }, [status]);
 
   useLayoutEffect(() => {
     const viewport = contentRef.current;

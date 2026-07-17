@@ -62,6 +62,8 @@ SEARCH_TEXT_DESCRIPTION = (
     "返回 path、line、snippet 和可选上下文。"
     "当需要确认某段文本、符号、错误信息或关键词出现在哪些行时使用；"
     "如果只需要在某个已知文件内搜索，可将 path 设为该文件路径。"
+    "query 默认按固定字符串处理；使用 |、分组、^、$ 等正则语法时，"
+    "必须显式设置 regex=true。"
 )
 
 SEARCH_FILES_DESCRIPTION = (
@@ -85,7 +87,13 @@ def create_search_tools() -> list[FunctionTool]:
             parameters={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "要搜索的文本或正则表达式。"},
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "要搜索的文本；默认按固定字符串处理，"
+                            "仅在 regex=true 时作为正则表达式。"
+                        ),
+                    },
                     "path": {
                         "type": "string",
                         "description": (
@@ -96,7 +104,10 @@ def create_search_tools() -> list[FunctionTool]:
                     "regex": {
                         "type": "boolean",
                         "default": False,
-                        "description": "是否将 query 当作正则表达式。",
+                        "description": (
+                            "是否将 query 当作正则表达式。默认为 false；"
+                            "使用 | 表示多个候选词等正则语法时必须设为 true。"
+                        ),
                     },
                     "case_sensitive": {"type": "boolean", "default": False},
                     "limit": {
@@ -245,6 +256,7 @@ async def search_text_tool(
         scanned_files=rg_result.scanned_files,
         limit=limit,
         truncated=rg_result.truncated,
+        regex=regex,
     )
 
 
@@ -364,6 +376,7 @@ def _search_text_result(
     scanned_files: int,
     limit: int,
     truncated: bool,
+    regex: bool,
 ) -> dict[str, Any]:
     result = {
         "query": query,
@@ -373,11 +386,16 @@ def _search_text_result(
         "limit": limit,
         "engine": "ripgrep",
         "truncated": truncated,
+        "regex": regex,
     }
+    if not results and not regex and "|" in query:
+        result["hint"] = (
+            "当前 query 按固定字符串搜索；如果 | 表示正则“或”，请设置 regex=true。"
+        )
     logger.info(
         "[SearchTool] 文本搜索完成 | "
         f"path={result['path']} | query_chars={len(query)} | results={len(results)} | "
-        f"scanned_files={scanned_files} | limit={limit} | truncated={truncated}"
+        f"scanned_files={scanned_files} | limit={limit} | truncated={truncated} | regex={regex}"
     )
     return result
 
