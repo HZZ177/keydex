@@ -220,19 +220,21 @@ export function AppTooltipLayer({
           ? viewportHeight - VIEWPORT_MARGIN - rect.bottom
           : 0;
 
-    if (Math.abs(deltaLeft) < 0.5 && Math.abs(deltaTop) < 0.5) {
+    if (Math.abs(deltaLeft) <= 0.5 && Math.abs(deltaTop) <= 0.5) {
       return;
     }
 
-    setTooltip((current) =>
-      current
-        ? {
-            ...current,
-            left: Math.round(current.left + deltaLeft),
-            top: Math.round(current.top + deltaTop),
-          }
-        : current,
-    );
+    setTooltip((current) => {
+      if (!current) {
+        return current;
+      }
+      const left = Math.round(current.left + deltaLeft);
+      const top = Math.round(current.top + deltaTop);
+      if (left === current.left && top === current.top) {
+        return current;
+      }
+      return { ...current, left, top };
+    });
   }, [tooltip]);
 
   if (!tooltip) {

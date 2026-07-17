@@ -58,6 +58,11 @@ export {
   getCurrentAppVersion,
 } from "./appUpdate";
 export {
+  loadAppReleaseHistory,
+  normalizeReleaseMarkdown,
+  parseGitHubReleaseList,
+} from "./appReleaseNotes";
+export {
   ASSOCIATED_FILE_OPEN_REQUESTED_EVENT,
   listenForAssociatedFileOpenRequested,
   takeAssociatedFileOpenPaths,
@@ -248,3 +253,4 @@ export type {
   McpTrustRuleListOptions,
 } from "./mcp";
 export type { AppUpdateProgress, PendingAppUpdate } from "./appUpdate";
+export type { AppReleaseHistory, AppReleaseNote } from "./appReleaseNotes";

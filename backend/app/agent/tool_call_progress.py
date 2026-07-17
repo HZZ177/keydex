@@ -437,7 +437,26 @@ def parse_apply_patch_file_changes(patch: str) -> list[dict[str, Any]]:
     current_path = ""
     current_operation = ""
     current_move_to = ""
-    for line in patch.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+    normalized_patch = patch.replace("\r\n", "\n").replace("\r", "\n")
+    lines = normalized_patch.split("\n")
+    for index, line in enumerate(lines):
+        if (
+            index == len(lines) - 1
+            and not normalized_patch.endswith("\n")
+            and line.startswith(
+                (
+                    "*** Update File: ",
+                    "*** Add File: ",
+                    "*** Delete File: ",
+                    "*** Move to: ",
+                )
+            )
+        ):
+            # Tool-call JSON is parsed before its string value is closed. Do not
+            # publish the trailing fragment as a real path: a provider can split
+            # `guide.md` after `guide`, which would otherwise pin the UI to a
+            # temporary extension-less filename until the tool completes.
+            continue
         if line.startswith("*** Update File: "):
             current_path = line.removeprefix("*** Update File: ").strip()
             current_operation = "update"

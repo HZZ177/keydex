@@ -74,6 +74,32 @@ describe("ConversationFollowController", () => {
     expect(harness.controller.snapshot().showScrollToBottom).toBe(true);
   });
 
+  it("does not consume the first upward wheel when tail geometry still reports the bottom", () => {
+    const harness = createHarness();
+    harness.controller.setContentAvailable(true);
+    harness.controller.setTailReady(true);
+
+    harness.element.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
+    harness.element.scrollTop = 798;
+    harness.element.dispatchEvent(new Event("scroll"));
+
+    expect(harness.controller.snapshot()).toMatchObject({
+      mode: "user-detached",
+      reason: "user-wheel-up",
+    });
+
+    harness.element.scrollTop = 700;
+    harness.element.dispatchEvent(new Event("scroll"));
+    expect(harness.controller.snapshot().mode).toBe("user-detached");
+
+    harness.element.scrollTop = 800;
+    harness.element.dispatchEvent(new Event("scroll"));
+    expect(harness.controller.snapshot()).toMatchObject({
+      mode: "following-bottom",
+      reason: "user-returned-bottom",
+    });
+  });
+
   it("resumes only after the user reaches bottom or explicitly presses scroll-to-bottom", () => {
     const harness = createHarness();
     harness.controller.setContentAvailable(true);

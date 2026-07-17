@@ -2,6 +2,8 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { startGitE2EFixture } from "./git-e2e-fixtures";
 
+const LONG_BRANCH_NAME = "e2e-git-feature-with-an-intentionally-long-name";
+
 test("Git tool state survives mode changes, close/reopen, responsive layouts and external ref updates", async ({ page }) => {
   test.setTimeout(90_000);
   const fixture = await startGitE2EFixture("continuity-layout");
@@ -137,8 +139,61 @@ test("titlebar Git menu supports branch checkout and opening the tool window wit
   }
 });
 
+test("long Git branch expands right without moving the fixed mode switch", async ({ page }) => {
+  test.setTimeout(60_000);
+  const fixture = await startGitE2EFixture("titlebar-long-branch");
+  try {
+    await fixture.createBranch(LONG_BRANCH_NAME);
+    await fixture.configurePage(page);
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(`${fixture.appBaseUrl}/#/workbench/${fixture.workspaceId}`);
+
+    const trigger = gitTrigger(page);
+    await expect(trigger).toBeEnabled({ timeout: 20_000 });
+    const initialGeometry = await titlebarPillGeometry(page);
+
+    await fixture.git(["checkout", LONG_BRANCH_NAME]);
+    await page.reload();
+    await expect(trigger).toContainText(LONG_BRANCH_NAME, { timeout: 20_000 });
+    const longBranchGeometry = await titlebarPillGeometry(page);
+
+    expect(Math.abs(longBranchGeometry.mode.left - initialGeometry.mode.left)).toBeLessThan(0.5);
+    expect(Math.abs(longBranchGeometry.mode.width - initialGeometry.mode.width)).toBeLessThan(0.5);
+    expect(Math.abs(longBranchGeometry.git.left - initialGeometry.git.left)).toBeLessThan(0.5);
+    expect(longBranchGeometry.git.width).toBeGreaterThan(initialGeometry.git.width + 100);
+    expect(longBranchGeometry.git.right).toBeGreaterThan(initialGeometry.git.right + 100);
+    expect(longBranchGeometry.workspace.left).toBeGreaterThan(initialGeometry.workspace.left + 100);
+    expect(Math.abs(longBranchGeometry.workspace.width - initialGeometry.workspace.width)).toBeLessThan(0.5);
+    expect(await trigger.locator("span").first().evaluate((label) => label.scrollWidth <= label.clientWidth)).toBe(true);
+    await fixture.screenshot(page, "e2e-titlebar-long-branch");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 function gitTrigger(page: Page): Locator {
   return page.getByRole("button", { name: /Git：/ });
+}
+
+async function titlebarPillGeometry(page: Page): Promise<{
+  mode: { left: number; width: number };
+  git: { left: number; right: number; width: number };
+  workspace: { left: number; width: number };
+}> {
+  const [mode, git, workspace] = await Promise.all([
+    page.getByTestId("app-mode-switch").boundingBox(),
+    gitTrigger(page).boundingBox(),
+    page.getByTestId("workbench-titlebar-workspace-selector").boundingBox(),
+  ]);
+  expect(mode).not.toBeNull();
+  expect(git).not.toBeNull();
+  expect(workspace).not.toBeNull();
+  expect(Math.abs(mode!.width - 248)).toBeLessThan(0.5);
+  return {
+    mode: { left: mode!.x, width: mode!.width },
+    git: { left: git!.x, right: git!.x + git!.width, width: git!.width },
+    workspace: { left: workspace!.x, width: workspace!.width },
+  };
 }
 
 async function openGitToolWindow(page: Page): Promise<void> {

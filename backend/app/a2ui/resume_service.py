@@ -1,20 +1,20 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 from langgraph.types import Command
 
 from backend.app.a2ui.resume_context import build_a2ui_resume_context
+from backend.app.core.logger import logger
 from backend.app.core.request_context import (
     reset_a2ui_resume_context,
     reset_request_context,
     set_a2ui_resume_context,
     set_request_context,
 )
-from backend.app.core.logger import logger
 from backend.app.events.completed_aggregator import TurnCompletedAggregator
 from backend.app.events.dispatcher import EventDispatcher
 from backend.app.events.event_types import DomainEventType
@@ -88,6 +88,7 @@ class _NeverCancelled:
 AgentFactory = Callable[[A2UIResumeSnapshot], Any | Awaitable[Any]]
 EventProcessor = Callable[..., Awaitable[Any]]
 TaskFactory = Callable[[Awaitable[Any]], asyncio.Task[Any]]
+BackgroundTaskStarter = Callable[[Awaitable[Any]], Awaitable[asyncio.Task[Any]]]
 
 
 class A2UIResumeService:
@@ -118,6 +119,7 @@ class A2UIResumeService:
         *,
         background: bool = True,
         cancellation: Any | None = None,
+        background_task_starter: BackgroundTaskStarter | None = None,
         user_id: str = "local-user",
     ) -> A2UIResumeStartResult:
         snapshot, started = self._mark_started_and_snapshot(interaction_id)
@@ -158,7 +160,10 @@ class A2UIResumeService:
         )
         self.repositories.sessions.update(snapshot.session_id, status="running")
         if background:
-            self.task_factory(resume_coro)
+            if background_task_starter is not None:
+                await background_task_starter(resume_coro)
+            else:
+                self.task_factory(resume_coro)
         else:
             await resume_coro
 
@@ -176,7 +181,9 @@ class A2UIResumeService:
         if interaction is None:
             raise A2UIResumeServiceError(f"A2UI interaction not found: {interaction_id}")
         if not interaction.resume_payload:
-            raise A2UIResumeServiceError(f"A2UI interaction missing resume_payload: {interaction_id}")
+            raise A2UIResumeServiceError(
+                f"A2UI interaction missing resume_payload: {interaction_id}"
+            )
         resume_group_id = interaction.resume_group_id or _fallback_resume_group_id(interaction)
         peers = self.repositories.a2ui_interactions.list_resume_group_peers(
             resume_group_id=resume_group_id,
@@ -225,11 +232,6 @@ class A2UIResumeService:
         user_id: str,
         raise_errors: bool,
     ) -> None:
-        await self._emit_resume_event(
-            snapshot,
-            event_type=DomainEventType.A2UI_RESUME_STARTED,
-            resume_status=A2UI_RESUME_STATUS_STARTED,
-        )
         completed_aggregator = TurnCompletedAggregator()
         clone_with_consumers = getattr(self.dispatcher, "clone_with_consumers", None)
         turn_dispatcher = (
@@ -238,12 +240,33 @@ class A2UIResumeService:
             else self.dispatcher
         )
         try:
+            await self._emit_resume_event(
+                snapshot,
+                event_type=DomainEventType.A2UI_RESUME_STARTED,
+                resume_status=A2UI_RESUME_STATUS_STARTED,
+            )
             event_result = await self._execute_resume(
                 snapshot,
                 cancellation=cancellation,
                 user_id=user_id,
                 dispatcher=turn_dispatcher,
             )
+            if cancellation.is_cancelled():
+                await self._finish_cancelled_resume(
+                    snapshot,
+                    completed_aggregator=completed_aggregator,
+                    user_id=user_id,
+                )
+                return
+        except asyncio.CancelledError:
+            if not cancellation.is_cancelled():
+                raise
+            await self._finish_cancelled_resume(
+                snapshot,
+                completed_aggregator=completed_aggregator,
+                user_id=user_id,
+            )
+            return
         except Exception as exc:
             error = str(exc) or exc.__class__.__name__
             self.repositories.a2ui_interactions.mark_resume_failed(
@@ -280,6 +303,29 @@ class A2UIResumeService:
         await self._emit_completed_event(
             snapshot,
             event_result=event_result,
+            completed_aggregator=completed_aggregator,
+            user_id=user_id,
+        )
+        self.repositories.sessions.update(snapshot.session_id, status="active")
+
+    async def _finish_cancelled_resume(
+        self,
+        snapshot: A2UIResumeSnapshot,
+        *,
+        completed_aggregator: TurnCompletedAggregator,
+        user_id: str,
+    ) -> None:
+        self.repositories.a2ui_interactions.mark_resume_finished(
+            [item.interaction_id for item in snapshot.resume_items]
+        )
+        await self._emit_resume_event(
+            snapshot,
+            event_type=DomainEventType.A2UI_RESUME_SUCCEEDED,
+            resume_status=A2UI_RESUME_STATUS_SUCCEEDED,
+            reason="turn_cancelled",
+        )
+        await self._emit_cancelled_event(
+            snapshot,
             completed_aggregator=completed_aggregator,
             user_id=user_id,
         )
@@ -353,6 +399,34 @@ class A2UIResumeService:
         )
         await self.dispatcher.emit_event(
             event_type=DomainEventType.TURN_COMPLETED.value,
+            source="a2ui_resume_service",
+            payload=payload,
+            original_session_id=snapshot.session_id,
+            active_session_id=(
+                snapshot.active_session_id
+                or snapshot.langgraph_thread_id
+                or snapshot.session_id
+            ),
+            trace_id=snapshot.trace_id,
+            user_id=user_id,
+            turn_index=snapshot.turn_index,
+        )
+
+    async def _emit_cancelled_event(
+        self,
+        snapshot: A2UIResumeSnapshot,
+        *,
+        completed_aggregator: TurnCompletedAggregator,
+        user_id: str,
+    ) -> None:
+        payload = completed_aggregator.build_cancelled_data(
+            session_id=snapshot.session_id,
+            trace_id=snapshot.trace_id or "",
+            user_id=user_id,
+            reason="user",
+        )
+        await self.dispatcher.emit_event(
+            event_type=DomainEventType.TURN_CANCELLED.value,
             source="a2ui_resume_service",
             payload=payload,
             original_session_id=snapshot.session_id,
@@ -539,7 +613,9 @@ def _fallback_resume_group_id(interaction: A2UIInteractionRecord) -> str:
     return ":".join(
         [
             interaction.session_id,
-            interaction.langgraph_thread_id or interaction.active_session_id or interaction.session_id,
+            interaction.langgraph_thread_id
+            or interaction.active_session_id
+            or interaction.session_id,
             interaction.checkpoint_ns,
             interaction.checkpoint_id or "",
             interaction.trace_id or "",

@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   BarChart3,
   Bot,
+  Download,
   FolderKanban,
   Moon,
   Palette,
@@ -27,6 +28,7 @@ import { Titlebar } from "@/renderer/components/layout/Titlebar";
 import { AppTooltipLayer } from "@/renderer/components/tooltip";
 import { useLayoutState } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { useSidebarCollapseMotion } from "@/renderer/hooks/layout/useSidebarCollapseMotion";
+import { useOptionalAppUpdate } from "@/renderer/providers/AppUpdateController";
 import { useTheme } from "@/renderer/providers/ThemeProvider";
 
 import styles from "./SettingsShell.module.css";
@@ -66,6 +68,7 @@ export function SettingsShell({
   const navigate = useNavigate();
   const location = useLocation();
   const { state, actions } = useLayoutState();
+  const appUpdate = useOptionalAppUpdate();
   const { theme, toggleTheme } = useTheme();
   const ThemeIcon = theme === "dark" ? Sun : Moon;
   const routeState = location.state as { from?: string } | null;
@@ -148,6 +151,7 @@ export function SettingsShell({
               <div className={styles.groupLabel}>个人</div>
               {visibleItems.map((item) => {
                 const Icon = item.icon;
+                const showUpdateIndicator = item.id === "about" && Boolean(appUpdate?.pendingUpdate);
                 return (
                   <button
                     className={styles.menuItem}
@@ -161,6 +165,15 @@ export function SettingsShell({
                   >
                     <Icon size={17} strokeWidth={2} />
                     <span>{item.label}</span>
+                    {showUpdateIndicator ? (
+                      <span
+                        aria-hidden="true"
+                        className={styles.updateBadge}
+                        data-app-update-indicator="about"
+                      >
+                        <Download size={10} strokeWidth={2.5} />
+                      </span>
+                    ) : null}
                   </button>
                 );
               })}

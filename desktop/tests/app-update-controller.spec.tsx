@@ -2,18 +2,25 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
+import { MemoryRouter } from "react-router-dom";
 
+import { Sider } from "@/renderer/components/layout/Sider";
+import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
+import { SettingsShell } from "@/renderer/pages/settings/SettingsShell";
 import {
   AppUpdateController,
   useAppUpdate,
 } from "@/renderer/providers/AppUpdateController";
 import { AboutSettingsPage } from "@/renderer/pages/settings/about/AboutSettingsPage";
+import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
+import { ThemeProvider } from "@/renderer/providers/ThemeProvider";
 import {
   canUseAppUpdater,
   checkForAppUpdate,
   downloadAndInstallAppUpdate,
   type AppUpdateProgress,
   type PendingAppUpdate,
+  type RuntimeBridge,
 } from "@/runtime";
 
 vi.mock("@/runtime", () => ({
@@ -69,7 +76,7 @@ describe("AppUpdateController", () => {
     render(<AppUpdateController />);
 
     expect(await screen.findByRole("dialog", { name: "发现新版本" })).not.toBeNull();
-    expect(screen.getByText("当前版本 0.1.0，可更新到 0.1.1")).not.toBeNull();
+    expect(screen.getByText("从 0.1.0 更新到 0.1.1")).not.toBeNull();
 
     await user.click(screen.getByRole("button", { name: "下载并重启" }));
 
@@ -91,6 +98,43 @@ describe("AppUpdateController", () => {
     await user.click(screen.getByRole("button", { name: "关闭" }));
 
     expect(screen.queryByRole("dialog", { name: "发现新版本" })).toBeNull();
+  });
+
+  it("keeps update indicators on the app settings entry and settings about entry after dismissing", async () => {
+    const user = userEvent.setup();
+    checkForAppUpdateMock.mockResolvedValue(createPendingUpdate());
+    const indicatorRuntime = { conversation: {} } as RuntimeBridge;
+
+    const { container } = render(
+      <ThemeProvider>
+        <NotificationProvider>
+          <AppUpdateController>
+            <MemoryRouter>
+              <LayoutStateProvider>
+                <Sider conversations={[]} runtime={indicatorRuntime} />
+                <SettingsShell activeSection="about">
+                  <AboutSettingsPage />
+                </SettingsShell>
+              </LayoutStateProvider>
+            </MemoryRouter>
+          </AppUpdateController>
+        </NotificationProvider>
+      </ThemeProvider>,
+    );
+
+    expect(await screen.findByRole("dialog", { name: "发现新版本" })).not.toBeNull();
+    expect(container.querySelectorAll("[data-app-update-indicator]")).toHaveLength(2);
+
+    await user.click(screen.getByRole("button", { name: "稍后" }));
+
+    expect(screen.queryByRole("dialog", { name: "发现新版本" })).toBeNull();
+    expect(container.querySelectorAll("[data-app-update-indicator]")).toHaveLength(2);
+
+    checkForAppUpdateMock.mockResolvedValueOnce(null);
+    await user.click(screen.getByRole("button", { name: "检查更新" }));
+
+    expect(await screen.findByRole("dialog", { name: "已是最新版本" })).not.toBeNull();
+    expect(container.querySelectorAll("[data-app-update-indicator]")).toHaveLength(0);
   });
 
   it("keeps download progress when the page using the updater unmounts", async () => {
@@ -138,7 +182,9 @@ describe("AppUpdateController", () => {
 
     expect(await screen.findByRole("dialog", { name: "发现新版本" })).not.toBeNull();
     await user.click(screen.getByRole("button", { name: "关闭" }));
-    await user.click(screen.getByRole("button", { name: "下载更新并重启" }));
+    await user.click(screen.getByRole("button", { name: "查看并更新" }));
+    expect(await screen.findByRole("dialog", { name: "发现新版本" })).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "下载并重启" }));
 
     const progressBars = await screen.findAllByRole("progressbar", { name: "更新下载进度" });
     expect(progressBars).toHaveLength(1);

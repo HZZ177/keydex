@@ -1,6 +1,8 @@
 import {
   Archive,
+  Check,
   ChevronDown,
+  Download,
   Folder,
   FolderOpen,
   GitBranch,
@@ -59,6 +61,8 @@ import {
   subscribeLifecycleEvents,
 } from "@/renderer/events/lifecycleEvents";
 import { useOptionalAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
+import { useGitCheckoutIndicator } from "@/renderer/features/git/useGitCheckoutIndicator";
+import { useOptionalAppUpdate } from "@/renderer/providers/AppUpdateController";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
 import { useTheme } from "@/renderer/providers/ThemeProvider";
@@ -171,6 +175,8 @@ export function Sider({
 }: SiderProps) {
   const { theme, toggleTheme } = useTheme();
   const notifications = useNotifications();
+  const appUpdate = useOptionalAppUpdate();
+  const gitCheckoutPhase = useGitCheckoutIndicator();
   const optionalAgentRuntime = useOptionalAgentSessionRuntime();
   const runtimeConnection = useOptionalRuntimeConnection();
   const backendReady = runtimeConnection?.ready ?? true;
@@ -876,10 +882,17 @@ export function Sider({
           data-active={gitActive ? "true" : "false"}
           data-system-entry="git"
           aria-pressed={gitActive}
+          aria-busy={gitCheckoutPhase === "busy" || undefined}
           disabled={!gitEnabled}
           onClick={onOpenGit}
         >
-          <GitBranch size={17} />
+          {gitCheckoutPhase === "busy" ? (
+            <LoaderCircle className={styles.gitLoadingIcon} size={17} aria-hidden="true" />
+          ) : gitCheckoutPhase === "success" ? (
+            <Check className={styles.gitSuccessIcon} size={17} aria-hidden="true" />
+          ) : (
+            <GitBranch size={17} />
+          )}
           <span>Git</span>
         </button>
       </nav>
@@ -1211,6 +1224,15 @@ export function Sider({
         >
           <Settings size={17} strokeWidth={2} />
           <span>设置</span>
+          {appUpdate?.pendingUpdate ? (
+            <span
+              aria-hidden="true"
+              className={styles.updateBadge}
+              data-app-update-indicator="settings"
+            >
+              <Download size={10} strokeWidth={2.5} />
+            </span>
+          ) : null}
         </button>
       </div>
 

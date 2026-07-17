@@ -155,6 +155,41 @@ def test_pipeline_emits_progress_for_streamed_apply_patch_chunks() -> None:
     assert second_progress[0]["files"][0]["patch_complete"] is True
 
 
+def test_pipeline_waits_for_a_complete_streamed_apply_patch_filename() -> None:
+    pipeline = ToolCallChunkPipeline()
+    first = AIMessageChunk(
+        content="",
+        tool_call_chunks=[
+            {
+                "id": "call_split_path",
+                "index": 0,
+                "name": "apply_patch",
+                "args": '{"patch":"*** Begin Patch\\n*** Update File: docs/guide',
+            }
+        ],
+    )
+    second = AIMessageChunk(
+        content="",
+        tool_call_chunks=[
+            {
+                "id": None,
+                "index": 0,
+                "name": None,
+                "args": '.md\\n@@\\n-old\\n+new\\n*** End Patch"}',
+            }
+        ],
+    )
+
+    assert pipeline.process_chunk(first, model_run_id="model_run") == []
+
+    progress = pipeline.process_chunk(second, model_run_id="model_run")
+
+    assert progress[0]["files"][0]["path"] == "docs/guide.md"
+    assert progress[0]["files"][0]["added_lines"] == 1
+    assert progress[0]["files"][0]["deleted_lines"] == 1
+    assert progress[0]["files"][0]["patch_complete"] is True
+
+
 def test_pipeline_merges_openai_argument_chunks_by_index_after_first_id() -> None:
     pipeline = ToolCallChunkPipeline()
 

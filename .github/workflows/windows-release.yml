@@ -7,9 +7,9 @@ on:
         description: "Release version, for example 0.1.1"
         required: true
         type: string
-      release_notes:
-        description: "Release notes shown on GitHub and in the in-app updater (Markdown supported)"
-        required: true
+      release_notes_file:
+        description: "Markdown file path. Leave empty to use .github/release-notes/v<version>.md"
+        required: false
         type: string
       draft:
         description: "Create the GitHub Release as a draft. Draft releases are not visible to the in-app updater."
@@ -45,7 +45,7 @@ jobs:
 
       - name: Prepare release metadata
         env:
-          KEYDEX_RELEASE_NOTES: ${{ inputs.release_notes }}
+          KEYDEX_RELEASE_NOTES_FILE: ${{ inputs.release_notes_file }}
         run: |
           $version = "${{ inputs.version }}".Trim()
           if ($version.StartsWith("v", [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -54,12 +54,48 @@ jobs:
           if ($version -notmatch '^\d+\.\d+\.\d+([\-+][0-9A-Za-z.-]+)?$') {
             throw "Invalid release version '${{ inputs.version }}'. Use SemVer such as 0.1.1 or 0.1.1-beta.1."
           }
-          if ([string]::IsNullOrWhiteSpace($env:KEYDEX_RELEASE_NOTES)) {
-            throw "Release notes must not be empty."
+          $notesInput = if ([string]::IsNullOrWhiteSpace($env:KEYDEX_RELEASE_NOTES_FILE)) {
+            ""
+          } else {
+            $env:KEYDEX_RELEASE_NOTES_FILE.Trim()
           }
+          $notesRelativePath = if ([string]::IsNullOrWhiteSpace($notesInput)) {
+            ".github/release-notes/v$version.md"
+          } else {
+            $notesInput
+          }
+          $workspace = [System.IO.Path]::GetFullPath($env:GITHUB_WORKSPACE)
+          $notesCandidate = if ([System.IO.Path]::IsPathRooted($notesRelativePath)) {
+            $notesRelativePath
+          } else {
+            Join-Path $workspace $notesRelativePath
+          }
+          $notesPath = [System.IO.Path]::GetFullPath($notesCandidate)
+          $workspacePrefix = $workspace.TrimEnd(
+            [System.IO.Path]::DirectorySeparatorChar,
+            [System.IO.Path]::AltDirectorySeparatorChar
+          ) + [System.IO.Path]::DirectorySeparatorChar
+          if (-not $notesPath.StartsWith($workspacePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Release notes file must be inside the checked-out repository: $notesPath"
+          }
+          if (-not (Test-Path -LiteralPath $notesPath -PathType Leaf)) {
+            throw "Release notes file not found: $notesRelativePath. Create .github/release-notes/v$version.md or provide another repository-relative path."
+          }
+          $releaseNotes = (Get-Content -Raw -Encoding UTF8 -LiteralPath $notesPath).Trim()
+          if ([string]::IsNullOrWhiteSpace($releaseNotes)) {
+            throw "Release notes file must not be empty: $notesRelativePath"
+          }
+
+          $shortSha = $env:GITHUB_SHA.Substring(0, 7)
+          $commitUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/commit/$env:GITHUB_SHA"
+          $releaseBody = "$releaseNotes`n`n---`n`nBuilt from commit [$shortSha]($commitUrl).`n"
+          $releaseBodyPath = Join-Path $env:RUNNER_TEMP "keydex-release-$version.md"
+          [System.IO.File]::WriteAllText($releaseBodyPath, $releaseBody, [System.Text.UTF8Encoding]::new($false))
 
           "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "RELEASE_TAG=v$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RELEASE_NOTES_PATH=$notesPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RELEASE_BODY_PATH=$releaseBodyPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "INSTALLER_NAME=Keydex_${version}_x64-setup.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "UPDATER_SIGNATURE_NAME=Keydex_${version}_x64-setup.exe.sig" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
@@ -100,7 +136,6 @@ jobs:
 
       - name: Build Windows package
         env:
-          KEYDEX_RELEASE_NOTES: ${{ inputs.release_notes }}
           TAURI_CONFIG: '{"bundle":{"createUpdaterArtifacts":true}}'
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -174,7 +209,4 @@ jobs:
             artifacts/windows/latest.json
             artifacts/windows/manifest.json
             artifacts/windows/README.txt
-          body: |
-            ${{ inputs.release_notes }}
-
-            Built from commit ${{ github.sha }}.
+          body_path: ${{ env.RELEASE_BODY_PATH }}

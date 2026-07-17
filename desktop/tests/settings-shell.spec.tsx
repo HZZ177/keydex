@@ -28,7 +28,7 @@ describe("SettingsShell", () => {
   });
 
   it("renders only supported settings menu entries", () => {
-    renderShell("providers");
+    const { container } = renderShell("providers");
 
     expect(screen.getAllByRole("button", { name: "返回应用" })).toHaveLength(2);
     expect(screen.getByLabelText("搜索设置")).not.toBeNull();
@@ -44,6 +44,7 @@ describe("SettingsShell", () => {
     expect(screen.getByRole("button", { name: "归档管理" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "切换主题" })).not.toBeNull();
     expect(screen.queryByText("暂未开放")).toBeNull();
+    expect(container.querySelector('[data-app-update-indicator="about"]')).toBeNull();
   });
 
   it("marks project and archive management as separate accessible sections", () => {

@@ -62,6 +62,7 @@ describe("Sider", () => {
     expect(screen.queryByText("Scheduled")).toBeNull();
     expect(screen.queryByText("自动化")).toBeNull();
     expect(container.querySelector('section[aria-label="keydex"] svg')).not.toBeNull();
+    expect(container.querySelector('[data-app-update-indicator="settings"]')).toBeNull();
   });
 
   it("emits navigation requests and toggles theme", () => {

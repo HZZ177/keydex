@@ -28,6 +28,7 @@ if ($Help) {
     Write-Host "- 仅在需要 Windows exe 时执行。日常开发不要默认打包。"
     Write-Host "- 不传 -Fast/-Full 且不在 CI 中运行时，会先让你输入版本号；直接回车使用 tauri.conf.json 当前版本。"
     Write-Host "- -Version 用于非交互指定本次打包版本，不修改 tauri.conf.json/package.json 源文件。"
+    Write-Host "- 签名发版时可通过 KEYDEX_RELEASE_NOTES_PATH 指定 Markdown 更新说明文件；CI 会自动使用版本对应文件。"
     Write-Host "- 不传 -Fast/-Full 时会先让你选择快速打包或全量打包。"
     Write-Host "- 全量打包会安装依赖、运行测试、构建或复用 sidecar，并构建 Tauri 安装包。"
     Write-Host "- Tauri build 会按 tauri.conf.json 的 beforeBuildCommand 构建前端资源，脚本不再重复执行前端 build。"
@@ -91,7 +92,26 @@ $ReleaseApp = Join-Path $Root "desktop\src-tauri\target\release\keydex-desktop.e
 $ArtifactDir = Join-Path $Root "artifacts\windows"
 $ReleaseRepository = if ([string]::IsNullOrWhiteSpace($env:GITHUB_REPOSITORY)) { "HZZ177/keydex" } else { $env:GITHUB_REPOSITORY }
 $ReleaseTag = if ([string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) { "v$AppVersion" } else { $env:RELEASE_TAG }
-$ReleaseNotes = if ([string]::IsNullOrWhiteSpace($env:KEYDEX_RELEASE_NOTES)) { "Keydex $AppVersion" } else { $env:KEYDEX_RELEASE_NOTES.Trim() }
+$ReleaseNotesPath = if ([string]::IsNullOrWhiteSpace($env:KEYDEX_RELEASE_NOTES_PATH)) {
+    ""
+} elseif ([System.IO.Path]::IsPathRooted($env:KEYDEX_RELEASE_NOTES_PATH)) {
+    [System.IO.Path]::GetFullPath($env:KEYDEX_RELEASE_NOTES_PATH)
+} else {
+    [System.IO.Path]::GetFullPath((Join-Path $Root $env:KEYDEX_RELEASE_NOTES_PATH))
+}
+$ReleaseNotes = if (-not [string]::IsNullOrWhiteSpace($ReleaseNotesPath)) {
+    if (-not (Test-Path -LiteralPath $ReleaseNotesPath -PathType Leaf)) {
+        throw "未找到更新说明 Markdown 文件：$ReleaseNotesPath"
+    }
+    (Get-Content -Raw -Encoding UTF8 -LiteralPath $ReleaseNotesPath).Trim()
+} elseif (-not [string]::IsNullOrWhiteSpace($env:KEYDEX_RELEASE_NOTES)) {
+    $env:KEYDEX_RELEASE_NOTES.Trim()
+} else {
+    "Keydex $AppVersion"
+}
+if ([string]::IsNullOrWhiteSpace($ReleaseNotes)) {
+    throw "更新说明不能为空：$ReleaseNotesPath"
+}
 $ExpectUpdaterArtifacts = $false
 
 function Invoke-Step {

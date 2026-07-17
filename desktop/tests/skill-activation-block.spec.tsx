@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { RuntimeBridge, SkillResourceReadResponse, SkillSource } from "@/runtime";
 import { MessageList } from "@/renderer/pages/conversation/messages";
-import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
+import {
+  PreviewProvider,
+  usePreview,
+  type PreviewContextValue,
+} from "@/renderer/providers/PreviewProvider";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 
 describe("SkillActivationBlock", () => {
@@ -40,6 +44,40 @@ describe("SkillActivationBlock", () => {
       skill_name: "dev-plan",
       source: "workspace",
       resource_path: "SKILL.md",
+    });
+  });
+
+  it("uses the explicitly passed preview context across the detached timeline boundary", async () => {
+    const runtime = skillRuntime("workspace", "SKILL.md");
+    const openPreview = vi.fn();
+    const previewContext = {
+      hostContext: null,
+      openPreview,
+    } as unknown as PreviewContextValue;
+
+    render(
+      <MessageList
+        messages={[loadSkillMessage()]}
+        workspaceRuntime={runtime}
+        workspaceScope={{ sessionId: "ses-1" }}
+        previewContextOverride={previewContext}
+      />,
+    );
+
+    const button = screen.getByTestId("skill-activation-block").querySelector("button");
+    expect(button).not.toBeNull();
+    fireEvent.click(button!);
+
+    await waitFor(() => {
+      expect(openPreview).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "skill-resource",
+          skillName: "dev-plan",
+          resourcePath: "SKILL.md",
+        }),
+        expect.objectContaining({ sessionId: "ses-1" }),
+        undefined,
+      );
     });
   });
 

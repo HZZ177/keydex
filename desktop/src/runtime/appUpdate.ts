@@ -2,6 +2,7 @@ import appPackage from "../../package.json";
 import type { DownloadEvent, Update } from "@tauri-apps/plugin-updater";
 
 import { isTauriRuntime } from "./agentConnection";
+import { normalizeReleaseMarkdown } from "./appReleaseNotes";
 
 export interface PendingAppUpdate {
   currentVersion: string;
@@ -46,7 +47,7 @@ export async function checkForAppUpdate(): Promise<PendingAppUpdate | null> {
     currentVersion: update.currentVersion,
     version: update.version,
     date: update.date,
-    body: update.body,
+    body: normalizeReleaseMarkdown(update.body),
     update,
   };
 }

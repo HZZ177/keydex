@@ -80,6 +80,88 @@ describe("Conversation RenderUnit projection", () => {
     });
   });
 
+  it("changes the A2UI render version when only hydrated interaction state changes", () => {
+    const initialMessage = message("a2ui-history", "a2ui", "", "completed", {
+      historyHydrated: true,
+      a2ui: {
+        render_key: "choice",
+        stream_id: "stream-history",
+        interaction: {
+          interaction_id: "interaction-history",
+          status: "submitted",
+          can_submit: false,
+          submit_result: { selected_values: ["primary"] },
+        },
+      },
+    });
+    const updatedMessage = {
+      ...initialMessage,
+      payload: {
+        ...initialMessage.payload,
+        a2ui: {
+          ...(initialMessage.payload.a2ui as Record<string, unknown>),
+          interaction: {
+            interaction_id: "interaction-history",
+            status: "cancelled",
+            can_submit: false,
+          },
+        },
+      },
+    };
+    const initial = unit(projectConversationRenderUnits(processMessages([initialMessage])), "a2ui");
+    const updated = unit(projectConversationRenderUnits(processMessages([updatedMessage])), "a2ui");
+
+    expect(updated.id).toBe(initial.id);
+    expect(updated.renderVersion).not.toBe(initial.renderVersion);
+  });
+
+  it("changes a running tool render version when streamed file details advance", () => {
+    const initialMessage = message("tool-stream", "tool", "apply_patch", "running", {
+      call: {
+        id: "call-stream",
+        name: "apply_patch",
+        arguments: { patch: "*** Begin Patch\n*** Update File: docs/guide" },
+      },
+      files: [{ path: "docs/guide", operation: "update", added_lines: 0, deleted_lines: 0 }],
+      result: {
+        status: "running",
+        files: [{ path: "docs/guide", operation: "update", added_lines: 0, deleted_lines: 0 }],
+      },
+    });
+    const namedMessage = message("tool-stream", "tool", "apply_patch", "running", {
+      call: {
+        id: "call-stream",
+        name: "apply_patch",
+        arguments: { patch: "*** Begin Patch\n*** Update File: docs/guide.md\n" },
+      },
+      files: [{ path: "docs/guide.md", operation: "update", added_lines: 0, deleted_lines: 0 }],
+      result: {
+        status: "running",
+        files: [{ path: "docs/guide.md", operation: "update", added_lines: 0, deleted_lines: 0 }],
+      },
+    });
+    const countedMessage = message("tool-stream", "tool", "apply_patch", "running", {
+      call: {
+        id: "call-stream",
+        name: "apply_patch",
+        arguments: { patch: "*** Begin Patch\n*** Update File: docs/guide.md\n@@\n-old\n+new" },
+      },
+      files: [{ path: "docs/guide.md", operation: "update", added_lines: 1, deleted_lines: 1 }],
+      result: {
+        status: "running",
+        files: [{ path: "docs/guide.md", operation: "update", added_lines: 1, deleted_lines: 1 }],
+      },
+    });
+    const initial = unit(projectConversationRenderUnits(processMessages([initialMessage])), "tool");
+    const named = unit(projectConversationRenderUnits(processMessages([namedMessage])), "tool");
+    const counted = unit(projectConversationRenderUnits(processMessages([countedMessage])), "tool");
+
+    expect(named.id).toBe(initial.id);
+    expect(counted.id).toBe(initial.id);
+    expect(named.renderVersion).not.toBe(initial.renderVersion);
+    expect(counted.renderVersion).not.toBe(named.renderVersion);
+  });
+
   it("covers error, skill, task, status, command, and file-change families", () => {
     const cases: Array<[ConversationMessage["kind"], ConversationRenderUnitKind]> = [
       ["error", "error"],

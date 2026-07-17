@@ -488,6 +488,7 @@ button.sectionTitle[data-kind="pinned"]:focus-visible,
 .navItem,
 .historyItem,
 .projectItem {
+  position: relative;
   width: 100%;
   min-width: 0;
   height: 30px;
@@ -512,6 +513,15 @@ button.sectionTitle[data-kind="pinned"]:focus-visible,
 .projectItem svg {
   flex: 0 0 auto;
   color: color-mix(in srgb, currentColor 82%, transparent);
+}
+
+.gitLoadingIcon {
+  animation: historySpinner 800ms linear infinite;
+}
+
+.gitSuccessIcon {
+  color: var(--color-success-6) !important;
+  animation: gitCheckoutSuccess 720ms var(--motion-ease-standard) both;
 }
 
 .projectItem {
@@ -944,6 +954,36 @@ button.sectionTitle[data-kind="pinned"]:focus-visible,
   white-space: nowrap;
 }
 
+.navItem .updateBadge {
+  position: relative;
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  flex: 0 0 16px;
+  place-items: center;
+  margin-left: auto;
+  overflow: visible;
+  background: transparent;
+  color: var(--color-info-6);
+  line-height: 1;
+}
+
+.navItem .updateBadge svg {
+  width: 13px;
+  height: 13px;
+  color: inherit;
+}
+
+.navItem .updateBadge::after {
+  position: absolute;
+  display: none;
+  border-radius: var(--radius-pill);
+  background: var(--color-info-6);
+  box-shadow: 0 0 0 1.5px var(--sidebar-bg);
+  content: "";
+}
+
 .empty {
   padding: 7px 9px;
   color: var(--color-text-4);
@@ -1107,6 +1147,30 @@ button.sectionTitle[data-kind="pinned"]:focus-visible,
 .sider[data-collapsed="true"] .navItem span,
 .sider[data-collapsed="true"] .footer .navItem span {
   display: none;
+}
+
+.sider[data-collapsed="true"] .footer .navItem .updateBadge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: inline-grid;
+  width: 13px;
+  height: 13px;
+  min-height: 13px;
+  margin: 0;
+}
+
+.sider[data-collapsed="true"] .footer .navItem .updateBadge svg {
+  display: none;
+}
+
+.sider[data-collapsed="true"] .footer .navItem .updateBadge::after {
+  top: 50%;
+  right: 50%;
+  display: block;
+  width: 7px;
+  height: 7px;
+  transform: translate(50%, -50%);
 }
 
 .sider[data-collapsed="true"] .history {
@@ -1346,7 +1410,19 @@ button.sectionTitle[data-kind="pinned"]:focus-visible,
   }
 }
 
+@keyframes gitCheckoutSuccess {
+  0% { opacity: 0; transform: rotate(-28deg) scale(0.55); }
+  24% { opacity: 1; transform: rotate(0) scale(1.08); }
+  62% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(0.78); }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .gitLoadingIcon,
+  .gitSuccessIcon {
+    animation: none;
+  }
+
   :global([data-sidebar-motion="true"]) .sider {
     transition: none;
   }

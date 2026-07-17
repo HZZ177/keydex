@@ -2104,6 +2104,11 @@ describe("MessageList", () => {
     fireEvent.wheel(scroller, { deltaY: -120 });
     expect(screen.getByTestId("message-list").getAttribute("data-list-mode")).toBe("virtual");
     expect(scroller.dataset.conversationTimelineUserScrollActive).toBe("true");
+    scroller.scrollTop = 798;
+    fireEvent.scroll(scroller);
+    await waitFor(() => {
+      expect(screen.getByTestId("message-list").getAttribute("data-follow-mode")).toBe("user-detached");
+    });
     mockScrollMetrics(scroller, { scrollHeight: 1200, clientHeight: 200, scrollTop: 800 });
     rerender(
       <MessageList
@@ -2116,6 +2121,31 @@ describe("MessageList", () => {
       await new Promise((resolve) => window.setTimeout(resolve, 40));
     });
     expect(scroller.scrollTop).toBe(800);
+  });
+
+  it("updates hot-tail residency in place when the user returns to the bottom", async () => {
+    render(<MessageList messages={historyMessages(5, "resident-tail")} />);
+    const scroller = screen.getByTestId("message-list-scroll") as HTMLDivElement;
+    await waitFor(() => expect(screen.getByTestId("message-list").getAttribute("data-tail-bootstrap")).toBe("committed"));
+    mockScrollMetrics(scroller, { scrollHeight: 2_000, clientHeight: 400, scrollTop: 600 });
+
+    fireEvent.wheel(scroller, { deltaY: -120 });
+    fireEvent.scroll(scroller);
+    await waitFor(() => {
+      expect(screen.getByTestId("message-list").getAttribute("data-follow-mode")).toBe("user-detached");
+      expect(scroller.querySelectorAll('[data-conversation-unit-resident="true"]')).toHaveLength(0);
+    });
+    const detachedRevision = scroller.dataset.markdownRevision;
+
+    scroller.scrollTop = 1_600;
+    fireEvent.wheel(scroller, { deltaY: 120 });
+    fireEvent.scroll(scroller);
+    await waitFor(() => {
+      expect(screen.getByTestId("message-list").getAttribute("data-follow-mode")).toBe("following-bottom");
+      expect(scroller.querySelectorAll('[data-conversation-unit-resident="true"]')).not.toHaveLength(0);
+    });
+
+    expect(scroller.dataset.markdownRevision).toBe(detachedRevision);
   });
 
   it("routes native scrollbar dragging through virtual timeline ownership", async () => {

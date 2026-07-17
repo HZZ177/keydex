@@ -51,6 +51,33 @@ describe("MessageList A2UI callback contract", () => {
     expect(screen.getByText("等待输入")).toBeTruthy();
   });
 
+  it("rerenders a settled A2UI unit when only its interaction payload changes", async () => {
+    const submitted: A2UIInteractionState = {
+      interaction_id: "int-history",
+      status: "submitted",
+      can_submit: false,
+      submit_result: { selected_values: ["now"] },
+    };
+    const cancelled: A2UIInteractionState = {
+      interaction_id: "int-history",
+      status: "cancelled",
+      can_submit: false,
+    };
+    const { rerender } = render(
+      <MessageList messages={[conversationA2UIMessageWith({ streamId: "stream-history", interaction: submitted })]} />,
+    );
+
+    expect(screen.getByTestId("a2ui-choice-result").getAttribute("data-result-status")).toBe("submitted");
+
+    rerender(
+      <MessageList messages={[conversationA2UIMessageWith({ streamId: "stream-history", interaction: cancelled })]} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("a2ui-choice-result").getAttribute("data-result-status")).toBe("cancelled");
+    });
+  });
+
   it("switches to virtual mode when many turns contain A2UI blocks", () => {
     withBrowserListEnvironment(() => {
       render(

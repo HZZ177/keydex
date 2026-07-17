@@ -1,6 +1,7 @@
 import {
   ArrowDownLeft,
   ArrowUpRight,
+  Check,
   ChevronDown,
   ChevronRight,
   GitBranch,
@@ -24,6 +25,7 @@ import {
   useOptionalGitStoreSelector,
 } from "@/renderer/providers/GitProvider";
 import type { GitProjectStoreState, GitStoreState } from "@/renderer/features/git/store/gitStore";
+import { useGitCheckoutIndicator } from "@/renderer/features/git/useGitCheckoutIndicator";
 import type { GitPushCommand } from "@/runtime/git";
 import type {
   GitCommitDetail,
@@ -180,6 +182,8 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
       : model.error
         ? "不可用"
       : model.branchLabel;
+  const checkoutPhase = useGitCheckoutIndicator(busyAction === "checkout");
+  const checkoutBusy = checkoutPhase === "busy";
   const disabledLabel = model.unavailable
     ? "Git：系统 Git 不可用"
     : "Git：加载项目后可用";
@@ -545,7 +549,8 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
   const activateRefMenuAction = (action: GitRefMenuAction, ref: GitRef) => {
     setRefMenu(null);
     if (action === "checkout") {
-      openCommandDialog({ kind: "checkout", detach: ref.kind !== "local" }, ref.shortName);
+      closeMenu();
+      requestRefCheckout(ref.shortName, ref.kind !== "local");
       return;
     }
     if (action === "create_branch") {
@@ -616,9 +621,10 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
         ref={triggerRef}
         className={styles.trigger}
         disabled={!model.enabled}
+        aria-busy={checkoutBusy || undefined}
         aria-expanded={open}
         aria-haspopup="menu"
-        aria-label={model.enabled ? `Git：${stateLabel}` : disabledLabel}
+        aria-label={model.enabled ? `Git：${checkoutBusy ? "签出中" : stateLabel}` : disabledLabel}
         onClick={() => {
           if (open) closeMenu();
           else setOpen(true);
@@ -630,9 +636,15 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
           queueMicrotask(() => searchRef.current?.focus());
         }}
       >
-        <GitBranch size={14} />
-        <span className={styles.branch}>{stateLabel}</span>
-        <GitDivergenceIndicator ahead={model.ahead} behind={model.behind} />
+        {checkoutPhase === "busy" ? (
+          <LoaderCircle className={styles.busyIcon} size={14} aria-hidden="true" />
+        ) : checkoutPhase === "success" ? (
+          <Check className={styles.checkoutSuccessIcon} size={14} aria-hidden="true" />
+        ) : (
+          <GitBranch size={14} />
+        )}
+        <span className={styles.branch}>{checkoutBusy ? "签出中" : stateLabel}</span>
+        {checkoutBusy ? null : <GitDivergenceIndicator ahead={model.ahead} behind={model.behind} />}
         <ChevronDown size={12} aria-hidden="true" />
       </button>
 

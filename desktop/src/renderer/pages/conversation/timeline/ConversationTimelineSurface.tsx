@@ -76,11 +76,13 @@ export function ConversationTimelineSurface({
   const onViewportChangedRef = useRef(onViewportChanged);
   const onScrollRequestRef = useRef(onScrollRequest);
   const scrollerRefRef = useRef(scrollerRef);
+  const residentUnitIdsRef = useRef(residentUnitIds);
   renderUnitRef.current = renderUnit;
   onPublishedRef.current = onPublished;
   onViewportChangedRef.current = onViewportChanged;
   onScrollRequestRef.current = onScrollRequest;
   scrollerRefRef.current = scrollerRef;
+  residentUnitIdsRef.current = residentUnitIds;
 
   useLayoutEffect(() => {
     const element = elementRef.current;
@@ -192,9 +194,13 @@ export function ConversationTimelineSurface({
   useLayoutEffect(() => {
     const runtime = runtimeInstanceRef.current;
     if (!runtime) return;
-    runtime.publish(units, residentUnitIds);
+    runtime.publish(units, residentUnitIdsRef.current);
     onPublishedRef.current?.(runtime.diagnostics());
-  }, [residentUnitIds, units]);
+  }, [units]);
+
+  useLayoutEffect(() => {
+    runtimeInstanceRef.current?.setResidentUnits(residentUnitIds);
+  }, [residentUnitIds]);
 
   return (
     <div

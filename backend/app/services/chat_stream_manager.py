@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
+from collections.abc import Awaitable
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -35,10 +36,11 @@ class ChatStreamMissingSessionError(ChatStreamError):
 @dataclass(slots=True)
 class ChatStreamRun:
     session_id: str
-    request: ChatRequest
+    request: ChatRequest | None
     task: asyncio.Task
     cancellation: ChatCancellationToken
     started_at_ms: int
+    kind: str = "chat"
 
 
 class BroadcastChatAdapter:
@@ -136,6 +138,43 @@ class ChatStreamManager:
 
         logger.info(f"[ChatStreamManager] 后台对话已启动 | session_id={session_id}")
         return session_id
+
+    async def start_managed_run(
+        self,
+        *,
+        session_id: str,
+        awaitable: Awaitable[Any],
+        cancellation: ChatCancellationToken,
+        kind: str,
+    ) -> asyncio.Task[Any]:
+        """Register a continuation under the same per-session task lifecycle as chat."""
+        cleaned = session_id.strip()
+        if not cleaned:
+            self._close_unstarted_awaitable(awaitable)
+            raise ChatStreamMissingSessionError("Background runs require a session_id")
+
+        async with self._lock:
+            existing = self._runs.get(cleaned)
+            if existing is not None and not existing.task.done():
+                self._close_unstarted_awaitable(awaitable)
+                raise ChatStreamAlreadyRunningError("A run is already active for this session")
+
+            task = asyncio.create_task(awaitable)
+            self._runs[cleaned] = ChatStreamRun(
+                session_id=cleaned,
+                request=None,
+                task=task,
+                cancellation=cancellation,
+                started_at_ms=int(time.time() * 1000),
+                kind=str(kind or "managed"),
+            )
+            task.add_done_callback(lambda done_task: self._schedule_finish(cleaned, done_task))
+
+        logger.info(
+            "[ChatStreamManager] Managed background run started | "
+            f"session_id={cleaned} | kind={kind or 'managed'}"
+        )
+        return task
 
     async def submit_input(self, request: ChatRequest) -> dict[str, Any]:
         session_id = (request.session_id or "").strip()
@@ -587,21 +626,28 @@ class ChatStreamManager:
 
         result: Any | None = None
         error: BaseException | None = None
+        cancelled = bool(
+            finished_run is not None and finished_run.cancellation.is_cancelled()
+        )
         try:
             result = task.result()
         except asyncio.CancelledError as exc:
             error = exc
-            logger.info(f"[ChatStreamManager] 后台对话 task 已取消 | session_id={session_id}")
+            cancelled = True
         except Exception as exc:
             error = exc
             logger.opt(exception=True).error(
                 f"[ChatStreamManager] 后台对话 task 异常 | session_id={session_id} | error={exc}"
             )
         else:
+            cancelled = cancelled or self._is_cancelled_completion(result=result, error=error)
+
+        if cancelled:
+            logger.info(f"[ChatStreamManager] 后台对话 task 已取消 | session_id={session_id}")
+        elif error is None:
             logger.info(f"[ChatStreamManager] 后台对话 task 完成 | session_id={session_id}")
 
         if removed_current:
-            cancelled = self._is_cancelled_completion(result=result, error=error)
             await self._notify_after_run_finished(
                 session_id,
                 request=finished_run.request if finished_run is not None else None,
@@ -609,6 +655,12 @@ class ChatStreamManager:
                 error=error,
                 cancelled=cancelled,
             )
+
+    @staticmethod
+    def _close_unstarted_awaitable(awaitable: Awaitable[Any]) -> None:
+        close = getattr(awaitable, "close", None)
+        if callable(close):
+            close()
 
     async def _notify_after_run_finished(
         self,

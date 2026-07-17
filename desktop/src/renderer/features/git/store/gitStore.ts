@@ -82,6 +82,20 @@ export interface GitStoreState {
 
 export type GitStore = StoreApi<GitStoreState>;
 
+export function selectLatestActiveGitCheckoutOperation(state: GitStoreState): GitCommandResult | null {
+  const workspaceId = state.activeWorkspaceId;
+  const repositoryId = workspaceId ? state.projects[workspaceId]?.selectedRepositoryId : null;
+  if (!repositoryId) return null;
+
+  for (const operationId of state.operationIds) {
+    const operation = state.operations[operationId];
+    if (operation?.repositoryId === repositoryId && operation.command === "checkout") {
+      return operation;
+    }
+  }
+  return null;
+}
+
 const DEFAULT_UI: GitProjectUiState = {
   toolWindowOpen: false,
   toolWindowMaximized: true,

@@ -239,6 +239,64 @@ describe("ConversationTimelineRuntime", () => {
     expect(harness.root.scrollTop).toBe(39_460);
   });
 
+  it("keeps final-wheel geometry correction inside the gesture instead of after scroll settle", () => {
+    const harness = createRuntime();
+    harness.runtime.publish(units(100));
+    harness.root.scrollTop = 3_400;
+    harness.runtime.updateViewport();
+    harness.runtime.setUserScrollInteraction(true);
+    harness.scrollRequests.length = 0;
+
+    harness.runtime.setFollowBottom(true);
+    expect(harness.scrollRequests).toEqual([{ scrollTop: 3_400, reason: "follow-bottom" }]);
+
+    harness.runtime.updateMeasuredHeight("unit-99", 140);
+    expect(harness.root.scrollTop).toBe(3_500);
+    expect(harness.runtime.diagnostics().totalHeight).toBe(4_100);
+    expect(harness.scrollRequests).toEqual([
+      { scrollTop: 3_400, reason: "follow-bottom" },
+      { scrollTop: 3_500, reason: "follow-bottom-geometry" },
+    ]);
+
+    harness.runtime.setUserScrollInteraction(false);
+    expect(harness.root.scrollTop).toBe(3_500);
+    expect(harness.scrollRequests).toHaveLength(2);
+  });
+
+  it("measures a dirty tail before choosing the final follow-bottom target", () => {
+    const harness = createRuntime();
+    const values = units(100);
+    harness.runtime.publish(values);
+    harness.root.scrollTop = 3_400;
+    harness.runtime.updateViewport();
+    const tail = harness.runtime.getUnitElement("unit-99")!;
+    let height = 40;
+    vi.spyOn(tail, "getBoundingClientRect").mockImplementation(() => ({
+      bottom: height,
+      height,
+      left: 0,
+      right: 100,
+      top: 0,
+      width: 100,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }));
+    expect(harness.runtime.commitRenderedUnit(values[99]!)).toBe(true);
+
+    height = 140;
+    tail.firstElementChild!.dispatchEvent(new CustomEvent(CONVERSATION_GEOMETRY_COMMIT_EVENT, {
+      bubbles: true,
+    }));
+    harness.runtime.setUserScrollInteraction(true);
+    harness.scrollRequests.length = 0;
+    harness.runtime.setFollowBottom(true);
+
+    expect(harness.runtime.diagnostics().totalHeight).toBe(4_100);
+    expect(harness.root.scrollTop).toBe(3_500);
+    expect(harness.scrollRequests).toEqual([{ scrollTop: 3_500, reason: "follow-bottom" }]);
+  });
+
   it("top-aligns a revealed unit and clamps the final unit to the bottom", () => {
     const harness = createRuntime({ followBottom: true });
     harness.runtime.publish(units(1_000));

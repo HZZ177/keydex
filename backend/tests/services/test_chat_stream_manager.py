@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from backend.app.services import (
+    ChatCancellationToken,
     ChatRequest,
     ChatStreamAlreadyRunningError,
     ChatStreamManager,
@@ -275,6 +276,42 @@ async def test_chat_stream_manager_user_cancel_pauses_task_runtime_without_auto_
     assert type(runtime.cancel_calls[0]["error"]).__name__ == "CancelledError"
     assert runtime.events == ["finished", "cancelled"]
     assert runtime.calls == []
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_manager_cancels_managed_a2ui_resume_task() -> None:
+    service = BlockingChatService()
+    manager = ChatStreamManager(service)  # type: ignore[arg-type]
+    cancellation = ChatCancellationToken()
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def run_resume() -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+
+    task = await manager.start_managed_run(
+        session_id="ses-a2ui",
+        awaitable=run_resume(),
+        cancellation=cancellation,
+        kind="a2ui_resume",
+    )
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    assert (await manager.status("ses-a2ui"))["status"] == "running"
+    assert await manager.cancel("ses-a2ui") is True
+    await asyncio.wait_for(cancelled.wait(), timeout=1)
+    await asyncio.wait_for(task, timeout=1)
+
+    assert cancellation.is_cancelled() is True
+    for _ in range(20):
+        if (await manager.status("ses-a2ui"))["status"] == "idle":
+            break
+        await asyncio.sleep(0.01)
+    assert (await manager.status("ses-a2ui"))["status"] == "idle"
 
 
 @pytest.mark.asyncio

@@ -56,6 +56,7 @@ export class ConversationFollowController {
   private readonly onChange?: (snapshot: ConversationFollowSnapshot) => void;
   private temporaryPreviousMode: ConversationFollowMode = "following-bottom";
   private userIntent = false;
+  private upwardDetachStartScrollTop: number | null = null;
   private scrollbarDrag = false;
   private contentAvailable = false;
   private bootstrapCommitted: boolean;
@@ -119,6 +120,7 @@ export class ConversationFollowController {
     if (this.autoFollow === enabled) return;
     this.autoFollow = enabled;
     if (!enabled) {
+      this.upwardDetachStartScrollTop = null;
       this.bootstrapCommitted = true;
       if (this.mode === "following-bottom" || this.mode === "bootstrapping-tail") {
         this.transition("user-detached", "auto-follow-disabled");
@@ -129,6 +131,7 @@ export class ConversationFollowController {
       this.bootstrapCommitted = false;
       this.transition("bootstrapping-tail", "auto-follow-enabled-empty");
     } else if (this.atBottom()) {
+      this.upwardDetachStartScrollTop = null;
       this.bootstrapCommitted = true;
       this.transition("following-bottom", "auto-follow-enabled-at-bottom");
     } else this.emit();
@@ -141,6 +144,7 @@ export class ConversationFollowController {
     this.tailReady = false;
     this.bootstrapCommitted = !this.autoFollow;
     this.userIntent = false;
+    this.upwardDetachStartScrollTop = null;
     this.scrollbarDrag = false;
     this.transition(this.autoFollow ? "bootstrapping-tail" : "user-detached", reason);
   }
@@ -178,6 +182,9 @@ export class ConversationFollowController {
   notifyContentMutation(kind: ConversationContentMutation): void {
     this.assertActive();
     this.mutationSequence += 1;
+    if (this.upwardDetachStartScrollTop !== null && !this.atBottom()) {
+      this.upwardDetachStartScrollTop = null;
+    }
     if (!this.autoFollow || !this.shouldFollowTail() || !this.contentAvailable) {
       this.emit();
       return;
@@ -200,6 +207,7 @@ export class ConversationFollowController {
   beginNavigation(reason = "turn-navigation"): void {
     this.assertActive();
     this.cancelScheduledScroll();
+    this.upwardDetachStartScrollTop = null;
     this.bootstrapCommitted = true;
     this.temporaryPreviousMode = this.mode;
     this.transition("navigating-turn", reason);
@@ -214,6 +222,7 @@ export class ConversationFollowController {
   beginHistoryRestore(): void {
     this.assertActive();
     this.cancelScheduledScroll();
+    this.upwardDetachStartScrollTop = null;
     this.bootstrapCommitted = true;
     this.temporaryPreviousMode = this.mode;
     this.transition("restoring-history", "history-prepend");
@@ -233,6 +242,7 @@ export class ConversationFollowController {
     this.assertActive();
     this.cancelScheduledScroll();
     this.userIntent = true;
+    this.upwardDetachStartScrollTop = null;
     this.scrollbarDrag = true;
     this.bootstrapCommitted = true;
     if (this.mode === "following-bottom" || this.mode === "bootstrapping-tail") {
@@ -272,6 +282,7 @@ export class ConversationFollowController {
     if (!element || !this.contentAvailable) return;
     this.cancelScheduledScroll();
     this.userIntent = false;
+    this.upwardDetachStartScrollTop = null;
     this.scrollbarDrag = false;
     this.bootstrapCommitted = true;
     this.tailReady = true;
@@ -340,8 +351,14 @@ export class ConversationFollowController {
     if (!element || !wheelWillScrollElement(event as WheelIntentEvent, element)) return;
     this.cancelScheduledScroll();
     this.userIntent = true;
-    if (isUpwardWheelIntent(event as WheelIntentEvent) && this.mode === "following-bottom") {
-      this.transition("user-detached", "user-wheel-up");
+    if (
+      isUpwardWheelIntent(event as WheelIntentEvent)
+      && (this.mode === "following-bottom" || this.mode === "user-detached")
+    ) {
+      this.upwardDetachStartScrollTop = element.scrollTop;
+      if (this.mode === "following-bottom") this.transition("user-detached", "user-wheel-up");
+    } else {
+      this.upwardDetachStartScrollTop = null;
     }
   };
 
@@ -356,10 +373,27 @@ export class ConversationFollowController {
   };
 
   private readonly handleScroll = (event: Event) => {
+    const element = this.element;
+    if (!element) return;
     this.scrollSequence += 1;
     if (this.mode === "bootstrapping-tail") {
       this.emit();
       return;
+    }
+    // An upward wheel can be followed by a scroll event which still reports
+    // the old bottom because the virtual tail settled its measured height in
+    // the same frame. That geometry result must not override the explicit
+    // detach intent. Once a later event is observably away from the bottom,
+    // ordinary downward scrolling may attach again as before.
+    if (this.upwardDetachStartScrollTop !== null) {
+      const movedDownPastDetachStart = element.scrollTop > this.upwardDetachStartScrollTop + 0.5;
+      if (movedDownPastDetachStart) {
+        this.upwardDetachStartScrollTop = null;
+      } else {
+        if (!this.atBottom()) this.upwardDetachStartScrollTop = null;
+        this.emit();
+        return;
+      }
     }
     if (this.atBottom()) {
       this.userIntent = false;

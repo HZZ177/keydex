@@ -125,6 +125,7 @@ export class ConversationTimelineRuntime {
   private followBottom: boolean;
   private userScrollActive = false;
   private controlledScrollActive = false;
+  private followBottomGestureActive = false;
   private expectedProgrammaticScrollTop: number | null = null;
   private viewportFrame: number | null = null;
   private geometryFrame: number | null = null;
@@ -257,20 +258,32 @@ export class ConversationTimelineRuntime {
 
   setFollowBottom(enabled: boolean): ConversationTimelinePatch | null {
     this.assertActive();
+    const becameEnabled = enabled && !this.followBottom;
     this.followBottom = enabled;
     this.root.dataset.conversationTimelineFollowBottom = enabled ? "true" : "false";
-    if (!enabled || !this.snapshot) return null;
-    const target = this.bottomScrollTop();
-    const patch = this.updateViewportWithOrigin(target, this.root.clientHeight, "programmatic");
-    this.requestScroll(target, "follow-bottom");
-    return patch;
+    if (!enabled) {
+      this.followBottomGestureActive = false;
+      return null;
+    }
+    if (!this.snapshot) return null;
+    // Returning to the bottom can mount the resident tail and settle its exact
+    // height in the same gesture. Keep that correction inside the gesture: a
+    // delayed commit leaves the newly positioned tail visible at the old
+    // scrollTop for USER_SCROLL_SETTLE_MS, which looks like the whole timeline
+    // sinks behind the composer before snapping back.
+    this.followBottomGestureActive = this.userScrollActive && becameEnabled;
+    return this.commitFollowBottom("follow-bottom");
   }
 
   setUserScrollInteraction(active: boolean): void {
     this.assertActive();
-    this.userScrollActive = active;
-    this.root.dataset.conversationTimelineUserScrollActive = active ? "true" : "false";
-    if (!active) this.clearUserScrollSettleTimer();
+    if (active) {
+      this.userScrollActive = true;
+      this.root.dataset.conversationTimelineUserScrollActive = "true";
+      return;
+    }
+    this.clearUserScrollSettleTimer();
+    this.settleUserScrollInteraction();
   }
 
   setControlledScrollInteraction(active: boolean): void {
@@ -325,6 +338,7 @@ export class ConversationTimelineRuntime {
     const heightIndex = this.view.getHeightIndex();
     if (index === undefined || !heightIndex || !this.snapshot) return false;
     this.followBottom = false;
+    this.followBottomGestureActive = false;
     this.root.dataset.conversationTimelineFollowBottom = "false";
     const top = heightIndex.offsetOf(index);
     const height = heightIndex.heightAt(index);
@@ -367,6 +381,7 @@ export class ConversationTimelineRuntime {
     const heightIndex = this.view.getHeightIndex();
     if (index === undefined || !heightIndex || !this.snapshot) return false;
     this.followBottom = false;
+    this.followBottomGestureActive = false;
     this.root.dataset.conversationTimelineFollowBottom = "false";
     const target = clamp(
       heightIndex.offsetOf(index) + anchor.offsetWithinUnit - anchor.viewportOffset,
@@ -581,12 +596,8 @@ export class ConversationTimelineRuntime {
     const result = this.withViewMutation(() => this.view.updateMeasuredHeights(effective, revision));
     if (!result) return null;
     let patch = this.publishPatch(result);
-    if (this.followBottom && !this.userScrollActive) {
-      const target = this.bottomScrollTop();
-      patch = this.updateViewportWithOrigin(target, this.root.clientHeight, "automatic");
-      if (Math.abs(this.root.scrollTop - target) > HEIGHT_EPSILON_PX) {
-        this.requestScroll(target, "follow-bottom-geometry");
-      }
+    if (this.followBottom && (!this.userScrollActive || this.followBottomGestureActive)) {
+      patch = this.commitFollowBottom("follow-bottom-geometry");
     } else if (
       !this.userScrollActive
       && !this.controlledScrollActive
@@ -774,8 +785,7 @@ export class ConversationTimelineRuntime {
       if (view) {
         this.userScrollSettleTimer = view.setTimeout(() => {
           this.userScrollSettleTimer = null;
-          this.userScrollActive = false;
-          this.root.dataset.conversationTimelineUserScrollActive = "false";
+          this.settleUserScrollInteraction();
         }, USER_SCROLL_SETTLE_MS);
       }
     }
@@ -794,6 +804,39 @@ export class ConversationTimelineRuntime {
     if (this.userScrollSettleTimer === null) return;
     this.root.ownerDocument.defaultView?.clearTimeout(this.userScrollSettleTimer);
     this.userScrollSettleTimer = null;
+  }
+
+  private settleUserScrollInteraction(): void {
+    this.userScrollActive = false;
+    this.root.dataset.conversationTimelineUserScrollActive = "false";
+    this.followBottomGestureActive = false;
+  }
+
+  private commitFollowBottom(
+    reason: Extract<ConversationTimelineScrollRequest["reason"], "follow-bottom" | "follow-bottom-geometry">,
+  ): ConversationTimelinePatch {
+    this.cancelViewportFrame();
+    // First settle dirty mounted geometry against the scrollTop the browser is
+    // actually displaying. The old implementation calculated the target
+    // before this pass, so a late Markdown measurement could make that target
+    // stale by exactly the height delta that had just been published.
+    let patch = this.updateViewportWithOrigin(
+      this.root.scrollTop,
+      this.root.clientHeight,
+      "programmatic",
+    );
+    for (let pass = 0; pass < 2; pass += 1) {
+      const target = this.bottomScrollTop();
+      // The follow controller remains the only physical scroll writer. Issue
+      // the scroll before publishing the target viewport so the canvas and the
+      // browser thumb reach the same bottom in one synchronous commit.
+      this.requestScroll(target, reason);
+      patch = this.updateViewportWithOrigin(target, this.root.clientHeight, "programmatic");
+      if (Math.abs(this.bottomScrollTop() - target) <= HEIGHT_EPSILON_PX) return patch;
+    }
+    const settledTarget = this.bottomScrollTop();
+    this.requestScroll(settledTarget, reason);
+    return this.updateViewportWithOrigin(settledTarget, this.root.clientHeight, "programmatic");
   }
 
   private assertPinBudget(): void {

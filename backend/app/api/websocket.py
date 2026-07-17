@@ -40,6 +40,7 @@ from backend.app.services.chat_stream_manager import (
 from backend.app.services.chat_types import (
     PENDING_INPUT_MODE_STEER,
     PENDING_INPUT_MODES,
+    ChatCancellationToken,
     ChatRequest,
 )
 from backend.app.services.file_change_hub import normalize_local_file_path
@@ -789,7 +790,22 @@ async def _start_a2ui_resume(
         session_id=interaction.session_id,
         turn_index=turn_index,
     )
-    return await service.start_resume(interaction_id, background=True)
+    cancellation = ChatCancellationToken()
+
+    async def start_background_task(awaitable: Any) -> asyncio.Task[Any]:
+        return await runtime.chat_stream_manager.start_managed_run(
+            session_id=interaction.session_id,
+            awaitable=awaitable,
+            cancellation=cancellation,
+            kind="a2ui_resume",
+        )
+
+    return await service.start_resume(
+        interaction_id,
+        background=True,
+        cancellation=cancellation,
+        background_task_starter=start_background_task,
+    )
 
 
 async def _build_a2ui_resume_service(
@@ -839,12 +855,18 @@ async def _build_a2ui_resume_service(
             chat_service._resolve_session_keydex_snapshot,
             session,
         )
+        input_file_snapshot_id = _resolve_a2ui_resume_input_file_snapshot_id(
+            repositories=repositories,
+            chat_service=chat_service,
+            snapshot=snapshot,
+        )
         tool_context, enable_tools = chat_service._build_tool_context(
             request=request,
             session=session,
             trace_id=snapshot.trace_id or "",
             turn_index=snapshot.turn_index,
             keydex_snapshot=keydex_snapshot,
+            input_file_snapshot_id=input_file_snapshot_id,
         )
         tool_context.metadata["repositories"] = repositories
         tool_context.metadata["thread_task_service"] = chat_service.thread_task_service
@@ -878,6 +900,35 @@ async def _build_a2ui_resume_service(
         agent_factory=agent_factory,
         recursion_limit=PRACTICAL_NO_RECURSION_LIMIT,
     )
+
+
+def _resolve_a2ui_resume_input_file_snapshot_id(
+    *,
+    repositories: Any,
+    chat_service: Any,
+    snapshot: A2UIResumeSnapshot,
+) -> str | None:
+    file_history_service = getattr(chat_service, "file_history_service", None)
+    if not bool(getattr(file_history_service, "enabled", False)):
+        return None
+
+    trace_id = str(snapshot.trace_id or "").strip()
+    if not trace_id:
+        raise A2UIResumeServiceError(f"A2UI resume missing trace id: {snapshot.interaction_id}")
+    trace = repositories.trace_records.get(trace_id)
+    if trace is None:
+        raise A2UIResumeServiceError(f"A2UI resume trace not found: {trace_id}")
+    if trace.session_id != snapshot.session_id or trace.turn_index != snapshot.turn_index:
+        raise A2UIResumeServiceError(
+            f"A2UI resume trace does not match the interaction turn: {snapshot.interaction_id}"
+        )
+
+    input_file_snapshot_id = str(trace.input_file_snapshot_id or "").strip()
+    if trace.input_file_snapshot_status != "ready" or not input_file_snapshot_id:
+        raise A2UIResumeServiceError(
+            f"A2UI resume original file snapshot is unavailable: {snapshot.interaction_id}"
+        )
+    return input_file_snapshot_id
 
 
 async def _resolve_chat_service(runtime: Any) -> Any:

@@ -1,8 +1,7 @@
-import { Download, Info, RefreshCw, RotateCcw } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { BookOpenText, Download, Info, RefreshCw } from "lucide-react";
+import { useMemo, useState } from "react";
 
 import {
-  getCurrentAppVersion,
   type AppUpdateProgress,
   type PendingAppUpdate,
 } from "@/runtime";
@@ -12,24 +11,13 @@ import {
 } from "@/renderer/providers/AppUpdateController";
 import { appUpdateProgressPercent } from "@/renderer/utils/appUpdateDisplay";
 
+import { ReleaseNotesDialog } from "./ReleaseNotesDialog";
 import styles from "./AboutSettingsPage.module.css";
 
 export function AboutSettingsPage() {
-  const [currentVersion, setCurrentVersion] = useState("...");
+  const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
   const appUpdate = useAppUpdate();
-  const { busy, pendingUpdate, progress, status, updaterAvailable } = appUpdate;
-
-  useEffect(() => {
-    let active = true;
-    void getCurrentAppVersion().then((version) => {
-      if (active) {
-        setCurrentVersion(version);
-      }
-    });
-    return () => {
-      active = false;
-    };
-  }, []);
+  const { busy, currentVersion = "...", pendingUpdate, progress, status, updaterAvailable } = appUpdate;
 
   const statusText = useMemo(
     () => updateStatusText(status, pendingUpdate, progress, updaterAvailable),
@@ -69,8 +57,16 @@ export function AboutSettingsPage() {
             <div className={styles.actions}>
               <button
                 data-settings-secondary
+                onClick={() => setReleaseNotesOpen(true)}
+                type="button"
+              >
+                <BookOpenText size={15} />
+                <span>更新日志</span>
+              </button>
+              <button
+                data-settings-secondary
                 disabled={busy || !updaterAvailable}
-                onClick={() => void appUpdate.checkUpdate({ notify: true, openDialogOnAvailable: false })}
+                onClick={() => void appUpdate.checkUpdate({ openDialog: true })}
                 type="button"
               >
                 <RefreshCw size={15} />
@@ -80,19 +76,24 @@ export function AboutSettingsPage() {
                 <button
                   data-settings-primary
                   disabled={busy}
-                  onClick={() => void appUpdate.installUpdate({ notify: true })}
+                  onClick={appUpdate.openDialog}
                   type="button"
                 >
-                  {status === "downloading" ? <RotateCcw size={15} /> : <Download size={15} />}
-                  <span>{downloadButtonText(status)}</span>
+                  <Download size={15} />
+                  <span>查看并更新</span>
                 </button>
               ) : null}
             </div>
           </div>
-
-          {pendingUpdate?.body ? <p className={styles.notes}>{pendingUpdate.body}</p> : null}
         </div>
       </section>
+
+      {releaseNotesOpen ? (
+        <ReleaseNotesDialog
+          currentVersion={currentVersion}
+          onClose={() => setReleaseNotesOpen(false)}
+        />
+      ) : null}
     </main>
   );
 }
@@ -125,17 +126,4 @@ function updateStatusText(
     return "更新检查失败";
   }
   return "尚未检查更新";
-}
-
-function downloadButtonText(status: AppUpdateStatus): string {
-  if (status === "downloading") {
-    return "下载中";
-  }
-  if (status === "installed") {
-    return "正在重启";
-  }
-  if (status === "error") {
-    return "重试下载并重启";
-  }
-  return "下载更新并重启";
 }

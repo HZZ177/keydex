@@ -1794,6 +1794,7 @@ function DefaultMessage({
         message={message}
         workspaceRuntime={workspaceRuntime}
         workspaceScope={workspaceScope}
+        previewContextOverride={previewContext}
         onQuoteSelection={onQuoteSelection}
       />
     );

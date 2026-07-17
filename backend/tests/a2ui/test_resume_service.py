@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -13,12 +14,12 @@ from backend.app.a2ui.resume_service import (
 )
 from backend.app.core.request_context import consume_a2ui_resume_payload
 from backend.app.events.event_types import DomainEventType
+from backend.app.services import ChatCancellationToken
 from backend.app.storage import (
     A2UI_RESUME_STATUS_FAILED,
     A2UI_RESUME_STATUS_NOT_STARTED,
     A2UI_RESUME_STATUS_SUCCEEDED,
     A2UI_STATUS_SUBMITTED,
-    A2UI_STATUS_WAITING_USER_INPUT,
     StorageRepositories,
     init_database,
 )
@@ -31,6 +32,9 @@ class RecordingDispatcher:
     async def emit_event(self, **kwargs: Any) -> dict[str, Any]:
         self.events.append(kwargs)
         return kwargs
+
+    async def flush(self) -> None:
+        return None
 
 
 class RecordingAgent:
@@ -85,6 +89,19 @@ async def completed_processor(event_stream, **kwargs: Any) -> SimpleNamespace:
         chain_token_usage={"llm_call_count": 1},
         latest_llm_token_usage={"input_tokens": 3, "output_tokens": 5, "total_tokens": 8},
     )
+
+
+class BlockingResumeAgent(RecordingAgent):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+
+    async def astream_events(self, input_data: Any, *, config: dict[str, Any], version: str):
+        self.inputs.append(input_data)
+        self.configs.append(config)
+        self.started.set()
+        await asyncio.Event().wait()
+        yield {}
 
 
 @pytest.mark.asyncio
@@ -159,6 +176,51 @@ async def test_resume_success_emits_completed_turn_payload(tmp_path) -> None:
         "total_tokens": 8,
     }
     assert repositories.sessions.get("session-1").status == "active"
+
+
+@pytest.mark.asyncio
+async def test_managed_resume_task_emits_cancelled_turn_when_stopped(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    dispatcher = RecordingDispatcher()
+    agent = BlockingResumeAgent()
+    cancellation = ChatCancellationToken()
+    tasks: list[asyncio.Task[Any]] = []
+    _create_interaction(repositories, interaction_id="a2ui-1")
+    _submit(repositories, "a2ui-1", request_id="submit-1", result={"confirmed": True})
+    service = A2UIResumeService(
+        repositories=repositories,
+        dispatcher=dispatcher,
+        agent_factory=lambda _snapshot: agent,
+    )
+
+    async def start_background(awaitable: Any) -> asyncio.Task[Any]:
+        task = asyncio.create_task(awaitable)
+        tasks.append(task)
+        return task
+
+    result = await service.start_resume(
+        "a2ui-1",
+        background=True,
+        cancellation=cancellation,
+        background_task_starter=start_background,
+        user_id="user-1",
+    )
+    await asyncio.wait_for(agent.started.wait(), timeout=1)
+    cancellation.cancel()
+    tasks[0].cancel()
+    await asyncio.wait_for(tasks[0], timeout=1)
+
+    stored = repositories.a2ui_interactions.get("a2ui-1")
+    assert result.started is True
+    assert stored is not None
+    assert stored.resume_status == A2UI_RESUME_STATUS_SUCCEEDED
+    assert repositories.sessions.get("session-1").status == "active"
+    assert [event["event_type"] for event in dispatcher.events] == [
+        DomainEventType.A2UI_RESUME_STARTED.value,
+        DomainEventType.A2UI_RESUME_SUCCEEDED.value,
+        DomainEventType.TURN_CANCELLED.value,
+    ]
+    assert dispatcher.events[-1]["payload"]["status"] == "cancelled"
 
 
 @pytest.mark.asyncio

@@ -15,9 +15,12 @@ export const choiceSemanticAdapter: A2UISemanticAdapter = {
           if (!record) {
             return null;
           }
-          const value = scalarText(record.value) || scalarText(record.key) || scalarText(record.label) || `option_${index + 1}`;
           return {
-            key: `choice:option:${value}`,
+            // Tool arguments arrive as a cumulative, partially repaired JSON
+            // snapshot. Content-derived identities are not stable while a
+            // string such as `value` is still growing, so keep the semantic
+            // unit attached to its array slot until the snapshot is complete.
+            key: `choice:option:${index}`,
             order: index,
             payload: record,
             signature: safeJsonStringify(record),
@@ -39,16 +42,6 @@ export const choiceSemanticAdapter: A2UISemanticAdapter = {
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-}
-
-function scalarText(value: unknown): string {
-  if (typeof value === "string") {
-    return value.trim();
-  }
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  return "";
 }
 
 function safeJsonStringify(value: unknown): string {

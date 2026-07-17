@@ -34,6 +34,7 @@ test("agent mode remains the full conversation surface and only switches manuall
   await page.getByRole("button", { name: "工作台模式" }).click();
   await expect(page.getByTestId("workbench-mode-page")).toBeVisible();
   await expect(page.getByTestId("workbench-workspace-picker")).toBeVisible();
+  await expectTitlebarModeSwitchGeometry(page);
   await saveEvidence(page, "e2e-002");
 });
 
@@ -522,6 +523,7 @@ async function expectTitlebarModeSwitchGeometry(page: Page) {
     ) {
       throw new Error("Titlebar mode switch buttons were not rendered.");
     }
+    const switchStyle = window.getComputedStyle(switchElement);
     const sliderStyle = window.getComputedStyle(switchElement, "::before");
     const agentRect = agentButton.getBoundingClientRect();
     const workbenchRect = workbenchButton.getBoundingClientRect();
@@ -529,6 +531,8 @@ async function expectTitlebarModeSwitchGeometry(page: Page) {
 
     return {
       sliderBoxSizing: sliderStyle.boxSizing,
+      flexShrink: switchStyle.flexShrink,
+      switchWidth: switchElement.getBoundingClientRect().width,
       agentWidth: agentRect.width,
       workbenchWidth: workbenchRect.width,
       projectWidth: projectRect.width,
@@ -539,6 +543,8 @@ async function expectTitlebarModeSwitchGeometry(page: Page) {
   });
 
   expect(metrics.sliderBoxSizing).toBe("border-box");
+  expect(metrics.flexShrink).toBe("0");
+  expect(Math.abs(metrics.switchWidth - 248)).toBeLessThan(0.5);
   expect(Math.abs(metrics.agentWidth - metrics.workbenchWidth)).toBeLessThan(0.5);
   expect(Math.abs(metrics.agentWidth - metrics.projectWidth)).toBeLessThan(0.5);
   expect(Math.abs(metrics.agentCenterY - metrics.workbenchCenterY)).toBeLessThan(0.5);

@@ -279,9 +279,78 @@ function renderVersion(kind: ConversationRenderUnitKind, messages: readonly Conv
       message.status ?? "",
       content.length,
       contentRenderFingerprint(message, content),
+      a2uiRenderStateFingerprint(message),
+      fileChangeRenderStateFingerprint(message),
       footerPayloadVersion(message.payload),
     ].join("\u0000");
   }).join("\u0001") + kind);
+}
+
+function a2uiRenderStateFingerprint(message: ConversationMessage): string {
+  if (message.kind !== "a2ui") return "";
+  // DocumentView preserves measured geometry by stable unit id. A2UI history
+  // can settle through payload-only updates, so these fields must invalidate
+  // both the React render and any retained expanded-state height.
+  const a2ui = recordValue(message.payload.a2ui);
+  const debug = recordValue(message.payload.a2uiDebug);
+  return stableMarkdownIdentityHash(JSON.stringify({
+    historyHydrated: message.payload.historyHydrated === true,
+    renderKey: message.payload.renderKey ?? message.payload.render_key ?? a2ui?.render_key ?? debug?.renderKey,
+    streamId: message.payload.streamId ?? message.payload.stream_id ?? a2ui?.stream_id ?? debug?.streamId,
+    debugStatus: debug?.status,
+    debugUpdatedAt: debug?.updatedAt,
+    chunkCount: debug?.chunkCount,
+    argsTextLength: debug?.argsTextLength,
+    jsonParseStatus: debug?.jsonParseStatus,
+    payloadInteraction: message.payload.interaction,
+    a2uiInteraction: a2ui?.interaction,
+    debugInteraction: debug?.interaction,
+  }));
+}
+
+function fileChangeRenderStateFingerprint(message: ConversationMessage): string {
+  if (message.kind !== "tool" && message.kind !== "file_change") return "";
+  const payload = message.payload;
+  const result = recordValue(payload.result);
+  const directUiPayload = recordValue(payload.ui_payload) ?? recordValue(payload.uiPayload);
+  const resultUiPayload = recordValue(result?.ui_payload) ?? recordValue(result?.uiPayload);
+  const files = firstRecordList(
+    payload.files,
+    result?.files,
+    directUiPayload?.files,
+    directUiPayload?.changes,
+    resultUiPayload?.files,
+    resultUiPayload?.changes,
+  );
+  const records = files.length ? files : message.kind === "file_change" ? [payload] : [];
+  if (!records.length) return "";
+  return stableMarkdownIdentityHash(JSON.stringify(records.map((file) => ({
+    path: file.path,
+    oldPath: file.old_path ?? file.oldPath,
+    newPath: file.new_path ?? file.newPath,
+    operation: file.operation ?? file.change_type ?? file.changeType,
+    additions: file.added_lines ?? file.additions,
+    deletions: file.deleted_lines ?? file.removed_lines ?? file.deletions,
+    source: file.source,
+    patchComplete: file.patch_complete ?? file.patchComplete,
+    patchPrecision: file.patch_precision ?? file.patchPrecision,
+    diff: boundedTextRenderFingerprint(file.diff ?? file.raw_patch ?? file.rawPatch),
+  }))));
+}
+
+function firstRecordList(...values: unknown[]): Record<string, unknown>[] {
+  for (const value of values) {
+    if (!Array.isArray(value)) continue;
+    const records = value.map(recordValue).filter((record): record is Record<string, unknown> => Boolean(record));
+    if (records.length) return records;
+  }
+  return [];
+}
+
+function boundedTextRenderFingerprint(value: unknown): string {
+  const text = stringValue(value);
+  if (!text) return "";
+  return stableMarkdownIdentityHash(`${text.length}\u0000${text.slice(0, 128)}\u0000${text.slice(-256)}`);
 }
 
 function contentRenderFingerprint(message: ConversationMessage, content: string): string {

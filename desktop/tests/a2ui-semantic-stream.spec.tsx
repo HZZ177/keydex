@@ -74,6 +74,36 @@ describe("A2UI semantic stream isolation", () => {
     }
   });
 
+  it("replaces a partial choice option when its streamed value grows", () => {
+    vi.useFakeTimers();
+    try {
+      const label = "Technical notes";
+      const { rerender } = render(
+        <A2UIBlock
+          message={choiceStreamMessage([{ label, value: "technical", description: "" }])}
+        />,
+      );
+
+      rerender(
+        <A2UIBlock
+          message={choiceStreamMessage([
+            { label, value: "technical_notes", description: "Notes about languages and tools" },
+          ], 2)}
+        />,
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(1_200);
+      });
+
+      expect(screen.getByRole("radiogroup", { name: "选项" }).querySelectorAll("[data-option-value]")).toHaveLength(1);
+      expect(screen.getByText("Notes about languages and tools")).not.toBeNull();
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it("converges when every render recreates an equivalent semantic frame", () => {
     vi.useFakeTimers();
     try {

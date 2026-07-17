@@ -2,7 +2,10 @@ import { useMemo } from "react";
 import { Sparkles } from "lucide-react";
 
 import { runtimeBridge, type RuntimeBridge, type SkillSource, type WorkspaceScope } from "@/runtime";
-import { useOptionalPreview } from "@/renderer/providers/PreviewProvider";
+import {
+  useOptionalPreview,
+  type PreviewContextValue,
+} from "@/renderer/providers/PreviewProvider";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import { openSkillResourcePreview, skillResourcePreviewError } from "@/renderer/utils/skillResourcePreview";
@@ -14,6 +17,7 @@ export interface SkillActivationBlockProps {
   message: ConversationMessage;
   workspaceRuntime?: RuntimeBridge;
   workspaceScope?: WorkspaceScope | null;
+  previewContextOverride?: PreviewContextValue | null;
   onQuoteSelection?: (text: string, comment?: string) => void;
 }
 
@@ -30,9 +34,13 @@ export function SkillActivationBlock({
   message,
   workspaceRuntime,
   workspaceScope,
+  previewContextOverride,
   onQuoteSelection,
 }: SkillActivationBlockProps) {
-  const previewContext = useOptionalPreview();
+  const inheritedPreviewContext = useOptionalPreview();
+  const previewContext = previewContextOverride === undefined
+    ? inheritedPreviewContext
+    : previewContextOverride;
   const notifications = useNotifications();
   const model = useMemo(() => skillActivationViewModel(message), [message]);
 

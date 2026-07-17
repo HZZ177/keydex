@@ -268,6 +268,52 @@ describe("AppTooltipLayer", () => {
       HTMLElement.prototype.getBoundingClientRect = originalRect;
     }
   });
+
+  it("does not loop when a half-pixel edge correction rounds to the current position", () => {
+    vi.useFakeTimers();
+    const originalInnerWidth = window.innerWidth;
+    const originalInnerHeight = window.innerHeight;
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 800 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 600 });
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      const element = this as HTMLElement;
+      if (element.getAttribute("role") === "tooltip") {
+        return domRect({ left: 680.5, right: 792.5, top: 76, bottom: 96, width: 112, height: 20 });
+      }
+      if (element.dataset.subpixelEdgeTarget === "true") {
+        return domRect({ left: 722, right: 742, top: 100, bottom: 120, width: 20, height: 20 });
+      }
+      return originalRect.call(this);
+    };
+
+    try {
+      render(
+        <div data-tooltip-scope="true">
+          <AppTooltipLayer scopeSelector="[data-tooltip-scope='true']" delayMs={20} />
+          <button
+            type="button"
+            aria-label="批注整个 HTML 预览"
+            data-subpixel-edge-target="true"
+            data-tooltip-label="批注整个 HTML 预览"
+          >
+            annotate
+          </button>
+        </div>,
+      );
+
+      fireEvent.pointerOver(screen.getByRole("button", { name: "批注整个 HTML 预览" }));
+      expect(() => act(() => vi.advanceTimersByTime(20))).not.toThrow();
+
+      const tooltip = screen.getByRole("tooltip");
+      expect(tooltip.textContent).toBe("批注整个 HTML 预览");
+      expect(Number.parseFloat(tooltip.style.left)).toBe(732);
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: originalInnerWidth });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: originalInnerHeight });
+      HTMLElement.prototype.getBoundingClientRect = originalRect;
+    }
+  });
 });
 
 function domRect({

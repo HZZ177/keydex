@@ -129,19 +129,6 @@
   min-height: 32px;
 }
 
-.notes {
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-  line-height: 1.35;
-}
-
-.notes {
-  margin: 0;
-  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, transparent);
-  padding: 10px 14px 12px;
-  white-space: pre-wrap;
-}
-
 @media (max-width: 760px) {
   .page {
     width: calc(100% - 28px);

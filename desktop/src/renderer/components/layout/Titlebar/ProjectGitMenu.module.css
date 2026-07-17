@@ -8,7 +8,6 @@
 .trigger {
   display: inline-flex;
   height: 30px;
-  max-width: 190px;
   align-items: center;
   gap: 5px;
   padding: 0 9px;
@@ -139,8 +138,20 @@
   animation: git-menu-spin 800ms linear infinite;
 }
 
+.checkoutSuccessIcon {
+  color: var(--color-success-6);
+  animation: git-checkout-success 720ms var(--motion-ease-standard) both;
+}
+
 @keyframes git-menu-spin {
   to { transform: rotate(360deg); }
+}
+
+@keyframes git-checkout-success {
+  0% { opacity: 0; transform: rotate(-28deg) scale(0.55); }
+  24% { opacity: 1; transform: rotate(0) scale(1.08); }
+  62% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(0.78); }
 }
 
 .shortcutConflict {
@@ -514,6 +525,9 @@
 
 @media (prefers-reduced-motion: reduce) {
   .trigger > svg:last-child { transition: none; }
+
+  .busyIcon,
+  .checkoutSuccessIcon { animation: none; }
 
   .menu,
   .refSubmenu,
