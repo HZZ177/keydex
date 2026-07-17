@@ -582,7 +582,7 @@ Invoke-Step "构建 Tauri NSIS 安装包" {
         if ($UseAppVersionOverride) {
             Write-Host "临时覆盖 Tauri 打包版本：$AppVersion"
         }
-        $args = @("run", "tauri:build", "--", "--ci")
+        $args = @("run", "tauri:build", "--ci")
         if (-not [string]::IsNullOrWhiteSpace($buildTauriConfig)) {
             $buildTauriConfigDir = Join-Path $TauriDir "target"
             New-Item -ItemType Directory -Force -Path $buildTauriConfigDir | Out-Null
