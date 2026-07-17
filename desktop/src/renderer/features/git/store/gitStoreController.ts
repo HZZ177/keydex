@@ -60,7 +60,7 @@ export class GitStoreController {
     const project = state.activeWorkspaceId ? state.projects[state.activeWorkspaceId] : null;
     const repositoryId = project?.selectedRepositoryId;
     if (!repositoryId) return;
-    const pending = state.invalidatedDomainsByRepository[repositoryId] ?? [];
+    const pending = mapInvalidationDomains(state.invalidatedDomainsByRepository[repositoryId] ?? []);
     if (pending.length === 0) return;
     this.scheduleRepositoryRefresh(repositoryId, pending, true);
   }
@@ -411,7 +411,9 @@ export class GitStoreController {
       this.timers.delete(repositoryId);
       const scope = this.scopeForRepository(repositoryId);
       if (!scope) return;
-      const invalidated = this.store.getState().invalidatedDomainsByRepository[repositoryId] ?? demanded;
+      const invalidated = mapInvalidationDomains(
+        this.store.getState().invalidatedDomainsByRepository[repositoryId] ?? demanded,
+      );
       const pending = this.foregroundActive
         ? invalidated
         : invalidated.filter(isBackgroundRefreshDomain);

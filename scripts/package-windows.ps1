@@ -477,7 +477,7 @@ if (-not $SkipInstall) {
     Invoke-Step "安装桌面端依赖" {
         Push-Location $DesktopDir
         try {
-            Invoke-NativeCommand "npm.cmd" @("install", "--cache", ".\.npm-cache")
+            Invoke-NativeCommand "pnpm.cmd" @("install", "--frozen-lockfile")
         } finally {
             Pop-Location
         }
@@ -506,7 +506,7 @@ if (-not $SkipTests) {
     Invoke-Step "运行桌面端测试" {
         Push-Location $DesktopDir
         try {
-            Invoke-NativeCommand "npm.cmd" (Resolve-DesktopTestArguments)
+            Invoke-NativeCommand "pnpm.cmd" (Resolve-DesktopTestArguments)
         } finally {
             Pop-Location
         }
@@ -594,7 +594,7 @@ Invoke-Step "构建 Tauri NSIS 安装包" {
         if ($NoSign) {
             $args += "--no-sign"
         }
-        Invoke-NativeCommand "npm.cmd" $args
+        Invoke-NativeCommand "pnpm.cmd" $args
     } finally {
         $env:TAURI_CONFIG = $previousTauriConfig
         if (-not [string]::IsNullOrWhiteSpace($buildTauriConfigPath) -and (Test-Path -LiteralPath $buildTauriConfigPath)) {

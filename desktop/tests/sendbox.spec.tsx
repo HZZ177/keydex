@@ -1712,10 +1712,10 @@ function placeSelectionAtEnd(element: HTMLElement) {
 
 function insertTextAtSelection(text: string) {
   const selection = window.getSelection();
-  const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
-  if (!range) {
+  if (!selection || selection.rangeCount === 0) {
     throw new Error("Expected an active editor selection");
   }
+  const range = selection.getRangeAt(0);
   const node = document.createTextNode(text);
   range.insertNode(node);
   range.setStartAfter(node);

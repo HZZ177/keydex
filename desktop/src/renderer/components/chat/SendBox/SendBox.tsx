@@ -2585,7 +2585,7 @@ function adjacentPastedTextFragment(
   let directChild: Node = range.startContainer;
   if (directChild === editor) {
     const offset = range.startOffset;
-    let candidate = direction === "backward"
+    let candidate: ChildNode | null = direction === "backward"
       ? editor.childNodes[offset - 1] ?? null
       : editor.childNodes[offset] ?? null;
     if (
