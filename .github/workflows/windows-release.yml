@@ -83,7 +83,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: desktop/pnpm-lock.yaml
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
