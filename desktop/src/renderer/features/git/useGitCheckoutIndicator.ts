@@ -21,8 +21,7 @@ export function useGitCheckoutIndicator(localBusy = false): GitCheckoutIndicator
     previousLocalBusyRef.current = localBusy;
 
     const operationBusy = operation?.state === "queued"
-      || operation?.state === "running"
-      || operation?.state === "cancelling";
+      || operation?.state === "running";
     const isNewLocalOperation = localBusy
       && Boolean(operation)
       && operation?.operationId !== operationAtLocalStartRef.current;
