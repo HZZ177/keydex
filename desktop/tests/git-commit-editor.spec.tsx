@@ -1,10 +1,13 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GitCommitEditor, validateCommitMessage } from "@/renderer/features/git/components/GitCommitEditor";
 import type { GitRepositoryId, GitRepositoryVersion, GitStatusSnapshot } from "@/runtime/gitTypes";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 describe("GitCommitEditor", () => {
   it("validates messages and submits fixed standard options for selected files", () => {
@@ -59,6 +62,26 @@ describe("GitCommitEditor", () => {
     );
     expect(screen.getByText("Keydex User <keydex@example.com>").closest("header")).not.toBeNull();
     expect(screen.queryByRole("button", { name: "修改" })).toBeNull();
+  });
+
+  it("shows the repository identity through the shared tooltip instead of a native title", () => {
+    vi.useFakeTimers();
+    render(
+      <GitCommitEditor
+        status={status()}
+        selectedFileCount={1}
+        draft="feat: identity tooltip"
+        identity={{ repositoryId: "repo-1" as GitRepositoryId, name: "Keydex User", email: "keydex@example.com", signByDefault: true }}
+        onDraftChange={vi.fn()}
+        onCommit={vi.fn()}
+      />,
+    );
+
+    const identity = screen.getByText("Keydex User <keydex@example.com>");
+    expect(identity.hasAttribute("title")).toBe(false);
+    fireEvent.pointerOver(identity);
+    act(() => vi.advanceTimersByTime(420));
+    expect(screen.getByRole("tooltip").textContent).toBe("Keydex User <keydex@example.com>");
   });
 
   it("exposes 提交并推送 as an explicit second action", () => {

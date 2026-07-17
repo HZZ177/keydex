@@ -1,11 +1,14 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { commitSelectionFromEntries, groupGitChanges } from "@/renderer/features/git/changesTree";
 import { changesVirtualWindow, GitChangesView } from "@/renderer/features/git/components/GitChangesView";
 import type { GitRepositoryId, GitRepositoryVersion, GitStatusSnapshot } from "@/runtime/gitTypes";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 describe("Git changes tree", () => {
   it("flattens changed files into 更改 and 未跟踪 groups", () => {
@@ -53,6 +56,28 @@ describe("Git changes tree", () => {
     expect(screen.getByRole("treeitem", { name: /asset.bin modified/ }).textContent).toContain("二进制");
     expect(screen.getByRole("treeitem", { name: /modules\/core added/ }).textContent).toContain("子模块");
     expect(screen.queryByRole("button", { name: "查看逐行历史" })).toBeNull();
+  });
+
+  it("shows file names and directories through the shared tooltip instead of native titles", () => {
+    vi.useFakeTimers();
+    render(<GitChangesView status={status()} />);
+
+    const editRow = screen.getByRole("treeitem", { name: /src\/edit\.ts modified/ });
+    const fileText = editRow.querySelector<HTMLElement>("[data-tooltip-label='src/edit.ts']");
+    const fileName = within(editRow).getByText("edit.ts");
+    const directory = within(editRow).getByText("src");
+    expect(fileText?.hasAttribute("title")).toBe(false);
+    expect(fileName.hasAttribute("title")).toBe(false);
+    expect(directory.hasAttribute("title")).toBe(false);
+
+    fireEvent.pointerOver(fileName);
+    act(() => vi.advanceTimersByTime(420));
+    expect(screen.getByRole("tooltip").textContent).toBe("edit.ts");
+
+    fireEvent.pointerOut(fileName);
+    fireEvent.pointerOver(directory);
+    act(() => vi.advanceTimersByTime(420));
+    expect(screen.getByRole("tooltip").textContent).toBe("src");
   });
 
   it("renders the file refresh action and exposes its active animation state", () => {

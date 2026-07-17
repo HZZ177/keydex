@@ -17,23 +17,24 @@
 
 .root header {
   min-width: 0;
-  min-height: 34px;
+  min-height: 38px;
   gap: 8px;
-  padding: 0 10px;
+  padding: 0 12px;
   color: var(--color-text-3);
 }
 
 .root header strong {
   flex: 0 0 auto;
   color: var(--color-text-1);
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .identity {
   min-width: 0;
   overflow: hidden;
   color: var(--color-text-3);
-  font-size: 10px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -46,7 +47,7 @@
   margin-left: auto;
   flex: 0 0 auto;
   color: var(--color-text-3);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .root textarea {
@@ -55,14 +56,14 @@
   min-height: 0;
   box-sizing: border-box;
   resize: none;
-  padding: 7px 10px 10px;
+  padding: 9px 12px 12px;
   border: 0;
   outline: 0;
   background: transparent;
   color: var(--color-text-1);
   font-family: var(--font-sans);
-  font-size: 11px;
-  line-height: 1.55;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .root textarea::placeholder {
@@ -71,48 +72,60 @@
 
 .root footer {
   min-width: 0;
-  min-height: 39px;
+  min-height: 46px;
   gap: 10px;
-  padding: 5px 8px 7px 10px;
+  padding: 7px 10px 9px 12px;
   background: var(--color-bg-1);
 }
 
 .actions {
   margin-left: auto;
   flex: 0 0 auto;
-  gap: 7px;
+  gap: 8px;
 }
 
 .root footer button {
   display: inline-flex;
-  min-height: 27px;
+  height: 30px;
   flex: 0 0 auto;
   align-items: center;
-  padding: 0 11px;
-  border: 1px solid var(--color-border-2);
-  border-radius: var(--radius-sm);
-  background: var(--color-bg-1);
-  box-shadow: 0 1px 1px color-mix(in srgb, var(--color-text-1) 7%, transparent);
-  color: var(--color-text-1);
+  padding: 0 12px;
+  border-radius: var(--radius-md);
   cursor: pointer;
-  font-size: 10px;
+  font-size: 12px;
   white-space: nowrap;
   transition:
-    background-color var(--motion-fast) var(--motion-ease-standard),
-    border-color var(--motion-fast) var(--motion-ease-standard);
+    background-color var(--motion-fast) var(--motion-ease-out),
+    color var(--motion-fast) var(--motion-ease-out),
+    opacity var(--motion-fast) var(--motion-ease-out);
 }
 
-.root footer button:hover:not(:disabled),
-.root footer button:focus-visible {
-  border-color: color-mix(in srgb, var(--color-text-3) 60%, var(--color-border-2));
+.secondaryAction {
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+}
+
+.secondaryAction:hover:not(:disabled),
+.secondaryAction:focus-visible {
   background: var(--surface-hover);
+  color: var(--color-text-primary);
+  outline: none;
+}
+
+.primaryAction {
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 72%, transparent);
+  background: color-mix(in srgb, var(--color-text-primary) 8%, var(--color-bg-elevated));
+  color: var(--color-text-primary);
+}
+
+.primaryAction:hover:not(:disabled),
+.primaryAction:focus-visible {
+  background: color-mix(in srgb, var(--color-text-primary) 12%, var(--color-bg-elevated));
   outline: none;
 }
 
 .root footer button:disabled {
-  background: color-mix(in srgb, var(--color-bg-1) 86%, var(--surface-muted));
-  box-shadow: none;
-  color: var(--color-text-3);
   cursor: default;
-  opacity: 0.62;
+  opacity: 0.52;
 }

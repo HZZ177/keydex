@@ -1,6 +1,7 @@
 import { ChevronDown, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { AppTooltipLayer } from "@/renderer/components/tooltip";
 import { useMaterialEntryIcon } from "@/renderer/components/workspace/materialIconTheme";
 import { groupGitChanges, uniqueSelectedChangePaths, type GitChangeEntry, type GitChangeGroup } from "@/renderer/features/git/changesTree";
 import { GIT_CHANGES_VIRTUALIZATION_THRESHOLD } from "@/renderer/features/git/performancePolicy";
@@ -82,7 +83,8 @@ export function GitChangesView({
   if (!status) return <div className={styles.state} role="status">正在读取本地改动…</div>;
 
   return (
-    <div className={styles.root} data-virtualized={virtualized ? "true" : "false"}>
+    <div className={styles.root} data-git-changes-view="true" data-virtualized={virtualized ? "true" : "false"}>
+      <AppTooltipLayer scopeSelector="[data-git-changes-view='true']" />
       <div className={styles.summary}>
         <span>{totalEntries} 个文件</span>
         <span>{selectedPaths.length} 个已选择</span>
@@ -245,9 +247,9 @@ function GitChangeRow({
         draggable={false}
         src={icon.src}
       />
-      <span className={styles.fileText} title={entry.path}>
-        <span className={styles.name} title={entry.name}>{entry.name}</span>
-        {entry.directory ? <span className={styles.directory} title={entry.directory}>{entry.directory}</span> : null}
+      <span className={styles.fileText} data-tooltip-label={entry.path}>
+        <span className={styles.name} data-tooltip-label={entry.name}>{entry.name}</span>
+        {entry.directory ? <span className={styles.directory} data-tooltip-label={entry.directory}>{entry.directory}</span> : null}
       </span>
       {entry.binary ? <small>二进制</small> : null}
       {entry.submodule ? <small>子模块</small> : null}

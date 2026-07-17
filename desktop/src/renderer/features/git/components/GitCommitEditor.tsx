@@ -1,5 +1,6 @@
 import type { GitStatusSnapshot } from "@/runtime/gitTypes";
 import type { GitIdentity } from "@/runtime/git";
+import { AppTooltipLayer } from "@/renderer/components/tooltip";
 
 import styles from "./GitCommitEditor.module.css";
 
@@ -37,9 +38,15 @@ export function GitCommitEditor({
   const completesMerge = status?.operation?.kind === "merge" && status.operation.state === "continuable";
   const needsSelectedFiles = selectedFileCount === 0 && !completesMerge;
   const canCommit = validation.valid && identityReady && !needsSelectedFiles && !committing;
+  const identityLabel = identityLoading
+    ? "正在读取 Git 提交身份…"
+    : identityReady
+      ? `${identity?.name} <${identity?.email}>`
+      : "尚未配置 Git 提交身份";
 
   return (
-    <section className={styles.root} aria-label="提交编辑器">
+    <section className={styles.root} aria-label="提交编辑器" data-git-commit-editor="true">
+      <AppTooltipLayer scopeSelector="[data-git-commit-editor='true']" />
       <header>
         <strong>提交</strong>
         {identity !== undefined ? (
@@ -47,17 +54,9 @@ export function GitCommitEditor({
             className={styles.identity}
             data-ready={identityReady ? "true" : "false"}
             data-loading={identityLoading ? "true" : undefined}
-            title={identityLoading
-              ? "正在读取 Git 提交身份…"
-              : identityReady
-                ? `${identity?.name} <${identity?.email}>`
-                : "尚未配置 Git 提交身份"}
+            data-tooltip-label={identityLabel}
           >
-            {identityLoading
-              ? "正在读取 Git 提交身份…"
-              : identityReady
-                ? `${identity?.name} <${identity?.email}>`
-                : "尚未配置 Git 提交身份"}
+            {identityLabel}
           </span>
         ) : null}
         <span className={styles.selectionSummary}>{selectedFileCount} 个已选择文件</span>
@@ -72,6 +71,7 @@ export function GitCommitEditor({
       <footer>
         <div className={styles.actions}>
           <button
+            className={onCommitAndPush ? styles.secondaryAction : styles.primaryAction}
             type="button"
             disabled={!canCommit}
             onClick={() => void onCommit({ message: draft.trim(), amend: false, sign: false })}
@@ -80,6 +80,7 @@ export function GitCommitEditor({
           </button>
           {onCommitAndPush ? (
             <button
+              className={styles.primaryAction}
               type="button"
               disabled={!canCommit}
               onClick={() => void onCommitAndPush({ message: draft.trim(), amend: false, sign: false })}
