@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import type { GitLfsSnapshot } from "@/runtime/gitTypes";
 
+import { GitDialogField, GitFormDialog } from "../dialogs";
 import styles from "./GitLfsView.module.css";
 
 export type GitLfsAction = "fetch" | "pull" | "push";
@@ -15,6 +16,7 @@ export function GitLfsView({ snapshot, loading, busy, onAction }: {
 }) {
   const [remote, setRemote] = useState("origin");
   const [refspec, setRefspec] = useState("HEAD");
+  const [pushOpen, setPushOpen] = useState(false);
   const disabled = busy || !snapshot?.available;
   return (
     <section className={styles.root} aria-label="Git 大文件存储">
@@ -40,14 +42,16 @@ export function GitLfsView({ snapshot, loading, busy, onAction }: {
         </>
       )}
       <div className={styles.controls} aria-disabled={!snapshot?.available}>
-        <label>远程仓库<input aria-label="Git 大文件存储远程仓库" value={remote} disabled={disabled} onChange={(event) => setRemote(event.target.value)} /></label>
-        <label>引用规范<input aria-label="Git 大文件存储引用规范" value={refspec} disabled={disabled} onChange={(event) => setRefspec(event.target.value)} /></label>
-        <div>
-          <button type="button" disabled={disabled} onClick={() => onAction("fetch", remote.trim() || null, refspec.trim() || null)}><CloudDownload size={12} />获取对象</button>
-          <button type="button" disabled={disabled} onClick={() => onAction("pull", remote.trim() || null, null)}><CloudDownload size={12} />拉取并签出</button>
-          <button type="button" disabled={disabled || !remote.trim() || !refspec.trim()} onClick={() => onAction("push", remote.trim(), refspec.trim())}><CloudUpload size={12} />推送对象</button>
-        </div>
+        <button type="button" disabled={disabled} onClick={() => onAction("fetch", null, null)}><CloudDownload size={12} />获取对象</button>
+        <button type="button" disabled={disabled} onClick={() => onAction("pull", null, null)}><CloudDownload size={12} />拉取并签出</button>
+        <button type="button" disabled={disabled} onClick={() => setPushOpen(true)}><CloudUpload size={12} />推送对象…</button>
       </div>
+      {pushOpen && snapshot?.available ? (
+        <GitFormDialog title="推送 Git 大文件对象" description="指定远程仓库和引用规范后推送对应的大文件对象。" confirmLabel="推送" busy={busy} valid={Boolean(remote.trim() && refspec.trim())} onCancel={() => setPushOpen(false)} onSubmit={() => { setPushOpen(false); onAction("push", remote.trim(), refspec.trim()); }}>
+          <GitDialogField label="远程仓库"><input aria-label="Git 大文件存储远程仓库" value={remote} onChange={(event) => setRemote(event.target.value)} /></GitDialogField>
+          <GitDialogField label="引用规范"><input aria-label="Git 大文件存储引用规范" value={refspec} onChange={(event) => setRefspec(event.target.value)} /></GitDialogField>
+        </GitFormDialog>
+      ) : null}
     </section>
   );
 }

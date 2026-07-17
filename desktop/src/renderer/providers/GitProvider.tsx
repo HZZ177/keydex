@@ -11,6 +11,7 @@ import {
 
 import { createGitStore, type GitStore, type GitStoreState } from "@/renderer/features/git/store/gitStore";
 import { GitStoreController } from "@/renderer/features/git/store/gitStoreController";
+import { GitOperationNotificationBridge } from "@/renderer/features/git/GitNotifications";
 import { repositoryOwningPath } from "@/renderer/features/git/repositoryRoots";
 import type { GitRuntime } from "@/runtime/git";
 import type { GitRepositoryId } from "@/runtime/gitTypes";
@@ -147,7 +148,12 @@ export function GitProvider({ children, runtime }: PropsWithChildren<{ runtime: 
 
   useEffect(() => () => value.controller.dispose(), [value]);
 
-  return <GitContext.Provider value={value}>{children}</GitContext.Provider>;
+  return (
+    <GitContext.Provider value={value}>
+      <GitOperationNotificationBridge store={value.store} />
+      {children}
+    </GitContext.Provider>
+  );
 }
 
 export function useOptionalGitStore(): GitStore | null {

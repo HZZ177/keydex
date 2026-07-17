@@ -7,10 +7,7 @@ import {
 } from "@/renderer/features/git/components/GitConflictActions";
 import type { GitConflictFile } from "@/runtime/gitTypes";
 
-afterEach(() => {
-  cleanup();
-  vi.restoreAllMocks();
-});
+afterEach(cleanup);
 
 describe("Git conflict file actions", () => {
   it("derives only actions supported by conflict kind and available stages", () => {
@@ -28,27 +25,28 @@ describe("Git conflict file actions", () => {
 
   it("requires an explicit data-loss confirmation for accepting a side", () => {
     const onAction = vi.fn();
-    const confirmation = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<GitConflictActions file={file("binary")} dirty={false} unresolvedBlocks={0} busy={false} onAction={onAction} />);
-    fireEvent.click(screen.getByRole("button", { name: "Accept ours" }));
+    fireEvent.click(screen.getByRole("button", { name: "采用当前分支版本" }));
     expect(onAction).not.toHaveBeenCalled();
-    confirmation.mockReturnValue(true);
-    fireEvent.click(screen.getByRole("button", { name: "Accept ours" }));
+    expect(screen.getByRole("dialog", { name: "确认采用当前分支版本" }).textContent).toContain("二进制文件");
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(onAction).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "采用当前分支版本" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认采用当前分支版本" }));
     expect(onAction).toHaveBeenCalledWith("accept_ours");
-    expect(confirmation.mock.calls[1][0]).toContain("will be lost");
   });
 
   it("blocks mark-resolved for dirty or marker-bearing results and exposes reopen", () => {
     const onAction = vi.fn();
     const onReopen = vi.fn();
     const { rerender } = render(<GitConflictActions file={file("both_modified")} dirty unresolvedBlocks={0} busy={false} recentlyResolvedPath="old.txt" onAction={onAction} onReopen={onReopen} />);
-    expect((screen.getByRole("button", { name: "Mark resolved and stage" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText("Save the worktree result before staging it.")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "标记为已解决并暂存" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("请先保存工作树结果，再进行暂存。")).toBeTruthy();
     rerender(<GitConflictActions file={file("both_modified")} dirty={false} unresolvedBlocks={2} busy={false} recentlyResolvedPath="old.txt" onAction={onAction} onReopen={onReopen} />);
-    expect(screen.getByText("2 marker block(s) still unresolved.")).toBeTruthy();
+    expect(screen.getByText("仍有 2 个冲突标记块尚未解决。")).toBeTruthy();
     rerender(<GitConflictActions file={file("both_modified")} dirty={false} unresolvedBlocks={0} busy={false} recentlyResolvedPath="old.txt" onAction={onAction} onReopen={onReopen} />);
-    fireEvent.click(screen.getByRole("button", { name: "Mark resolved and stage" }));
-    fireEvent.click(screen.getByRole("button", { name: "Reopen old.txt" }));
+    fireEvent.click(screen.getByRole("button", { name: "标记为已解决并暂存" }));
+    fireEvent.click(screen.getByRole("button", { name: "重新打开 old.txt" }));
     expect(onAction).toHaveBeenCalledWith("mark_resolved");
     expect(onReopen).toHaveBeenCalledTimes(1);
   });

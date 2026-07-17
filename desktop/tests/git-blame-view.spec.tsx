@@ -58,22 +58,22 @@ describe("Git blame", () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText("Revision"), { target: { value: "main" } });
-    fireEvent.click(screen.getByLabelText("Use .git-blame-ignore-revs"));
-    fireEvent.click(screen.getByRole("button", { name: "Blame" }));
+    fireEvent.change(screen.getByLabelText("修订"), { target: { value: "main" } });
+    fireEvent.click(screen.getByLabelText("使用忽略修订配置文件"));
+    fireEvent.click(screen.getByRole("button", { name: "查看逐行历史" }));
     expect(onLoad).toHaveBeenCalledWith({
       path: "src/file.ts",
       revision: "main",
       ignoreRevsFile: ".git-blame-ignore-revs",
     });
 
-    expect(screen.getByText("boundary")).toBeTruthy();
+    expect(screen.getByText("边界提交")).toBeTruthy();
     const committed = screen.getByTitle(new RegExp(`^${"a".repeat(40)}`));
     fireEvent.click(committed);
     expect(onOpenCommit).toHaveBeenCalledWith("a".repeat(40));
-    const working = screen.getByTitle("Uncommitted working tree line") as HTMLButtonElement;
+    const working = screen.getByTitle("工作树中尚未提交的行") as HTMLButtonElement;
     expect(working.disabled).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Load lines from 3" }));
+    fireEvent.click(screen.getByRole("button", { name: "从第 3 行继续加载" }));
     expect(onLoadMore).toHaveBeenCalledTimes(1);
   });
 });

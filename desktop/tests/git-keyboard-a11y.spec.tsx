@@ -1,8 +1,11 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GitRefsTree } from "@/renderer/features/git/components/GitRefsTree";
 import { adjacentGitToolView } from "@/renderer/features/git/components/GitToolWindow";
+import { GitDialogField, GitFormDialog } from "@/renderer/features/git/dialogs";
 import { AppContextMenuProvider } from "@/renderer/providers/AppContextMenuProvider";
 import type { GitRef } from "@/runtime/gitTypes";
 
@@ -57,7 +60,52 @@ describe("Git keyboard and accessibility contracts", () => {
     expect(document.activeElement).toBe(topic);
     expect(tree.querySelectorAll('[role="treeitem"][tabindex="0"]')).toHaveLength(1);
   });
+
+  it("opens, fills, confirms and cancels a named Git dialog without leaving the keyboard", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(<KeyboardDialogHarness onSubmit={onSubmit} />);
+    const opener = screen.getByRole("button", { name: "新建分支…" });
+    opener.focus();
+    await user.keyboard("{Enter}");
+
+    const dialog = screen.getByRole("dialog", { name: "创建新分支" });
+    expect(dialog.getAttribute("aria-describedby")).toBeTruthy();
+    const input = screen.getByLabelText("新分支名称");
+    await waitFor(() => expect(document.activeElement).toBe(input));
+    await user.type(input, "feature/keyboard");
+    await user.keyboard("{Enter}");
+    expect(onSubmit).toHaveBeenCalledWith("feature/keyboard");
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+
+    await user.keyboard("{Enter}");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "创建新分支" })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+  });
 });
+
+function KeyboardDialogHarness({ onSubmit }: { onSubmit: (value: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState("");
+  return (
+    <>
+      <button type="button" onClick={() => { setValue(""); setOpen(true); }}>新建分支…</button>
+      {open ? (
+        <GitFormDialog
+          title="创建新分支"
+          description="输入有效的 Git 分支名称。"
+          confirmLabel="创建"
+          valid={Boolean(value.trim())}
+          onCancel={() => setOpen(false)}
+          onSubmit={() => { onSubmit(value); setOpen(false); }}
+        >
+          <GitDialogField label="分支名称"><input autoFocus aria-label="新分支名称" value={value} onChange={(event) => setValue(event.target.value)} /></GitDialogField>
+        </GitFormDialog>
+      ) : null}
+    </>
+  );
+}
 
 function refs(): GitRef[] {
   const base = {

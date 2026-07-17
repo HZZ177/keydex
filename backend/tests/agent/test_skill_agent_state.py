@@ -11,6 +11,8 @@ from backend.app.agent.state import (
     build_pending_skill_activations_reset_update,
     build_pending_tool_call_preset_update,
     merge_pending_skill_activations,
+    merge_structured_user_group_replay_markers,
+    merge_structured_user_message_groups,
 )
 
 
@@ -66,5 +68,13 @@ def test_keydex_agent_state_keeps_messages_reducer() -> None:
     assert "messages" in hints
     assert PENDING_TOOL_CALL_PRESET_STATE_KEY in hints
     assert "pending_skill_activations" in hints
+    assert "structured_user_message_groups" in hints
+    assert "structured_user_group_replay_markers" in hints
     assert add_messages in get_args(hints["messages"])
     assert merge_pending_skill_activations in get_args(hints["pending_skill_activations"])
+    assert merge_structured_user_message_groups in get_args(
+        hints["structured_user_message_groups"]
+    )
+    assert merge_structured_user_group_replay_markers in get_args(
+        hints["structured_user_group_replay_markers"]
+    )

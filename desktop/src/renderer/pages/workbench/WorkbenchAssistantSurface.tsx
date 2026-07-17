@@ -36,7 +36,8 @@ import {
 import { LoadingSkeleton } from "@/renderer/components/loading";
 import { useRafPanelResize } from "@/renderer/components/layout/useRafPanelResize";
 import { useRuntimeModelSelection, type RuntimeSelectedModel } from "@/renderer/components/model";
-import { FileReviewPanel } from "@/renderer/components/review/FileReviewDiff";
+import { fileReviewDocumentFromChanges } from "@/renderer/components/diff/adapters/fileReviewDocument";
+import { ReviewDiffView } from "@/renderer/components/diff/wrappers/ReviewDiffView";
 import { useLayoutState } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { useHeldActiveFlag } from "@/renderer/hooks/useHeldActiveFlag";
 import {
@@ -59,7 +60,6 @@ import {
 } from "@/renderer/pages/conversation/conversationForkSource";
 import {
   goalContextItem,
-  goalSeedContextMetadata,
   runtimeParamsWithGoalContextItem,
   runtimeParamsWithInitialGoalTask,
 } from "@/renderer/pages/conversation/goalSeedContext";
@@ -268,8 +268,19 @@ export function WorkbenchAssistantSurface({
   const workbenchWorkspaceLabel = workspace?.root_path ?? workspace?.name ?? workspaceId;
   const handledReviewPanelRequestIdRef = useRef(previewContext.reviewPanelRequest?.requestId ?? 0);
   const [workbenchReviewPanel, setWorkbenchReviewPanel] = useState<ReviewPanelRequest | null>(null);
+  const [workbenchReviewWrap, setWorkbenchReviewWrap] = useState(true);
   const pendingApproval = controller.pendingApproval;
   const panelSessionId = controller.session?.id ?? "";
+  const workbenchReviewDocument = useMemo(
+    () => workbenchReviewPanel
+      ? workbenchReviewPanel.document ??
+        fileReviewDocumentFromChanges(workbenchReviewPanel.files, {
+          sessionId: panelSessionId || workspaceId,
+          requestId: `${workbenchReviewPanel.requestId}:${workbenchReviewPanel.panelKey}`,
+        })
+      : null,
+    [panelSessionId, workbenchReviewPanel, workspaceId],
+  );
   const workbenchPreviewScopeKey = workspaceId ? workbenchPreviewPanelScopeKey(workspaceId) : undefined;
   const currentFileChipRequestId = controller.fileChipRequest?.requestId ?? 0;
   const currentQuoteChipRequestId = controller.quoteChipRequest?.requestId ?? 0;
@@ -1119,12 +1130,6 @@ export function WorkbenchAssistantSurface({
         const task = await runtime.conversation.createThreadTask(targetSessionId, {
           type: "goal",
           objective,
-          metadata: goalSeedContextMetadata({
-            message: prepared.message,
-            contextItems: prepared.contextItems,
-            runtimeParams: prepared.runtimeParams,
-            attachments,
-          }),
         });
         const goalItem = goalContextItem(objective);
         const runtimeParams = runtimeParamsWithInitialGoalTask(
@@ -1324,6 +1329,9 @@ export function WorkbenchAssistantSurface({
     },
     [previewContext, workbenchPreviewRenderContext],
   );
+  const updateWorkbenchReviewFocusedPath = useCallback((path: string) => {
+    setWorkbenchReviewPanel((current) => current ? { ...current, focusedPath: path } : current);
+  }, []);
 
   useEffect(() => {
     handledReviewPanelRequestIdRef.current = previewContext.reviewPanelRequest?.requestId ?? 0;
@@ -1341,6 +1349,7 @@ export function WorkbenchAssistantSurface({
     }
     handledReviewPanelRequestIdRef.current = request.requestId;
     setWorkbenchReviewPanel(request);
+    setWorkbenchReviewWrap(true);
     if (surfaceMode !== "drawer") {
       dockToDrawer();
     }
@@ -1597,14 +1606,26 @@ export function WorkbenchAssistantSurface({
   const shouldMountStablePanel = surfaceMode !== "expanded" && (renderMorphContent || renderDrawerContent);
   const stablePanelContentReady = stablePanelMode === "drawer" && (drawerContentReady || panelMessageCount <= 0);
   const stableReviewPanel =
-    shouldMountStablePanel && stablePanelContentReady && workbenchReviewPanel ? (
-      <div className={styles.drawerReviewPanel} data-testid="workbench-review-panel">
-        <FileReviewPanel
-          files={workbenchReviewPanel.files}
+    shouldMountStablePanel && stablePanelContentReady && workbenchReviewPanel && workbenchReviewDocument ? (
+      <div
+        className={styles.drawerReviewPanel}
+        data-review-host="drawer"
+        data-testid="workbench-review-panel"
+      >
+        <ReviewDiffView
+          document={workbenchReviewDocument}
           focusedPath={workbenchReviewPanel.focusedPath}
-          title={workbenchReviewPanel.title}
-          onFocusPath={() => undefined}
-          onOpenFile={openWorkbenchReviewFile}
+          onFocusPath={updateWorkbenchReviewFocusedPath}
+          scrollScopeKey={`workbench-review:${workspaceId}:${panelSessionId}`}
+          wrap={workbenchReviewWrap}
+          onWrapChange={setWorkbenchReviewWrap}
+          actions={{
+            copyPatch: async (patch) => {
+              if (!navigator.clipboard?.writeText) throw new Error("剪贴板不可用");
+              await navigator.clipboard.writeText(patch);
+            },
+            openFile: openWorkbenchReviewFile,
+          }}
         />
       </div>
     ) : null;
@@ -1649,14 +1670,26 @@ export function WorkbenchAssistantSurface({
   const overlayPanelContentReady =
     surfaceMode === "expanded" && dockTransitionPhase === null && (expandedContentReady || panelMessageCount <= 0);
   const overlayReviewPanel =
-    overlayPanelContentReady && workbenchReviewPanel ? (
-      <div className={styles.overlayReviewPanel} data-testid="workbench-review-panel">
-        <FileReviewPanel
-          files={workbenchReviewPanel.files}
+    overlayPanelContentReady && workbenchReviewPanel && workbenchReviewDocument ? (
+      <div
+        className={styles.overlayReviewPanel}
+        data-review-host="overlay"
+        data-testid="workbench-review-panel"
+      >
+        <ReviewDiffView
+          document={workbenchReviewDocument}
           focusedPath={workbenchReviewPanel.focusedPath}
-          title={workbenchReviewPanel.title}
-          onFocusPath={() => undefined}
-          onOpenFile={openWorkbenchReviewFile}
+          onFocusPath={updateWorkbenchReviewFocusedPath}
+          scrollScopeKey={`workbench-review:${workspaceId}:${panelSessionId}`}
+          wrap={workbenchReviewWrap}
+          onWrapChange={setWorkbenchReviewWrap}
+          actions={{
+            copyPatch: async (patch) => {
+              if (!navigator.clipboard?.writeText) throw new Error("剪贴板不可用");
+              await navigator.clipboard.writeText(patch);
+            },
+            openFile: openWorkbenchReviewFile,
+          }}
         />
       </div>
     ) : null;

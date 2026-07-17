@@ -1,7 +1,8 @@
 import { ChevronDown, Copy, FileDiff, FilePenLine, FileX2, XCircle } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { FileReviewCard } from "@/renderer/components/review/FileReviewDiff";
+import { fileReviewDocumentFromMessage } from "@/renderer/components/diff/adapters/fileReviewDocument";
+import { CompactDiffView } from "@/renderer/components/diff/wrappers/CompactDiffView";
 import { useMaterialEntryIcon } from "@/renderer/components/workspace/materialIconTheme";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type { FileReviewChange } from "@/renderer/utils/fileReview";
@@ -23,6 +24,7 @@ export interface FileChangePreview {
   path: string;
   diff: string;
   files?: FileReviewChange[];
+  document?: ReturnType<typeof fileReviewDocumentFromMessage>;
   message?: ConversationMessage;
   messages?: ConversationMessage[];
   title?: string;
@@ -33,10 +35,21 @@ export function FileChangeBlock({ message, onPreviewFile, onLoadDetails }: FileC
   const [expandedPath, setExpandedPath] = useState<string | null>(null);
   const details = useLazyToolDetails(message, onLoadDetails);
   const change = useMemo(() => parseFileChange(details.message), [details.message]);
+  const diffDocument = useMemo(
+    () => fileReviewDocumentFromMessage(details.message, change.files[0]?.path ?? "", {
+      sessionId: details.message.threadId,
+      requestId: details.message.itemId ?? details.message.id,
+    }),
+    [change.files, details.message],
+  );
   const failed = details.message.status === "failed" || change.status === "failed";
   const statusKind = failed ? "failed" : change.status === "running" ? "running" : "done";
   const singleFile = change.files.length === 1 ? change.files[0] : null;
-  const expandedFile = singleFile ? null : change.files.find((file) => file.path === expandedPath) ?? null;
+  const activeDiffFileId = diffDocument.files.find((file) => [
+    file.displayPath,
+    file.oldPath,
+    file.newPath,
+  ].includes(expandedPath))?.id ?? diffDocument.files[0]?.id ?? null;
   const primaryOperation = singleFile?.operation ?? commonOperation(change.files);
   const title = change.files.length ? `${summaryVerb(change.status, primaryOperation)} ${change.files.length} 个文件` : "文件变更";
   const headerStatusLabel = singleFile
@@ -44,6 +57,12 @@ export function FileChangeBlock({ message, onPreviewFile, onLoadDetails }: FileC
     : statusLabel(change.status, primaryOperation);
   const detailsMotion = useDeferredUnmount<HTMLDivElement>(detailsOpen);
   const captureExpansionAnchor = useExpansionScrollAnchor();
+  useEffect(() => {
+    if (!detailsOpen || failed || change.files.length <= 1) return;
+    if (!expandedPath || !change.files.some((file) => file.path === expandedPath)) {
+      setExpandedPath(change.files[0]?.path ?? null);
+    }
+  }, [change.files, detailsOpen, expandedPath, failed]);
   const toggleDetails = (target: HTMLElement) => {
     captureExpansionAnchor(target);
     setDetailsOpen((open) => {
@@ -51,6 +70,18 @@ export function FileChangeBlock({ message, onPreviewFile, onLoadDetails }: FileC
         void details.load();
       }
       return !open;
+    });
+  };
+  const previewFile = (path: string) => {
+    const file = change.files.find((item) => item.path === path);
+    if (!file || !onPreviewFile) return;
+    onPreviewFile({
+      path: file.path,
+      diff: file.diff,
+      files: change.files,
+      document: diffDocument,
+      message: details.message,
+      title,
     });
   };
 
@@ -90,13 +121,7 @@ export function FileChangeBlock({ message, onPreviewFile, onLoadDetails }: FileC
                 type="button"
                 onClick={(event) => {
                   event.stopPropagation();
-                  onPreviewFile?.({
-                    path: singleFile.path,
-                    diff: singleFile.diff,
-                    files: change.files,
-                    message: details.message,
-                    title,
-                  });
+                  previewFile(singleFile.path);
                 }}
               >
                 <FileChangePathIcon path={singleFile.path} />
@@ -138,7 +163,11 @@ export function FileChangeBlock({ message, onPreviewFile, onLoadDetails }: FileC
               failed ? (
                 <FileChangeErrorPanel paramsText={change.paramsText} errorMessage={change.errorMessage} files={change.files} />
               ) : (
-                <FileDiffPreview file={singleFile} />
+                <FileChangeDiffPreview
+                  document={diffDocument}
+                  activeFileId={activeDiffFileId}
+                  onOpenFile={onPreviewFile ? previewFile : undefined}
+                />
               )
             ) : failed ? (
               <FileChangeErrorPanel paramsText={change.paramsText} errorMessage={change.errorMessage} files={change.files} />
@@ -163,15 +192,7 @@ export function FileChangeBlock({ message, onPreviewFile, onLoadDetails }: FileC
                         <button
                           className={styles.previewButton}
                           type="button"
-                          onClick={() =>
-                            onPreviewFile?.({
-                              path: file.path,
-                              diff: file.diff,
-                              files: change.files,
-                              message: details.message,
-                              title,
-                            })
-                          }
+                          onClick={() => previewFile(file.path)}
                         >
                           预览
                         </button>
@@ -180,7 +201,13 @@ export function FileChangeBlock({ message, onPreviewFile, onLoadDetails }: FileC
                   })}
                 </ul>
 
-                {expandedFile ? <FileReviewCard file={expandedFile} /> : null}
+                {expandedPath ? (
+                  <FileChangeDiffPreview
+                    document={diffDocument}
+                    activeFileId={activeDiffFileId}
+                    onOpenFile={onPreviewFile ? previewFile : undefined}
+                  />
+                ) : null}
               </>
             )}
           </div>
@@ -235,8 +262,29 @@ interface FileChangeFile {
 
 type FileChangeOperation = "add" | "update" | "delete" | "append" | "write" | "move" | "unknown";
 
-function FileDiffPreview({ file }: { file: FileChangeFile }) {
-  return <FileReviewCard file={file} />;
+function FileChangeDiffPreview({
+  document,
+  activeFileId,
+  onOpenFile,
+}: {
+  document: ReturnType<typeof fileReviewDocumentFromMessage>;
+  activeFileId: string | null;
+  onOpenFile?: (path: string) => void;
+}) {
+  return (
+    <CompactDiffView
+      document={document}
+      activeFileId={activeFileId}
+      defaultExpanded
+      actions={{
+        copyPatch: async (patch) => {
+          if (!navigator.clipboard?.writeText) throw new Error("剪贴板不可用");
+          await navigator.clipboard.writeText(patch);
+        },
+        ...(onOpenFile ? { openFile: onOpenFile } : {}),
+      }}
+    />
+  );
 }
 
 function FileChangeErrorPanel({

@@ -1,0 +1,90 @@
+.annotation {
+  display: flex;
+  min-width: 0;
+  min-height: 32px;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  border-block: 1px solid var(--diff-annotation-border);
+  background: var(--diff-annotation-bg);
+  color: var(--diff-annotation-text);
+  font-family: var(--font-sans);
+  font-size: 12px;
+}
+
+.annotation[data-tone="warning"],
+.annotation[data-tone="error"] {
+  border-color: color-mix(in srgb, var(--diff-removed-border) 62%, var(--diff-annotation-border));
+}
+
+.annotation[data-tone="error"] .icon {
+  color: var(--diff-removed-text);
+}
+
+.icon {
+  display: inline-flex;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
+}
+
+.message {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+}
+
+.action {
+  display: inline-flex;
+  min-height: 26px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid var(--diff-annotation-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.action[data-action-state="success"] {
+  color: var(--diff-added-text);
+}
+
+.action[data-action-state="error"] {
+  color: var(--diff-removed-text);
+}
+
+.spinner {
+  animation: keydex-diff-annotation-spin 0.8s linear infinite;
+}
+
+@keyframes keydex-diff-annotation-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
+
+.action:hover:not(:disabled) {
+  background: var(--diff-toolbar-control-hover);
+  color: var(--color-text-primary);
+}
+
+.action:focus-visible {
+  outline: 2px solid var(--diff-focus-ring);
+  outline-offset: 1px;
+}
+
+.action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

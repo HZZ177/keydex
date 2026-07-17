@@ -15,6 +15,7 @@ import { APP_FIND_SHORTCUT_EVENT, isFindShortcutEvent } from "@/renderer/events/
 import { AppTooltipLayer } from "@/renderer/components/tooltip";
 import { ComposerDraftProvider } from "@/renderer/features/composer";
 import { runtimeBridge, type RuntimeBridge } from "@/runtime";
+import { PierreWorkerPoolHost } from "@/renderer/components/diff/engine/PierreWorkerPoolHost";
 
 export interface AppProvidersProps extends PropsWithChildren {
   runtime?: RuntimeBridge;
@@ -30,27 +31,29 @@ export function AppProviders({
 
   return (
     <ThemeProvider>
-      <NotificationProvider>
-        <AppUpdateController>
-          <AppContextMenuProvider>
-            <RuntimeConnectionProvider runtime={runtime} {...runtimeConnection}>
-              <WindowClosePreferenceController runtime={runtime} />
-              <AppTooltipLayer scopeSelector="body" targetMode="native-interactive-title" />
-              <FontProvider>
-                <ComposerDraftProvider>
-                  <AgentSessionProvider runtime={runtime}>
-                    <FileChangeProvider>
-                      <PreviewProvider>
-                        <HashRouter>{children}</HashRouter>
-                      </PreviewProvider>
-                    </FileChangeProvider>
-                  </AgentSessionProvider>
-                </ComposerDraftProvider>
-              </FontProvider>
-            </RuntimeConnectionProvider>
-          </AppContextMenuProvider>
-        </AppUpdateController>
-      </NotificationProvider>
+      <PierreWorkerPoolHost>
+        <NotificationProvider>
+          <AppUpdateController>
+            <AppContextMenuProvider>
+              <RuntimeConnectionProvider runtime={runtime} {...runtimeConnection}>
+                <WindowClosePreferenceController runtime={runtime} />
+                <AppTooltipLayer scopeSelector="body" targetMode="native-interactive-title" />
+                <FontProvider>
+                  <ComposerDraftProvider>
+                    <AgentSessionProvider runtime={runtime}>
+                      <FileChangeProvider>
+                        <PreviewProvider>
+                          <HashRouter>{children}</HashRouter>
+                        </PreviewProvider>
+                      </FileChangeProvider>
+                    </AgentSessionProvider>
+                  </ComposerDraftProvider>
+                </FontProvider>
+              </RuntimeConnectionProvider>
+            </AppContextMenuProvider>
+          </AppUpdateController>
+        </NotificationProvider>
+      </PierreWorkerPoolHost>
     </ThemeProvider>
   );
 }

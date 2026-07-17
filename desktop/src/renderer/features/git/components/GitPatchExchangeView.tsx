@@ -1,10 +1,11 @@
 import { ClipboardCheck, Download, FileUp } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import type { GitCommandResult } from "@/runtime/gitTypes";
 import type { GitPatchExport, GitPatchExportMode } from "@/runtime/git";
 
+import { GitConfirmActionDialog } from "../dialogs";
 import { parseCherryPickCommits } from "./GitCherryPickView";
+import { GitPatchExportDiff } from "./GitPatchExportDiff";
 import styles from "./GitPatchExchangeView.module.css";
 
 export interface GitPatchImportOptions {
@@ -17,7 +18,6 @@ export function GitPatchExchangeView({
   exported,
   busy,
   dryRunSignature,
-  outcome,
   rejectFiles,
   onExport,
   onCheck,
@@ -26,7 +26,6 @@ export function GitPatchExchangeView({
   exported: GitPatchExport | null;
   busy: boolean;
   dryRunSignature: string | null;
-  outcome: GitCommandResult | null;
   rejectFiles: readonly string[];
   onExport: (mode: GitPatchExportMode, left: string | null, right: string | null, paths: readonly string[]) => void;
   onCheck: (patch: string, options: GitPatchImportOptions) => void;
@@ -40,6 +39,7 @@ export function GitPatchExchangeView({
   const [cached, setCached] = useState(false);
   const [reverse, setReverse] = useState(false);
   const [reject, setReject] = useState(false);
+  const [pendingApply, setPendingApply] = useState(false);
   const paths = useMemo(() => parseCherryPickCommits(pathsInput), [pathsInput]);
   const options = { cached, reverse, reject };
   const signature = patchImportSignature(patch, options);
@@ -54,7 +54,16 @@ export function GitPatchExchangeView({
         <label className={styles.wide}><span>限定路径（可选，每行一个）</span><textarea aria-label="补丁导出路径" rows={2} value={pathsInput} onChange={(event) => setPathsInput(event.target.value)} /></label>
         <button type="button" disabled={busy || exportInvalid} onClick={() => onExport(mode, left.trim() || null, right.trim() || null, paths)}>生成补丁</button>
       </div>
-      {exported ? <div className={styles.exportResult}><strong>{exported.filename}</strong><span>{exported.patch.length} 个字符</span><button type="button" disabled={!exported.patch} onClick={() => downloadPatch(exported)}>保存补丁</button><textarea aria-label="已导出的补丁" readOnly rows={5} value={exported.patch} /></div> : null}
+      {exported ? (
+        <div className={styles.exportResult}>
+          <strong>{exported.filename}</strong>
+          <span>{exported.patch.length} 个字符</span>
+          <button type="button" disabled={!exported.patch} onClick={() => downloadPatch(exported)}>保存补丁</button>
+          <div className={styles.exportPreview} aria-label="已导出的补丁">
+            <GitPatchExportDiff exported={exported} />
+          </div>
+        </div>
+      ) : null}
 
       <header className={styles.importHeader}><FileUp size={14} /><div><strong>导入补丁</strong><span>补丁内容和选项必须先通过试运行，之后才能正式应用。</span></div></header>
       <textarea className={styles.patchInput} aria-label="补丁内容" rows={8} value={patch} onChange={(event) => setPatch(event.target.value)} placeholder="请粘贴补丁内容" />
@@ -63,16 +72,30 @@ export function GitPatchExchangeView({
         <label><input type="checkbox" checked={reverse} onChange={(event) => setReverse(event.target.checked)} />反向应用补丁</label>
         <label><input type="checkbox" checked={reject} disabled={cached} onChange={(event) => setReject(event.target.checked)} />保留未应用的变更块文件（.rej）</label>
       </div>
-      <div className={styles.actions}><button type="button" disabled={busy || !patch.trim()} onClick={() => onCheck(patch, options)}><ClipboardCheck size={11} />试运行</button><button type="button" disabled={busy || !patch.trim() || dryRunSignature !== signature} onClick={() => onApply(patch, options)}>应用补丁</button></div>
+      <div className={styles.actions}><button type="button" disabled={busy || !patch.trim()} onClick={() => onCheck(patch, options)}><ClipboardCheck size={11} />试运行</button><button type="button" disabled={busy || !patch.trim() || dryRunSignature !== signature} onClick={() => setPendingApply(true)}>应用补丁</button></div>
       {dryRunSignature === signature ? <p className={styles.ready}>当前补丁内容和选项已通过试运行。</p> : null}
-      {outcome ? <p className={styles.outcome} data-state={outcome.state}>{commandStateLabel(outcome.state)}</p> : null}
       {rejectFiles.length ? <div className={styles.rejects} role="alert"><strong>补丁仅部分应用，请检查以下未应用文件：</strong><ul>{rejectFiles.map((path) => <li key={path}>{path}</li>)}</ul></div> : null}
+      {pendingApply && dryRunSignature === signature ? (
+        <GitConfirmActionDialog
+          title="确认应用补丁"
+          description="当前补丁内容和选项已通过试运行。修改补丁或选项后必须重新试运行。"
+          target={patchImpactSummary(patch)}
+          details={[`目标：${cached ? "暂存区" : "工作树"}`, `方向：${reverse ? "反向应用" : "正向应用"}`, `失败变更块：${reject ? "保留 .rej 文件" : "直接失败"}`]}
+          confirmLabel="确认应用"
+          confirmTone="default"
+          busy={busy}
+          onCancel={() => setPendingApply(false)}
+          onConfirm={() => { setPendingApply(false); onApply(patch, options); }}
+        />
+      ) : null}
     </section>
   );
 }
 
-function commandStateLabel(state: GitCommandResult["state"]): string {
-  return ({ queued: "操作已进入队列", running: "操作正在执行", succeeded: "操作成功完成", failed: "操作执行失败", cancelled: "操作已取消" } as Record<GitCommandResult["state"], string>)[state];
+function patchImpactSummary(patch: string): string {
+  const paths = new Set(Array.from(patch.matchAll(/^\+\+\+\s+(?:b\/)?(.+)$/gm), (match) => match[1]).filter((path) => path !== "/dev/null"));
+  const hunks = (patch.match(/^@@/gm) ?? []).length;
+  return `影响 ${paths.size || "未知数量"} 个路径，${hunks || "未知数量"} 个变更块`;
 }
 
 export function patchImportSignature(patch: string, options: GitPatchImportOptions): string {

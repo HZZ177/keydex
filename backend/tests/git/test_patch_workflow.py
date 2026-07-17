@@ -97,6 +97,49 @@ def test_patch_dry_run_precedes_cached_apply_and_reverse(tmp_path: Path) -> None
         assert repo.run("show", ":apply.txt").stdout == "old\n"
 
 
+def test_cached_patch_rejects_a_stale_worktree_source_inside_the_write_queue(
+    tmp_path: Path,
+) -> None:
+    repo = GitRepoFactory(tmp_path).create("patch-stale-source")
+    repo.write("apply.txt", "old\n")
+    repo.commit("add apply file", "apply.txt")
+    repo.write("apply.txt", "selected\n")
+
+    with _client(tmp_path / "patch-stale-source-data") as client:
+        repository_id, scope = _discover(client, repo, "workspace-patch-stale")
+        diff_response = client.get(
+            f"/api/git/repositories/{repository_id}/diff",
+            params={**scope, "path": "apply.txt"},
+        )
+        assert diff_response.status_code == 200, diff_response.text
+        diff = diff_response.json()
+        source_patch = diff["files"][0]["raw_patch"]
+
+        repo.write("apply.txt", "changed after selection\n")
+        result = _apply(
+            client,
+            repository_id,
+            scope,
+            "patch-stale-source-apply",
+            source_patch,
+            cached=True,
+            reverse=False,
+            check_only=False,
+            reject=False,
+            expected_repository_version=diff["repository_version"],
+            expected_source_version="diff-source:v1:stale-selection",
+            expected_source_patch=source_patch,
+            source_kind="working_tree",
+            source_paths=["apply.txt"],
+        )
+
+    assert result["state"] == "failed"
+    assert result["result"]["error_code"] == "git_operation_conflict"
+    assert result["result"]["retryable"] is True
+    assert repo.run("show", ":apply.txt").stdout == "old\n"
+    assert (repo.path / "apply.txt").read_text(encoding="utf-8") == "changed after selection\n"
+
+
 def test_failed_dry_run_is_atomic_and_reject_mode_exposes_partial_reject_files(
     tmp_path: Path,
 ) -> None:

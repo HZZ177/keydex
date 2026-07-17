@@ -104,3 +104,29 @@ async def test_skill_activation_is_appended_after_existing_tool_sequence() -> No
         tool_message,
         SystemMessage(content="Alpha instructions"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_skill_activation_records_actual_deferred_replay_tokens() -> None:
+    middleware = SkillActivationInjectionMiddleware()
+
+    result = await middleware.abefore_model(
+        {
+            "messages": [HumanMessage(content="continue")],
+            "pending_skill_activations": [
+                {"skill_name": "alpha", "content": "Alpha instructions"},
+            ],
+            "context_compression_diagnostics": {
+                "boundary_id": "boundary-1",
+                "deferred_replay_reserve": 4_000,
+            },
+        },
+        None,
+    )
+
+    assert result is not None
+    diagnostics = result["context_compression_diagnostics"]
+    assert diagnostics["boundary_id"] == "boundary-1"
+    assert diagnostics["materialization_status"] == "materialized"
+    assert diagnostics["deferred_replay_actual_tokens"] > 0
+    assert diagnostics["deferred_replay_delta_tokens"] < 0

@@ -349,6 +349,32 @@ describe("conversation message adapter", () => {
       ),
     ).toBe(false);
   });
+
+  it("hides synthetic Human compact summaries by metadata rather than user role", () => {
+    const compactSummary = agentMessage({
+      role: "user",
+      content: "较早历史摘要",
+      metadata: {
+        keydex_context_compression: {
+          kind: "summary",
+          boundary_id: "boundary-1",
+        },
+        is_compact_summary: true,
+      },
+    });
+
+    expect(conversationKindFromAgent(compactSummary)).toBe("context_compression");
+    expect(shouldDisplayAgentTranscriptMessage(compactSummary)).toBe(false);
+    expect(
+      shouldDisplayAgentTranscriptMessage(
+        agentMessage({
+          role: "user",
+          content: "较早历史摘要",
+          metadata: {},
+        }),
+      ),
+    ).toBe(true);
+  });
 });
 
 function agentMessage(patch: Partial<AgentChatMessage>): AgentChatMessage {

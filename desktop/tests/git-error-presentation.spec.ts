@@ -54,12 +54,12 @@ describe("Git error presentation contract", () => {
       rawText: "",
     });
     expect(error.retryable).toBe(true);
-    expect(gitUiErrorMessage(error)).toContain("Git 凭据不可用：credential rejected");
+    expect(gitUiErrorMessage(error)).toContain("Git 凭据不可用：远程仓库认证失败，请先配置可用凭据");
     expect(formatGitErrorMessage("git_timeout", "", "")).toContain("检查仓库、网络或远程响应后重试");
     expect(gitOperationErrorMessage({
       summary: "fetch",
       result: { error_code: "git_network_unavailable", error: "offline" },
-    })).toContain("Git 远程不可达：offline");
+    })).toContain("Git 远程不可达：无法连接 Git 远程");
     expect(gitErrorPresentation("git_future_error").title).toBe("未知 Git 错误");
   });
 });

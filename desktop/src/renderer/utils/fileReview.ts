@@ -13,6 +13,9 @@ export interface FileReviewChange {
   oldPath?: string | null;
   newPath?: string | null;
   source?: FileReviewSource;
+  binary?: boolean;
+  truncated?: boolean;
+  patchPrecision?: "exact" | "approximate";
 }
 
 export function fileReviewChangesFromMessage(message: ConversationMessage, fallbackTarget = ""): FileReviewChange[] {
@@ -83,6 +86,9 @@ export function normalizeFileReviewChange(change: Partial<FileReviewChange> & { 
     oldPath: change.oldPath ?? null,
     newPath: change.newPath ?? null,
     source: change.source ?? "unknown",
+    binary: change.binary ?? false,
+    truncated: change.truncated ?? false,
+    patchPrecision: change.patchPrecision ?? "exact",
   };
 }
 
@@ -125,6 +131,9 @@ function mergeFileReviewChange(changes: Map<string, FileReviewChange>, next: Fil
     oldPath: next.oldPath ?? existing?.oldPath ?? null,
     newPath: next.newPath ?? existing?.newPath ?? null,
     source: next.source ?? existing?.source ?? "unknown",
+    binary: next.binary ?? existing?.binary ?? false,
+    truncated: next.truncated ?? existing?.truncated ?? false,
+    patchPrecision: next.patchPrecision ?? existing?.patchPrecision ?? "exact",
   });
 }
 
@@ -135,7 +144,7 @@ function fileReviewChangeFromRecord(
   forcedOperation: FileReviewOperation | null,
   source: FileReviewSource,
 ): FileReviewChange | null {
-  const diff = stringValue(record.diff);
+  const diff = stringValue(record.diff) || stringValue(record.raw_patch ?? record.rawPatch);
   const operation = forcedOperation ?? operationFromRecord(record, fallbackOperation);
   return {
     path,
@@ -151,6 +160,12 @@ function fileReviewChangeFromRecord(
     oldPath: nullableString(record.old_path ?? record.oldPath),
     newPath: nullableString(record.new_path ?? record.newPath),
     source,
+    binary: record.binary === true,
+    truncated: record.truncated === true,
+    patchPrecision:
+      stringValue(record.patch_precision ?? record.patchPrecision) === "approximate"
+        ? "approximate"
+        : "exact",
   };
 }
 

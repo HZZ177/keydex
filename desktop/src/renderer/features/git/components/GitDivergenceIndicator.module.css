@@ -3,7 +3,7 @@
   min-width: max-content;
   flex: 0 0 auto;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   margin-left: auto;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
@@ -16,7 +16,7 @@
 .outgoing {
   display: inline-flex;
   align-items: center;
-  gap: 1px;
+  gap: 0;
 }
 
 .incoming {

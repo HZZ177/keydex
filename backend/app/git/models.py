@@ -731,6 +731,7 @@ class GitPushCommandRequest(GitCommandRequest):
     tag_name: str | None = Field(default=None, min_length=1, max_length=255)
     set_upstream: bool = False
     tags: bool = False
+    follow_tags: bool = False
     force_with_lease: bool = False
 
 
@@ -900,9 +901,31 @@ class GitPatchCommandRequest(GitCommandRequest):
     reverse: bool = False
     check_only: bool = False
     reject: bool = False
+    expected_source_version: str | None = Field(default=None, min_length=1, max_length=128)
+    expected_source_patch: str | None = Field(default=None, min_length=1, max_length=2_000_000)
+    source_kind: Literal["working_tree", "index"] | None = None
+    source_paths: list[str] = Field(default_factory=list, max_length=500)
+
+    @field_validator("source_paths")
+    @classmethod
+    def validate_source_paths(cls, value: list[str]) -> list[str]:
+        from .security import validate_repo_relative_path
+
+        return list(dict.fromkeys(validate_repo_relative_path(path) for path in value))
 
     @model_validator(mode="after")
     def validate_patch_mode(self) -> GitPatchCommandRequest:
+        source_identity = (
+            self.expected_source_version,
+            self.expected_source_patch,
+            self.source_kind,
+        )
+        if any(item is not None for item in source_identity) and (
+            any(item is None for item in source_identity) or not self.source_paths
+        ):
+            raise ValueError(
+                "Patch source identity requires version, original patch, kind, and paths"
+            )
         if self.check_only and self.reject:
             raise ValueError("Patch dry-run cannot create reject files")
         if self.cached and self.reject:

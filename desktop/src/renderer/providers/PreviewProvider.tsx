@@ -3,8 +3,10 @@ import type { PropsWithChildren } from "react";
 
 import type { RuntimeBridge } from "@/runtime";
 import type { FileReviewChange } from "@/renderer/utils/fileReview";
+import type { KeydexDiffDocument } from "@/renderer/components/diff/model";
 
 import { evictFileMarkdownRuntimeEntry } from "@/renderer/components/workspace/fileMarkdownRuntime";
+import { normalizeDiffPreviewRequest } from "@/renderer/components/diff/adapters/previewDocument";
 
 import type { PreviewMarkdownViewDescriptor, PreviewRequest } from "./previewTypes";
 
@@ -73,6 +75,7 @@ export interface FilePanelRequest {
 
 export interface OpenReviewPanelRequest {
   files?: FileReviewChange[];
+  document?: KeydexDiffDocument | null;
   focusedPath?: string | null;
   panelKey?: string | null;
   sourceMessageId?: string | null;
@@ -84,6 +87,7 @@ export interface ReviewPanelRequest {
   requestId: number;
   scopeKey: string;
   files: FileReviewChange[];
+  document: KeydexDiffDocument | null;
   focusedPath: string | null;
   panelKey: string;
   sourceMessageId: string | null;
@@ -243,6 +247,7 @@ export function PreviewProvider({ children }: PropsWithChildren) {
           requestId: (current.reviewPanelRequest?.requestId ?? 0) + 1,
           scopeKey: previewScopeKey(context),
           files,
+          document: request.document ?? null,
           focusedPath,
           panelKey,
           sourceMessageId: request.sourceMessageId ?? null,
@@ -499,7 +504,8 @@ function openPreviewInStore(
 }
 
 function normalizePreviewRequest(request: PreviewRequest | string): PreviewRequest {
-  return typeof request === "string" ? { type: "file", path: request } : request;
+  const normalized = typeof request === "string" ? { type: "file" as const, path: request } : request;
+  return normalizeDiffPreviewRequest(normalized);
 }
 
 function createPreviewEntry(
@@ -566,6 +572,9 @@ function previewEntryId(request: PreviewRequest): string {
   if (request.type === "diff") {
     return `diff:${request.path}:${hashText(request.diff)}`;
   }
+  if (request.type === "diff-document") {
+    return `diff-document:${request.document.id}:${request.document.sourceVersion}`;
+  }
   if (request.type === "skill-resource") {
     return `skill-resource:${request.skillSource}:${request.skillName}:${request.resourcePath}`;
   }
@@ -573,7 +582,7 @@ function previewEntryId(request: PreviewRequest): string {
 }
 
 function previewTitle(request: PreviewRequest): string {
-  if (request.type === "content" || request.type === "skill-resource") {
+  if (request.type === "content" || request.type === "skill-resource" || request.type === "diff-document") {
     return request.title;
   }
   return fileName(request.path);
@@ -586,6 +595,9 @@ function previewSourceLabel(request: PreviewRequest): string {
   if (request.type === "content") {
     return request.sourcePath ?? "消息内容";
   }
+  if (request.type === "diff-document") {
+    return request.sourceLabel ?? request.sourcePath ?? "差异内容";
+  }
   return request.path;
 }
 
@@ -593,7 +605,7 @@ function targetPathForRequest(request: PreviewRequest): string | null {
   if ("path" in request) {
     return request.path;
   }
-  return request.type === "content" ? request.sourcePath ?? null : null;
+  return request.type === "content" || request.type === "diff-document" ? request.sourcePath ?? null : null;
 }
 
 function reviewPanelKey(

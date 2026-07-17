@@ -11,7 +11,13 @@ from langchain.agents.middleware.types import (
     ModelRequest,
     ModelResponse,
 )
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, RemoveMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    RemoveMessage,
+    SystemMessage,
+)
 
 try:
     from langchain_core.messages.utils import count_tokens_approximately
@@ -19,19 +25,44 @@ except Exception:  # pragma: no cover
     count_tokens_approximately = None
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
+from backend.app.agent.compact_runtime_attachments import (
+    build_current_text_reader,
+    build_latest_plan_attachment,
+    build_recent_read_attachments,
+)
+from backend.app.agent.context_compression_input import build_compression_prefix_input
+from backend.app.agent.context_compression_replacement import (
+    build_compression_replacement,
+    plan_compression_budget,
+)
+from backend.app.agent.context_compression_selection import (
+    POST_COMPACTION_NORMAL_CEILING_TOKENS,
+    select_recent_execution_segment,
+    select_structured_user_message_groups,
+)
+from backend.app.agent.context_compression_utils import (
+    is_context_compression_protocol_message,
+)
 from backend.app.agent.factory import AgentFactory, agent_factory
 from backend.app.agent.middleware.common import _compression_display_label, _state_messages
 from backend.app.agent.runtime_settings import ContextCompressionRuntimeSettings
+from backend.app.agent.state import CONTEXT_COMPRESSION_DIAGNOSTICS_STATE_KEY
 from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
 from backend.app.core.request_context import (
     get_active_session_id,
     get_session_id,
     get_trace_id,
+    get_turn_index,
     get_user_id,
 )
 from backend.app.events import DomainEventType, EventDispatcher
 from backend.app.services.context_compression_service import ContextCompressionService
+from backend.app.services.legacy_user_group_reconstructor import LegacyUserGroupReconstructor
+from backend.app.services.structured_user_group_materializer import (
+    build_current_attachment_resolver,
+)
+from backend.app.services.structured_user_message_group import StructuredUserMessageGroup
 from backend.app.storage import StorageRepositories
 
 CURRENT_TURN_MESSAGE_MARKER = "_keydex_current_turn"
@@ -63,6 +94,7 @@ class ContextCompressionMiddleware(AgentMiddleware):
         self.http_transport = http_transport
         self.factory = factory
         self._compression_service = compression_service
+        self._reported_final_request_boundaries: set[str] = set()
 
     def _service(self) -> ContextCompressionService:
         return self._compression_service or ContextCompressionService(
@@ -92,6 +124,14 @@ class ContextCompressionMiddleware(AgentMiddleware):
         if not original_session_id or not active_session_id:
             return await handler(request)
 
+        request_messages = self._model_request_messages(request)
+        await self._emit_compression_final_request_diagnostics(
+            request=request,
+            request_messages=request_messages,
+            original_session_id=original_session_id,
+            active_session_id=active_session_id,
+        )
+
         try:
             response = await handler(request)
         except Exception:
@@ -110,7 +150,6 @@ class ContextCompressionMiddleware(AgentMiddleware):
             )
             return response
 
-        request_messages = self._model_request_messages(request)
         await self._emit_model_call_window_snapshot(
             hook="model_call_after",
             call_phase="after",
@@ -122,6 +161,64 @@ class ContextCompressionMiddleware(AgentMiddleware):
             usage_total_tokens=usage_total_tokens,
         )
         return response
+
+    async def _emit_compression_final_request_diagnostics(
+        self,
+        *,
+        request: ModelRequest,
+        request_messages: list[BaseMessage],
+        original_session_id: str,
+        active_session_id: str,
+    ) -> None:
+        state = request.state if isinstance(request.state, dict) else {}
+        diagnostics = state.get(CONTEXT_COMPRESSION_DIAGNOSTICS_STATE_KEY)
+        if not isinstance(diagnostics, dict):
+            return
+        boundary_id = str(diagnostics.get("boundary_id") or "").strip()
+        if not boundary_id or boundary_id in self._reported_final_request_boundaries:
+            return
+        summary_present = any(
+            is_context_compression_protocol_message(message) for message in request_messages
+        )
+        if not summary_present:
+            return
+        system_tokens = sum(
+            self._calculate_approximate_token_count([message])
+            for message in request_messages
+            if isinstance(message, SystemMessage)
+        )
+        tool_schema_tokens = max(len(str(getattr(request, "tools", []) or [])) // 2, 0)
+        message_tokens = self._calculate_approximate_token_count(request_messages)
+        final_request_tokens = message_tokens + tool_schema_tokens
+        self._reported_final_request_boundaries.add(boundary_id)
+        await self._emit_middleware_progress(
+            stage="compression_final_request",
+            original_session_id=original_session_id,
+            active_session_id=active_session_id,
+            compression_operation_id=boundary_id,
+            boundary_id=boundary_id,
+            replacement_actual_tokens=max(
+                int(diagnostics.get("replacement_actual_tokens") or 0), 0
+            ),
+            deferred_replay_reserve=max(
+                int(diagnostics.get("deferred_replay_reserve") or 0), 0
+            ),
+            deferred_replay_actual_tokens=max(
+                int(diagnostics.get("deferred_replay_actual_tokens") or 0), 0
+            ),
+            deferred_replay_delta_tokens=int(
+                diagnostics.get("deferred_replay_delta_tokens") or 0
+            ),
+            system_tool_actual_tokens=system_tokens + tool_schema_tokens,
+            final_request_actual_tokens=final_request_tokens,
+            provider_hard_window_tokens=max(int(self.settings.context_window_tokens), 1),
+            provider_hard_window_margin=(
+                max(int(self.settings.context_window_tokens), 1) - final_request_tokens
+            ),
+            materialization_status=str(
+                diagnostics.get("materialization_status") or "pending"
+            ),
+        )
 
     async def abefore_model(self, state: Any, runtime: Any) -> dict | None:
         if not self.settings.enabled:
@@ -145,8 +242,26 @@ class ContextCompressionMiddleware(AgentMiddleware):
             )
             return None
 
-        compression_messages, continuation_messages = self._split_messages_for_blocking_compression(
-            messages
+        recent_execution = select_recent_execution_segment(messages)
+        if recent_execution.failure_reason:
+            raise RuntimeError(
+                f"context_compression_invalid_history:{recent_execution.failure_reason}"
+            )
+        prefix_input = build_compression_prefix_input(messages, recent_execution)
+        compression_messages = list(prefix_input.messages)
+        continuation_messages = list(recent_execution.messages)
+        raw_groups = _state_channel(state, "structured_user_message_groups")
+        groups = _normalize_structured_user_groups(raw_groups)
+        if not groups:
+            groups = LegacyUserGroupReconstructor(self.repositories).reconstruct_messages(
+                messages,
+                session_id=original_session_id,
+            )
+        group_selection = select_structured_user_message_groups(groups)
+        tail_tool_call_ids = _tool_call_ids(recent_execution.messages)
+        plan_attachment = build_latest_plan_attachment(
+            messages,
+            tail_tool_call_ids=tail_tool_call_ids,
         )
         fraction_snapshot = self._calculate_before_model_fraction(
             messages=messages,
@@ -180,7 +295,10 @@ class ContextCompressionMiddleware(AgentMiddleware):
             continuation_count=len(continuation_messages),
             trigger_fraction=trigger_fraction,
         )
-        if not compression_messages:
+        if not compression_messages or not any(
+            not is_context_compression_protocol_message(message)
+            for message in compression_messages
+        ):
             self._log_compression_decision(
                 hook="abefore_model",
                 decision="skip_compression",
@@ -208,6 +326,11 @@ class ContextCompressionMiddleware(AgentMiddleware):
             return None
 
         compression_operation_id = new_id()
+        budget_plan = plan_compression_budget(
+            group_selection=group_selection,
+            recent_execution=recent_execution,
+            plan_attachment=plan_attachment,
+        )
         logger.info(
             "[ContextCompressionMiddleware] 触发阻塞式上下文压缩 | "
             f"原始会话ID={original_session_id} | 活动会话ID={active_session_id} | "
@@ -230,8 +353,12 @@ class ContextCompressionMiddleware(AgentMiddleware):
             trace_id=get_trace_id(),
             trace_record_id=get_trace_id(),
             active_session_id=active_session_id,
+            boundary_id=compression_operation_id,
+            selected_group_ids=group_selection.mandatory_group_ids,
+            tail_message_count=len(recent_execution.messages),
+            max_output_tokens=budget_plan.requested_summary_max_tokens,
         )
-        if not result.success or not result.replacement_messages:
+        if not result.success or not result.summary:
             failure_reason = result.failure_reason or "generation_failed"
             await self._emit_middleware_progress(
                 stage="compression_failed",
@@ -239,6 +366,46 @@ class ContextCompressionMiddleware(AgentMiddleware):
                 active_session_id=active_session_id,
                 reason=failure_reason,
                 compression_operation_id=compression_operation_id,
+            )
+            raise RuntimeError(f"context_compression_failed:{failure_reason}")
+
+        recent_attachments = build_recent_read_attachments(
+            messages,
+            available_tokens=POST_COMPACTION_NORMAL_CEILING_TOKENS,
+            read_current=build_current_text_reader(
+                self.repositories,
+                session=session,
+                user_id=get_user_id() or session.user_id,
+                turn_index=get_turn_index() or 0,
+            ),
+            tail_tool_call_ids=tail_tool_call_ids,
+        )
+        replacement = build_compression_replacement(
+            summary=result.summary,
+            boundary_id=compression_operation_id,
+            prefix_messages=compression_messages,
+            all_groups=groups,
+            group_selection=group_selection,
+            recent_execution=recent_execution,
+            plan_attachment=plan_attachment,
+            recent_attachments=recent_attachments.attachments,
+            pre_dropped_components=recent_attachments.dropped,
+            attachment_resolver=build_current_attachment_resolver(
+                self.repositories,
+                session_id=original_session_id,
+                user_id=get_user_id() or session.user_id,
+            ),
+            provider_hard_window_tokens=max(int(self.settings.context_window_tokens), 1),
+        )
+        if not replacement.success:
+            failure_reason = replacement.failure_reason or "replacement_build_failed"
+            await self._emit_middleware_progress(
+                stage="compression_failed",
+                original_session_id=original_session_id,
+                active_session_id=active_session_id,
+                reason=failure_reason,
+                compression_operation_id=compression_operation_id,
+                selection_report=replacement.report.to_safe_dict(),
             )
             raise RuntimeError(f"context_compression_failed:{failure_reason}")
 
@@ -256,6 +423,10 @@ class ContextCompressionMiddleware(AgentMiddleware):
             continuation_message_count=len(continuation_messages),
             retain_message_count=len(continuation_messages),
             compression_operation_id=compression_operation_id,
+            selected_authorized_group_ids=list(replacement.report.selected_group_ids),
+            historical_tail_message_ids=list(recent_execution.source_message_ids),
+            selection_report=replacement.report.to_safe_dict(),
+            attempt_count=result.attempt_count,
         )
         self._log_compression_decision(
             hook="abefore_model",
@@ -271,9 +442,9 @@ class ContextCompressionMiddleware(AgentMiddleware):
         return {
             "messages": [
                 RemoveMessage(id=REMOVE_ALL_MESSAGES),
-                *result.replacement_messages,
-                *continuation_messages,
-            ]
+                *replacement.messages,
+            ],
+            **replacement.state_update,
         }
 
     async def aafter_agent(self, state: Any, runtime: Any) -> dict | None:
@@ -761,3 +932,39 @@ def _message_flag(message: BaseMessage, key: str) -> bool:
     if isinstance(additional_kwargs, dict) and additional_kwargs.get(key) is True:
         return True
     return bool(getattr(message, key, False) is True)
+
+
+def _state_channel(state: Any, key: str) -> Any:
+    if isinstance(state, dict):
+        return state.get(key)
+    return getattr(state, key, None)
+
+
+def _normalize_structured_user_groups(raw_groups: Any) -> list[StructuredUserMessageGroup]:
+    groups: list[StructuredUserMessageGroup] = []
+    for raw in list(raw_groups or []):
+        try:
+            groups.append(
+                raw
+                if isinstance(raw, StructuredUserMessageGroup)
+                else StructuredUserMessageGroup.from_dict(raw)
+            )
+        except (TypeError, ValueError) as exc:
+            logger.debug(
+                "[ContextCompressionMiddleware] 跳过无效结构化用户消息组 | "
+                f"error_type={type(exc).__name__}"
+            )
+    return groups
+
+
+def _tool_call_ids(messages: list[BaseMessage] | tuple[BaseMessage, ...]) -> set[str]:
+    result: set[str] = set()
+    for message in messages:
+        if not isinstance(message, AIMessage):
+            continue
+        result.update(
+            str(call.get("id") or "")
+            for call in message.tool_calls
+            if str(call.get("id") or "")
+        )
+    return result

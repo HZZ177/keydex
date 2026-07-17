@@ -23,13 +23,13 @@ export function GitDivergenceIndicator({
     >
       {incoming > 0 ? (
         <span className={styles.incoming} data-direction="incoming" title={`传入 ${incoming} 个提交`}>
-          <ArrowDownLeft size={15} strokeWidth={2.2} aria-hidden="true" />
+          <ArrowDownLeft size={13} strokeWidth={2} aria-hidden="true" />
           <span>{incoming}</span>
         </span>
       ) : null}
       {outgoing > 0 ? (
         <span className={styles.outgoing} data-direction="outgoing" title={`传出 ${outgoing} 个提交`}>
-          <ArrowUpRight size={15} strokeWidth={2.2} aria-hidden="true" />
+          <ArrowUpRight size={13} strokeWidth={2} aria-hidden="true" />
           <span>{outgoing}</span>
         </span>
       ) : null}

@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { confirmWorktreeRemoval, GitWorktreeView } from "@/renderer/features/git/components/GitWorktreeView";
+import { GitWorktreeView } from "@/renderer/features/git/components/GitWorktreeView";
 import type { GitWorktreesSnapshot } from "@/runtime/gitTypes";
 
 afterEach(cleanup);
@@ -9,37 +9,40 @@ afterEach(cleanup);
 describe("Git worktree management", () => {
   it("keeps parent identity and independent external authorization visible", () => {
     renderView();
-    const identity = screen.getByText(/Parent repository/, { selector: "p" });
+    const identity = screen.getByText(/父仓库/, { selector: "p" });
     expect(identity.textContent).toContain("parent-repo");
-    expect(identity.textContent).toContain("independent exact-path grant");
+    expect(identity.textContent).toContain("精确路径权限");
     expect(screen.getByText("D:/worktrees/topic")).toBeTruthy();
-    expect(screen.getByText(/external · dirty/)).toBeTruthy();
+    expect(screen.getByText(/外部路径 · 有改动/)).toBeTruthy();
   });
 
   it("separates authorization from add and submits typed add options", () => {
     const onAuthorize = vi.fn();
     const onAdd = vi.fn();
     renderView({ onAuthorize, onAdd });
-    fireEvent.change(screen.getByLabelText("Worktree target path"), { target: { value: "D:/worktrees/new" } });
-    fireEvent.change(screen.getByLabelText("Worktree revision"), { target: { value: "main" } });
-    fireEvent.change(screen.getByLabelText("Worktree new branch"), { target: { value: "feature/new" } });
-    fireEvent.click(screen.getByRole("button", { name: "Authorize external path" }));
+    fireEvent.click(screen.getByRole("button", { name: "授权路径…" }));
+    fireEvent.change(screen.getByLabelText("要授权的工作树路径"), { target: { value: "D:/worktrees/new" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认授权" }));
     expect(onAuthorize).toHaveBeenCalledWith("D:/worktrees/new");
     expect(onAdd).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.click(screen.getByRole("button", { name: "添加工作树…" }));
+    fireEvent.change(screen.getByLabelText("工作树目标路径"), { target: { value: "D:/worktrees/new" } });
+    fireEvent.change(screen.getByLabelText("工作树修订"), { target: { value: "main" } });
+    fireEvent.change(screen.getByLabelText("工作树新分支"), { target: { value: "feature/new" } });
+    fireEvent.click(screen.getByRole("button", { name: "添加" }));
     expect(onAdd).toHaveBeenCalledWith({ path: "D:/worktrees/new", revision: "main", newBranch: "feature/new", detach: false });
   });
 
-  it("requires two confirmations only for dirty removal", () => {
-    const confirm = vi.fn().mockReturnValue(true);
-    expect(confirmWorktreeRemoval({ path: "D:/clean", dirty: false }, confirm)).toBe(true);
-    expect(confirm).toHaveBeenCalledTimes(1);
-    confirm.mockClear();
-    expect(confirmWorktreeRemoval({ path: "D:/dirty", dirty: true }, confirm)).toBe(true);
-    expect(confirm).toHaveBeenCalledTimes(2);
-    expect(confirm.mock.calls[1][0]).toContain("uncommitted changes");
-    confirm.mockReset().mockReturnValueOnce(true).mockReturnValueOnce(false);
-    expect(confirmWorktreeRemoval({ path: "D:/dirty", dirty: true }, confirm)).toBe(false);
+  it("previews dirty removal and executes only after confirmation", () => {
+    const onRemove = vi.fn();
+    renderView({ onRemove });
+    fireEvent.click(screen.getByRole("button", { name: "移除" }));
+    expect(screen.getByRole("dialog", { name: "确认移除工作树" }).textContent).toContain("有未提交改动，将强制移除");
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(onRemove).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "移除" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认移除" }));
+    expect(onRemove).toHaveBeenCalledWith(expect.objectContaining({ dirty: true }));
   });
 
   it("routes revoke, lock, unlock, remove and prune without exposing primary removal", () => {
@@ -50,17 +53,21 @@ describe("Git worktree management", () => {
       onLock: vi.fn(),
       onUnlock: vi.fn(),
     };
-    vi.spyOn(window, "prompt").mockReturnValue("maintenance");
     renderView(actions);
-    fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
-    fireEvent.click(screen.getByRole("button", { name: "Lock" }));
-    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
-    fireEvent.click(screen.getByRole("button", { name: "Prune stale" }));
+    fireEvent.click(screen.getByRole("button", { name: "撤销授权" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认撤销" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "锁定" }).at(-1)!);
+    fireEvent.change(screen.getByLabelText("工作树锁定原因"), { target: { value: "maintenance" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "锁定" }).at(-1)!);
+    fireEvent.click(screen.getByRole("button", { name: "移除" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认移除" }));
+    fireEvent.click(screen.getByRole("button", { name: "清理失效登记…" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认清理" }));
     expect(actions.onRevoke).toHaveBeenCalledWith("D:/worktrees/topic");
     expect(actions.onLock).toHaveBeenCalledWith(expect.objectContaining({ path: "D:/worktrees/topic" }), "maintenance");
     expect(actions.onRemove).toHaveBeenCalledWith(expect.objectContaining({ dirty: true }));
     expect(actions.onPrune).toHaveBeenCalledTimes(1);
-    expect(screen.getAllByRole("button", { name: "Remove" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "移除" })).toHaveLength(1);
   });
 });
 

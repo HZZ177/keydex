@@ -1,0 +1,22 @@
+.host {
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  overflow: hidden;
+  contain: inline-size;
+}
+
+.host:not([data-profile="compact"]) {
+  width: 100%;
+  height: 100%;
+}
+
+.host > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.host:not([data-profile="compact"]) > * {
+  height: 100%;
+  min-height: 0;
+}

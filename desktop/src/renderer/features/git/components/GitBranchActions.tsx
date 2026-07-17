@@ -1,12 +1,22 @@
-import { GitBranch, Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { GitBranch } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { GitRef, GitStatusSnapshot } from "@/runtime/gitTypes";
+import {
+  GitChoiceDialog,
+  GitConfirmActionDialog,
+  GitDialogField,
+  GitDialogOptions,
+  GitDialogSummary,
+  GitFormDialog,
+  validateGitBranchName,
+} from "@/renderer/features/git/dialogs";
 
 import styles from "./GitBranchActions.module.css";
 
 export interface GitBranchActionsProps {
   refs: readonly GitRef[];
+  remotes?: readonly string[];
   selectedRef: string | null;
   status: GitStatusSnapshot | null;
   busy?: boolean;
@@ -24,6 +34,7 @@ export interface GitBranchActionsProps {
 
 export function GitBranchActions({
   refs,
+  remotes = [],
   selectedRef,
   status,
   busy = false,
@@ -44,16 +55,41 @@ export function GitBranchActions({
   );
   const [branchName, setBranchName] = useState("");
   const [renameName, setRenameName] = useState("");
+  const [dialog, setDialog] = useState<"create" | "rename" | "upstream" | "create_tag" | "push_tag" | "delete_remote_tag" | null>(null);
+  const [deleteRequest, setDeleteRequest] = useState<
+    | { kind: "branch"; ref: GitRef; force: boolean }
+    | { kind: "tag"; ref: GitRef }
+    | null
+  >(null);
   const [dirtyCheckout, setDirtyCheckout] = useState<GitRef | null>(null);
   const [tagName, setTagName] = useState("");
   const [tagMessage, setTagMessage] = useState("");
   const [tagAnnotated, setTagAnnotated] = useState(false);
   const [tagSigned, setTagSigned] = useState(false);
-  const [tagRemote, setTagRemote] = useState("origin");
+  const [tagRemote, setTagRemote] = useState(remotes[0] ?? "");
   const [upstreamChoice, setUpstreamChoice] = useState("");
   const validation = validateBranchName(branchName);
   const dirty = Boolean(status?.files.length);
   const deletionRisk = branchDeletionRisk(selected, status);
+  const availableRemotes = useMemo(() => Array.from(new Set([
+    ...remotes,
+    ...refs.filter((ref) => ref.kind === "remote").map((ref) => ref.shortName.split("/", 1)[0]).filter(Boolean),
+  ])), [refs, remotes]);
+
+  useEffect(() => {
+    setDirtyCheckout(null);
+    setDialog(null);
+    setDeleteRequest(null);
+    setBranchName("");
+    setRenameName("");
+    setTagName("");
+    setTagMessage("");
+    setUpstreamChoice("");
+  }, [selectedRef]);
+
+  useEffect(() => {
+    if (!availableRemotes.includes(tagRemote)) setTagRemote(availableRemotes[0] ?? "");
+  }, [availableRemotes, tagRemote]);
 
   const checkout = () => {
     if (!selected || selected.current) return;
@@ -71,125 +107,204 @@ export function GitBranchActions({
         <strong>分支</strong>
         <span>{selected ? selected.shortName : "请选择引用"}</span>
       </header>
-      <form
-        className={styles.create}
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!validation.valid || busy) return;
-          void onCreate(branchName.trim(), selected?.shortName ?? "HEAD");
-          setBranchName("");
-        }}
-      >
-        <label htmlFor="git-new-branch">从 {selected?.shortName ?? "当前指针"} 新建分支</label>
-        <div>
-          <input
-            id="git-new-branch"
-            value={branchName}
-            placeholder="feature/name"
-            onChange={(event) => setBranchName(event.currentTarget.value)}
-          />
-          <button type="submit" disabled={!validation.valid || busy}><Plus size={13} />创建</button>
-        </div>
-        <small data-valid={validation.valid ? "true" : "false"}>{validation.message}</small>
-      </form>
-      <div className={styles.checkout}>
-        <span>{selected?.current ? "当前分支" : "将工作树切换到所选引用"}</span>
-        <button type="button" disabled={!selected || selected.current || busy} onClick={checkout}>签出</button>
+      <div className={styles.actionGrid}>
+        <button type="button" disabled={busy} onClick={() => setDialog("create")}>新建分支…</button>
+        <button type="button" disabled={!selected || selected.current || busy} onClick={checkout}>签出…</button>
+        {selected?.kind === "local" ? <button type="button" disabled={busy} onClick={() => { setRenameName(selected.shortName); setDialog("rename"); }}>重命名…</button> : null}
+        {selected?.kind === "local" ? <button type="button" disabled={busy} onClick={() => {
+          setUpstreamChoice(selected.upstream ?? refs.find((ref) => ref.kind === "remote")?.shortName ?? "");
+          setDialog("upstream");
+        }}>设置上游…</button> : null}
+        <button type="button" disabled={busy} onClick={() => setDialog("create_tag")}>创建标签…</button>
       </div>
       {selected?.kind === "local" ? (
-        <form
-          className={styles.manage}
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!validateBranchName(renameName).valid || busy) return;
-            void onRename(selected, renameName.trim());
-            setRenameName("");
-          }}
-        >
-          <input
-            value={renameName}
-            aria-label={`重命名 ${selected.shortName}`}
-            placeholder="新分支名称"
-            onChange={(event) => setRenameName(event.currentTarget.value)}
-          />
-          <button type="submit" disabled={!validateBranchName(renameName).valid || busy}>重命名</button>
-        </form>
-      ) : null}
-      {selected?.kind === "local" ? (
-        <div className={styles.upstream}>
+        <div className={styles.upstreamSummary}>
           <span>上游分支：{selected.upstream ?? "未配置"}</span>
-          <select aria-label="上游分支" value={upstreamChoice} onChange={(event) => setUpstreamChoice(event.currentTarget.value)}>
-            <option value="">选择远程分支</option>
-            {refs.filter((ref) => ref.kind === "remote").map((ref) => (
-              <option value={ref.shortName} key={ref.fullName}>{ref.shortName}</option>
-            ))}
-          </select>
-          <button type="button" disabled={!upstreamChoice || busy} onClick={() => void onSetUpstream(selected, upstreamChoice)}>设置上游</button>
           <button type="button" disabled={!selected.upstream || busy} onClick={() => void onSetUpstream(selected, null)}>取消设置</button>
         </div>
       ) : null}
       {selected && !selected.current && selected.kind !== "tag" ? (
         <div className={styles.deleteZone} data-risk={deletionRisk}>
           <span>{selected.kind === "remote" ? `删除远程分支 ${selected.shortName}` : `删除 ${selected.shortName}`}</span>
-          <button type="button" disabled={busy} onClick={() => void onDelete(selected, false)}>删除…</button>
+          <button type="button" disabled={busy} onClick={() => setDeleteRequest({ kind: "branch", ref: selected, force: false })}>删除…</button>
           {selected.kind === "local" ? (
-            <button type="button" disabled={busy} onClick={() => void onDelete(selected, true)}>强制删除…</button>
+            <button type="button" disabled={busy} onClick={() => setDeleteRequest({ kind: "branch", ref: selected, force: true })}>强制删除…</button>
           ) : null}
         </div>
       ) : null}
-      <form
-        className={styles.tagForm}
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!validateBranchName(tagName).valid || busy) return;
-          void onCreateTag({
-            name: tagName.trim(),
-            target: selected?.shortName ?? "HEAD",
-            annotated: tagAnnotated || tagSigned,
-            message: tagMessage.trim(),
-            sign: tagSigned,
-          });
-          setTagName("");
-          setTagMessage("");
-        }}
-      >
-        <strong>在 {selected?.shortName ?? "当前指针"} 创建标签</strong>
-        <input aria-label="标签名称" value={tagName} placeholder="v1.0.0" onChange={(event) => setTagName(event.currentTarget.value)} />
-        <label><input type="checkbox" checked={tagAnnotated} onChange={(event) => setTagAnnotated(event.currentTarget.checked)} />附注标签</label>
-        <label><input type="checkbox" checked={tagSigned} onChange={(event) => setTagSigned(event.currentTarget.checked)} />签名标签</label>
-        {tagAnnotated || tagSigned ? (
-          <input aria-label="标签说明" value={tagMessage} placeholder="版本说明" onChange={(event) => setTagMessage(event.currentTarget.value)} />
-        ) : null}
-        <button type="submit" disabled={!validateBranchName(tagName).valid || busy}>创建标签</button>
-      </form>
       {selected?.kind === "tag" ? (
         <div className={styles.tagDetails}>
           <strong>{selected.shortName}</strong>
           <span>目标 {(selected.peeledObjectId ?? selected.objectId).slice(0, 12)}</span>
           <span>{selected.annotated ? selected.annotation || "附注标签" : "轻量标签"}</span>
-          <button type="button" onClick={() => void onDeleteTag(selected, null)}>删除本地标签…</button>
-          <label>
-            远程仓库
-            <input value={tagRemote} aria-label="标签远程仓库" onChange={(event) => setTagRemote(event.currentTarget.value)} />
-          </label>
-          <button type="button" disabled={!tagRemote.trim() || busy} onClick={() => void onPushTag(selected, tagRemote.trim())}>推送标签…</button>
-          <button type="button" disabled={!tagRemote.trim()} onClick={() => void onDeleteTag(selected, tagRemote.trim())}>删除远程标签…</button>
+          <button type="button" disabled={busy} onClick={() => setDeleteRequest({ kind: "tag", ref: selected })}>删除本地标签…</button>
+          <button type="button" disabled={busy} onClick={() => setDialog("push_tag")}>推送标签…</button>
+          <button type="button" disabled={busy} onClick={() => setDialog("delete_remote_tag")}>删除远程标签…</button>
         </div>
       ) : null}
+      {dialog === "create" ? (
+        <GitFormDialog
+          title="创建新分支"
+          description={`基于 ${selected?.shortName ?? "HEAD"} 创建本地分支。`}
+          confirmLabel={busy ? "正在创建…" : "创建"}
+          busy={busy}
+          valid={validation.valid}
+          onCancel={() => setDialog(null)}
+          onSubmit={async () => {
+            await onCreate(branchName.trim(), selected?.shortName ?? "HEAD");
+            setBranchName("");
+            setDialog(null);
+          }}
+        >
+          <GitDialogSummary>起点：{selected?.shortName ?? "HEAD"}</GitDialogSummary>
+          <GitDialogField label="分支名称" error={branchName && !validation.valid ? validation.message : undefined}>
+            <input autoFocus aria-label="新分支名称" value={branchName} placeholder="feature/name" onChange={(event) => setBranchName(event.currentTarget.value)} />
+          </GitDialogField>
+        </GitFormDialog>
+      ) : null}
+      {dialog === "rename" && selected?.kind === "local" ? (
+        <GitFormDialog
+          title={`重命名分支 ${selected.shortName}`}
+          description="输入新的本地分支名称。"
+          confirmLabel={busy ? "正在重命名…" : "重命名"}
+          busy={busy}
+          valid={validateBranchName(renameName).valid && renameName.trim() !== selected.shortName}
+          onCancel={() => setDialog(null)}
+          onSubmit={async () => {
+            await onRename(selected, renameName.trim());
+            setDialog(null);
+          }}
+        >
+          <GitDialogSummary>原名称：{selected.shortName}</GitDialogSummary>
+          <GitDialogField label="新分支名称" error={renameName && !validateBranchName(renameName).valid ? validateBranchName(renameName).message : undefined}>
+            <input autoFocus aria-label="重命名分支" value={renameName} onChange={(event) => setRenameName(event.currentTarget.value)} />
+          </GitDialogField>
+        </GitFormDialog>
+      ) : null}
+      {dialog === "upstream" && selected?.kind === "local" ? (
+        <GitFormDialog
+          title={`设置 ${selected.shortName} 的上游`}
+          description="仅可选择明确存在的远程跟踪分支。"
+          confirmLabel={busy ? "正在设置…" : "设置上游"}
+          busy={busy}
+          valid={Boolean(upstreamChoice)}
+          onCancel={() => setDialog(null)}
+          onSubmit={async () => {
+            await onSetUpstream(selected, upstreamChoice);
+            setDialog(null);
+          }}
+        >
+          <GitDialogSummary>当前上游：{selected.upstream ?? "未配置"}</GitDialogSummary>
+          <GitDialogField label="远程分支" error={!refs.some((ref) => ref.kind === "remote") ? "没有可选择的远程分支" : undefined}>
+            <select autoFocus aria-label="上游分支" value={upstreamChoice} onChange={(event) => setUpstreamChoice(event.currentTarget.value)}>
+              <option value="">选择远程分支</option>
+              {refs.filter((ref) => ref.kind === "remote").map((ref) => <option value={ref.shortName} key={ref.fullName}>{ref.shortName}</option>)}
+            </select>
+          </GitDialogField>
+        </GitFormDialog>
+      ) : null}
+      {dialog === "create_tag" ? (
+        <GitFormDialog
+          title="创建标签"
+          description={`在 ${selected?.shortName ?? "HEAD"} 创建标签。`}
+          confirmLabel={busy ? "正在创建…" : "创建标签"}
+          busy={busy}
+          valid={validateBranchName(tagName).valid}
+          onCancel={() => setDialog(null)}
+          onSubmit={async () => {
+            await onCreateTag({
+              name: tagName.trim(),
+              target: selected?.shortName ?? "HEAD",
+              annotated: tagAnnotated || tagSigned,
+              message: tagMessage.trim(),
+              sign: tagSigned,
+            });
+            setTagName("");
+            setTagMessage("");
+            setDialog(null);
+          }}
+        >
+          <GitDialogSummary>目标：{selected?.shortName ?? "HEAD"}</GitDialogSummary>
+          <GitDialogField label="标签名称" error={tagName && !validateBranchName(tagName).valid ? validateBranchName(tagName).message : undefined}>
+            <input autoFocus aria-label="标签名称" value={tagName} placeholder="v1.0.0" onChange={(event) => setTagName(event.currentTarget.value)} />
+          </GitDialogField>
+          <GitDialogOptions>
+            <label><input type="checkbox" checked={tagAnnotated} onChange={(event) => setTagAnnotated(event.currentTarget.checked)} />附注标签</label>
+            <label><input type="checkbox" checked={tagSigned} onChange={(event) => setTagSigned(event.currentTarget.checked)} />签名标签</label>
+          </GitDialogOptions>
+          {tagAnnotated || tagSigned ? (
+            <GitDialogField label="标签说明">
+              <textarea aria-label="标签说明" value={tagMessage} placeholder="版本说明" onChange={(event) => setTagMessage(event.currentTarget.value)} />
+            </GitDialogField>
+          ) : null}
+        </GitFormDialog>
+      ) : null}
+      {(dialog === "push_tag" || dialog === "delete_remote_tag") && selected?.kind === "tag" ? (
+        <GitFormDialog
+          title={dialog === "push_tag" ? `推送标签 ${selected.shortName}` : `删除远程标签 ${selected.shortName}`}
+          description={dialog === "push_tag" ? "选择要接收该标签的远程仓库。" : "仅删除所选远程仓库中的标签，本地标签会保留。"}
+          confirmLabel={busy ? "正在处理…" : dialog === "push_tag" ? "推送标签" : "删除远程标签"}
+          confirmTone={dialog === "delete_remote_tag" ? "danger" : "default"}
+          busy={busy}
+          valid={Boolean(tagRemote)}
+          onCancel={() => setDialog(null)}
+          onSubmit={async () => {
+            if (dialog === "push_tag") await onPushTag(selected, tagRemote);
+            else await onDeleteTag(selected, tagRemote);
+            setDialog(null);
+          }}
+        >
+          <GitDialogSummary tone={dialog === "delete_remote_tag" ? "danger" : "default"}>标签：{selected.shortName}</GitDialogSummary>
+          <GitDialogField label="远程仓库" error={!availableRemotes.length ? "当前仓库没有远程仓库" : undefined}>
+            <select autoFocus aria-label="标签远程仓库" value={tagRemote} disabled={!availableRemotes.length} onChange={(event) => setTagRemote(event.currentTarget.value)}>
+              {availableRemotes.map((remote) => <option value={remote} key={remote}>{remote}</option>)}
+            </select>
+          </GitDialogField>
+        </GitFormDialog>
+      ) : null}
+      {deleteRequest ? (
+        <GitConfirmActionDialog
+          title={deleteRequest.kind === "tag" ? "删除本地标签" : deleteRequest.force ? "强制删除分支" : deleteRequest.ref.kind === "remote" ? "删除远程分支" : "删除分支"}
+          description={deleteRequest.kind === "tag"
+            ? "删除标签不会删除其指向的提交，但标签名称需要手动重建。"
+            : "删除分支不会删除工作区文件；未被其他引用保留的提交之后只能通过引用记录恢复。"}
+          target={deleteRequest.ref.shortName}
+          details={deleteRequest.kind === "branch" ? [
+            deleteRequest.ref.kind === "remote" ? "将删除远程仓库中的分支" : "仅删除本地分支引用",
+            deleteRequest.force ? "允许删除尚未合并的分支" : "仅在 Git 判定已合并时删除",
+            branchDeletionRisk(deleteRequest.ref, status) === "protected" ? "这是受保护或上游关联分支" : "不会自动切换当前分支",
+          ] : []}
+          confirmLabel={busy ? "正在删除…" : "删除"}
+          busy={busy}
+          onCancel={() => setDeleteRequest(null)}
+          onConfirm={() => {
+            const request = deleteRequest;
+            setDeleteRequest(null);
+            if (request.kind === "tag") void onDeleteTag(request.ref, null);
+            else void onDelete(request.ref, request.force);
+          }}
+        />
+      ) : null}
       {dirtyCheckout ? (
-        <div className={styles.dirty} role="alert">
-          <strong>工作树存在本地改动</strong>
-          <span>切换到 {dirtyCheckout.shortName} 可能覆盖这些改动。Keydex 不会自动储藏。</span>
-          <div>
-            <button type="button" onClick={onOpenChanges}>提交改动</button>
-            <button type="button" onClick={() => {
+        <GitChoiceDialog
+          title="工作树存在本地改动"
+          description={`签出 ${dirtyCheckout.shortName} 前请选择如何处理当前改动。Keydex 不会自动储藏。`}
+          busy={busy}
+          actions={[
+            { label: "提交改动", tone: "secondary", onSelect: () => { setDirtyCheckout(null); onOpenChanges(); } },
+            { label: "储藏并签出", tone: "primary", onSelect: () => {
               const target = dirtyCheckout;
               setDirtyCheckout(null);
               void onStashAndCheckout(target);
-            }}>储藏并签出</button>
-            <button type="button" onClick={() => setDirtyCheckout(null)}>取消</button>
-          </div>
-        </div>
+            } },
+          ]}
+          onCancel={() => setDirtyCheckout(null)}
+        >
+          <GitDialogSummary tone="warning">
+            <strong>{status?.files.length ?? 0} 个本地改动</strong>
+            <span>目标：{dirtyCheckout.shortName}{dirtyCheckout.kind === "local" ? "" : "（分离指针）"}</span>
+          </GitDialogSummary>
+        </GitChoiceDialog>
       ) : null}
     </section>
   );
@@ -210,18 +325,5 @@ export function branchDeletionRisk(
 }
 
 export function validateBranchName(value: string): { valid: boolean; message: string } {
-  const branch = value.trim();
-  if (!branch) return { valid: false, message: "请输入分支名称" };
-  if (branch.length > 255) return { valid: false, message: "分支名称过长" };
-  if (
-    branch.startsWith("-")
-    || branch.startsWith("/")
-    || branch.endsWith("/")
-    || branch.endsWith(".")
-    || branch.includes("..")
-    || branch.includes("@{")
-    || /[\s~^:?*\\]/u.test(branch)
-    || branch.includes("[")
-  ) return { valid: false, message: "分支名称不符合 Git 规则" };
-  return { valid: true, message: "分支名称有效" };
+  return validateGitBranchName(value);
 }

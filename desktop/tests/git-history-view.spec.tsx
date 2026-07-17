@@ -9,6 +9,7 @@ import {
   mergeHistoryPages,
   presentGitHistoryDecorations,
 } from "@/renderer/features/git/components/GitHistoryView";
+import type { GitCommitSummary, GitObjectId } from "@/runtime/gitTypes";
 
 afterEach(cleanup);
 
@@ -138,9 +139,9 @@ describe("GitHistoryView", () => {
   });
 });
 
-function commit(index: number) {
+function commit(index: number): GitCommitSummary {
   return {
-    objectId: index.toString(16).padStart(40, "0") as never,
+    objectId: index.toString(16).padStart(40, "0") as GitObjectId,
     parentIds: [],
     authorName: "Keydex",
     authorEmail: "keydex@example.invalid",

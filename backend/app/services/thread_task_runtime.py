@@ -18,16 +18,6 @@ from backend.app.storage import (
     THREAD_TASK_STATUS_ACTIVE,
 )
 
-THREAD_TASK_SEED_CONTEXT_METADATA_KEY = "seed_turn_context"
-_THREAD_TASK_RUNTIME_PARAM_KEYS = {
-    "thread_task",
-    "threadTask",
-    "hide_user_message_for_transcript",
-    "hideUserMessageForTranscript",
-    "message_context_items",
-    "messageContextItems",
-}
-
 
 class ThreadTaskStateLocks:
     """Per-session lock registry shared by task service and runtime."""
@@ -315,19 +305,12 @@ class ThreadTaskRuntime:
                     "reason": "task_run_running",
                 }
 
-            current_compression_epoch = self._context_compression_epoch(cleaned)
-            seed_replay = self._build_seed_context_replay(
-                task,
-                current_compression_epoch=current_compression_epoch,
-            )
             run = self._repositories.thread_task_runs.create_running(
                 task_id=task.id,
                 session_id=cleaned,
                 summary={
                     "reason": reason,
                     "input_summary": task.objective[:200],
-                    "seed_context_replayed": bool(seed_replay),
-                    "context_compression_epoch": current_compression_epoch,
                 },
             )
             updated_task = self._repositories.thread_tasks.update(
@@ -336,7 +319,6 @@ class ThreadTaskRuntime:
             ) or task
             message_injection = []
             request_message = ""
-            request_attachments = None
             runtime_params: dict[str, Any] = {
                 "thread_task": {
                     "task_id": task.id,
@@ -344,16 +326,8 @@ class ThreadTaskRuntime:
                     "trigger": "task_continue",
                     "type": task.type,
                     "reason": reason,
-                    "context_compression_epoch": current_compression_epoch,
                 },
             }
-            if seed_replay is not None:
-                request_attachments = seed_replay["attachments"]
-                runtime_params["hide_user_message_for_transcript"] = True
-                runtime_params["thread_task"]["seed_context_replayed"] = True
-                runtime_params["thread_task"]["hide_user_message_for_transcript"] = True
-                runtime_params.update(seed_replay["runtime_params"])
-                message_injection.extend(seed_replay["message_injection"])
             message_injection.append(
                 {
                     "type": "follow",
@@ -376,7 +350,7 @@ class ThreadTaskRuntime:
                 provider_id=session.current_model_provider_id or "",
                 model=session.current_model or "",
                 runtime_params=runtime_params,
-                attachments=request_attachments,
+                attachments=None,
             )
 
         await self._publish_run_started(run=run, task=updated_task, reason=reason)
@@ -392,13 +366,6 @@ class ThreadTaskRuntime:
 
         try:
             await self._chat_stream_manager.start_chat(request)
-            if seed_replay is not None:
-                self._mark_seed_context_replayed(
-                    task_id=task.id,
-                    task_metadata=task.metadata,
-                    compression_epoch=current_compression_epoch,
-                    run_id=run.id,
-                )
         except ChatStreamAlreadyRunningError:
             finished = self._repositories.thread_task_runs.finish(
                 run.id,
@@ -486,167 +453,6 @@ class ThreadTaskRuntime:
         if raw is None:
             raw = request.runtime_params.get("threadTask")
         return raw if isinstance(raw, dict) else None
-
-    def _context_compression_epoch(self, session_id: str) -> int:
-        if self._repositories is None:
-            return 0
-        getter = getattr(self._repositories.sessions, "get_context_compression_epoch", None)
-        if not callable(getter):
-            return 0
-        return max(0, int(getter(session_id) or 0))
-
-    def _build_seed_context_replay(
-        self,
-        task: Any,
-        *,
-        current_compression_epoch: int,
-    ) -> dict[str, Any] | None:
-        seed = self._seed_context(task)
-        if seed is None:
-            return None
-        last_replayed_epoch = self._int_value(
-            seed.get("last_replayed_compression_epoch"),
-            default=self._int_value(seed.get("created_compression_epoch"), default=0),
-        )
-        if current_compression_epoch <= last_replayed_epoch:
-            return None
-
-        runtime_params = self._seed_runtime_params(seed)
-        message_injection = self._seed_message_injection(
-            seed,
-            task=task,
-            current_compression_epoch=current_compression_epoch,
-        )
-        attachments = self._seed_attachments(seed)
-        if not message_injection and not runtime_params and not attachments:
-            return None
-        return {
-            "message_injection": message_injection,
-            "runtime_params": runtime_params,
-            "attachments": attachments,
-        }
-
-    def _mark_seed_context_replayed(
-        self,
-        *,
-        task_id: str,
-        task_metadata: dict[str, Any],
-        compression_epoch: int,
-        run_id: str,
-    ) -> None:
-        if self._repositories is None:
-            return
-        metadata = dict(task_metadata or {})
-        seed = metadata.get(THREAD_TASK_SEED_CONTEXT_METADATA_KEY)
-        if not isinstance(seed, dict):
-            return
-        updated_seed = dict(seed)
-        updated_seed["last_replayed_compression_epoch"] = max(0, int(compression_epoch or 0))
-        history = updated_seed.get("replay_history")
-        if not isinstance(history, list):
-            history = []
-        history = [
-            *history[-9:],
-            {
-                "compression_epoch": updated_seed["last_replayed_compression_epoch"],
-                "run_id": run_id,
-            },
-        ]
-        updated_seed["replay_history"] = history
-        metadata[THREAD_TASK_SEED_CONTEXT_METADATA_KEY] = updated_seed
-        self._repositories.thread_tasks.update(task_id, metadata=metadata)
-
-    @staticmethod
-    def _seed_context(task: Any) -> dict[str, Any] | None:
-        metadata = getattr(task, "metadata", None)
-        if not isinstance(metadata, dict):
-            return None
-        seed = metadata.get(THREAD_TASK_SEED_CONTEXT_METADATA_KEY)
-        return dict(seed) if isinstance(seed, dict) else None
-
-    @classmethod
-    def _seed_runtime_params(cls, seed: dict[str, Any]) -> dict[str, Any]:
-        raw = seed.get("runtime_params")
-        if raw is None:
-            raw = seed.get("runtimeParams")
-        if not isinstance(raw, dict):
-            return {}
-        runtime_params: dict[str, Any] = {}
-        skill_activation = raw.get("skill_activation")
-        if skill_activation is None:
-            skill_activation = raw.get("skillActivation")
-        if isinstance(skill_activation, dict):
-            runtime_params["skill_activation"] = dict(skill_activation)
-        for key, value in raw.items():
-            if key in _THREAD_TASK_RUNTIME_PARAM_KEYS:
-                continue
-            if key in {
-                "message_injection",
-                "messageInjection",
-                "skill_activation",
-                "skillActivation",
-            }:
-                continue
-            runtime_params[key] = value
-        return runtime_params
-
-    @classmethod
-    def _seed_message_injection(
-        cls,
-        seed: dict[str, Any],
-        *,
-        task: Any,
-        current_compression_epoch: int,
-    ) -> list[dict[str, Any]]:
-        raw_runtime_params = seed.get("runtime_params")
-        if raw_runtime_params is None:
-            raw_runtime_params = seed.get("runtimeParams")
-        if not isinstance(raw_runtime_params, dict):
-            return []
-        raw_items = raw_runtime_params.get("message_injection")
-        if raw_items is None:
-            raw_items = raw_runtime_params.get("messageInjection")
-        if not isinstance(raw_items, list):
-            return []
-
-        items: list[dict[str, Any]] = []
-        for raw_item in raw_items:
-            if not isinstance(raw_item, dict):
-                continue
-            content = str(raw_item.get("content") or "").strip()
-            if not content:
-                continue
-            item = dict(raw_item)
-            metadata = item.get("metadata")
-            metadata = dict(metadata) if isinstance(metadata, dict) else {}
-            metadata.update(
-                {
-                    "source": "thread_task_seed_context",
-                    "task_id": getattr(task, "id", ""),
-                    "task_type": getattr(task, "type", ""),
-                    "context_compression_epoch": current_compression_epoch,
-                    "hidden_for_transcript": True,
-                }
-            )
-            item["metadata"] = metadata
-            item["hidden_for_transcript"] = True
-            items.append(item)
-        return items
-
-    @staticmethod
-    def _seed_attachments(seed: dict[str, Any]) -> list[dict[str, Any]] | None:
-        raw = seed.get("attachments")
-        if not isinstance(raw, list):
-            return None
-        attachments = [dict(item) for item in raw if isinstance(item, dict)]
-        return attachments or None
-
-    @staticmethod
-    def _int_value(value: Any, *, default: int = 0) -> int:
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return default
 
     @staticmethod
     def _log_runtime_lifecycle(

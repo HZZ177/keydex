@@ -17,6 +17,7 @@ from langgraph.types import Command
 from backend.app.agent.state import (
     PENDING_TOOL_CALL_PRESET_STATE_KEY,
     build_pending_tool_call_preset_update,
+    build_structured_user_group_replay_marker_update,
 )
 from backend.app.agent.tool_call_preset import ToolCallPreset, ToolCallPresetItem
 from backend.app.core.logger import logger
@@ -89,9 +90,32 @@ class ToolCallPresetMiddleware(AgentMiddleware):
         message = AIMessage(content="", tool_calls=tool_calls)
         if state_preset is None:
             return message
+        state_update: dict[str, Any] = build_pending_tool_call_preset_update(None)
+        replay_consumed_update = self._compression_replay_consumed_update(state_preset)
+        state_update.update(replay_consumed_update)
         return ExtendedModelResponse(
             model_response=ModelResponse(result=[message]),
-            command=Command(update=build_pending_tool_call_preset_update(None)),
+            command=Command(update=state_update),
+        )
+
+    @staticmethod
+    def _compression_replay_consumed_update(preset: ToolCallPreset) -> dict[str, Any]:
+        metadata = preset.metadata
+        if metadata.get("source") != "context_compression":
+            return {}
+        boundary_id = str(metadata.get("boundary_id") or "").strip()
+        raw_group_ids = metadata.get("selected_group_ids")
+        if not boundary_id or not isinstance(raw_group_ids, list):
+            return {}
+        group_ids = list(
+            dict.fromkeys(str(item).strip() for item in raw_group_ids if str(item).strip())
+        )
+        if not group_ids:
+            return {}
+        return build_structured_user_group_replay_marker_update(
+            boundary_id=boundary_id,
+            group_ids=group_ids,
+            consumed=True,
         )
 
     @staticmethod

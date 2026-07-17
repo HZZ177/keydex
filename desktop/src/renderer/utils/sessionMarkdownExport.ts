@@ -1,4 +1,5 @@
 import type { AgentChatMessagePayload } from "@/types/protocol";
+import { shouldDisplayAgentTranscriptMessage } from "@/renderer/utils/agentTranscriptVisibility";
 
 export type SessionMarkdownSaveResult = "saved" | "downloaded" | "cancelled";
 
@@ -56,6 +57,9 @@ export async function saveSessionMarkdownFile(
 
 function sessionTranscriptEntries(messages: AgentChatMessagePayload[]): SessionTranscriptEntry[] {
   return messages.flatMap((message) => {
+    if (!shouldDisplayAgentTranscriptMessage(message)) {
+      return [];
+    }
     if (message.role !== "user" && message.role !== "assistant" && message.role !== "reasoning") {
       return [];
     }

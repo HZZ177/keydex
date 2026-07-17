@@ -31,11 +31,23 @@ function isTaskContinuationUserMessage(message: TranscriptMessage): boolean {
 }
 
 function isContextCompressionProtocolMessage(message: TranscriptMessage): boolean {
-  if (message.role !== "system") {
-    return false;
+  const root = objectValue(message);
+  const metadata = objectValue(message.metadata);
+  const additional = objectValue(root?.additional_kwargs) || objectValue(root?.additionalKwargs);
+  const compression =
+    objectValue(metadata?.keydex_context_compression) ||
+    objectValue(additional?.keydex_context_compression);
+  if (
+    stringValue(compression?.kind) === "summary" ||
+    booleanValue(metadata?.is_compact_summary) ||
+    booleanValue(metadata?.isCompactSummary) ||
+    booleanValue(additional?.is_compact_summary) ||
+    booleanValue(additional?.isCompactSummary)
+  ) {
+    return true;
   }
   const content = stringValue(message.content).trim();
-  return content.startsWith("<keydex_context_compression>");
+  return message.role === "system" && content.startsWith("<keydex_context_compression");
 }
 
 function isThreadTaskToolMessage(message: TranscriptMessage): boolean {

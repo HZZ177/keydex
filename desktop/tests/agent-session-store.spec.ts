@@ -2910,6 +2910,20 @@ describe("agentSessionStore reducer", () => {
         metadata: { source: "message_context_item" },
       },
     });
+    state = reduceAgentWsEvent(state, {
+      action: "system_message",
+      data: {
+        session_id: "ses-1",
+        content: "synthetic Human compact summary payload",
+        message_event_id: "evt-context-4",
+        metadata: {
+          keydex_context_compression: {
+            kind: "summary",
+            boundary_id: "boundary-1",
+          },
+        },
+      },
+    });
 
     expect(selectAgentMessages(state, "ses-1")).toEqual([]);
   });

@@ -127,6 +127,7 @@ const EMPTY_WORKBENCH_PREVIEW_TABS: WorkbenchPreviewTabsState = {
   tabs: [],
 };
 const workbenchModeUiStateCacheByRuntime = new WeakMap<RuntimeBridge, Map<string, WorkbenchModeUiState>>();
+const WORKBENCH_UI_STORAGE_PREFIX = "keydex.workbench.ui-state.v1";
 
 export function WorkbenchModePage({
   runtime,
@@ -158,11 +159,12 @@ export function WorkbenchModePage({
   const layout = useLayoutState();
   const workbenchUiScopeKey = workbenchModeUiScopeKey({ workspaceId, selectedSessionId, externalPreviewPath });
   const workbenchUiStateCache = workbenchModeUiStateCacheForRuntime(runtime);
+  const cachedWorkbenchUiState = cachedWorkbenchModeUiState(workbenchUiStateCache, workbenchUiScopeKey);
   const cachedWorkspaceBrowserState =
-    workbenchUiStateCache.get(workbenchUiScopeKey)?.workspaceBrowserState ?? null;
+    cachedWorkbenchUiState?.workspaceBrowserState ?? null;
   const initialWorkbenchUiStateRef = useRef<WorkbenchModeUiState | null | undefined>(undefined);
   if (initialWorkbenchUiStateRef.current === undefined) {
-    initialWorkbenchUiStateRef.current = workbenchUiStateCache.get(workbenchUiScopeKey) ?? null;
+    initialWorkbenchUiStateRef.current = cachedWorkbenchUiState;
   }
   const initialWorkbenchUiState = initialWorkbenchUiStateRef.current;
   const workbenchUiStateScopeKeyRef = useRef(workbenchUiScopeKey);
@@ -518,12 +520,20 @@ export function WorkbenchModePage({
     [nextMainPreviewRequestId, resetMainPreviewOutline],
   );
   const openWorkspaceBrowserFilePreview = useCallback(
-    (path: string | null) => {
+    (path: string | null, refreshExisting = false) => {
       if (!path) {
         setWorkbenchPreviewTabs(EMPTY_WORKBENCH_PREVIEW_TABS);
         return;
       }
-      openWorkbenchMainPreview({ type: "file", path }, workbenchPreviewRenderContext);
+      openWorkbenchMainPreview(
+        { type: "file", path },
+        workbenchPreviewRenderContext,
+        null,
+        null,
+        undefined,
+        null,
+        refreshExisting,
+      );
     },
     [openWorkbenchMainPreview, workbenchPreviewRenderContext],
   );
@@ -664,7 +674,7 @@ export function WorkbenchModePage({
     }
     handledFilePanelRequestIdRef.current = previewContext?.filePanelRequest?.requestId ?? 0;
     handledPreviewEntryStampRef.current = previewContext?.activeEntry ? previewEntryStamp(previewContext.activeEntry) : "";
-    const restoredState = workbenchUiStateCache.get(workbenchUiScopeKey) ?? null;
+    const restoredState = cachedWorkbenchModeUiState(workbenchUiStateCache, workbenchUiScopeKey);
     workbenchUiStateScopeKeyRef.current = workbenchUiScopeKey;
     const restoredPreviewBrowserWidth = restoredState?.previewBrowserWidth ?? DEFAULT_WORKBENCH_BROWSER_WIDTH;
     setPreviewBrowserWidth(restoredPreviewBrowserWidth);
@@ -692,13 +702,15 @@ export function WorkbenchModePage({
     if (workbenchUiStateScopeKeyRef.current !== workbenchUiScopeKey) {
       return;
     }
-    workbenchUiStateCache.set(workbenchUiScopeKey, {
+    const nextState: WorkbenchModeUiState = {
       previewBrowserWidth,
       previewTabs: sanitizeWorkbenchPreviewTabs(workbenchPreviewTabs),
       activeMainPreviewOutline,
       activeMainPreviewOutlineReady,
       workspaceBrowserState,
-    });
+    };
+    workbenchUiStateCache.set(workbenchUiScopeKey, nextState);
+    persistWorkbenchModeUiState(workbenchUiScopeKey, nextState);
   }, [
     activeMainPreviewOutline,
     activeMainPreviewOutlineReady,
@@ -1018,6 +1030,82 @@ function workbenchModeUiStateCacheForRuntime(runtime: RuntimeBridge): Map<string
   const next = new Map<string, WorkbenchModeUiState>();
   workbenchModeUiStateCacheByRuntime.set(runtime, next);
   return next;
+}
+
+function cachedWorkbenchModeUiState(
+  cache: Map<string, WorkbenchModeUiState>,
+  scopeKey: string,
+): WorkbenchModeUiState | null {
+  const cached = cache.get(scopeKey);
+  if (cached) return cached;
+  const persisted = readPersistedWorkbenchModeUiState(scopeKey);
+  if (persisted) cache.set(scopeKey, persisted);
+  return persisted;
+}
+
+function readPersistedWorkbenchModeUiState(scopeKey: string): WorkbenchModeUiState | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(workbenchUiStorageKey(scopeKey));
+    if (!raw) return null;
+    const envelope = JSON.parse(raw) as { scopeKey?: unknown; state?: unknown };
+    if (envelope.scopeKey !== scopeKey || !isPersistedWorkbenchModeUiState(envelope.state)) return null;
+    return envelope.state;
+  } catch {
+    return null;
+  }
+}
+
+function persistWorkbenchModeUiState(scopeKey: string, state: WorkbenchModeUiState): void {
+  if (typeof window === "undefined") return;
+  const previewTabs = persistableWorkbenchPreviewTabs(state.previewTabs);
+  const persisted: WorkbenchModeUiState = {
+    ...state,
+    previewTabs,
+    activeMainPreviewOutline: previewTabs.tabs.length ? state.activeMainPreviewOutline : [],
+    activeMainPreviewOutlineReady: previewTabs.tabs.length ? state.activeMainPreviewOutlineReady : false,
+  };
+  try {
+    const serialized = JSON.stringify({ scopeKey, state: persisted });
+    if (serialized.length > 1_000_000) return;
+    window.localStorage.setItem(workbenchUiStorageKey(scopeKey), serialized);
+  } catch {
+    // Storage can be unavailable or full; the in-memory cache remains authoritative for this run.
+  }
+}
+
+function persistableWorkbenchPreviewTabs(state: WorkbenchPreviewTabsState): WorkbenchPreviewTabsState {
+  const tabs = state.tabs.filter((tab) => tab.request.type === "file" || tab.request.type === "local-file");
+  const activeTabId = tabs.some((tab) => tab.id === state.activeTabId)
+    ? state.activeTabId
+    : tabs.at(-1)?.id ?? null;
+  return sanitizeWorkbenchPreviewTabs({ activeTabId, tabs });
+}
+
+function isPersistedWorkbenchModeUiState(value: unknown): value is WorkbenchModeUiState {
+  if (!value || typeof value !== "object") return false;
+  const state = value as Partial<WorkbenchModeUiState>;
+  if (typeof state.previewBrowserWidth !== "number" || !Number.isFinite(state.previewBrowserWidth)) return false;
+  if (!state.previewTabs || !Array.isArray(state.previewTabs.tabs)) return false;
+  if (state.previewTabs.activeTabId !== null && typeof state.previewTabs.activeTabId !== "string") return false;
+  return state.previewTabs.tabs.every((tab) => {
+    if (!tab || typeof tab !== "object") return false;
+    const candidate = tab as Partial<WorkbenchMainPreviewTabState>;
+    const request = candidate.request;
+    return typeof candidate.id === "string"
+      && typeof candidate.requestId === "number"
+      && typeof candidate.refreshRequestId === "number"
+      && typeof candidate.title === "string"
+      && typeof candidate.sourceLabel === "string"
+      && Boolean(candidate.markdownView)
+      && Boolean(request)
+      && (request?.type === "file" || request?.type === "local-file")
+      && typeof request.path === "string";
+  });
+}
+
+function workbenchUiStorageKey(scopeKey: string): string {
+  return `${WORKBENCH_UI_STORAGE_PREFIX}:${hashText(scopeKey)}`;
 }
 
 function workbenchModeUiScopeKey({
@@ -1625,6 +1713,9 @@ function workbenchPreviewTabId(request: PreviewRequest): string {
   if (request.type === "diff") {
     return `diff:${request.path}:${hashText(request.diff)}`;
   }
+  if (request.type === "diff-document") {
+    return `diff-document:${request.document.id}:${request.document.sourceVersion}`;
+  }
   if (request.type === "skill-resource") {
     return `skill-resource:${request.skillSource}:${request.skillName}:${request.resourcePath}`;
   }
@@ -1632,7 +1723,7 @@ function workbenchPreviewTabId(request: PreviewRequest): string {
 }
 
 function previewTitle(request: PreviewRequest): string {
-  if (request.type === "content" || request.type === "skill-resource") {
+  if (request.type === "content" || request.type === "skill-resource" || request.type === "diff-document") {
     return request.title;
   }
   return fileName(request.path);
@@ -1645,6 +1736,9 @@ function previewSourceLabel(request: PreviewRequest): string {
   if (request.type === "content") {
     return request.sourcePath ?? "消息内容";
   }
+  if (request.type === "diff-document") {
+    return request.sourceLabel ?? request.sourcePath ?? "差异内容";
+  }
   return request.path;
 }
 
@@ -1652,7 +1746,7 @@ function targetPathForPreviewRequest(request: PreviewRequest): string | null {
   if ("path" in request) {
     return request.path;
   }
-  return request.type === "content" ? request.sourcePath ?? null : null;
+  return request.type === "content" || request.type === "diff-document" ? request.sourcePath ?? null : null;
 }
 
 function fileName(path: string): string {

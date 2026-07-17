@@ -4,7 +4,7 @@ import base64
 import json
 import sqlite3
 import warnings
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from inspect import signature
 from typing import Any
@@ -502,10 +502,27 @@ class SQLiteCheckpointSaver(BaseCheckpointSaver):
         checkpoint_ns: str = "",
         messages: Sequence[Any],
     ) -> None:
+        self.replace_checkpoint_state(
+            thread_id=thread_id,
+            checkpoint_id=checkpoint_id,
+            checkpoint_ns=checkpoint_ns,
+            channel_values={"messages": list(messages)},
+        )
+
+    def replace_checkpoint_state(
+        self,
+        *,
+        thread_id: str,
+        checkpoint_id: str,
+        checkpoint_ns: str = "",
+        channel_values: Mapping[str, Any],
+    ) -> None:
         if not thread_id.strip():
             raise ValueError("thread_id must not be empty")
         if not checkpoint_id.strip():
             raise ValueError("checkpoint_id must not be empty")
+        if not channel_values:
+            raise ValueError("channel_values must not be empty")
 
         with self.db.transaction() as conn:
             row = conn.execute(
@@ -525,9 +542,9 @@ class SQLiteCheckpointSaver(BaseCheckpointSaver):
             checkpoint = self.serde.loads_typed((row["type"], bytes(row["checkpoint_blob"])))
             if not isinstance(checkpoint, dict):
                 raise ValueError("checkpoint payload must be a dict")
-            channel_values = dict(checkpoint.get("channel_values") or {})
-            channel_values["messages"] = list(messages)
-            checkpoint = {**checkpoint, "channel_values": channel_values}
+            updated_values = dict(checkpoint.get("channel_values") or {})
+            updated_values.update(dict(channel_values))
+            checkpoint = {**checkpoint, "channel_values": updated_values}
             type_name, checkpoint_bytes = self.serde.dumps_typed(checkpoint)
             conn.execute(
                 """

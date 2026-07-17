@@ -233,6 +233,28 @@
   overflow: hidden;
 }
 
+.details[data-view="changes"] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.details[data-detail-surface="change_diff"],
+.details[data-view="stash"] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+  background: var(--diff-surface-bg);
+}
+
+.details[data-detail-surface="change_diff"] > :global([data-keydex-diff-wrapper="git"]),
+.details[data-view="stash"] > :global([data-keydex-diff-wrapper="git"]) {
+  height: 0;
+  min-height: 0;
+  flex: 1 1 0;
+}
+
 .repositorySection { min-width: 0; }
 .repositorySection > * + * { margin-top: 8px; }
 .refsPane {
@@ -354,16 +376,6 @@
   padding: 10px 12px;
   border-bottom: 1px solid var(--color-border-2);
   font-size: 12px;
-}
-
-.actionError {
-  margin: 8px 12px 0;
-  padding: 7px 9px;
-  border: 1px solid color-mix(in srgb, var(--color-danger, #d14343) 35%, transparent);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--color-danger, #d14343) 8%, transparent);
-  color: var(--color-danger, #d14343);
-  font-size: 11px;
 }
 
 .placeholder {
@@ -547,10 +559,6 @@
 
 .root :global(code),
 .root :global(pre) {
-  font-size: var(--git-meta-font-size);
-}
-
-.root :global([data-git-diff-viewer] [role="table"] span) {
   font-size: var(--git-meta-font-size);
 }
 

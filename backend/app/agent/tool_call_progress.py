@@ -172,7 +172,13 @@ class ApplyPatchProgressCollector:
         files = parse_apply_patch_file_changes(patch)
         if not files:
             return None
-        return progress_payload(state=state, files=files, phase="streaming")
+        return progress_payload(
+            state=state,
+            files=files,
+            phase="streaming",
+            patch_format="relaxed_apply_patch",
+            patch_complete=args_object_complete(state) and "*** End Patch" in patch,
+        )
 
 
 class EditFileProgressCollector:
@@ -183,7 +189,13 @@ class EditFileProgressCollector:
         if patch:
             files = parse_apply_patch_file_changes(patch)
             if files:
-                return progress_payload(state=state, files=files, phase="streaming")
+                return progress_payload(
+                    state=state,
+                    files=files,
+                    phase="streaming",
+                    patch_format="relaxed_apply_patch",
+                    patch_complete=args_object_complete(state) and "*** End Patch" in patch,
+                )
             return None
         path = string_value(state.args.get("path"))
         if not path:
@@ -197,7 +209,13 @@ class EditFileProgressCollector:
             deleted_lines=count_text_lines(old_string),
             diff=build_text_diff(path=path, before=old_string, after=new_string),
         )
-        return progress_payload(state=state, files=[file_change], phase="streaming")
+        return progress_payload(
+            state=state,
+            files=[file_change],
+            phase="streaming",
+            patch_format="canonical_unified",
+            patch_complete=args_object_complete(state),
+        )
 
 
 class WriteFileProgressCollector:
@@ -220,7 +238,13 @@ class WriteFileProgressCollector:
                 operation="add",
             ),
         )
-        return progress_payload(state=state, files=[file_change], phase="streaming")
+        return progress_payload(
+            state=state,
+            files=[file_change],
+            phase="streaming",
+            patch_format="canonical_unified",
+            patch_complete=args_object_complete(state),
+        )
 
 
 class DeleteFileProgressCollector:
@@ -235,9 +259,14 @@ class DeleteFileProgressCollector:
             operation="delete",
             added_lines=0,
             deleted_lines=0,
-            diff=diff_header(path, "delete")[0] + "\n" + diff_header(path, "delete")[1],
         )
-        return progress_payload(state=state, files=[file_change], phase="streaming")
+        return progress_payload(
+            state=state,
+            files=[file_change],
+            phase="streaming",
+            patch_format="canonical_unified",
+            patch_complete=args_object_complete(state),
+        )
 
 
 class MoveFileProgressCollector:
@@ -258,10 +287,15 @@ class MoveFileProgressCollector:
                 "new_path": target,
                 "added_lines": 0,
                 "deleted_lines": 0,
-                "diff": f"--- a/{path}\n+++ b/{target}",
             }
         )
-        return progress_payload(state=state, files=[file_change], phase="streaming")
+        return progress_payload(
+            state=state,
+            files=[file_change],
+            phase="streaming",
+            patch_format="canonical_unified",
+            patch_complete=args_object_complete(state),
+        )
 
 
 def default_collectors() -> list[ToolProgressCollector]:
@@ -486,15 +520,25 @@ def build_text_diff(
 ) -> str:
     from_file = "/dev/null" if operation == "add" else f"a/{path}"
     to_file = "/dev/null" if operation == "delete" else f"b/{path}"
-    return "\n".join(
+    source_lines = list(
         unified_diff(
-            before.splitlines(),
-            after.splitlines(),
+            before.splitlines(keepends=True),
+            after.splitlines(keepends=True),
             fromfile=from_file,
             tofile=to_file,
             lineterm="",
         )
     )
+    rendered: list[str] = []
+    for line in source_lines:
+        is_body_line = line.startswith((" ", "+", "-")) and not line.startswith(
+            ("+++", "---")
+        )
+        has_line_ending = line.endswith(("\n", "\r"))
+        rendered.append(line.rstrip("\r\n"))
+        if is_body_line and not has_line_ending:
+            rendered.append("\\ No newline at end of file")
+    return "\n".join(rendered)
 
 
 def ensure_file_change(
@@ -525,6 +569,7 @@ def normalize_file_change(
     added_lines: int = 0,
     deleted_lines: int = 0,
     diff: str = "",
+    completed: bool = False,
 ) -> dict[str, Any]:
     return finalize_file_change(
         {
@@ -533,11 +578,16 @@ def normalize_file_change(
             "added_lines": max(0, int(added_lines or 0)),
             "deleted_lines": max(0, int(deleted_lines or 0)),
             **({"diff": diff} if diff else {}),
-        }
+        },
+        completed=completed,
     )
 
 
-def finalize_file_change(change: dict[str, Any]) -> dict[str, Any]:
+def finalize_file_change(
+    change: dict[str, Any],
+    *,
+    completed: bool = False,
+) -> dict[str, Any]:
     added = max(0, int(change.get("added_lines") or change.get("additions") or 0))
     deleted = max(
         0,
@@ -554,6 +604,37 @@ def finalize_file_change(change: dict[str, Any]) -> dict[str, Any]:
     result["removed_lines"] = deleted
     result["additions"] = added
     result["deletions"] = deleted
+    if completed:
+        operation = string_value(result.get("operation")) or "update"
+        path = string_value(result.get("path"))
+        old_path = string_value(result.get("old_path")) or (
+            None if operation == "add" else path
+        )
+        new_path = string_value(result.get("new_path")) or (
+            None if operation == "delete" else path
+        )
+        binary = bool(result.get("binary", False))
+        raw_patch = result.get("diff") if isinstance(result.get("diff"), str) else None
+        result.update(
+            {
+                "status": {
+                    "add": "added",
+                    "delete": "deleted",
+                    "move": "renamed",
+                }.get(operation, "modified"),
+                "old_path": old_path,
+                "new_path": new_path,
+                "raw_patch": raw_patch,
+                "binary": binary,
+                "content_kind": "binary" if binary else "text",
+                "truncated": False,
+                "source": "final",
+                "patch_format": "canonical_unified" if raw_patch else "none",
+                "patch_precision": "exact",
+                "patch_complete": True,
+                "selectable_for_patch": False,
+            }
+        )
     return result
 
 
@@ -562,7 +643,24 @@ def progress_payload(
     state: ToolCallChunkState,
     files: list[dict[str, Any]],
     phase: str,
+    patch_format: str,
+    patch_complete: bool,
 ) -> dict[str, Any]:
+    normalized_files = [
+        {
+            **file,
+            "source": "streaming",
+            "patch_format": (
+                patch_format
+                if isinstance(file.get("diff"), str) and bool(file["diff"])
+                else "none"
+            ),
+            "patch_precision": "approximate",
+            "patch_complete": patch_complete,
+            "selectable_for_patch": False,
+        }
+        for file in files
+    ]
     return {
         "tool": state.name,
         "tool_name": state.name,
@@ -570,10 +668,19 @@ def progress_payload(
         "run_id": state.tool_call_id or state.key,
         "index": state.index,
         "params": dict(state.args),
-        "files": files,
+        "files": normalized_files,
         "phase": phase,
         "status": "running",
     }
+
+
+def args_object_complete(state: ToolCallChunkState) -> bool:
+    if not state.args_text:
+        return False
+    try:
+        return isinstance(json.loads(state.args_text), dict)
+    except json.JSONDecodeError:
+        return False
 
 
 def count_text_lines(value: str) -> int:

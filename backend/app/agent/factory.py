@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import threading
 import time
 from collections.abc import AsyncIterator, Iterator
-from dataclasses import dataclass
-from typing import Any
+from contextlib import suppress
+from dataclasses import dataclass, field
+from typing import Any, Protocol
 
 import httpx
 import openai
@@ -27,6 +29,11 @@ from backend.app.core.request_context import (
     get_user_id,
     get_user_message,
 )
+from backend.app.core.system_proxy import (
+    SystemProxySnapshot,
+    SystemProxyState,
+    normalize_system_proxies,
+)
 from backend.app.events import DomainEventType
 from backend.app.model import ModelSettings, is_stream_chunk_timeout_error
 
@@ -45,6 +52,196 @@ _TOOL_CALL_PREVIEW_MAX_CALLS = 5
 _LLM_BUSINESS_MAX_RETRIES = 3
 _LLM_RETRY_DELAYS_SECONDS = (0.8, 1.6, 3.2)
 _LLM_TERMINAL_TAIL_GRACE_SECONDS = 1.0
+
+
+class _SyncHttpClientFactory(Protocol):
+    def __call__(self, **kwargs: Any) -> httpx.Client: ...
+
+
+class _AsyncHttpClientFactory(Protocol):
+    def __call__(self, **kwargs: Any) -> httpx.AsyncClient: ...
+
+
+@dataclass(slots=True)
+class ManagedOpenAIHttpClients:
+    http_client: httpx.Client
+    http_async_client: httpx.AsyncClient
+    _closed: bool = False
+    _close_lock: threading.Lock = field(
+        default_factory=threading.Lock,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+    async def aclose(self) -> None:
+        with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+        errors: list[BaseException] = []
+        try:
+            await asyncio.to_thread(self.http_client.close)
+        except BaseException as exc:
+            errors.append(exc)
+        try:
+            await self.http_async_client.aclose()
+        except BaseException as exc:
+            errors.append(exc)
+        if errors:
+            raise RuntimeError("managed OpenAI HTTP client close failed") from errors[0]
+
+
+class OpenAIHttpClientPairFactory(Protocol):
+    def __call__(
+        self,
+        snapshot: SystemProxySnapshot,
+        *,
+        timeout: float,
+        http_transport: httpx.BaseTransport | httpx.AsyncBaseTransport | None = None,
+    ) -> ManagedOpenAIHttpClients: ...
+
+
+class _BorrowedSyncTransport(httpx.BaseTransport):
+    def __init__(self, transport: httpx.BaseTransport | httpx.AsyncBaseTransport) -> None:
+        self._transport = transport
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        handler = getattr(self._transport, "handle_request", None)
+        if not callable(handler):
+            raise RuntimeError("custom model transport does not support sync requests")
+        return handler(request)
+
+
+class _BorrowedAsyncTransport(httpx.AsyncBaseTransport):
+    def __init__(self, transport: httpx.BaseTransport | httpx.AsyncBaseTransport) -> None:
+        self._transport = transport
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        handler = getattr(self._transport, "handle_async_request", None)
+        if not callable(handler):
+            raise RuntimeError("custom model transport does not support async requests")
+        return await handler(request)
+
+
+def create_openai_http_clients(
+    snapshot: SystemProxySnapshot,
+    *,
+    timeout: float,
+    http_transport: httpx.BaseTransport | httpx.AsyncBaseTransport | None = None,
+    sync_client_factory: _SyncHttpClientFactory = openai.DefaultHttpxClient,
+    async_client_factory: _AsyncHttpClientFactory = openai.DefaultAsyncHttpxClient,
+) -> ManagedOpenAIHttpClients:
+    """Build an owned sync/async client pair for one immutable network route."""
+
+    if http_transport is not None:
+        sync_kwargs: dict[str, Any] = {
+            "transport": _BorrowedSyncTransport(http_transport),
+            "timeout": timeout,
+        }
+    else:
+        sync_kwargs = _default_http_client_kwargs(snapshot, timeout=timeout, asynchronous=False)
+
+    sync_client = sync_client_factory(**sync_kwargs)
+    try:
+        if http_transport is not None:
+            async_kwargs: dict[str, Any] = {
+                "transport": _BorrowedAsyncTransport(http_transport),
+                "timeout": timeout,
+            }
+        else:
+            async_kwargs = _default_http_client_kwargs(
+                snapshot,
+                timeout=timeout,
+                asynchronous=True,
+            )
+        async_client = async_client_factory(**async_kwargs)
+    except BaseException:
+        with suppress(Exception):
+            sync_client.close()
+        raise
+    return ManagedOpenAIHttpClients(
+        http_client=sync_client,
+        http_async_client=async_client,
+    )
+
+
+def _default_http_client_kwargs(
+    snapshot: SystemProxySnapshot,
+    *,
+    timeout: float,
+    asynchronous: bool,
+) -> dict[str, Any]:
+    transport_type = httpx.AsyncHTTPTransport if asynchronous else httpx.HTTPTransport
+    direct_transport = transport_type(
+        limits=openai.DEFAULT_CONNECTION_LIMITS,
+        trust_env=True,
+    )
+    mounts: dict[str, Any] = {}
+    if "*" not in snapshot.no_proxy_hosts:
+        for scheme in ("http", "https", "all"):
+            proxy = snapshot.proxy_for(scheme)
+            if proxy:
+                mounts[f"{scheme}://"] = transport_type(
+                    proxy=_ensure_proxy_url(proxy),
+                    limits=openai.DEFAULT_CONNECTION_LIMITS,
+                    trust_env=True,
+                )
+        for hostname in snapshot.no_proxy_hosts:
+            mounts[_no_proxy_mount(hostname)] = None
+    return {
+        "timeout": timeout,
+        "transport": direct_transport,
+        "mounts": mounts,
+        "trust_env": False,
+    }
+
+
+def _ensure_proxy_url(value: str) -> str:
+    return value if "://" in value else f"http://{value}"
+
+
+def _no_proxy_mount(hostname: str) -> str:
+    if "://" in hostname:
+        return hostname
+    candidate = hostname.split("/", maxsplit=1)[0]
+    try:
+        ipaddress.IPv4Address(candidate)
+    except ValueError:
+        pass
+    else:
+        return f"all://{hostname}"
+    try:
+        ipaddress.IPv6Address(candidate)
+    except ValueError:
+        pass
+    else:
+        return f"all://[{hostname}]"
+    if hostname.lower() == "localhost":
+        return f"all://{hostname}"
+    return f"all://*{hostname}"
+
+
+_CUSTOM_TRANSPORT_PROXY_SNAPSHOT = normalize_system_proxies({})
+
+
+async def _close_managed_clients_safely(clients: ManagedOpenAIHttpClients) -> None:
+    try:
+        await clients.aclose()
+    except Exception as exc:
+        logger.warning(
+            "[LLM] failed to clean up HTTP clients after construction error | error_type={}",
+            type(exc).__name__,
+        )
+
+
+def _close_clients_after_construction_failure(clients: ManagedOpenAIHttpClients) -> None:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(_close_managed_clients_safely(clients))
+        return
+    loop.create_task(_close_managed_clients_safely(clients))
 
 
 def register_llm_gateway_trace_id(run_id: str, gateway_trace_id: str) -> None:
@@ -419,7 +616,7 @@ class PatchedChatOpenAI(ChatOpenAI):
         resolved_kwargs = dict(kwargs)
         gateway_trace_id = self._resolve_gateway_trace_id(run_id, resolved_kwargs)
         kwargs = self._inject_gateway_headers(resolved_kwargs, gateway_trace_id)
-        max_retries = _llm_business_max_retries()
+        max_retries = _llm_business_max_retries_for_run(run_manager)
         attempt = 1
         try:
             while True:
@@ -828,6 +1025,20 @@ def _duration_ms(started_at: float) -> int:
 
 def _llm_business_max_retries() -> int:
     return max(0, int(_LLM_BUSINESS_MAX_RETRIES))
+
+
+def _llm_business_max_retries_for_run(run_manager: Any) -> int:
+    tags = getattr(run_manager, "tags", None)
+    if isinstance(tags, (list, tuple, set)) and (
+        "keydex_internal_context_compression" in tags
+    ):
+        return 0
+    metadata = getattr(run_manager, "metadata", None)
+    if isinstance(metadata, dict) and (
+        metadata.get("keydex_internal_context_compression") is True
+    ):
+        return 0
+    return _llm_business_max_retries()
 
 
 async def _sleep_before_llm_retry(attempt: int) -> None:
@@ -1522,14 +1733,45 @@ def _zero_repeated_cache_read(usage: Any, seen: int | None) -> int | None:
     return seen
 
 
-class AgentFactory:
-    def __init__(self) -> None:
-        self._llm_cache: dict[str, BaseChatModel] = {}
-        self._llm_cache_locks: dict[str, threading.Lock] = {}
-        self._llm_cache_locks_guard = threading.Lock()
+@dataclass(slots=True)
+class _ManagedLLMEntry:
+    llm: BaseChatModel
+    clients: ManagedOpenAIHttpClients
 
-    def _get_llm_cache_lock(self, cache_key: str) -> threading.Lock:
+
+@dataclass(frozen=True, slots=True)
+class _LLMCacheKey:
+    api_key: str = field(repr=False)
+    base_url: str
+    model: str
+    temperature: float | None
+    max_tokens: int | None
+    timeout: float
+    streaming: bool
+    route_identity: str
+    llm_request_logs_identity: int | None
+    provider_id: str
+    provider_name: str
+
+
+class AgentFactory:
+    def __init__(
+        self,
+        *,
+        system_proxy_state: SystemProxyState | None = None,
+        http_client_factory: OpenAIHttpClientPairFactory = create_openai_http_clients,
+    ) -> None:
+        self.system_proxy_state = system_proxy_state or SystemProxyState()
+        self._http_client_factory = http_client_factory
+        self._llm_cache: dict[_LLMCacheKey, _ManagedLLMEntry] = {}
+        self._llm_cache_locks: dict[_LLMCacheKey, threading.Lock] = {}
+        self._llm_cache_locks_guard = threading.Lock()
+        self._closed = False
+
+    def _get_llm_cache_lock(self, cache_key: _LLMCacheKey) -> threading.Lock:
         with self._llm_cache_locks_guard:
+            if self._closed:
+                raise RuntimeError("AgentFactory is closed")
             lock = self._llm_cache_locks.get(cache_key)
             if lock is None:
                 lock = threading.Lock()
@@ -1557,57 +1799,105 @@ class AgentFactory:
         url = _normalize_base_url(settings.base_url)
         api_key = settings.api_key or ""
         timeout = settings.timeout_seconds
-        cache_key = (
-            f"{api_key}:{url}:{request_model}:"
-            f"{temperature}:{max_tokens}:{timeout}:{streaming}:"
-            f"{id(http_transport) if http_transport else ''}:"
-            f"{id(llm_request_logs) if llm_request_logs else ''}:"
-            f"{provider_id or ''}:{provider_name or ''}"
+        if http_transport is None:
+            proxy_snapshot = self.system_proxy_state.current()
+            route_identity = proxy_snapshot.fingerprint
+        else:
+            proxy_snapshot = _CUSTOM_TRANSPORT_PROXY_SNAPSHOT
+            route_identity = f"custom-transport:{id(http_transport)}"
+        cache_key = _LLMCacheKey(
+            api_key=api_key,
+            base_url=url,
+            model=request_model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=timeout,
+            streaming=streaming,
+            route_identity=route_identity,
+            llm_request_logs_identity=id(llm_request_logs) if llm_request_logs else None,
+            provider_id=provider_id or "",
+            provider_name=provider_name or "",
         )
-        cached = self._llm_cache.get(cache_key)
+        with self._llm_cache_locks_guard:
+            if self._closed:
+                raise RuntimeError("AgentFactory is closed")
+            cached = self._llm_cache.get(cache_key)
         if cached is not None:
             logger.debug(f"[LLM] 复用缓存实例 | model={request_model} | base_url={url}")
-            return cached
+            return cached.llm
 
         lock = self._get_llm_cache_lock(cache_key)
         with lock:
-            cached = self._llm_cache.get(cache_key)
+            with self._llm_cache_locks_guard:
+                if self._closed:
+                    raise RuntimeError("AgentFactory is closed")
+                cached = self._llm_cache.get(cache_key)
             if cached is not None:
                 logger.debug(f"[LLM] 复用缓存实例 | model={request_model} | base_url={url}")
-                return cached
-            client_kwargs: dict[str, Any] = {}
-            if http_transport is not None:
-                client_kwargs["http_client"] = httpx.Client(
-                    transport=http_transport,
-                    timeout=timeout,
-                )
-                client_kwargs["http_async_client"] = httpx.AsyncClient(
-                    transport=http_transport,
-                    timeout=timeout,
-                )
-            llm = PatchedChatOpenAI(
-                model=request_model,
-                api_key=api_key,
-                base_url=url,
-                temperature=temperature,
-                max_completion_tokens=max_tokens,
+                return cached.llm
+            clients = self._http_client_factory(
+                proxy_snapshot,
                 timeout=timeout,
-                max_retries=0,
-                streaming=streaming,
-                stream_usage=True,
-                use_responses_api=False,
-                http_socket_options=(),
-                llm_request_logs=llm_request_logs,
-                provider_id=provider_id,
-                provider_name=provider_name,
-                **client_kwargs,
+                http_transport=http_transport,
             )
-            self._llm_cache[cache_key] = llm
+            try:
+                llm = PatchedChatOpenAI(
+                    model=request_model,
+                    api_key=api_key,
+                    base_url=url,
+                    temperature=temperature,
+                    max_completion_tokens=max_tokens,
+                    timeout=timeout,
+                    max_retries=0,
+                    streaming=streaming,
+                    stream_usage=True,
+                    use_responses_api=False,
+                    http_socket_options=(),
+                    llm_request_logs=llm_request_logs,
+                    provider_id=provider_id,
+                    provider_name=provider_name,
+                    http_client=clients.http_client,
+                    http_async_client=clients.http_async_client,
+                )
+            except BaseException:
+                _close_clients_after_construction_failure(clients)
+                raise
+            entry = _ManagedLLMEntry(llm=llm, clients=clients)
+            with self._llm_cache_locks_guard:
+                if self._closed:
+                    should_cache = False
+                else:
+                    self._llm_cache[cache_key] = entry
+                    should_cache = True
+            if not should_cache:
+                _close_clients_after_construction_failure(clients)
+                raise RuntimeError("AgentFactory is closed")
             logger.info(
                 f"[LLM] 创建模型实例 | model={request_model} | base_url={url} | "
-                f"streaming={streaming} | timeout={timeout}"
+                f"streaming={streaming} | timeout={timeout} | "
+                f"network_mode={proxy_snapshot.mode} | "
+                f"proxy_generation={proxy_snapshot.generation} | "
+                f"proxy_fingerprint={proxy_snapshot.fingerprint_short}"
             )
             return llm
+
+    async def aclose(self) -> None:
+        with self._llm_cache_locks_guard:
+            if self._closed:
+                return
+            self._closed = True
+            entries = list(self._llm_cache.values())
+            self._llm_cache.clear()
+            self._llm_cache_locks.clear()
+        for entry in entries:
+            try:
+                await entry.clients.aclose()
+            except Exception as exc:
+                logger.warning(
+                    "[LLM] managed HTTP client close failed | error_type={}",
+                    type(exc).__name__,
+                )
+        logger.info("[LLM] managed HTTP clients closed | entries={}", len(entries))
 
     @staticmethod
     def create_agent(

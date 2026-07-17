@@ -3,6 +3,7 @@ import type { PropsWithChildren } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RuntimeBridge } from "../src/runtime";
+import { fileReviewDocumentFromChanges } from "../src/renderer/components/diff/adapters/fileReviewDocument";
 import type { AgentSessionController } from "../src/renderer/hooks/useAgentSessionController";
 import { useConversationPanelModel } from "../src/renderer/pages/conversation/useConversationPanelModel";
 import { NotificationProvider } from "../src/renderer/providers/NotificationProvider";
@@ -243,19 +244,25 @@ describe("useConversationPanelModel", () => {
       { wrapper: Providers },
     );
 
+    const files = [
+      {
+        path: "src/main.ts",
+        additions: 1,
+        deletions: 1,
+        diff: "--- a/src/main.ts\n+++ b/src/main.ts\n@@ -1 +1 @@\n-old\n+new",
+        operation: "update" as const,
+      },
+    ];
+    const document = fileReviewDocumentFromChanges(files, {
+      sessionId: "ses-1",
+      requestId: "message-file",
+    });
     act(() => {
       result.current.openFileChangePreview({
         path: "src/main.ts",
         diff: "--- a/src/main.ts\n+++ b/src/main.ts\n@@ -1 +1 @@\n-old\n+new",
-        files: [
-          {
-            path: "src/main.ts",
-            additions: 1,
-            deletions: 1,
-            diff: "--- a/src/main.ts\n+++ b/src/main.ts\n@@ -1 +1 @@\n-old\n+new",
-            operation: "update",
-          },
-        ],
+        files,
+        document,
         title: "已编辑文件",
       });
     });
@@ -270,6 +277,7 @@ describe("useConversationPanelModel", () => {
         }),
       ],
     });
+    expect(latestReviewPanelRequest?.document).toBe(document);
     expect(runtime.conversation.loadToolDetails).not.toHaveBeenCalled();
   });
 
@@ -314,6 +322,51 @@ describe("useConversationPanelModel", () => {
       });
       expect(latestReviewPanelRequest?.files[0]?.diff).toContain("+loaded");
     });
+  });
+
+  it("drops a deferred review result after the active session changes", async () => {
+    let resolveDetails: ((value: Awaited<ReturnType<RuntimeBridge["conversation"]["loadToolDetails"]>>) => void) | null = null;
+    const runtime = fakeRuntime();
+    vi.mocked(runtime.conversation.loadToolDetails).mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveDetails = resolve;
+      }),
+    );
+    const controller = fakeController();
+    const { result, rerender } = renderHook(
+      ({ activeSessionId }) => useConversationPanelModel({ runtime, sessionId: activeSessionId, controller }),
+      { wrapper: Providers, initialProps: { activeSessionId: "ses-1" } },
+    );
+
+    act(() => {
+      result.current.openFileChangePreview({
+        path: "src/main.ts",
+        diff: "",
+        message: fileEditMessage(),
+      });
+    });
+    expect(runtime.conversation.loadToolDetails).toHaveBeenCalledTimes(1);
+
+    rerender({ activeSessionId: "ses-2" });
+    await act(async () => {
+      resolveDetails?.({
+        detailRef: { startEventId: "start-file", endEventId: "end-file" },
+        toolName: "apply_patch",
+        toolParams: { path: "src/main.ts" },
+        toolResult: "patched",
+        status: "completed",
+        fileChanges: [{
+          path: "src/main.ts",
+          operation: "update",
+          added_lines: 1,
+          deleted_lines: 1,
+          diff: "--- a/src/main.ts\n+++ b/src/main.ts\n@@ -1 +1 @@\n-old\n+stale",
+        }],
+      });
+      await Promise.resolve();
+    });
+
+    expect(latestReviewPanelRequest).toBeNull();
   });
 
 

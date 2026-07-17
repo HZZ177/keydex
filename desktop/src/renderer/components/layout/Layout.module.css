@@ -608,6 +608,12 @@
   padding: 0;
 }
 
+.rightSidebarBody[data-content="review"] {
+  display: grid;
+  overflow: hidden;
+  padding: 0;
+}
+
 .rightSidebarBody[data-content="git"] {
   display: grid;
   overflow: hidden;

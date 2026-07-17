@@ -61,20 +61,6 @@ describe("GitCommitEditor", () => {
     expect(screen.queryByRole("button", { name: "修改" })).toBeNull();
   });
 
-  it("renders the successful commit oid returned by the backend", () => {
-    render(
-      <GitCommitEditor
-        status={status()}
-        draft=""
-        outcome={{ oid: "1234567890abcdef", summary: "Created commit", status: "committed" }}
-        onDraftChange={vi.fn()}
-        onCommit={vi.fn()}
-      />,
-    );
-    expect(screen.getByRole("status", { name: "提交结果" }).textContent).toContain("Created commit");
-    expect(screen.getByText("1234567890ab")).not.toBeNull();
-  });
-
   it("exposes 提交并推送 as an explicit second action", () => {
     const onCommitAndPush = vi.fn();
     render(

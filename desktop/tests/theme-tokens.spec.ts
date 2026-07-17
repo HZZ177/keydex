@@ -4,6 +4,11 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import {
+  KEYDEX_DIFF_DESIGN_TOKENS,
+  KEYDEX_LEGACY_DIFF_TOKENS,
+} from "@/renderer/components/diff/diffTokens";
+
 const themeDir = resolve(dirname(fileURLToPath(import.meta.url)), "../src/renderer/styles/themes");
 const rendererDir = resolve(themeDir, "../..");
 
@@ -33,8 +38,8 @@ describe("theme tokens", () => {
     expect(css).toContain("--color-bg-1: #282a36");
     expect(css).toContain("--color-text-1: #f8f8f2");
     expect(css).toContain("--color-primary-6: #ff79c6");
-    expect(css).toContain("--diff-added-text: #50fa7b");
-    expect(css).toContain("--diff-removed-text: #ff5555");
+    expect(css).toContain("--diff-added-text: #87d99c");
+    expect(css).toContain("--diff-removed-text: #e8797f");
     expect(css).toContain("--color-skill: #ff79c6");
     expect(css).toContain("--syntax-comment: #6272a4");
     expect(css).toContain("--syntax-string: #f1fa8c");
@@ -46,6 +51,25 @@ describe("theme tokens", () => {
     expect(css).toContain("--control-pill-border: transparent");
     expect(css).toContain("#1677ff");
     expect(css).toContain("#d97706");
+  });
+
+  it("defines the complete Diff design-token graph in both themes", () => {
+    const css = readFileSync(resolve(themeDir, "default-color-scheme.css"), "utf8");
+    const light = css.match(/:root,\s*:root\[data-theme="light"\]\s*\{([\s\S]*?)\n\}/u)?.[1] ?? "";
+    const dark = css.match(/:root\[data-theme="dark"\]\s*\{([\s\S]*?)\n\}/u)?.[1] ?? "";
+
+    [...KEYDEX_DIFF_DESIGN_TOKENS, ...KEYDEX_LEGACY_DIFF_TOKENS].forEach((token) => {
+      expect(light, `${token} missing from light theme`).toContain(`${token}:`);
+      expect(dark, `${token} missing from dark theme`).toContain(`${token}:`);
+    });
+  });
+
+  it("keeps semantic Diff colors independent from link blue and fluorescent Dracula colors", () => {
+    const css = readFileSync(resolve(themeDir, "default-color-scheme.css"), "utf8");
+    expect(css).not.toContain("--diff-added-text: #50fa7b");
+    expect(css).not.toContain("--diff-removed-text: #ff5555");
+    expect(css).not.toContain("--diff-added-text: #1677ff");
+    expect(css).not.toContain("--diff-removed-text: #1677ff");
   });
 
   it("uses Dracula highlighting for dark conversation code and semantic syntax tokens in file preview", () => {

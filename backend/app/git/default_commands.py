@@ -843,9 +843,20 @@ def _prepare_apply_patch(request: GitPatchCommandRequest) -> GitPreparedCommand:
     if request.reject:
         argv.append("--reject")
     argv.append("-")
+    identity_checks: tuple[tuple[tuple[str, ...], str], ...] = ()
+    if request.expected_source_patch is not None:
+        source_argv = ["diff", "--no-ext-diff", "--binary", "--find-renames"]
+        if request.source_kind == "index":
+            source_argv.append("--cached")
+        source_argv.extend(["--", *request.source_paths])
+        identity_checks = ((
+            tuple(source_argv),
+            request.expected_source_patch.replace("\r\n", "\n").strip(),
+        ),)
     return GitPreparedCommand(
         argv=tuple(argv),
         input_text=patch,
+        identity_checks=identity_checks,
         summary=(
             "Patch dry-run passed"
             if request.check_only
@@ -999,8 +1010,13 @@ def _prepare_set_upstream(request: GitUpstreamCommandRequest) -> GitPreparedComm
 
 def _prepare_push(request: GitPushCommandRequest) -> GitPreparedCommand:
     remote = validate_remote_name(request.remote)
+    if request.tags and request.follow_tags:
+        raise GitApiError(
+            "git_validation_failed",
+            "Push tags and follow tags are mutually exclusive",
+        )
     if request.tag_name:
-        if request.force_with_lease or request.set_upstream or request.tags:
+        if request.force_with_lease or request.set_upstream or request.tags or request.follow_tags:
             raise GitApiError(
                 "git_validation_failed",
                 "A single tag push cannot be combined with branch push options",
@@ -1018,6 +1034,8 @@ def _prepare_push(request: GitPushCommandRequest) -> GitPreparedCommand:
         argv.append("--set-upstream")
     if request.tags:
         argv.append("--tags")
+    elif request.follow_tags:
+        argv.append("--follow-tags")
     argv.append(remote)
     source = validate_ref_name(request.source)
     target = validate_ref_name(request.target)

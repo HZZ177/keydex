@@ -1,0 +1,12 @@
+.wrapper {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  contain: layout size;
+}
+
+.wrapper :global([data-keydex-diff-surface]) {
+  border-radius: var(--radius-md);
+}

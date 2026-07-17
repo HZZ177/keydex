@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 
 import type { GitCommandResult, GitRef, GitStatusSnapshot } from "@/runtime/gitTypes";
 
+import { GitConfirmActionDialog } from "../dialogs";
 import { parseCherryPickCommits } from "./GitCherryPickView";
 import styles from "./GitRevertView.module.css";
 
@@ -25,6 +26,7 @@ export function GitRevertView({
 }) {
   const [input, setInput] = useState("");
   const [mainline, setMainline] = useState("");
+  const [pendingStart, setPendingStart] = useState(false);
   const [pendingControl, setPendingControl] = useState<"skip" | "abort" | null>(null);
   const commits = useMemo(() => parseCherryPickCommits(input), [input]);
   const duplicate = commits.find((commit, index) => commits.indexOf(commit) !== index) ?? null;
@@ -42,14 +44,6 @@ export function GitRevertView({
           <button type="button" disabled={busy} onClick={() => setPendingControl("abort")}>中止</button>
         </div>
       ) : null}
-      {pendingControl ? (
-        <div className={styles.confirmation} role="alertdialog" aria-label="确认反向提交控制操作">
-          <strong>{pendingControl === "abort" ? "中止反向提交序列吗？" : "跳过当前反向提交吗？"}</strong>
-          <span>{pendingControl === "abort" ? "尚未提交的撤销改动将被丢弃，并恢复到序列开始时的状态。" : "当前撤销提交将被省略，其余提交继续执行。"}</span>
-          <button type="button" onClick={() => { const action = pendingControl; setPendingControl(null); onControl(action); }}>{pendingControl === "abort" ? "确认中止" : "确认跳过"}</button>
-          <button type="button" onClick={() => setPendingControl(null)}>取消</button>
-        </div>
-      ) : null}
       <div className={styles.form}>
         <label><span>提交（每行一个，按列出顺序撤销）</span><textarea aria-label="要撤销的提交" rows={4} value={input} onChange={(event) => setInput(event.target.value)} /></label>
         <div className={styles.suggestions} aria-label="反向提交引用建议">{refs.slice(0, 8).map((ref) => <button type="button" key={ref.fullName} disabled={busy} onClick={() => setInput((current) => `${current}${current.trim() ? "\n" : ""}${ref.fullName}`)}>{ref.shortName}</button>)}</div>
@@ -57,13 +51,38 @@ export function GitRevertView({
         <p className={styles.note}>对于合并提交，请选择需要保留其历史的父提交（通常为 1）。Keydex 不会猜测此值。</p>
         {duplicate ? <p className={styles.warning} role="alert">提交 {duplicate} 重复出现。</p> : null}
         {invalidMainline ? <p className={styles.warning} role="alert">主线父提交必须是 1 到 64 之间的整数。</p> : null}
-        <button type="button" className={styles.primary} disabled={busy || commits.length === 0 || Boolean(duplicate) || invalidMainline || Boolean(operation)} onClick={() => onRevert(commits, parsedMainline)}>创建反向提交</button>
+        <button type="button" className={styles.primary} disabled={busy || commits.length === 0 || Boolean(duplicate) || invalidMainline || Boolean(operation)} onClick={() => setPendingStart(true)}>创建反向提交</button>
       </div>
       {requestedCommits.length ? (
         <ol className={styles.queue} aria-label="反向提交结果队列">{requestedCommits.map((commit, index) => {
           const state = revertItemState(commit, index, requestedCommits, status, outcome);
           return <li key={`${commit}:${index}`} data-state={state}><code>{commit.length > 16 ? commit.slice(0, 12) : commit}</code><span>{queueStateLabel(state)}</span></li>;
         })}</ol>
+      ) : null}
+      {pendingStart && commits.length > 0 && !duplicate && !invalidMainline ? (
+        <GitConfirmActionDialog
+          title="确认创建反向提交"
+          description="将按列出顺序创建新提交来撤销这些提交，不会移动或删除现有历史。"
+          target={`${commits.length} 个提交`}
+          details={[commits.join(" → "), `主线父提交：${parsedMainline ?? "不指定"}`]}
+          confirmLabel="确认创建"
+          confirmTone="default"
+          busy={busy}
+          onCancel={() => setPendingStart(false)}
+          onConfirm={() => { setPendingStart(false); onRevert(commits, parsedMainline); }}
+        />
+      ) : null}
+      {pendingControl && operation ? (
+        <GitConfirmActionDialog
+          title={pendingControl === "abort" ? "确认中止反向提交" : "确认跳过当前提交"}
+          description={pendingControl === "abort" ? "尚未提交的撤销改动将被丢弃，并恢复到序列开始时。" : "当前撤销提交将被省略，其余提交继续执行。"}
+          target={operation.currentObjectId ? `当前对象：${operation.currentObjectId.slice(0, 12)}` : "当前反向提交步骤"}
+          details={operation.currentStep && operation.totalSteps ? [`进度：${operation.currentStep}/${operation.totalSteps}`] : []}
+          confirmLabel={pendingControl === "abort" ? "确认中止" : "确认跳过"}
+          busy={busy}
+          onCancel={() => setPendingControl(null)}
+          onConfirm={() => { const action = pendingControl; setPendingControl(null); onControl(action); }}
+        />
       ) : null}
     </section>
   );

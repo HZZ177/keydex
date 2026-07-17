@@ -104,6 +104,10 @@ describe("Git changes tree", () => {
       />,
     );
 
+    expect(onPreviewChange).toHaveBeenCalledWith(expect.objectContaining({ path: "asset.bin" }));
+    expect(screen.getByRole("treeitem", { name: /asset\.bin modified/ }).getAttribute("data-previewed")).toBe("true");
+    onPreviewChange.mockClear();
+
     const row = screen.getByRole("treeitem", { name: /src\/edit\.ts modified/ });
     fireEvent.click(row);
     expect(onPreviewChange).toHaveBeenCalledWith(expect.objectContaining({ path: "src/edit.ts" }));
@@ -116,6 +120,20 @@ describe("Git changes tree", () => {
       [expect.objectContaining({ path: "src/edit.ts" })],
     );
     expect(onPreviewChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the preview when the refreshed status no longer has changed files", () => {
+    const onPreviewChange = vi.fn();
+    const { rerender } = render(
+      <GitChangesView status={status()} onPreviewChange={onPreviewChange} />,
+    );
+    expect(onPreviewChange).toHaveBeenLastCalledWith(expect.objectContaining({ path: "asset.bin" }));
+
+    const emptyStatus = status();
+    emptyStatus.files = [];
+    rerender(<GitChangesView status={emptyStatus} onPreviewChange={onPreviewChange} />);
+
+    expect(onPreviewChange).toHaveBeenLastCalledWith(null);
   });
 
   it("collapses and expands a change group from the disclosure button", () => {

@@ -1,12 +1,9 @@
 import { AlertTriangle, ChevronRight, FileCode2, LoaderCircle } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { AppDialog, DialogButton } from "@/renderer/components/dialog";
-import {
-  fileReviewDisplayLines,
-  UnifiedDiffRows,
-} from "@/renderer/components/review/FileReviewDiff";
-import type { FileReviewChange } from "@/renderer/utils/fileReview";
+import { reverseDocumentFromFiles } from "@/renderer/components/diff/adapters/reverseDocument";
+import { ReviewDiffView } from "@/renderer/components/diff/wrappers/ReviewDiffView";
 import type {
   SessionReverseDecision,
   SessionReverseFilePreview,
@@ -213,8 +210,9 @@ function ReverseDecisionPanel({
           ? "以下文件无法直接回溯，请选择只处理其他文件或取消。"
           : "以下文件已在其他对话或应用中修改，回溯所有文件会覆盖这些修改。"}
       </p>
-      <ReverseFileGroups
-        files={files}
+        <ReverseFileGroups
+          files={files}
+          operationId={preview.operation_id}
         className={styles.decisionFileList}
         ariaLabel="需要确认的文件"
       />
@@ -272,6 +270,7 @@ function ReverseFilePreview({ state }: { state: ReverseDialogState }) {
       {preview.files.length ? (
         <ReverseFileGroups
           files={preview.files}
+          operationId={preview.operation_id}
           className={styles.fileList}
           ariaLabel="预计回溯的文件"
           testId="reverse-file-list"
@@ -288,11 +287,13 @@ function ReverseFileGroups({
   className,
   ariaLabel,
   testId,
+  operationId,
 }: {
   files: SessionReverseFilePreview[];
   className: string;
   ariaLabel: string;
   testId?: string;
+  operationId: string;
 }) {
   return (
     <div className={className} aria-label={ariaLabel} data-testid={testId}>
@@ -304,7 +305,11 @@ function ReverseFileGroups({
           </div>
           <div className={styles.scopeFiles}>
             {group.files.map((file) => (
-              <ReverseFilePreviewItem file={file} key={fileResourceKey(file)} />
+              <ReverseFilePreviewItem
+                file={file}
+                key={fileResourceKey(file)}
+                operationId={operationId}
+              />
             ))}
           </div>
         </div>
@@ -340,12 +345,33 @@ function fileResourceKey(file: SessionReverseFilePreview): string {
   return file.resource_id || `${file.scope_kind ?? "workspace"}:${file.scope_identity ?? "current"}:${file.path}`;
 }
 
-function ReverseFilePreviewItem({ file }: { file: SessionReverseFilePreview }) {
+function ReverseFilePreviewItem({
+  file,
+  operationId,
+}: {
+  file: SessionReverseFilePreview;
+  operationId: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
   const statusLabel = classificationLabel(file.classification, file.reason_code);
   const displayPath = file.display_path || file.path;
+  const document = useMemo(
+    () => reverseDocumentFromFiles([file], operationId),
+    [file, operationId],
+  );
   return (
-    <details className={styles.fileRow} data-testid="reverse-file-preview">
-      <summary className={styles.fileSummary}>
+    <details
+      className={styles.fileRow}
+      data-testid="reverse-file-preview"
+      open={expanded}
+    >
+      <summary
+        className={styles.fileSummary}
+        onClick={(event) => {
+          event.preventDefault();
+          setExpanded((open) => !open);
+        }}
+      >
         <ChevronRight aria-hidden="true" className={styles.fileChevron} size={14} />
         <FileCode2 aria-hidden="true" size={14} />
         <code title={file.scope_kind === "external" ? file.absolute_path : displayPath}>{displayPath}</code>
@@ -362,35 +388,19 @@ function ReverseFilePreviewItem({ file }: { file: SessionReverseFilePreview }) {
         <p className={styles.externalPath} title={file.absolute_path}>{file.absolute_path}</p>
       ) : null}
       <div className={styles.fileExpanded}>
-        {file.binary ? (
-          <p>该文件可以回溯，但不提供代码行预览。</p>
-        ) : file.diff ? (
-          <>
-            <UnifiedDiffRows lines={fileReviewDisplayLines(fileReviewChange(file))} />
-            {file.truncated ? <p>内容较多，仅展示部分差异。</p> : null}
-          </>
-        ) : (
-          <p>{file.truncated ? "内容较多，仅展示部分差异。" : "没有需要展示的代码差异。"}</p>
-        )}
+        {file.binary ? <p>该文件可以回溯，但不提供代码行预览。</p> : null}
+        {file.truncated ? <p>内容较多，仅展示部分差异。</p> : null}
+        {!file.binary && !file.truncated && !file.diff ? <p>没有需要展示的代码差异。</p> : null}
+        {expanded ? (
+          <ReviewDiffView
+            document={document}
+            focusedPath={displayPath}
+            scrollScopeKey={`reverse:${operationId}:${fileResourceKey(file)}`}
+          />
+        ) : null}
       </div>
     </details>
   );
-}
-
-function fileReviewChange(file: SessionReverseFilePreview): FileReviewChange {
-  return {
-    path: file.display_path || file.path,
-    additions: file.insertions,
-    deletions: file.deletions,
-    diff: file.diff ?? "",
-    operation:
-      file.current_state === "missing" && file.target_state === "file"
-        ? "add"
-        : file.current_state === "file" && file.target_state === "missing"
-          ? "delete"
-          : "update",
-    source: "final",
-  };
 }
 
 function ReverseResult({ state }: { state: ReverseDialogState }) {

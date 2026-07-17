@@ -28,19 +28,19 @@ describe("Git conflict domain model", () => {
     const onSelect = vi.fn();
     const snapshot = normalizedSnapshot();
     render(<GitConflictOverview snapshot={snapshot} loading={false} selectedPath="conflict.txt" onSelect={onSelect} />);
-    expect(screen.getAllByText("BASE · OURS · THEIRS").length).toBe(3);
-    expect(screen.getAllByText(/accept_ours · accept_theirs · edit/).length).toBe(2);
-    expect(screen.getByText("Binary: direct editing unavailable")).toBeTruthy();
-    expect(screen.getByText(/Rename conflicts may span related paths/)).toBeTruthy();
+    expect(screen.getAllByText("共同基础 · 当前分支 · 传入版本").length).toBe(3);
+    expect(screen.getAllByText(/采用当前分支版本 · 采用传入版本/).length).toBe(2);
+    expect(screen.getByText("二进制文件：无法直接编辑")).toBeTruthy();
+    expect(screen.getByText(/重命名冲突可能涉及多个关联路径/)).toBeTruthy();
     fireEvent.click(screen.getByRole("option", { name: /binary.dat/ }));
     expect(onSelect).toHaveBeenCalledWith(snapshot.files[1]);
   });
 
   it("prioritizes submodule, binary, size, and encoding edit restrictions", () => {
-    expect(conflictLimitReason(file("submodule"))).toContain("Submodule");
-    expect(conflictLimitReason(file("binary"))).toContain("Binary");
-    expect(conflictLimitReason({ ...file("both_modified"), resultTooLarge: true })).toContain("Too large");
-    expect(conflictLimitReason({ ...file("both_modified"), stages: [{ ...file("both_modified").stages[0], encoding: "unsupported" }] })).toContain("encoding");
+    expect(conflictLimitReason(file("submodule"))).toContain("子模块");
+    expect(conflictLimitReason(file("binary"))).toContain("二进制");
+    expect(conflictLimitReason({ ...file("both_modified"), resultTooLarge: true })).toContain("文件过大");
+    expect(conflictLimitReason({ ...file("both_modified"), stages: [{ ...file("both_modified").stages[0], encoding: "unsupported" }] })).toContain("编码");
   });
 });
 

@@ -31,14 +31,7 @@ describe("ConversationPage goal task creation", () => {
     const taskPayload = createThreadTask.mock.calls[0][1];
     expect(taskPayload.type).toBe("goal");
     expect(taskPayload.objective).toBe("完成需求");
-    expect(taskPayload.metadata.seed_turn_context).toMatchObject({
-      schema_version: 1,
-      source: "goal_composer",
-      message: "完成需求",
-      context_items: [],
-      runtime_params: {},
-      attachments: [],
-    });
+    expect(taskPayload.metadata).toBeUndefined();
     await waitFor(() => {
       expect(chat).toHaveBeenCalled();
     });

@@ -19,7 +19,9 @@ describe("Git responsive and performance budgets", () => {
     const css = readFileSync(resolve(process.cwd(), "src/renderer/features/git/components/GitToolWindow.module.css"), "utf8");
     expect(css).toContain("container-type: inline-size");
     expect(css).toContain("@container (max-width: 560px)");
-    expect(css).toContain("@container (min-width: 1600px)");
+    expect(css).toContain("clamp(112px, var(--git-navigation-pane-width, 19%), 35%)");
+    expect(css).toMatch(/\.details\[data-view="changes"\]\s*\{[^}]*display:\s*flex;[^}]*overflow:\s*hidden;/s);
+    expect(css).toMatch(/data-keydex-diff-wrapper="git"[^}]*height:\s*auto;[^}]*min-height:\s*0;[^}]*flex:\s*1 1 0;/s);
   });
 
   it("centralizes pagination, virtualization and worker candidate thresholds", () => {

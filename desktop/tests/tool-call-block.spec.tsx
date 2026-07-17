@@ -4,6 +4,27 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MessageList, ToolCallBlock } from "@/renderer/pages/conversation/messages";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 
+vi.mock("@/renderer/components/diff/wrappers/CompactDiffView", () => ({
+  CompactDiffView: ({ document, activeFileId, actions }: {
+    document: { files: Array<{ id: string; displayPath: string; patch: string }> };
+    activeFileId?: string | null;
+    actions?: { copyPatch?: (patch: string) => void | Promise<void> };
+  }) => {
+    const activeFile = document.files.find((file) => file.id === activeFileId) ?? document.files[0];
+    return (
+      <section aria-label="文件差异" data-keydex-diff-wrapper="compact">
+        <span>{activeFile?.displayPath}</span>
+        <pre>{activeFile?.patch}</pre>
+        {actions?.copyPatch && activeFile ? (
+          <button type="button" aria-label="复制原始补丁" onClick={() => void actions.copyPatch?.(activeFile.patch)}>
+            复制原始补丁
+          </button>
+        ) : null}
+      </section>
+    );
+  },
+}));
+
 describe("ToolCallBlock", () => {
   beforeEach(() => {
     vi.stubGlobal("navigator", {
@@ -422,16 +443,14 @@ describe("ToolCallBlock", () => {
     fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
 
     expect(screen.queryByText("已编辑的文件")).toBeNull();
-    expect(screen.getByTestId("file-review-card")).not.toBeNull();
-    expect(screen.getByLabelText("文件 diff").textContent).toContain("+new");
+    expect((await screen.findByLabelText("文件差异")).textContent).toContain("+new");
     expect(screen.queryByLabelText("工具入参")).toBeNull();
     expect(screen.queryByLabelText("工具输出")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "复制 diff" }));
+    fireEvent.click(screen.getByRole("button", { name: "复制原始补丁" }));
     await waitFor(() => {
       expect(clipboard).toHaveBeenLastCalledWith(diff);
     });
-    expect(screen.getByRole("button", { name: "已复制 diff" }).querySelector(".lucide-check")).not.toBeNull();
   });
 
   it("renders move file mutation tools with move wording", () => {

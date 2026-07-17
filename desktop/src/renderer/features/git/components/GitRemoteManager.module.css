@@ -15,3 +15,9 @@
 .removePreview { display: flex; grid-column: 1 / -1; align-items: center; gap: 8px; padding-top: 5px; border-top: 1px solid var(--color-border-2); }
 .removePreview span { flex: 1; color: var(--color-text-3); font-size: 9px; }
 .empty { display: grid; place-items: center; color: var(--color-text-3); font-size: 10px; }
+.toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--color-text-3); font-size: 10px; }
+.toolbar button, .actions button { min-height: 28px; padding: 0 8px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--surface-active); color: var(--color-text-1); cursor: pointer; font-size: 10px; }
+.toolbar button:disabled, .actions button:disabled { cursor: default; opacity: .45; }
+.readonlyField { display: grid; grid-column: 1 / -1; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: 6px; min-height: 24px; color: var(--color-text-3); font-size: 9px; }
+.readonlyField strong, .readonlyField code { overflow: hidden; color: var(--color-text-1); font: inherit; text-overflow: ellipsis; white-space: nowrap; }
+.actions { display: flex; grid-column: 1 / -1; flex-wrap: wrap; gap: 5px; }

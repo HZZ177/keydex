@@ -36,7 +36,7 @@ export function conversationKindFromAgent(message: AgentChatMessage): Conversati
   if (message.role === "system" && isLLMRetryMessage(message)) {
     return "llm_retry";
   }
-  if (message.role === "system" && isContextCompressionMessage(message)) {
+  if (isContextCompressionMessage(message)) {
     return "context_compression";
   }
   if (message.role === "tool") {
@@ -299,8 +299,16 @@ function isContextCompressionMessage(message: AgentChatMessage): boolean {
   if (kind === "context_compression" || kind === "context_compressed") {
     return true;
   }
+  const compact = objectValue(message.metadata?.keydex_context_compression);
+  if (
+    stringValue(compact?.kind) === "summary" ||
+    message.metadata?.is_compact_summary === true ||
+    message.metadata?.isCompactSummary === true
+  ) {
+    return true;
+  }
   const content = normalizeMessageContent(message.content).trim();
-  return content.startsWith("<keydex_context_compression>");
+  return message.role === "system" && content.startsWith("<keydex_context_compression");
 }
 
 function isLLMRetryMessage(message: AgentChatMessage): boolean {

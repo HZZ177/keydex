@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   lazy,
   Suspense,
@@ -192,14 +192,16 @@ function AppRoutes({
               path="/"
               element={launchIntent === "normal" ? <Navigate to={HOME_PATH} replace /> : null}
             />
-            <Route path="/guid" element={<HomeRoute runtime={runtime} />} />
-            <Route path="/git/:workspaceId" element={<GitRoute runtime={runtime} />} />
+            <Route element={<AgentShellRoute runtime={runtime} />}>
+              <Route path="/guid" element={<HomeRoute runtime={runtime} />} />
+              <Route path="/git/:workspaceId" element={<GitRoute runtime={runtime} />} />
+              <Route path="/conversation/:threadId" element={<ConversationRoute runtime={runtime} />} />
+            </Route>
             <Route path="/workbench" element={<WorkbenchRoute runtime={runtime} />} />
             <Route path="/workbench/:workspaceId" element={<WorkbenchRoute runtime={runtime} />} />
             <Route path="/workbench/:workspaceId/git" element={<WorkbenchRoute runtime={runtime} />} />
             <Route path="/workbench/:workspaceId/session/:sessionId" element={<WorkbenchRoute runtime={runtime} />} />
             <Route path={PROJECT_PATH} element={<ProjectRoute />} />
-            <Route path="/conversation/:threadId" element={<ConversationRoute runtime={runtime} />} />
             <Route path="/mcp" element={<Navigate to="/settings/mcp" replace />} />
             <Route path="/__dev/event-replay" element={<EventReplayRoute />} />
             <Route path="/settings/providers" element={<ProviderSettingsRoute runtime={runtime} />} />
@@ -316,6 +318,7 @@ function EventReplayRoute() {
 }
 
 function RoutedLayout({
+  runtime,
   title,
   contentMode = "reading",
   projects,
@@ -331,6 +334,7 @@ function RoutedLayout({
   resetRightSidebarOnEnter = false,
   children,
 }: PropsWithChildren<{
+  runtime?: RuntimeBridge;
   title: string;
   contentMode?: "reading" | "full";
   projects?: SiderEntry[];
@@ -376,6 +380,7 @@ function RoutedLayout({
 
   return (
     <Layout
+      runtime={runtime}
       title={title}
       appMode={appMode}
       activePath={location.pathname}
@@ -404,6 +409,23 @@ function ProjectRoute() {
   return (
     <RoutedLayout title="" contentMode="full">
       <ProjectModePage />
+    </RoutedLayout>
+  );
+}
+
+function AgentShellRoute({ runtime }: { runtime: RuntimeBridge }) {
+  const location = useLocation();
+  const homeActive = location.pathname === HOME_PATH;
+  const gitActive = location.pathname.startsWith("/git/");
+  return (
+    <RoutedLayout
+      runtime={runtime}
+      title={homeActive ? "新对话" : ""}
+      contentMode="full"
+      primarySurface={gitActive ? "git" : "content"}
+      resetRightSidebarOnEnter={homeActive}
+    >
+      <Outlet />
     </RoutedLayout>
   );
 }
@@ -451,7 +473,7 @@ function GitRoute({ runtime }: { runtime: RuntimeBridge }) {
   );
   usePublishActiveProjectDiscovery("git-route", activeProjectDiscovery);
 
-  return <RoutedLayout title="" contentMode="full" primarySurface="git" />;
+  return null;
 }
 
 function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
@@ -894,7 +916,6 @@ function HomeRoute({ runtime }: { runtime: RuntimeBridge }) {
   const autoFocusInputKey = routeParams.get("focus") === "prompt" ? location.key : undefined;
 
   return (
-    <RoutedLayout title="新对话" contentMode="full" resetRightSidebarOnEnter>
       <HomePage
         key={`${initialSessionType ?? "workspace"}:${initialWorkspaceId ?? "default"}`}
         runtime={runtime}
@@ -916,7 +937,6 @@ function HomeRoute({ runtime }: { runtime: RuntimeBridge }) {
         }}
         onOpenModelSettings={() => void navigate("/settings/model-defaults", { state: { from: location.pathname } })}
       />
-    </RoutedLayout>
   );
 }
 
@@ -946,7 +966,6 @@ function ConversationRoute({ runtime }: { runtime: RuntimeBridge }) {
   }, [location.pathname, navigate, routeState?.initialMessage, routeState?.initialModel, routeState?.quickSendId]);
 
   return (
-    <RoutedLayout title="" contentMode="full">
       <ConversationPage
         threadId={threadId ?? ""}
         runtime={runtime}
@@ -960,7 +979,6 @@ function ConversationRoute({ runtime }: { runtime: RuntimeBridge }) {
         onNavigateToConversation={(nextThreadId) => void navigate(conversationPath(nextThreadId))}
         onArchived={() => void navigate(HOME_PATH)}
       />
-    </RoutedLayout>
   );
 }
 

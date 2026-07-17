@@ -757,7 +757,8 @@ def _change_result(change: PlannedChange, context: ToolExecutionContext) -> dict
             "added_lines": added,
             "deleted_lines": deleted,
             "diff": diff,
-        }
+        },
+        completed=True,
     )
     if change.kind == "add":
         result["created"] = True

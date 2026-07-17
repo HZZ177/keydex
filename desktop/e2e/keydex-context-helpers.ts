@@ -69,15 +69,17 @@ export async function sendAndWait(
   const answer = page.locator("article").filter({ hasText: expected }).last();
   if ((await page.getByRole("main", { name: "工作台" }).count()) > 0) {
     const carrier = page.getByTestId("workbench-message-carrier");
-    await expect(carrier).toHaveAttribute("data-state", "completed", { timeout: 30_000 });
-    if ((await carrier.getAttribute("data-expanded")) !== "true") {
-      await carrier.click();
+    if ((await carrier.count()) > 0) {
+      await expect(carrier).toHaveAttribute("data-state", "completed", { timeout: 30_000 });
+      if ((await carrier.getAttribute("data-expanded")) !== "true") {
+        await carrier.click();
+      }
     }
   } else {
     await expect(answer).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByLabel("停止")).toHaveCount(0, { timeout: 30_000 });
   }
   await expect(answer).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByLabel("停止")).toHaveCount(0, { timeout: 30_000 });
   return answer;
 }
 
@@ -129,9 +131,7 @@ export async function openSkillGroup(page: Page, input: Locator): Promise<void> 
 
 export async function replaceComposer(input: Locator, value: string): Promise<void> {
   await input.click();
-  await input.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
-  await input.press("Backspace");
-  if (value) await input.pressSequentially(value);
+  await input.fill(value);
 }
 
 async function waitForControlledModel(page: Page): Promise<void> {

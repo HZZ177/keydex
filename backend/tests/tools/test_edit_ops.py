@@ -1,10 +1,22 @@
 from __future__ import annotations
 
 import time
+import subprocess
 
 from backend.app.tools import ToolExecutionContext, ToolRegistry
 from backend.app.tools.edit_ops import register_edit_operation_tools
 from backend.app.tools.filesystem import register_filesystem_tools
+
+
+def _assert_final_patch_applies_in_reverse(root, patch: str) -> None:
+    result = subprocess.run(
+        ["git", "apply", "--check", "--reverse", "--recount", "--unsafe-paths", "-"],
+        cwd=root,
+        input=(patch.rstrip("\r\n") + "\n").encode("utf-8"),
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
 
 
 def _context(tmp_path, *, file_access_mode: str | None = None) -> ToolExecutionContext:
@@ -52,6 +64,10 @@ async def test_edit_file_replaces_single_match_after_read(tmp_path) -> None:
     assert result.result["added_lines"] == 1
     assert result.result["deleted_lines"] == 1
     assert target.read_text(encoding="utf-8") == "alpha\nnew\nomega\n"
+    change = result.result["files"][0]
+    assert change["patch_format"] == "canonical_unified"
+    assert change["patch_precision"] == "exact"
+    _assert_final_patch_applies_in_reverse(tmp_path, change["raw_patch"])
 
 
 async def test_edit_file_allows_direct_edit_without_prior_read(tmp_path) -> None:
@@ -259,7 +275,36 @@ async def test_delete_file_allows_direct_delete_and_returns_delete_diff(tmp_path
     assert deleted.result["operation"] == "delete"
     assert deleted.result["deleted_lines"] == 2
     assert "--- a/old.txt" in deleted.result["diff"]
+    assert deleted.result["files"][0]["status"] == "deleted"
+    assert deleted.result["files"][0]["old_path"] == "old.txt"
+    assert deleted.result["files"][0]["new_path"] is None
+    assert deleted.result["files"][0]["patch_complete"] is True
     assert not target.exists()
+    _assert_final_patch_applies_in_reverse(
+        tmp_path,
+        deleted.result["files"][0]["raw_patch"],
+    )
+
+
+async def test_delete_file_returns_explicit_binary_final_contract(tmp_path) -> None:
+    target = tmp_path / "asset.bin"
+    target.write_bytes(b"\xff\x00\xfe")
+    registry = _registry()
+
+    deleted = await registry.require("delete_file").run(
+        {"path": "asset.bin"},
+        _context(tmp_path),
+    )
+
+    assert deleted.ok is True
+    change = deleted.result["files"][0]
+    assert change["status"] == "deleted"
+    assert change["binary"] is True
+    assert change["content_kind"] == "binary"
+    assert change["raw_patch"] is None
+    assert change["patch_format"] == "none"
+    assert change["truncated"] is False
+    assert change["patch_complete"] is True
 
 
 async def test_move_file_allows_direct_move_and_updates_snapshot_for_new_path(tmp_path) -> None:
@@ -281,6 +326,9 @@ async def test_move_file_allows_direct_move_and_updates_snapshot_for_new_path(tm
     assert moved.result["operation"] == "move"
     assert moved.result["old_path"] == "old.txt"
     assert moved.result["new_path"] == "dir/new.txt"
+    assert moved.result["files"][0]["status"] == "renamed"
+    assert moved.result["files"][0]["patch_precision"] == "exact"
+    assert moved.result["files"][0]["raw_patch"] == moved.result["files"][0]["diff"]
     assert edited.ok is True
     assert not source.exists()
     assert (tmp_path / "dir" / "new.txt").read_text(encoding="utf-8") == "new\n"

@@ -34,6 +34,12 @@ export default defineConfig({
     entries: ["index.html"],
     include: ["@radix-ui/react-slider"],
   },
+  worker: {
+    format: "es",
+  },
+  build: {
+    manifest: true,
+  },
   test: {
     environment: "jsdom",
     exclude: [...configDefaults.exclude, "e2e/**"],

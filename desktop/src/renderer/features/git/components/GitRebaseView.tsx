@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import type { GitRebaseAction, GitRebasePreview, GitRebaseTodoItem, GitRef, GitStatusSnapshot } from "@/runtime/gitTypes";
 
+import { GitConfirmActionDialog } from "../dialogs";
 import styles from "./GitRebaseView.module.css";
 
 export function GitRebaseView({
@@ -73,21 +74,33 @@ export function GitRebaseView({
           {interactive && validationError ? <p className={styles.warning} role="alert">{validationError}</p> : null}
         </div>
       ) : null}
-      {pendingStart ? (
-        <div className={styles.confirmation} role="alertdialog" aria-label="确认变基">
-          <strong>重写 {preview?.commits.length ?? 0} 个本地提交吗？</strong>
-          <span>当前提交标识将发生变化，可通过“恢复提交”找回原位置。</span>
-          <button type="button" onClick={() => { setPendingStart(false); onRebase(upstream.trim(), onto.trim() || null, interactive, interactive ? todo : []); }}>确认变基</button>
-          <button type="button" onClick={() => setPendingStart(false)}>取消</button>
-        </div>
+      {pendingStart && previewMatches && preview ? (
+        <GitConfirmActionDialog
+          title="确认变基"
+          description="本地提交会被重新应用并获得新的提交标识，可通过恢复提交找回原位置。"
+          target={`${preview.headObjectId.slice(0, 12)} → ${onto.trim() || upstream.trim()}`}
+          details={[
+            `上游：${upstream.trim()}`,
+            `提交：${preview.commits.map((commit) => `${commit.objectId.slice(0, 8)} ${commit.subject}`).join("；")}`,
+            `模式：${interactive ? "交互式" : "普通"}`,
+          ]}
+          confirmLabel="确认变基"
+          busy={busy}
+          onCancel={() => setPendingStart(false)}
+          onConfirm={() => { setPendingStart(false); onRebase(upstream.trim(), onto.trim() || null, interactive, interactive ? todo : []); }}
+        />
       ) : null}
-      {pendingControl ? (
-        <div className={styles.confirmation} role="alertdialog" aria-label="确认变基控制操作">
-          <strong>{pendingControl === "abort" ? "中止并恢复原分支状态吗？" : "跳过当前变基提交吗？"}</strong>
-          <span>{pendingControl === "abort" ? "本次变基进度和已经解决的改动都将被丢弃。" : "当前提交不会被重新应用。"}</span>
-          <button type="button" onClick={() => { const action = pendingControl; setPendingControl(null); onControl(action); }}>{pendingControl === "abort" ? "确认中止" : "确认跳过"}</button>
-          <button type="button" onClick={() => setPendingControl(null)}>取消</button>
-        </div>
+      {pendingControl && operation ? (
+        <GitConfirmActionDialog
+          title={pendingControl === "abort" ? "确认中止变基" : "确认跳过当前提交"}
+          description={pendingControl === "abort" ? "本次变基进度和已经解决的改动都将被丢弃，并恢复原分支状态。" : "当前提交不会被重新应用，其余步骤继续执行。"}
+          target={operation.currentObjectId ? `当前对象：${operation.currentObjectId.slice(0, 12)}` : "当前变基步骤"}
+          details={operation.currentStep && operation.totalSteps ? [`进度：${operation.currentStep}/${operation.totalSteps}`] : []}
+          confirmLabel={pendingControl === "abort" ? "确认中止" : "确认跳过"}
+          busy={busy}
+          onCancel={() => setPendingControl(null)}
+          onConfirm={() => { const action = pendingControl; setPendingControl(null); onControl(action); }}
+        />
       ) : null}
     </section>
   );

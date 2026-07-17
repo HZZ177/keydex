@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "final-create-no-newline",
+      "source": "agent",
+      "patch_format": "canonical_unified",
+      "path": "out/result.txt",
+      "raw_patch": "--- /dev/null\n+++ b/out/result.txt\n@@ -0,0 +1 @@\n+hello\n\\ No newline at end of file",
+      "expected": {
+        "status": "added",
+        "precision": "exact",
+        "selectable": true,
+        "additions": 1,
+        "deletions": 0,
+        "old_trailing_newline": null,
+        "new_trailing_newline": false
+      }
+    },
+    {
+      "id": "streaming-relaxed-apply-patch",
+      "source": "agent",
+      "patch_format": "relaxed_apply_patch",
+      "path": "src/app.py",
+      "raw_patch": "*** Begin Patch\n*** Update File: src/app.py\n@@\n-old\n+new\n*** End Patch",
+      "expected": {
+        "status": "modified",
+        "precision": "approximate",
+        "selectable": false,
+        "additions": 1,
+        "deletions": 1,
+        "old_trailing_newline": null,
+        "new_trailing_newline": null
+      }
+    },
+    {
+      "id": "reverse-current-to-target-delete",
+      "source": "reverse",
+      "patch_format": "canonical_unified",
+      "path": "created.txt",
+      "patch_direction": "current_to_target",
+      "raw_patch": "--- a/created.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-created",
+      "expected": {
+        "status": "deleted",
+        "precision": "exact",
+        "selectable": true,
+        "additions": 0,
+        "deletions": 1,
+        "old_trailing_newline": null,
+        "new_trailing_newline": null
+      }
+    },
+    {
+      "id": "git-rename-crlf",
+      "source": "git",
+      "patch_format": "canonical_unified",
+      "path": "src/new name.ts",
+      "raw_patch": "diff --git a/src/old name.ts b/src/new name.ts\r\nsimilarity index 80%\r\nrename from src/old name.ts\r\nrename to src/new name.ts\r\n--- a/src/old name.ts\r\n+++ b/src/new name.ts\r\n@@ -1 +1 @@\r\n-old\r\n+new\r\n",
+      "expected": {
+        "status": "renamed",
+        "precision": "exact",
+        "selectable": true,
+        "additions": 1,
+        "deletions": 1,
+        "old_trailing_newline": null,
+        "new_trailing_newline": null
+      }
+    },
+    {
+      "id": "legacy-content-only-added",
+      "source": "agent",
+      "patch_format": "content_only",
+      "path": "docs/legacy.md",
+      "content": "# 旧消息\n正文",
+      "expected": {
+        "status": "added",
+        "precision": "exact",
+        "selectable": false,
+        "additions": 2,
+        "deletions": 0,
+        "old_trailing_newline": null,
+        "new_trailing_newline": false
+      }
+    }
+  ]
+}

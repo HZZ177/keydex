@@ -4,7 +4,7 @@ interface ResizeDragState {
   pointerId: number;
   target: HTMLDivElement;
   startWidth: number;
-  startX: number;
+  startCoordinate: number;
   lastWidth: number;
   pendingWidth: number;
   frameId: number | null;
@@ -13,10 +13,11 @@ interface ResizeDragState {
 interface UseRafPanelResizeOptions {
   disabled: boolean;
   width: number;
-  getWidth(startWidth: number, startX: number, clientX: number): number;
+  getWidth(startWidth: number, startCoordinate: number, clientCoordinate: number): number;
   onPreview?: (width: number) => void;
   onCommit: (width: number) => void;
   previewMode?: "raf" | "sync";
+  axis?: "x" | "y";
 }
 
 export function useRafPanelResize({
@@ -26,6 +27,7 @@ export function useRafPanelResize({
   onPreview,
   onCommit,
   previewMode = "raf",
+  axis = "x",
 }: UseRafPanelResizeOptions) {
   const dragRef = useRef<ResizeDragState | null>(null);
   const optionsRef = useRef({ getWidth, onPreview, onCommit, previewMode });
@@ -111,7 +113,8 @@ export function useRafPanelResize({
         return;
       }
       event.preventDefault();
-      schedulePreview(optionsRef.current.getWidth(drag.startWidth, drag.startX, event.clientX));
+      const coordinate = axis === "y" ? event.clientY : event.clientX;
+      schedulePreview(optionsRef.current.getWidth(drag.startWidth, drag.startCoordinate, coordinate));
     };
     const handlePointerEnd = (event: PointerEvent) => {
       finishDrag(pointerIdValue(event));
@@ -119,7 +122,7 @@ export function useRafPanelResize({
 
     const previousCursor = document.body.style.cursor;
     const previousUserSelect = document.body.style.userSelect;
-    document.body.style.cursor = "col-resize";
+    document.body.style.cursor = axis === "y" ? "row-resize" : "col-resize";
     document.body.style.userSelect = "none";
     window.addEventListener("pointermove", handlePointerMove, { passive: false });
     window.addEventListener("pointerup", handlePointerEnd);
@@ -131,7 +134,7 @@ export function useRafPanelResize({
       document.body.style.cursor = previousCursor;
       document.body.style.userSelect = previousUserSelect;
     };
-  }, [dragging, finishDrag, schedulePreview]);
+  }, [axis, dragging, finishDrag, schedulePreview]);
 
   useEffect(() => {
     if (disabled) {
@@ -151,7 +154,7 @@ export function useRafPanelResize({
 
   const startDrag = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (disabled) {
+      if (disabled || event.button !== 0) {
         return;
       }
       event.preventDefault();
@@ -165,14 +168,14 @@ export function useRafPanelResize({
         pointerId,
         target: event.currentTarget,
         startWidth: width,
-        startX: event.clientX,
+        startCoordinate: axis === "y" ? event.clientY : event.clientX,
         lastWidth: width,
         pendingWidth: width,
         frameId: null,
       };
       setDragging(true);
     },
-    [disabled, width],
+    [axis, disabled, width],
   );
 
   return { dragging, startDrag, finishDrag };

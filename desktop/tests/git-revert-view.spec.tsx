@@ -26,14 +26,16 @@ describe("Git revert workflow", () => {
     const onRevert = vi.fn();
     const onControl = vi.fn();
     render(<GitRevertView refs={[]} status={null} busy={false} requestedCommits={[]} outcome={null} onRevert={onRevert} onControl={onControl} />);
-    expect(screen.getByText(/Existing history is not moved or deleted/)).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Commits to revert"), { target: { value: "one\ntwo" } });
-    fireEvent.change(screen.getByLabelText("Mainline parent"), { target: { value: "2" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create revert commits" }));
+    expect(screen.getByText(/不移动或删除现有历史/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("要撤销的提交"), { target: { value: "one\ntwo" } });
+    fireEvent.change(screen.getByLabelText("主线父提交"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建反向提交" }));
+    expect(onRevert).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "确认创建" }));
     expect(onRevert).toHaveBeenCalledWith(["one", "two"], 2);
-    fireEvent.change(screen.getByLabelText("Mainline parent"), { target: { value: "0" } });
-    expect(screen.getByRole("alert").textContent).toContain("integer from 1 to 64");
-    expect((screen.getByRole("button", { name: "Create revert commits" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("主线父提交"), { target: { value: "0" } });
+    expect(screen.getByRole("alert").textContent).toContain("1 到 64");
+    expect((screen.getByRole("button", { name: "创建反向提交" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("shows conflict progress and continue/skip/abort recovery", () => {
@@ -42,11 +44,11 @@ describe("Git revert workflow", () => {
     render(<GitRevertView refs={[]} status={status(commits[1])} busy={false} requestedCommits={commits} outcome={result("failed")} onRevert={vi.fn()} onControl={onControl} />);
     expect(screen.getByText(commits[0].slice(0, 12)).closest("li")?.getAttribute("data-state")).toBe("reverted");
     expect(screen.getByText(commits[1].slice(0, 12)).closest("li")?.getAttribute("data-state")).toBe("conflicted");
-    expect((screen.getByRole("button", { name: "Continue revert" }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Skip revert" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm skip" }));
-    fireEvent.click(screen.getByRole("button", { name: "Abort revert" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm abort" }));
+    expect((screen.getByRole("button", { name: "继续" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "跳过" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认跳过" }));
+    fireEvent.click(screen.getByRole("button", { name: "中止" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认中止" }));
     expect(onControl.mock.calls.map((call) => call[0])).toEqual(["skip", "abort"]);
     expect(revertItemState(commits[0], 0, commits, null, { ...result("succeeded"), summary: "Revert abort" })).toBe("aborted");
   });

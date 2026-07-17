@@ -21,6 +21,7 @@ interface NativeTitleSnapshot {
 
 export interface AppTooltipLayerProps {
   scopeSelector: string;
+  ownerId?: string;
   defaultPlacement?: TooltipPlacement;
   delayMs?: number;
   targetMode?: TooltipTargetMode;
@@ -45,6 +46,7 @@ const VIEWPORT_MARGIN = 8;
 
 export function AppTooltipLayer({
   scopeSelector,
+  ownerId,
   defaultPlacement = "top",
   delayMs = DEFAULT_DELAY_MS,
   targetMode = "explicit",
@@ -131,6 +133,13 @@ export function AppTooltipLayer({
       if (!target.closest(scopeSelector) || target.dataset.tooltipDisabled === "true") {
         return null;
       }
+      const ownedScope = target.closest<HTMLElement>("[data-app-tooltip-owner]");
+      if (ownedScope && ownedScope.dataset.appTooltipOwner !== ownerId) {
+        return null;
+      }
+      if (!ownedScope && ownerId) {
+        return null;
+      }
       return target;
     };
 
@@ -182,7 +191,7 @@ export function AppTooltipLayer({
       window.removeEventListener("resize", hideTooltip);
       hideTooltip();
     };
-  }, [hideTooltip, scopeSelector, showTooltip, targetMode]);
+  }, [hideTooltip, ownerId, scopeSelector, showTooltip, targetMode]);
 
   useLayoutEffect(() => {
     if (!tooltip) {

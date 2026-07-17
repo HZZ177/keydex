@@ -1,0 +1,250 @@
+.form {
+  display: grid;
+  gap: 14px;
+  padding: 16px 18px 4px;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.label {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  outline: 0;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+
+.field input,
+.field select {
+  height: 32px;
+  padding: 0 9px;
+}
+
+.field textarea {
+  min-height: 72px;
+  resize: vertical;
+  padding: 8px 9px;
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  border-color: color-mix(in srgb, var(--color-text-primary) 38%, var(--color-border-default));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--surface-hover) 72%, transparent);
+}
+
+.field small {
+  color: var(--color-text-tertiary);
+  line-height: 1.45;
+}
+
+.fieldError,
+.error {
+  color: var(--color-danger) !important;
+}
+
+.error {
+  margin: 0;
+  font-size: 12px;
+}
+
+.options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.summary {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 10px 11px;
+}
+
+.summary[data-tone="warning"] {
+  border-color: color-mix(in srgb, var(--color-warning) 42%, var(--color-border-subtle));
+}
+
+.summary[data-tone="danger"] {
+  border-color: color-mix(in srgb, var(--color-danger) 42%, var(--color-border-subtle));
+  color: color-mix(in srgb, var(--color-danger) 82%, var(--color-text-secondary));
+}
+
+.confirmDetails {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: normal;
+}
+
+.confirmDetails strong,
+.confirmDetails span {
+  overflow-wrap: anywhere;
+}
+
+.choiceGroup {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.choiceGroup legend {
+  margin-bottom: 2px;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.choiceOption {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 8px 9px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.choiceOption:has(input:checked) {
+  border-color: color-mix(in srgb, var(--color-accent) 48%, var(--color-border-default));
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--surface-muted));
+}
+
+.choiceOption input {
+  margin: 2px 0 0;
+  accent-color: var(--color-accent);
+}
+
+.choiceOption span {
+  display: grid;
+  gap: 2px;
+}
+
+.choiceOption strong {
+  color: var(--color-text-primary);
+  font-size: 12px;
+}
+
+.choiceOption small {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.updateChoiceGroup {
+  gap: 2px;
+}
+
+.updateChoiceGroup legend {
+  margin-bottom: 5px;
+}
+
+.updateChoiceOption {
+  padding: 7px 4px;
+  border-color: transparent;
+  border-radius: var(--radius-sm);
+}
+
+.updateChoiceOption:hover {
+  background: var(--surface-hover);
+}
+
+.updateChoiceOption:has(input:checked) {
+  border-color: transparent;
+  background: transparent;
+}
+
+.updateChoiceHint {
+  margin: -2px 0 0 28px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.inlineAction {
+  justify-self: start;
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.inlineAction:hover {
+  background: var(--surface-hover);
+}
+
+.commitList {
+  display: grid;
+  gap: 6px;
+  max-height: 142px;
+  overflow: auto;
+  padding: 9px 10px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.commitList[data-tone="danger"] {
+  border-color: color-mix(in srgb, var(--color-danger) 42%, var(--color-border-subtle));
+}
+
+.commitList ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.commitList li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 7px;
+}
+
+.commitList li span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

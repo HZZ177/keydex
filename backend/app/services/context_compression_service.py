@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Literal
 
 import httpx
 from langchain_core.messages import BaseMessage
 
+from backend.app.agent.context_compression_selection import (
+    SUMMARY_ABSOLUTE_MAX_OUTPUT_TOKENS,
+    SUMMARY_PREFERRED_CAPACITY_TOKENS,
+)
 from backend.app.agent.context_compression_utils import (
     CompressionReplacementResult,
     build_context_compression_replacement_messages,
@@ -28,6 +34,7 @@ from backend.app.services.context_compression_prompt_builder import (
 from backend.app.storage import MODEL_DEFAULT_CHAT, SessionRecord, StorageRepositories
 
 CONTEXT_COMPRESSION_REQUEST_TIMEOUT_SECONDS = 5 * 60
+CONTEXT_COMPRESSION_MAX_ATTEMPTS = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +48,11 @@ class CompressionGenerationResult:
     model: str | None = None
     compression_message_count: int = 0
     total_message_count: int = 0
+    attempt_count: int = 0
+    boundary_id: str | None = None
+    requested_max_output_tokens: int | None = None
+    actual_output_tokens: int = 0
+    actual_output_chars: int = 0
 
 
 @dataclass(frozen=True)
@@ -76,6 +88,11 @@ class ContextCompressionService:
         trace_id: str | None = None,
         trace_record_id: str | None = None,
         active_session_id: str | None = None,
+        boundary_id: str | None = None,
+        selected_group_ids: Iterable[str] = (),
+        tail_message_count: int = 0,
+        max_output_tokens: int | None = None,
+        additional_instructions: str | None = None,
     ) -> CompressionGenerationResult:
         message_list = list(messages)
         if not message_list:
@@ -84,6 +101,11 @@ class ContextCompressionService:
                 reason=reason,
                 failure_reason="no_compressible_messages",
             )
+        compression_boundary_id = str(boundary_id or new_id())
+        dynamic_max_tokens = min(
+            max(int(max_output_tokens or SUMMARY_PREFERRED_CAPACITY_TOKENS), 1),
+            SUMMARY_ABSOLUTE_MAX_OUTPUT_TOKENS,
+        )
         try:
             resolved = self._resolve_session_model(session)
             compression_settings = resolved.settings.model_copy(
@@ -98,6 +120,7 @@ class ContextCompressionService:
                 llm_request_logs=self.repositories.llm_request_logs,
                 provider_id=resolved.provider_id,
                 provider_name=resolved.provider_name,
+                max_tokens=dynamic_max_tokens,
             )
         except ModelSelectionError as exc:
             logger.warning(
@@ -109,6 +132,8 @@ class ContextCompressionService:
                 reason=reason,
                 failure_reason=f"model_config_error:{exc.code}",
                 total_message_count=len(message_list),
+                boundary_id=compression_boundary_id,
+                requested_max_output_tokens=dynamic_max_tokens,
             )
         except Exception as exc:
             logger.warning(f"[ContextCompressionService] 创建主模型失败 | error={exc}")
@@ -117,86 +142,138 @@ class ContextCompressionService:
                 reason=reason,
                 failure_reason=f"model_create_error:{exc}",
                 total_message_count=len(message_list),
+                boundary_id=compression_boundary_id,
+                requested_max_output_tokens=dynamic_max_tokens,
             )
 
-        prompt = build_compaction_prompt()
+        prompt = build_compaction_prompt(additional_instructions)
         prompt_messages = [*message_list, prompt.human_message]
-        side_event_id = new_id()
-        started_at_ms = int(time.time() * 1000)
-        if trace_id and trace_record_id:
-            self._append_side_event(
-                trace_id=trace_id,
-                trace_record_id=trace_record_id,
-                status="running",
-                side_event_id=side_event_id,
-                session=session,
-                active_session_id=active_session_id or session.active_session_id or session.id,
-                model=resolved.settings.model,
-                reason=reason,
-                started_at_ms=started_at_ms,
-            )
-        try:
-            response = await llm.ainvoke(prompt_messages, config=context_compression_llm_config())
-        except Exception as exc:
-            logger.opt(exception=True).warning(
-                "[ContextCompressionService] 主模型压缩调用失败 | "
-                f"session_id={session.id} | reason={reason} | error={exc}"
-            )
+        response: Any = None
+        summary: str | None = None
+        final_failure_reason: str | None = None
+        attempt_count = 0
+        operation_started_at_ms = int(time.time() * 1000)
+        for attempt in range(1, CONTEXT_COMPRESSION_MAX_ATTEMPTS + 1):
+            attempt_count = attempt
+            attempt_started_at_ms = int(time.time() * 1000)
             if trace_id and trace_record_id:
                 self._append_side_event(
                     trace_id=trace_id,
                     trace_record_id=trace_record_id,
-                    status="failed",
-                    side_event_id=side_event_id,
+                    status="running",
+                    side_event_id=compression_boundary_id,
                     session=session,
-                    active_session_id=active_session_id or session.active_session_id or session.id,
+                    active_session_id=(
+                        active_session_id or session.active_session_id or session.id
+                    ),
                     model=resolved.settings.model,
                     reason=reason,
-                    started_at_ms=started_at_ms,
-                    error={"type": type(exc).__name__, "message": str(exc)},
+                    started_at_ms=operation_started_at_ms,
+                    attempt=attempt,
+                    attempt_started_at_ms=attempt_started_at_ms,
+                    requested_max_output_tokens=dynamic_max_tokens,
                 )
-            return CompressionGenerationResult(
-                success=False,
-                reason=reason,
-                failure_reason=f"llm_error:{exc}",
-                model_provider_id=resolved.provider_id,
-                model=resolved.settings.model,
-                total_message_count=len(message_list),
-            )
+            try:
+                response = await llm.ainvoke(
+                    prompt_messages,
+                    config=context_compression_llm_config(),
+                )
+            except Exception as exc:
+                retryable = _is_retryable_compression_error(exc)
+                final_failure_reason = f"llm_error:{exc}"
+                logger.opt(exception=True).warning(
+                    "[ContextCompressionService] 主模型压缩调用失败 | "
+                    f"session_id={session.id} | reason={reason} | attempt={attempt} | "
+                    f"retryable={retryable} | error={exc}"
+                )
+                if trace_id and trace_record_id:
+                    self._append_side_event(
+                        trace_id=trace_id,
+                        trace_record_id=trace_record_id,
+                        status="attempt_failed",
+                        side_event_id=compression_boundary_id,
+                        session=session,
+                        active_session_id=(
+                            active_session_id or session.active_session_id or session.id
+                        ),
+                        model=resolved.settings.model,
+                        reason=reason,
+                        started_at_ms=operation_started_at_ms,
+                        error={"type": type(exc).__name__, "message": str(exc)},
+                        attempt=attempt,
+                        attempt_started_at_ms=attempt_started_at_ms,
+                        retryable=retryable,
+                        requested_max_output_tokens=dynamic_max_tokens,
+                    )
+                if not retryable or attempt >= CONTEXT_COMPRESSION_MAX_ATTEMPTS:
+                    break
+                await asyncio.sleep(0)
+                continue
 
-        if getattr(response, "tool_calls", None):
-            return CompressionGenerationResult(
-                success=False,
-                reason=reason,
-                failure_reason="tool_call_returned",
-                model_provider_id=resolved.provider_id,
-                model=resolved.settings.model,
-                total_message_count=len(message_list),
-            )
-        summary = extract_summary_text(getattr(response, "content", response))
+            if getattr(response, "tool_calls", None):
+                final_failure_reason = "tool_call_returned"
+            else:
+                summary = extract_summary_text(getattr(response, "content", response))
+                final_failure_reason = None if summary else "empty_summary_output"
+            if summary:
+                break
+            if trace_id and trace_record_id:
+                self._append_side_event(
+                    trace_id=trace_id,
+                    trace_record_id=trace_record_id,
+                    status="attempt_failed",
+                    side_event_id=compression_boundary_id,
+                    session=session,
+                    active_session_id=(
+                        active_session_id or session.active_session_id or session.id
+                    ),
+                    model=resolved.settings.model,
+                    reason=reason,
+                    started_at_ms=operation_started_at_ms,
+                    error={"type": final_failure_reason or "invalid_summary", "message": ""},
+                    attempt=attempt,
+                    attempt_started_at_ms=attempt_started_at_ms,
+                    retryable=True,
+                    requested_max_output_tokens=dynamic_max_tokens,
+                )
+
         if not summary:
             return CompressionGenerationResult(
                 success=False,
                 reason=reason,
-                failure_reason="empty_summary_output",
+                failure_reason=final_failure_reason or "generation_failed",
                 model_provider_id=resolved.provider_id,
                 model=resolved.settings.model,
                 total_message_count=len(message_list),
+                attempt_count=attempt_count,
+                boundary_id=compression_boundary_id,
+                requested_max_output_tokens=dynamic_max_tokens,
             )
-        replacement = self._build_replacement(summary=summary, messages=message_list)
+
+        selected_ids = tuple(str(item) for item in selected_group_ids)
+        replacement = self._build_replacement(
+            summary=summary,
+            messages=message_list,
+            boundary_id=compression_boundary_id,
+            tail_message_count=tail_message_count,
+            selected_group_ids=selected_ids,
+        )
         usage = _extract_token_usage(response)
         if trace_id and trace_record_id:
             self._append_side_event(
                 trace_id=trace_id,
                 trace_record_id=trace_record_id,
                 status="completed",
-                side_event_id=side_event_id,
+                side_event_id=compression_boundary_id,
                 session=session,
                 active_session_id=active_session_id or session.active_session_id or session.id,
                 model=resolved.settings.model,
                 reason=reason,
                 usage=usage,
-                started_at_ms=started_at_ms,
+                started_at_ms=operation_started_at_ms,
+                attempt=attempt_count,
+                requested_max_output_tokens=dynamic_max_tokens,
+                output_chars=len(summary),
             )
         return CompressionGenerationResult(
             success=True,
@@ -207,6 +284,11 @@ class ContextCompressionService:
             model=resolved.settings.model,
             compression_message_count=len(message_list),
             total_message_count=len(message_list),
+            attempt_count=attempt_count,
+            boundary_id=compression_boundary_id,
+            requested_max_output_tokens=dynamic_max_tokens,
+            actual_output_tokens=usage["output_tokens"],
+            actual_output_chars=len(summary),
         )
 
     def _resolve_session_model(self, session: SessionRecord) -> ResolvedModelSelection:
@@ -228,10 +310,17 @@ class ContextCompressionService:
         *,
         summary: str,
         messages: list[BaseMessage],
+        boundary_id: str = "legacy-boundary",
+        tail_message_count: int = 0,
+        selected_group_ids: Iterable[str] = (),
     ) -> CompressionReplacementResult:
         return build_context_compression_replacement_messages(
             summary=summary,
             source_messages=messages,
+            boundary_id=boundary_id,
+            prefix_message_count=len(messages),
+            tail_message_count=tail_message_count,
+            selected_group_ids=selected_group_ids,
         )
 
     def _append_side_event(
@@ -248,6 +337,11 @@ class ContextCompressionService:
         usage: dict[str, int] | None = None,
         started_at_ms: int | None = None,
         error: dict[str, str] | None = None,
+        attempt: int = 1,
+        attempt_started_at_ms: int | None = None,
+        retryable: bool | None = None,
+        requested_max_output_tokens: int | None = None,
+        output_chars: int = 0,
     ) -> None:
         token_usage = usage or {
             "input_tokens": 0,
@@ -271,6 +365,11 @@ class ContextCompressionService:
                 "domain": "context_compression",
                 "reason": reason,
                 "started_at_ms": started_at_ms,
+                "attempt": attempt,
+                "attempt_started_at_ms": attempt_started_at_ms,
+                "retryable": retryable,
+                "requested_max_output_tokens": requested_max_output_tokens,
+                "actual_output_chars": max(int(output_chars), 0),
             },
         }
         try:
@@ -279,7 +378,7 @@ class ContextCompressionService:
                 trace_record_id=trace_record_id,
                 event_type="context_compression.llm",
                 source="context_compression_service",
-                idempotency_key=f"{side_event_id}:{status}",
+                idempotency_key=f"{side_event_id}:{attempt}:{status}",
                 timestamp_ms=int(time.time() * 1000),
                 payload=payload,
                 original_session_id=session.id,
@@ -342,3 +441,21 @@ def _extract_token_usage_from_metadata(usage: Any) -> dict[str, int]:
         "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
         "cache_read_tokens": cache_read_tokens,
     }
+
+
+def _is_retryable_compression_error(error: BaseException) -> bool:
+    if isinstance(error, (PermissionError, TypeError, ValueError)):
+        return False
+    if isinstance(error, (httpx.TimeoutException, httpx.NetworkError)):
+        return True
+    status_code = getattr(error, "status_code", None)
+    if status_code is None:
+        response = getattr(error, "response", None)
+        status_code = getattr(response, "status_code", None)
+    try:
+        normalized_status = int(status_code) if status_code is not None else None
+    except (TypeError, ValueError):
+        normalized_status = None
+    if normalized_status is not None:
+        return normalized_status in {408, 409, 425, 429} or normalized_status >= 500
+    return True

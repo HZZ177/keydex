@@ -14,7 +14,7 @@ describe("Git operation recovery state machine", () => {
     expect(transitionRecoveryUi("continuable", "continue")).toBe("running");
     expect(transitionRecoveryUi("running", "abort")).toBe("aborting");
     expect(transitionRecoveryUi("aborting", "complete")).toBe("idle");
-    expect(() => transitionRecoveryUi("idle", "continue")).toThrow("Illegal Git recovery transition");
+    expect(() => transitionRecoveryUi("idle", "continue")).toThrow("非法的 Git 恢复状态转换");
   });
 
   it("derives legal recovered CTAs for every persisted operation kind", () => {
@@ -31,18 +31,18 @@ describe("Git operation recovery state machine", () => {
     const onAction = vi.fn();
     const recovered = { ...operation("cherry_pick", "continuable"), currentStep: 2, totalSteps: 4 };
     const first = render(<GitOperationRecoveryBanner operation={recovered} busy={false} onAction={onAction} />);
-    expect(screen.getByText(/step 2\/4/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(screen.getByText(/第 2\/4 步/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "继续" }));
     expect(onAction).toHaveBeenCalledWith("continue");
     first.unmount();
 
     render(<GitOperationRecoveryBanner operation={recovered} busy={false} onAction={onAction} />);
-    expect(screen.getByRole("button", { name: "Continue" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Skip" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Abort" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Abort" }));
-    expect(screen.getByRole("alertdialog", { name: "Confirm recovered operation abort" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "继续" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "跳过" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "中止" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "中止" }));
+    expect(screen.getByRole("dialog", { name: "确认中止摘取提交" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
     expect(onAction).not.toHaveBeenCalledWith("abort");
   });
 });

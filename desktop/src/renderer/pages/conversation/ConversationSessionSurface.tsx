@@ -63,7 +63,6 @@ import {
 import { consumeQuickChatSend, type QueuedQuickChatSend } from "./quickSend";
 import {
   goalContextItem,
-  goalSeedContextMetadata,
   runtimeParamsWithGoalContextItem,
   runtimeParamsWithInitialGoalTask,
 } from "./goalSeedContext";
@@ -654,12 +653,6 @@ export function ConversationSessionSurface({
       const task = await runtime.conversation.createThreadTask(threadId, {
         type: "goal",
         objective,
-        metadata: goalSeedContextMetadata({
-          message: prepared.message,
-          contextItems: prepared.contextItems,
-          runtimeParams: prepared.runtimeParams,
-          attachments,
-        }),
       });
       const goalItem = goalContextItem(objective);
       const runtimeParams = runtimeParamsWithInitialGoalTask(

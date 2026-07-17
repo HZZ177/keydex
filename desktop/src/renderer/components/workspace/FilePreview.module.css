@@ -639,7 +639,6 @@
 .body[data-chrome="panel"] .documentColumn > .splitPane,
 .body[data-chrome="panel"] .documentColumn > .markdownPane,
 .body[data-chrome="panel"] .documentColumn > .htmlPane,
-.body[data-chrome="panel"] .documentColumn > .diffPane,
 .body[data-chrome="panel"] .documentColumn > .mermaidPane,
 .body[data-chrome="panel"] .documentColumn > .imagePane {
   height: 100%;
@@ -916,7 +915,6 @@
 
 .markdownPane,
 .htmlPane,
-.diffPane,
 .mermaidPane,
 .imagePane {
   min-height: 180px;
@@ -932,7 +930,6 @@
 .sourceViewer,
 .markdownPane,
 .htmlPane,
-.diffPane,
 .mermaidPane,
 .imagePane,
 .mermaidSvg {
@@ -945,7 +942,6 @@
 .sourceViewer::-webkit-scrollbar,
 .markdownPane::-webkit-scrollbar,
 .htmlPane::-webkit-scrollbar,
-.diffPane::-webkit-scrollbar,
 .mermaidPane::-webkit-scrollbar,
 .imagePane::-webkit-scrollbar,
 .mermaidSvg::-webkit-scrollbar {
@@ -958,7 +954,6 @@
 .sourceViewer::-webkit-scrollbar-track,
 .markdownPane::-webkit-scrollbar-track,
 .htmlPane::-webkit-scrollbar-track,
-.diffPane::-webkit-scrollbar-track,
 .mermaidPane::-webkit-scrollbar-track,
 .imagePane::-webkit-scrollbar-track,
 .mermaidSvg::-webkit-scrollbar-track {
@@ -970,7 +965,6 @@
 .sourceViewer::-webkit-scrollbar-thumb,
 .markdownPane::-webkit-scrollbar-thumb,
 .htmlPane::-webkit-scrollbar-thumb,
-.diffPane::-webkit-scrollbar-thumb,
 .mermaidPane::-webkit-scrollbar-thumb,
 .imagePane::-webkit-scrollbar-thumb,
 .mermaidSvg::-webkit-scrollbar-thumb {
@@ -1137,7 +1131,6 @@
 
 .body[data-chrome="panel"] .documentColumn > .previewScrollShell > .markdownPane,
 .body[data-chrome="panel"] .documentColumn > .previewScrollShell > .htmlPane,
-.body[data-chrome="panel"] .documentColumn > .previewScrollShell > .diffPane,
 .body[data-chrome="panel"] .documentColumn > .previewScrollShell > .mermaidPane,
 .body[data-chrome="panel"] .documentColumn > .previewScrollShell > .imagePane {
   height: 100%;
@@ -1567,12 +1560,10 @@
 .splitPanelBody > .sourceViewer,
 .splitPanelBody > .markdownPane,
 .splitPanelBody > .htmlPane,
-.splitPanelBody > .diffPane,
 .splitPanelBody > .mermaidPane,
 .splitPanelBody > .imagePane,
 .splitPanelBody > .previewScrollShell > .markdownPane,
 .splitPanelBody > .previewScrollShell > .htmlPane,
-.splitPanelBody > .previewScrollShell > .diffPane,
 .splitPanelBody > .previewScrollShell > .mermaidPane,
 .splitPanelBody > .previewScrollShell > .imagePane,
 .splitScrollViewport > .content,
@@ -1580,12 +1571,10 @@
 .splitScrollViewport > .sourceViewer,
 .splitScrollViewport > .markdownPane,
 .splitScrollViewport > .htmlPane,
-.splitScrollViewport > .diffPane,
 .splitScrollViewport > .mermaidPane,
 .splitScrollViewport > .imagePane,
 .splitScrollViewport > .previewScrollShell > .markdownPane,
 .splitScrollViewport > .previewScrollShell > .htmlPane,
-.splitScrollViewport > .previewScrollShell > .diffPane,
 .splitScrollViewport > .previewScrollShell > .mermaidPane,
 .splitScrollViewport > .previewScrollShell > .imagePane {
   height: auto;
@@ -1980,87 +1969,6 @@
   place-items: center;
   color: var(--color-text-tertiary);
   font-size: 11px;
-}
-
-.diffPane {
-  background: var(--color-bg-elevated);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  line-height: 1.55;
-  padding: 8px 0;
-}
-
-.diffLine {
-  display: grid;
-  grid-template-columns: 46px minmax(0, 1fr);
-  min-height: 20px;
-  color: var(--color-text-secondary);
-}
-
-.diffLine[data-kind="add"] {
-  background: var(--diff-added-bg);
-  color: var(--diff-added-text);
-}
-
-.diffLine[data-kind="delete"] {
-  background: var(--diff-removed-bg);
-  color: var(--diff-removed-text);
-}
-
-.diffLine[data-kind="separator"] {
-  grid-template-columns: minmax(0, 1fr);
-  min-height: 26px;
-  align-items: center;
-  background: color-mix(in srgb, var(--surface-muted) 72%, transparent);
-  color: var(--color-text-tertiary);
-}
-
-.diffLine[data-kind="separator"] .diffLineNo {
-  display: none;
-}
-
-.diffLine[data-kind="separator"] code {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 10px;
-  color: var(--color-text-tertiary);
-  font-family: var(--font-ui);
-  font-size: 11px;
-  padding: 0 12px;
-  white-space: nowrap;
-}
-
-.diffLine[data-kind="separator"] code::before,
-.diffLine[data-kind="separator"] code::after {
-  content: "";
-  height: 1px;
-  min-width: 12px;
-  flex: 1 1 auto;
-  background: color-mix(in srgb, var(--color-border-2) 72%, transparent);
-}
-
-.diffLine[data-kind="hunk"] {
-  background: var(--diff-hunk-bg);
-  color: var(--diff-hunk-text);
-}
-
-.diffLine[data-kind="meta"] {
-  color: var(--color-text-tertiary);
-}
-
-.diffLineNo {
-  user-select: none;
-  color: var(--color-text-tertiary);
-  padding: 0 10px;
-  text-align: right;
-}
-
-.diffLine code {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  padding-right: 12px;
-  white-space: pre-wrap;
 }
 
 .copyHint,

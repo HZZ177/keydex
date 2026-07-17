@@ -69,6 +69,11 @@ from backend.app.services.chat_message_payload import (
 from backend.app.services.chat_types import ChatCancellationToken, ChatRequest, ChatTurnResult
 from backend.app.services.file_history_service import FileHistoryService
 from backend.app.services.message_event_service import MessageEventService
+from backend.app.services.structured_user_message_group import (
+    StructuredUserMessageGroup,
+    StructuredUserMessageMember,
+    build_structured_user_message_member,
+)
 from backend.app.services.thread_task_prompt import build_task_initial_prompt
 from backend.app.services.thread_task_service import ThreadTaskService
 from backend.app.services.workspace_service import WorkspaceService
@@ -446,6 +451,152 @@ def _build_skill_activation_preset(
             )
         ],
         metadata=metadata,
+    )
+
+
+def _build_structured_user_message_group(
+    *,
+    request: ChatRequest,
+    message_injection: list[InjectedMessage],
+    message_context_items: list[dict[str, Any]],
+    skill_activation: SkillActivationRequest | None,
+    attachment_payloads: list[dict[str, Any]],
+    thread_task_context: dict[str, Any] | None,
+    session_id: str,
+    trace_id: str,
+    turn_index: int,
+    message_event_id: str,
+) -> StructuredUserMessageGroup:
+    members: list[StructuredUserMessageMember] = []
+    member_order = 0
+
+    if thread_task_context is not None:
+        members.append(
+            build_structured_user_message_member(
+                "thread_task_context",
+                member_order,
+                {
+                    key: thread_task_context[key]
+                    for key in ("task_id", "run_id", "trigger", "type")
+                    if thread_task_context.get(key) is not None
+                },
+            )
+        )
+        member_order += 1
+
+    for item in message_injection:
+        member_kind = (
+            "message_injection_slot"
+            if item.type == MessageInjectionType.SLOT
+            else "message_injection_follow"
+        )
+        members.append(
+            build_structured_user_message_member(
+                member_kind,
+                member_order,
+                {
+                    "type": item.type.value,
+                    "role": item.role.value,
+                    "content": item.content,
+                    "message_time": item.message_time,
+                    "metadata": dict(item.metadata or {}),
+                    "hidden_for_transcript": item.hidden_for_transcript,
+                },
+            )
+        )
+        member_order += 1
+
+    if skill_activation is not None:
+        members.append(
+            build_structured_user_message_member(
+                "skill_activation",
+                member_order,
+                {
+                    "skill_name": skill_activation.skill_name,
+                    "source": skill_activation.source,
+                    "origin": skill_activation.origin,
+                },
+            )
+        )
+        member_order += 1
+
+    for item in message_context_items:
+        payload = {
+            key: item[key]
+            for key in (
+                "id",
+                "type",
+                "label",
+                "content",
+                "role",
+                "source",
+                "metadata",
+                "path",
+                "name",
+                "description",
+                "locator",
+            )
+            if key in item
+        }
+        if "file_type" in item or "fileType" in item:
+            payload["file_type"] = item.get("file_type", item.get("fileType"))
+        if "skill_name" in item or "skillName" in item:
+            payload["skill_name"] = item.get("skill_name", item.get("skillName"))
+        members.append(
+            build_structured_user_message_member(
+                "message_context_item",
+                member_order,
+                payload,
+                source_id=str(item.get("id") or "") or None,
+            )
+        )
+        member_order += 1
+
+    root_user_message = build_structured_user_message_member(
+        "root_user_message",
+        member_order,
+        {
+            "content": request.message,
+            "message_id": message_event_id,
+            "role": "HumanMessage",
+            "hidden_for_transcript": _should_hide_user_message_for_injection_turn(
+                request,
+                message_injection,
+            ),
+        },
+        source_id=message_event_id,
+    )
+    member_order += 1
+
+    for index, item in enumerate(attachment_payloads):
+        payload = {
+            key: item[key]
+            for key in ("type", "source", "name", "mime_type", "size")
+            if item.get(key) is not None
+        }
+        payload["attachment_id"] = str(
+            item.get("attachment_id") or item.get("id") or ""
+        ).strip()
+        payload["order"] = index
+        kind = "image_attachment" if str(item.get("type") or "") == "image" else "attachment"
+        members.append(
+            build_structured_user_message_member(
+                kind,
+                member_order,
+                payload,
+                source_id=payload["attachment_id"],
+            )
+        )
+        member_order += 1
+
+    return StructuredUserMessageGroup.create(
+        group_id=f"sug-{trace_id}",
+        root_user_message=root_user_message,
+        members=members,
+        source_session_id=session_id,
+        trace_id=trace_id,
+        turn_index=turn_index,
+        message_event_id=message_event_id,
     )
 
 
@@ -1074,6 +1225,18 @@ class ChatService:
                 session,
                 snapshot=turn_keydex_snapshot,
             )
+            structured_user_message_group = _build_structured_user_message_group(
+                request=request,
+                message_injection=message_injection_items,
+                message_context_items=message_context_items,
+                skill_activation=skill_activation,
+                attachment_payloads=attachment_payloads,
+                thread_task_context=thread_task_context or initial_thread_task_context,
+                session_id=session.id,
+                trace_id=trace_id,
+                turn_index=turn_index,
+                message_event_id=user_message_event_id,
+            )
             await self._emit_turn_started(
                 dispatcher=dispatcher,
                 request=request,
@@ -1164,6 +1327,7 @@ class ChatService:
                 injected_runtime_messages=injected_runtime_messages,
                 image_attachments=image_attachments,
                 skill_activation=skill_activation,
+                structured_user_message_group=structured_user_message_group,
                 keydex_snapshot=turn_keydex_snapshot,
                 input_file_snapshot_id=input_file_snapshot_id,
             )
@@ -1430,6 +1594,7 @@ class ChatService:
         injected_runtime_messages: list[dict[str, Any]] | None = None,
         image_attachments: list[AttachmentRecord] | None = None,
         skill_activation: SkillActivationRequest | None = None,
+        structured_user_message_group: StructuredUserMessageGroup,
         keydex_snapshot: KeydexTurnSnapshot,
         input_file_snapshot_id: str | None = None,
     ) -> AgentLoopOutcome:
@@ -1449,6 +1614,9 @@ class ChatService:
         tool_context.metadata["active_session_id"] = active_session_id
         tool_context.metadata["thread_id"] = active_session_id
         tool_context.metadata["checkpoint_ns"] = ""
+        tool_context.metadata["structured_user_message_group"] = (
+            structured_user_message_group.to_dict()
+        )
         tool_context.metadata["file_access_mode"] = load_command_settings(
             self.repositories
         ).file_access_mode
@@ -1519,7 +1687,12 @@ class ChatService:
                     }
                 )
             event_stream = agent.astream_events(
-                {"messages": messages_to_send},
+                {
+                    "messages": messages_to_send,
+                    "structured_user_message_groups": [
+                        structured_user_message_group.to_dict()
+                    ],
+                },
                 config=run_config,
                 version="v2",
             )

@@ -1,32 +1,9 @@
-import type { AgentContextItem, AgentFileAttachment, ThreadTask } from "@/types/protocol";
+import type { AgentContextItem, ThreadTask } from "@/types/protocol";
 import type { RuntimeParamsWithInjection } from "@/renderer/utils/messageInjection";
 
 export const GOAL_CONTEXT_ITEM_TYPE = "goal";
 export const GOAL_MESSAGE_CONTEXT_ITEMS_KEY = "message_context_items";
 export const GOAL_INITIAL_THREAD_TASK_KEY = "initial_thread_task";
-
-export function goalSeedContextMetadata({
-  attachments,
-  contextItems,
-  message,
-  runtimeParams,
-}: {
-  message: string;
-  contextItems: AgentContextItem[];
-  runtimeParams?: RuntimeParamsWithInjection;
-  attachments: AgentFileAttachment[];
-}): Record<string, unknown> {
-  return {
-    seed_turn_context: {
-      schema_version: 1,
-      source: "goal_composer",
-      message,
-      context_items: contextItems,
-      runtime_params: runtimeParams ?? {},
-      attachments,
-    },
-  };
-}
 
 export function goalContextItem(objective: string, title = "目标"): AgentContextItem {
   const normalizedObjective = objective.trim();

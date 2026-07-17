@@ -10,12 +10,9 @@
 .options select, .options input[type="text"], .options input:not([type]) { min-height: 26px; padding: 0 7px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--color-bg-2); color: var(--color-text-1); }
 .check input { margin: 0; accent-color: var(--color-accent-1); }
 .hint { margin: 0; }
-.progress { max-height: 88px; overflow: auto; padding: 7px 8px; border-radius: var(--radius-sm); background: var(--color-bg-2); color: var(--color-text-2); font: 10px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; }
 .divider { height: 1px; margin: 2px 0; background: var(--color-border-2); }
 .preflight { color: var(--color-text-2); font-size: 11px; }
 .warning { margin: 0; color: var(--color-warning-1, #b56a00); font-size: 11px; line-height: 1.45; }
-.outcome { padding: 6px 8px; border-radius: var(--radius-sm); background: var(--color-bg-2); color: var(--color-text-2); font-size: 11px; }
-.outcome[data-status="conflict"] { color: var(--color-danger-1); }
 .commitPreview { display: grid; gap: 5px; padding: 7px 8px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--color-bg-2); font-size: 11px; }
 .commitPreview strong { color: var(--color-text-2); }
 .commitPreview ul { display: grid; gap: 3px; max-height: 112px; overflow: auto; margin: 0; padding: 0; list-style: none; }

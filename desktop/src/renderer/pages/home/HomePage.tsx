@@ -47,7 +47,6 @@ import { prepareComposerMessage, type RuntimeParamsWithInjection } from "@/rende
 import type { AgentContextItem, AgentFileAttachment, FileAccessMode, ThreadTask, Workspace } from "@/types/protocol";
 import {
   goalContextItem,
-  goalSeedContextMetadata,
   runtimeParamsWithGoalContextItem,
   runtimeParamsWithInitialGoalTask,
 } from "@/renderer/pages/conversation/goalSeedContext";
@@ -518,12 +517,6 @@ export function HomePage({
           goalTask = await runtime.conversation.createThreadTask(session.id, {
             type: "goal",
             objective: text,
-            metadata: goalSeedContextMetadata({
-              message: text,
-              contextItems: prepared.contextItems,
-              runtimeParams: prepared.runtimeParams,
-              attachments,
-            }),
           });
         } catch (reason) {
           setGoalError(errorMessage(reason));

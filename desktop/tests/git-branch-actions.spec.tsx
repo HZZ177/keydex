@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -11,14 +11,16 @@ import type { GitObjectId, GitRef, GitRepositoryId, GitRepositoryVersion, GitSta
 afterEach(cleanup);
 
 describe("GitBranchActions", () => {
-  it("validates branch names and creates from the selected revision", () => {
+  it("validates branch names and creates from the selected revision", async () => {
     expect(validateBranchName("feature/git-ui").valid).toBe(true);
     expect(validateBranchName("../bad").valid).toBe(false);
     const onCreate = vi.fn();
     renderBranchActions({ onCreate });
-    fireEvent.change(screen.getByLabelText("New branch from feature/base"), { target: { value: "feature/git-ui" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create" }));
-    expect(onCreate).toHaveBeenCalledWith("feature/git-ui", "feature/base");
+    fireEvent.click(screen.getByRole("button", { name: "新建分支…" }));
+    fireEvent.change(screen.getByLabelText("新分支名称"), { target: { value: "feature/git-ui" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建" }));
+    await waitFor(() => expect(onCreate).toHaveBeenCalledWith("feature/git-ui", "feature/base"));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "创建新分支" })).toBeNull());
   });
 
   it("offers Commit, Stash, and Cancel without automatically checking out a dirty tree", () => {
@@ -27,50 +29,76 @@ describe("GitBranchActions", () => {
     const onStashAndCheckout = vi.fn();
     renderBranchActions({ onCheckout, onOpenChanges, onStashAndCheckout, dirty: true });
 
-    fireEvent.click(screen.getByRole("button", { name: "Checkout" }));
+    fireEvent.click(screen.getByRole("button", { name: "签出…" }));
     expect(onCheckout).not.toHaveBeenCalled();
-    expect(screen.getByRole("alert").textContent).toContain("will not stash automatically");
-    fireEvent.click(screen.getByRole("button", { name: "Commit changes" }));
-    fireEvent.click(screen.getByRole("button", { name: "Stash and checkout" }));
+    expect(screen.getByRole("dialog", { name: "工作树存在本地改动" }).textContent).toContain("不会自动储藏");
+    fireEvent.click(screen.getByRole("button", { name: "提交改动" }));
     expect(onOpenChanges).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "签出…" }));
+    fireEvent.click(screen.getByRole("button", { name: "储藏并签出" }));
     expect(onStashAndCheckout).toHaveBeenCalledWith(expect.objectContaining({ shortName: "feature/base" }));
-    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "工作树存在本地改动" })).toBeNull();
   });
 
-  it("classifies protected branches and exposes rename/delete commands", () => {
+  it("classifies protected branches and exposes rename/delete commands", async () => {
     const onRename = vi.fn();
     const onDelete = vi.fn();
     renderBranchActions({ onRename, onDelete });
-    fireEvent.change(screen.getByLabelText("Rename feature/base"), { target: { value: "feature/renamed" } });
-    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
-    expect(onRename).toHaveBeenCalledWith(expect.objectContaining({ shortName: "feature/base" }), "feature/renamed");
-    fireEvent.click(screen.getByRole("button", { name: "Delete…" }));
-    fireEvent.click(screen.getByRole("button", { name: "Force delete…" }));
+    fireEvent.click(screen.getByRole("button", { name: "重命名…" }));
+    fireEvent.change(screen.getByLabelText("重命名分支"), { target: { value: "feature/renamed" } });
+    fireEvent.click(screen.getByRole("button", { name: "重命名" }));
+    await waitFor(() => expect(onRename).toHaveBeenCalledWith(expect.objectContaining({ shortName: "feature/base" }), "feature/renamed"));
+    fireEvent.click(screen.getByRole("button", { name: "删除…" }));
+    expect(screen.getByRole("dialog", { name: "删除分支" }).textContent).toContain("feature/base");
+    expect(onDelete).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    fireEvent.click(screen.getByRole("button", { name: "删除…" }));
+    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+    fireEvent.click(screen.getByRole("button", { name: "强制删除…" }));
+    expect(screen.getByRole("dialog", { name: "强制删除分支" }).textContent).toContain("允许删除尚未合并");
+    fireEvent.click(screen.getByRole("button", { name: "删除" }));
     expect(onDelete).toHaveBeenNthCalledWith(1, expect.objectContaining({ shortName: "feature/base" }), false);
     expect(onDelete).toHaveBeenNthCalledWith(2, expect.objectContaining({ shortName: "feature/base" }), true);
     expect(branchDeletionRisk(refs()[0], status(false))).toBe("current");
     expect(branchDeletionRisk({ ...refs()[1], shortName: "main" }, status(false))).toBe("protected");
   });
 
-  it("creates annotated tags from the selected ref and displays tag target/message", () => {
+  it("creates annotated tags from the selected ref and displays tag target/message", async () => {
     const onCreateTag = vi.fn();
     const onPushTag = vi.fn();
     const { rerender } = renderBranchActions({ onCreateTag });
-    fireEvent.change(screen.getByLabelText("Tag name"), { target: { value: "v1.0.0" } });
-    fireEvent.click(screen.getByRole("checkbox", { name: "Annotated" }));
-    fireEvent.change(screen.getByLabelText("Tag message"), { target: { value: "Version one" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create tag" }));
-    expect(onCreateTag).toHaveBeenCalledWith({
+    fireEvent.click(screen.getByRole("button", { name: "创建标签…" }));
+    fireEvent.change(screen.getByLabelText("标签名称"), { target: { value: "v1.0.0" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "附注标签" }));
+    fireEvent.change(screen.getByLabelText("标签说明"), { target: { value: "Version one" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建标签" }));
+    await waitFor(() => expect(onCreateTag).toHaveBeenCalledWith({
       name: "v1.0.0",
       target: "feature/base",
       annotated: true,
       message: "Version one",
       sign: false,
-    });
+    }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "创建标签" })).toBeNull());
+
+    fireEvent.click(screen.getByRole("button", { name: "创建标签…" }));
+    fireEvent.change(screen.getByLabelText("标签名称"), { target: { value: "v1.0.1" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "签名标签" }));
+    fireEvent.change(screen.getByLabelText("标签说明"), { target: { value: "Signed release" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建标签" }));
+    await waitFor(() => expect(onCreateTag).toHaveBeenLastCalledWith({
+      name: "v1.0.1",
+      target: "feature/base",
+      annotated: true,
+      message: "Signed release",
+      sign: true,
+    }));
 
     rerender(
       <GitBranchActions
         refs={[tagRef()]}
+        remotes={["origin"]}
         selectedRef="refs/tags/v1.0.0"
         status={status(false)}
         onCreate={vi.fn()}
@@ -86,20 +114,26 @@ describe("GitBranchActions", () => {
       />,
     );
     expect(screen.getByText("Version one")).not.toBeNull();
-    expect(screen.getByText(/Target dddddddddddd/)).not.toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Push tag…" }));
-    expect(onPushTag).toHaveBeenCalledWith(expect.objectContaining({ shortName: "v1.0.0" }), "origin");
+    expect(screen.getByText(/目标 dddddddddddd/)).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "删除本地标签…" }));
+    expect(screen.getByRole("dialog", { name: "删除本地标签" }).textContent).toContain("v1.0.0");
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    fireEvent.click(screen.getByRole("button", { name: "推送标签…" }));
+    expect(screen.getByRole("dialog", { name: "推送标签 v1.0.0" })).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "推送标签" }));
+    await waitFor(() => expect(onPushTag).toHaveBeenCalledWith(expect.objectContaining({ shortName: "v1.0.0" }), "origin"));
   });
 
-  it("binds a local branch only to the explicitly selected remote branch", () => {
+  it("binds a local branch only to the explicitly selected remote branch", async () => {
     const onSetUpstream = vi.fn();
     renderBranchActions({ onSetUpstream });
-    fireEvent.change(screen.getByRole("combobox", { name: "Upstream branch" }), { target: { value: "origin/main" } });
-    fireEvent.click(screen.getByRole("button", { name: "Set upstream" }));
-    expect(onSetUpstream).toHaveBeenCalledWith(
+    fireEvent.click(screen.getByRole("button", { name: "设置上游…" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "上游分支" }), { target: { value: "origin/main" } });
+    fireEvent.click(screen.getByRole("button", { name: "设置上游" }));
+    await waitFor(() => expect(onSetUpstream).toHaveBeenCalledWith(
       expect.objectContaining({ shortName: "feature/base" }),
       "origin/main",
-    );
+    ));
   });
 });
 
@@ -119,6 +153,7 @@ function renderBranchActions(overrides: {
   return render(
     <GitBranchActions
       refs={refs()}
+      remotes={["origin"]}
       selectedRef="refs/heads/feature/base"
       status={status(Boolean(overrides.dirty))}
       onCreate={overrides.onCreate ?? vi.fn()}

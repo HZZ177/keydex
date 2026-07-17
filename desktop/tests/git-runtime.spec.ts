@@ -109,6 +109,11 @@ describe("Git runtime", () => {
     await runtime.applyPatch({
       ...scope,
       idempotencyKey: "patch-key",
+      expectedRepositoryVersion: "repository-v1",
+      expectedSourceVersion: "diff-source:v1:source",
+      expectedSourcePatch: "source patch",
+      sourceKind: "working_tree",
+      sourcePaths: ["a"],
       patch: "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-old\n+new\n",
     });
     await runtime.checkout({
@@ -162,6 +167,14 @@ describe("Git runtime", () => {
       target: "main",
       tagName: "v1.0.0",
     });
+    await runtime.push({
+      ...scope,
+      idempotencyKey: "push-follow-tags-key",
+      remote: "origin",
+      source: "feature/demo",
+      target: "feature/demo",
+      followTags: true,
+    });
 
     const [url, init] = fetcher.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("http://127.0.0.1:8765/api/git/repositories/git-test/stage");
@@ -183,6 +196,11 @@ describe("Git runtime", () => {
     expect(patchUrl).toBe("http://127.0.0.1:8765/api/git/repositories/git-test/patch");
     expect(JSON.parse(String(patchInit.body))).toMatchObject({
       idempotency_key: "patch-key",
+      expected_repository_version: "repository-v1",
+      expected_source_version: "diff-source:v1:source",
+      expected_source_patch: "source patch",
+      source_kind: "working_tree",
+      source_paths: ["a"],
       cached: true,
       reverse: false,
     });
@@ -227,6 +245,13 @@ describe("Git runtime", () => {
     expect(pushTagBody).not.toHaveProperty("annotated");
     expect(pushTagBody).not.toHaveProperty("message");
     expect(pushTagBody).not.toHaveProperty("sign");
+    expect(JSON.parse(String((fetcher.mock.calls[10][1] as RequestInit).body))).toMatchObject({
+      remote: "origin",
+      source: "feature/demo",
+      target: "feature/demo",
+      tags: false,
+      follow_tags: true,
+    });
   });
 
   it("sends the selected commit scope and untracked subset", async () => {

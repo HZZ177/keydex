@@ -2,21 +2,21 @@
 .root > header { display: flex; align-items: flex-start; gap: 8px; }
 .root > header > div { display: grid; gap: 2px; }
 .root strong { color: var(--color-text-1); font-size: 12px; }
-.root header span, .grid label > span, .exportResult > span, .ready, .outcome { color: var(--color-text-3); font-size: 11px; }
+.root header span, .grid label > span, .exportResult > span, .ready { color: var(--color-text-3); font-size: 11px; }
 .importHeader { margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--color-border-2); }
 .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .grid label { display: grid; gap: 4px; }
 .wide { grid-column: 1 / -1; }
-.grid input, .grid select, .grid textarea, .patchInput, .exportResult textarea { padding: 6px 8px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--color-bg-2); color: var(--color-text-1); font: 11px/1.45 var(--font-mono); }
+.grid input, .grid select, .grid textarea, .patchInput { padding: 6px 8px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--color-bg-2); color: var(--color-text-1); font: 11px/1.45 var(--font-mono); }
 .grid button, .actions button, .exportResult button { min-height: 28px; justify-self: start; padding: 0 9px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--surface-active); color: var(--color-text-1); cursor: pointer; font-size: 11px; }
 .grid button:disabled, .actions button:disabled, .exportResult button:disabled { cursor: default; opacity: .5; }
 .exportResult { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 7px; }
-.exportResult textarea { grid-column: 1 / -1; resize: vertical; }
+.exportPreview { grid-column: 1 / -1; min-height: 260px; height: min(44vh, 520px); overflow: hidden; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--color-bg-1); }
 .patchInput { resize: vertical; }
 .options, .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .options label { display: inline-flex; align-items: center; gap: 5px; color: var(--color-text-2); font-size: 11px; }
 .actions button { display: inline-flex; align-items: center; gap: 5px; }
-.ready, .outcome { margin: 0; }
+.ready { margin: 0; }
 .ready { color: var(--color-success-1, #2f9d62); }
 .rejects { padding: 8px; border: 1px solid color-mix(in srgb, var(--color-danger-1) 40%, var(--color-border-2)); border-radius: var(--radius-sm); color: var(--color-danger-1); font-size: 11px; }
 .rejects ul { margin: 5px 0 0; padding-left: 18px; }

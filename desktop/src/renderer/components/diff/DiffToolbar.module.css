@@ -1,0 +1,142 @@
+.toolbar {
+  display: flex;
+  min-width: 0;
+  min-height: 36px;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+  border-block: 1px solid var(--diff-toolbar-border);
+  background: var(--diff-toolbar-bg);
+}
+
+.toolbar[data-profile="compact"] {
+  min-height: 32px;
+  padding-block: 2px;
+}
+
+.toolbar[data-profile="git"] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+
+.leading,
+.trailing,
+.actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.leading {
+  margin-inline-end: auto;
+}
+
+.trailing {
+  margin-inline-start: auto;
+}
+
+.actions {
+  flex: 0 0 auto;
+}
+
+.toolbar[data-profile="git"] .actions {
+  grid-column: 2;
+  margin-inline: auto;
+}
+
+.toolbar[data-profile="git"] .leading {
+  grid-column: 1;
+}
+
+.toolbar[data-profile="git"] .trailing {
+  grid-column: 3;
+}
+
+.action {
+  display: inline-flex;
+  min-width: 28px;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 4px 7px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.action:hover:not(:disabled) {
+  border-color: var(--diff-toolbar-border);
+  background: var(--diff-toolbar-control-hover);
+  color: var(--color-text-primary);
+}
+
+.action:active:not(:disabled),
+.action[aria-pressed="true"] {
+  border-color: var(--diff-selection-border);
+  background: var(--diff-toolbar-control-active);
+  color: var(--color-text-primary);
+}
+
+.toolbar[data-profile="git"] .action:active:not(:disabled),
+.toolbar[data-profile="git"] .action[aria-pressed="true"] {
+  border-color: transparent;
+}
+
+.action:focus-visible {
+  outline: 2px solid var(--diff-focus-ring);
+  outline-offset: 1px;
+}
+
+.action:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.action[data-action-state="success"] {
+  color: var(--diff-added-text);
+}
+
+.action[data-action-state="error"] {
+  color: var(--diff-removed-text);
+}
+
+.actionIcon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+}
+
+.actionLabel {
+  white-space: nowrap;
+}
+
+.shortcut {
+  color: var(--color-text-tertiary);
+  font: inherit;
+  font-size: 11px;
+}
+
+.spinner {
+  animation: keydex-diff-toolbar-spin 0.8s linear infinite;
+}
+
+@keyframes keydex-diff-toolbar-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}

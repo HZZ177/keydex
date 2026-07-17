@@ -1,7 +1,20 @@
 from __future__ import annotations
 
+import subprocess
+
 from backend.app.tools import ToolExecutionContext, ToolRegistry
 from backend.app.tools.patch import register_patch_tools
+
+
+def _assert_final_patch_applies_in_reverse(root, patch: str) -> None:
+    result = subprocess.run(
+        ["git", "apply", "--check", "--reverse", "--recount", "--unsafe-paths", "-"],
+        cwd=root,
+        input=(patch.rstrip("\r\n") + "\n").encode("utf-8"),
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
 
 
 def _context(tmp_path) -> ToolExecutionContext:
@@ -51,7 +64,15 @@ async def test_apply_patch_adds_file(tmp_path) -> None:
     assert change["change_type"] == "create"
     assert change["created"] is True
     assert change["added_lines"] == 2
+    assert change["status"] == "added"
+    assert change["old_path"] is None
+    assert change["new_path"] == "docs/note.txt"
+    assert change["patch_format"] == "canonical_unified"
+    assert change["patch_precision"] == "exact"
+    assert change["patch_complete"] is True
+    assert change["raw_patch"] == change["diff"]
     assert (tmp_path / "docs" / "note.txt").read_text(encoding="utf-8") == "第一行\n第二行\n"
+    _assert_final_patch_applies_in_reverse(tmp_path, change["raw_patch"])
 
 
 async def test_apply_patch_rejects_add_file_when_target_exists(tmp_path) -> None:
@@ -124,6 +145,10 @@ async def test_apply_patch_updates_file_with_matching_context(tmp_path) -> None:
         " omega"
     )
     assert target.read_text(encoding="utf-8") == "alpha\nnew\nomega\n"
+    _assert_final_patch_applies_in_reverse(
+        tmp_path,
+        result.result["changes"][0]["raw_patch"],
+    )
 
 
 async def test_apply_patch_updates_file_with_multiple_hunks(tmp_path) -> None:
@@ -448,6 +473,7 @@ async def test_apply_patch_deletes_file_with_removed_line_count(tmp_path) -> Non
     )
     assert result.result["changes"][0]["removed_bytes"] > 0
     assert not target.exists()
+    _assert_final_patch_applies_in_reverse(tmp_path, change["raw_patch"])
 
 
 async def test_apply_patch_moves_file_and_updates_content(tmp_path) -> None:
@@ -484,6 +510,7 @@ async def test_apply_patch_moves_file_and_updates_content(tmp_path) -> None:
     )
     assert not target.exists()
     assert (tmp_path / "docs" / "new.md").read_text(encoding="utf-8") == "title: new\nbody\n"
+    _assert_final_patch_applies_in_reverse(tmp_path, change["raw_patch"])
 
 
 async def test_apply_patch_rejects_invalid_patch(tmp_path) -> None:

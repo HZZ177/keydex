@@ -1,0 +1,73 @@
+.gutterGuides {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.gutterGuide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--gutter-guide-left);
+  width: 1px;
+  background: var(--diff-border-subtle);
+}
+
+.overlay {
+  position: relative;
+  z-index: 6;
+  grid-row: 2;
+  width: 100%;
+  height: 17px;
+  box-sizing: border-box;
+  align-self: stretch;
+  border-top: 1px solid var(--diff-border-subtle);
+  background: var(--diff-surface-bg);
+  pointer-events: none;
+}
+
+.scroller {
+  position: absolute;
+  top: 3px;
+  bottom: 2px;
+  left: var(--scrollbar-left);
+  width: var(--scrollbar-width);
+  height: auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-color: var(--diff-scrollbar-thumb) var(--diff-scrollbar-track);
+  scrollbar-width: thin;
+  pointer-events: auto;
+}
+
+.overlay .scroller::-webkit-scrollbar {
+  height: 10px;
+}
+
+.overlay .scroller::-webkit-scrollbar-track {
+  background: var(--diff-scrollbar-track);
+}
+
+.overlay .scroller::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--diff-scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+.overlay .scroller::-webkit-scrollbar-thumb:hover {
+  background: var(--diff-scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
+.overlay .scroller::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.spacer {
+  height: 1px;
+}

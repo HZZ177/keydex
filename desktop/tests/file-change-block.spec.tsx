@@ -4,20 +4,41 @@ import { describe, expect, it, vi } from "vitest";
 import { FileChangeBlock, MessageList } from "@/renderer/pages/conversation/messages";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 
+vi.mock("@/renderer/components/diff/wrappers/CompactDiffView", () => ({
+  CompactDiffView: ({ document }: {
+    document: {
+      files: Array<{ displayPath: string; patch: string; newContent?: string }>;
+    };
+  }) => (
+    <section aria-label="文件差异" data-keydex-diff-wrapper="compact">
+      {document.files.map((file) => (
+        <div key={file.displayPath}>
+          <span>{file.displayPath}</span>
+          <pre>
+            {file.patch
+              ? file.patch.split("\n").filter((line) => !/^(diff --git |--- |\+\+\+ |@@)/.test(line)).join("\n")
+              : file.newContent?.split("\n").filter(Boolean).map((line) => `+${line}`).join("\n") || ""}
+          </pre>
+        </div>
+      ))}
+    </section>
+  ),
+}));
+
 describe("FileChangeBlock", () => {
   it("summarizes multiple files and expands a diff on demand", () => {
     render(<FileChangeBlock message={fileChangeMessage("completed", true)} />);
 
     expect(screen.getByText("编辑了 2 个文件")).not.toBeNull();
     expect(screen.queryByTestId("line-change-ticker")).toBeNull();
-    expect(screen.queryByLabelText("文件 diff")).toBeNull();
+    expect(screen.queryByLabelText("文件差异")).toBeNull();
     expect(screen.queryByLabelText("变更文件")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "展开文件变更详情" }));
     const fileButton = screen.getByRole("button", { name: /src\/main.py/ });
     expect(fileButton.querySelector("[data-file-change-path-icon='true']")?.getAttribute("data-icon-id")).toBe("python");
     fireEvent.click(fileButton);
-    expect(screen.getByLabelText("文件 diff").textContent).toContain("+print('new')");
+    expect(screen.getByLabelText("文件差异").textContent).toContain("+print('new')");
   });
 
   it("shows applied and failed states", () => {
@@ -41,7 +62,7 @@ describe("FileChangeBlock", () => {
     expect(screen.getByLabelText("文件变更错误").textContent).toContain("无法写入文件");
     expect(screen.getByLabelText("文件变更错误").textContent).toContain('"path": "src/main.py"');
     expect(screen.getByLabelText("失败文件").textContent).toContain("src/main.py");
-    expect(screen.queryByLabelText("文件 diff")).toBeNull();
+    expect(screen.queryByLabelText("文件差异")).toBeNull();
   });
 
   it("does not show line-change stats for failed single-file changes", () => {
@@ -105,8 +126,7 @@ describe("FileChangeBlock", () => {
     const { unmount } = render(<FileChangeBlock message={singleFileChangeMessage("completed")} onPreviewFile={onPreviewFile} />);
 
     fireEvent.click(screen.getByRole("button", { name: "展开文件变更详情" }));
-    expect(screen.getByLabelText("文件变更预览")).not.toBeNull();
-    expect(screen.queryByLabelText("文件 diff")).toBeNull();
+    expect(screen.getByLabelText("文件差异")).not.toBeNull();
     expect(screen.queryByText("暂无 diff")).toBeNull();
     expect(screen.queryByLabelText("变更文件")).toBeNull();
 
@@ -128,7 +148,7 @@ describe("FileChangeBlock", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "展开文件变更详情" }));
 
-    const diff = screen.getByLabelText("文件 diff");
+    const diff = screen.getByLabelText("文件差异");
     expect(diff.textContent).toContain("print('new')");
     expect(diff.textContent).not.toContain("--- a/src/main.py");
     expect(diff.textContent).not.toContain("+++ b/src/main.py");
@@ -139,7 +159,7 @@ describe("FileChangeBlock", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "展开文件变更详情" }));
 
-    const diff = screen.getByLabelText("文件 diff");
+    const diff = screen.getByLabelText("文件差异");
     expect(diff.textContent).toContain("+first");
     expect(diff.textContent).toContain("+second");
     expect(screen.queryByText("暂无 diff")).toBeNull();
@@ -150,8 +170,7 @@ describe("FileChangeBlock", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "展开文件变更详情" }));
 
-    expect(screen.getByLabelText("文件变更预览")).not.toBeNull();
-    expect(screen.queryByLabelText("文件 diff")).toBeNull();
+    expect(screen.getByLabelText("文件差异")).not.toBeNull();
     expect(screen.queryByText("暂无 diff")).toBeNull();
   });
 
@@ -215,7 +234,7 @@ describe("FileChangeBlock", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "展开文件变更详情" }));
 
-    const diff = screen.getByLabelText("文件 diff");
+    const diff = screen.getByLabelText("文件差异");
     expect(diff.textContent).toContain("print('new')");
     expect(screen.queryByText("暂无 diff")).toBeNull();
   });
@@ -270,7 +289,7 @@ describe("FileChangeBlock", () => {
 
     await waitFor(() => {
       expect(onLoadDetails).toHaveBeenCalledTimes(1);
-      expect(screen.getByLabelText("文件 diff").textContent).toContain("lazy new");
+      expect(screen.getByLabelText("文件差异").textContent).toContain("lazy new");
     });
   });
 });

@@ -1381,9 +1381,13 @@ function isInternalTranscriptContextMessage(data: Record<string, unknown>): bool
   const source = stringValue(data.source);
   const metadata = asRecord(data.metadata);
   const metadataSource = metadata ? stringValue(metadata.source) : "";
+  const compact = metadata ? asRecord(metadata.keydex_context_compression) : null;
   const content = (stringValue(data.content) || stringValue(data.text)).trim();
   return (
     isContextCompressionProtocolContent(content) ||
+    stringValue(compact?.kind) === "summary" ||
+    metadata?.is_compact_summary === true ||
+    metadata?.isCompactSummary === true ||
     source === "message_context_item" ||
     source === "message_injection" ||
     source === "skill_activation" ||
@@ -1394,7 +1398,7 @@ function isInternalTranscriptContextMessage(data: Record<string, unknown>): bool
 }
 
 function isContextCompressionProtocolContent(content: string): boolean {
-  return content.startsWith("<keydex_context_compression>");
+  return content.startsWith("<keydex_context_compression");
 }
 
 function handleMiddlewareProgress(

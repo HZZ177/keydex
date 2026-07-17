@@ -10,9 +10,9 @@ import {
   Wrench,
   XCircle,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 
-import { FileReviewCard } from "@/renderer/components/review/FileReviewDiff";
+import { fileReviewDocumentFromMessage } from "@/renderer/components/diff/adapters/fileReviewDocument";
 import { useMaterialEntryIcon } from "@/renderer/components/workspace/materialIconTheme";
 import { useTargetedCopyFeedback, type CopyFeedbackStatus } from "@/renderer/hooks/useCopyFeedback";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
@@ -33,6 +33,10 @@ import { useExpansionScrollAnchor } from "./useExpansionScrollAnchor";
 
 const INLINE_ERROR_MAX_CHARS = 240;
 const MCP_UNKNOWN_SERVER_LABEL = "未知 MCP 服务";
+const LazyCompactDiffView = lazy(async () => {
+  const module = await import("@/renderer/components/diff/wrappers/CompactDiffView");
+  return { default: module.CompactDiffView };
+});
 
 export interface ToolCallBlockProps {
   message: ConversationMessage;
@@ -49,6 +53,13 @@ export function ToolCallBlock({ message, onPreviewFile, onLoadDetails }: ToolCal
   const { getCopyStatus, showCopyFeedback } = useTargetedCopyFeedback<CopyTarget>();
   const details = useLazyToolDetails(message, onLoadDetails);
   const tool = useMemo(() => parseToolPayload(details.message), [details.message]);
+  const diffDocument = useMemo(
+    () => fileReviewDocumentFromMessage(details.message, tool.target, {
+      sessionId: details.message.threadId,
+      requestId: details.message.itemId ?? details.message.id,
+    }),
+    [details.message, tool.fileChanges, tool.target],
+  );
   const running = details.message.status === "pending" || details.message.status === "running";
   const cancelled = details.message.status === "cancelled" || tool.resultStatus === "cancelled";
   const failed = details.message.status === "failed" || tool.resultStatus === "error";
@@ -127,6 +138,7 @@ export function ToolCallBlock({ message, onPreviewFile, onLoadDetails }: ToolCal
                   <span> </span>
                   <FileTarget
                     diff={tool.fileChange?.diff ?? ""}
+                    document={diffDocument}
                     files={tool.fileChanges}
                     message={details.message}
                     onPreviewFile={onPreviewFile}
@@ -171,6 +183,7 @@ export function ToolCallBlock({ message, onPreviewFile, onLoadDetails }: ToolCal
           <div className={styles.detailsInner} data-kind={tool.fileTarget ? "file-review" : "raw"}>
             {tool.fileTarget ? (
               <FileMutationDetails
+                document={diffDocument}
                 detailsError={Boolean(details.error)}
                 detailsLoading={details.loading}
                 errorText={tool.errorPreview || readableErrorText(tool.resultText)}
@@ -178,9 +191,11 @@ export function ToolCallBlock({ message, onPreviewFile, onLoadDetails }: ToolCal
                 failed={failed}
                 footerLabel={footerLabel}
                 footerState={footerState}
+                message={details.message}
                 running={running}
                 tool={tool}
                 onExpandedPathChange={setExpandedReviewPath}
+                onPreviewFile={onPreviewFile}
               />
             ) : (
               <>
@@ -260,6 +275,7 @@ function hasLineDeltas(file: ToolFileChange): boolean {
 
 function FileTarget({
   diff,
+  document,
   files,
   message,
   onPreviewFile,
@@ -267,6 +283,7 @@ function FileTarget({
   title,
 }: {
   diff: string;
+  document: ReturnType<typeof fileReviewDocumentFromMessage>;
   files: ToolFileChange[];
   message: ConversationMessage;
   onPreviewFile?: (file: FileChangePreview) => void;
@@ -287,7 +304,7 @@ function FileTarget({
       type="button"
       onClick={(event) => {
         event.stopPropagation();
-        onPreviewFile({ path, diff, files, message, title });
+        onPreviewFile({ path, diff, files, document, message, title });
       }}
     >
       <ToolFileTargetIcon path={path} />
@@ -312,6 +329,7 @@ function ToolFileTargetIcon({ path }: { path: string }) {
 }
 
 function FileMutationDetails({
+  document,
   detailsError,
   detailsLoading,
   errorText,
@@ -319,10 +337,13 @@ function FileMutationDetails({
   failed,
   footerLabel,
   footerState,
+  message,
   running,
   tool,
   onExpandedPathChange,
+  onPreviewFile,
 }: {
+  document: ReturnType<typeof fileReviewDocumentFromMessage>;
   detailsError: boolean;
   detailsLoading: boolean;
   errorText: string;
@@ -330,10 +351,13 @@ function FileMutationDetails({
   failed: boolean;
   footerLabel: string;
   footerState: "failed" | "running" | "done";
+  message: ConversationMessage;
   running: boolean;
   tool: ParsedToolPayload;
   onExpandedPathChange: (path: string | null) => void;
+  onPreviewFile?: (file: FileChangePreview) => void;
 }) {
+  const diffDocument = document;
   if (detailsLoading) {
     return <ToolDetailNotice text="正在加载文件变更详情" state={footerState} footerLabel={footerLabel} />;
   }
@@ -356,9 +380,17 @@ function FileMutationDetails({
   const selectedFile =
     tool.fileChanges.find((file) => file.path === expandedPath) ??
     tool.fileChanges[0];
+  const activeFileId = diffDocument.files.find((file) => [
+    file.displayPath,
+    file.oldPath,
+    file.newPath,
+  ].includes(selectedFile.path))?.id ?? diffDocument.files[0]?.id ?? null;
 
   return (
-    <section className={styles.fileReviewSection} aria-label={fileReviewHeading(tool)}>
+    <section
+      className={styles.fileReviewSection}
+      aria-label={fileReviewHeading(tool)}
+    >
       {tool.fileChanges.length > 1 ? (
         <ul className={styles.fileReviewList} aria-label="变更文件">
           {tool.fileChanges.map((file) => {
@@ -369,7 +401,7 @@ function FileMutationDetails({
                   className={styles.fileReviewListButton}
                   data-active={active ? "true" : "false"}
                   type="button"
-                  onClick={() => onExpandedPathChange(active ? null : file.path)}
+                  onClick={() => onExpandedPathChange(file.path)}
                 >
                   <span className={styles.fileReviewPath}>
                     <ToolFileTargetIcon path={file.path} />
@@ -382,7 +414,34 @@ function FileMutationDetails({
           })}
         </ul>
       ) : null}
-      <FileReviewCard file={selectedFile} />
+      <Suspense fallback={<div className={styles.fileReviewNotice}>正在加载文件差异</div>}>
+        <LazyCompactDiffView
+          document={diffDocument}
+          activeFileId={activeFileId}
+          defaultExpanded
+          onActiveFileChange={(fileId) => {
+            const file = diffDocument.files.find((item) => item.id === fileId);
+            if (file) onExpandedPathChange(file.displayPath);
+          }}
+          actions={{
+            copyPatch: copyText,
+            ...(onPreviewFile ? {
+              openFile: (path: string) => {
+                const file = tool.fileChanges.find((item) => [item.path, item.oldPath, item.newPath].includes(path))
+                  ?? selectedFile;
+                onPreviewFile({
+                  path: file.path,
+                  diff: file.diff,
+                  files: tool.fileChanges,
+                  document: diffDocument,
+                  message,
+                  title: tool.title,
+                });
+              },
+            } : {}),
+          }}
+        />
+      </Suspense>
       <div className={styles.panelFooter} data-state={footerState}>
         {footerLabel}
       </div>

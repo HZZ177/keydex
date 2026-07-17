@@ -27,6 +27,28 @@ def test_parses_text_hunks_rename_binary_modes_and_no_newline_marker() -> None:
     assert (diffs[2].old_mode, diffs[2].new_mode) == ("100644", "100755")
 
 
+def test_preserves_raw_patch_and_covers_add_delete_copy_and_truncation() -> None:
+    payload = (
+        "diff --git a/new.txt b/new.txt\r\n"
+        "new file mode 100644\r\n--- /dev/null\r\n+++ b/new.txt\r\n"
+        "@@ -0,0 +1 @@\r\n+new\r\n"
+        "diff --git a/old.txt b/old.txt\r\n"
+        "deleted file mode 100644\r\n--- a/old.txt\r\n+++ /dev/null\r\n"
+        "@@ -1 +0,0 @@\r\n-old\r\n"
+        "diff --git a/source.txt b/copied.txt\r\n"
+        "similarity index 100%\r\ncopy from source.txt\r\ncopy to copied.txt\r\n"
+    )
+
+    diffs = parse_git_diff(payload, truncated=True)
+
+    assert [item.status for item in diffs] == ["added", "deleted", "copied"]
+    assert diffs[0].old_path is None and diffs[0].new_path == "new.txt"
+    assert diffs[1].old_path == "old.txt" and diffs[1].new_path is None
+    assert (diffs[2].old_path, diffs[2].new_path) == ("source.txt", "copied.txt")
+    assert all(item.truncated is True for item in diffs)
+    assert "".join(item.raw_patch for item in diffs) == payload
+
+
 def test_parses_zero_terminated_numstat_for_text_binary_and_rename() -> None:
     stats = parse_numstat_z(
         "10\t2\tsrc/a.ts\x00-\t-\timage.bin\x001\t1\t\x00old.txt\x00new.txt\x00"

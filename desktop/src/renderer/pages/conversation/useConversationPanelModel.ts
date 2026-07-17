@@ -140,6 +140,8 @@ export function useConversationPanelModel({
   const [reverseState, setReverseState] = useState<ReverseDialogState | null>(null);
   const reverseRequestGenerationRef = useRef(0);
   const reverseExecuteInFlightRef = useRef(false);
+  const reviewPreviewGenerationRef = useRef(0);
+  const reviewPreviewSessionIdRef = useRef(sessionId);
   const scrollFrameRef = useRef<number | null>(null);
   const handledRuntimeSideEffectKeysRef = useRef(new Set<string>());
   const scrollToBottomRef = useRef<((behavior?: ScrollBehavior) => void) | null>(null);
@@ -160,6 +162,11 @@ export function useConversationPanelModel({
   const backendReady = runtimeConnection?.ready ?? true;
   const optionalAgentRuntime = useOptionalAgentSessionRuntime();
   const sharedSubscribeEvent = optionalAgentRuntime?.runtime === runtime ? optionalAgentRuntime.subscribeEvent : null;
+
+  if (reviewPreviewSessionIdRef.current !== sessionId) {
+    reviewPreviewSessionIdRef.current = sessionId;
+    reviewPreviewGenerationRef.current += 1;
+  }
 
   const session = controller.session;
   const messages = useMemo(
@@ -526,11 +533,26 @@ export function useConversationPanelModel({
         return;
       }
 
-      const openResolvedReview = (files: FileReviewChange[], title?: string | null) => {
+      const requestGeneration = reviewPreviewGenerationRef.current + 1;
+      reviewPreviewGenerationRef.current = requestGeneration;
+      const requestSessionId = sessionId;
+      const requestIsCurrent = () =>
+        reviewPreviewGenerationRef.current === requestGeneration &&
+        reviewPreviewSessionIdRef.current === requestSessionId;
+
+      const openResolvedReview = (
+        files: FileReviewChange[],
+        title?: string | null,
+        document = file.document ?? null,
+      ) => {
+        if (!requestIsCurrent()) {
+          return;
+        }
         const focusedPath = file.path;
         openReviewPanel(
           {
             files,
+            document,
             focusedPath,
             panelKey: file.message?.id ?? file.title ?? focusedPath,
             sourceMessageId: file.message?.id ?? null,
@@ -546,7 +568,7 @@ export function useConversationPanelModel({
       const previewMessages = previewMessagesFromFileChangePreview(file);
       const shouldLoadDetails = previewMessages.some((message) => message.payload.toolDetailsDeferred === true);
       if (!shouldLoadDetails) {
-        openResolvedReview(initialFiles, file.title);
+        openResolvedReview(initialFiles, file.title, file.document ?? null);
         return;
       }
 
@@ -566,14 +588,22 @@ export function useConversationPanelModel({
               .filter((change) => !file.messages?.length || isTargetReviewChange(change, file.path)),
           );
           const targetHasDiff = files.some((change) => change.path === file.path && change.diff);
-          openResolvedReview(files.length && (targetHasDiff || !targetFile?.diff) ? files : initialFiles, file.title);
+          const resolvedFiles = files.length && (targetHasDiff || !targetFile?.diff) ? files : initialFiles;
+          openResolvedReview(
+            resolvedFiles,
+            file.title,
+            resolvedFiles === initialFiles ? file.document ?? null : null,
+          );
         })
         .catch(() => {
+          if (!requestIsCurrent()) {
+            return;
+          }
           notifications.warning("文件变更详情加载失败");
-          openResolvedReview(initialFiles, file.title);
+          openResolvedReview(initialFiles, file.title, file.document ?? null);
         });
     },
-    [loadToolDetails, notifications, openReviewPanel, previewRenderContext],
+    [loadToolDetails, notifications, openReviewPanel, previewRenderContext, sessionId],
   );
 
   const branchFromMessage = useCallback(

@@ -1401,6 +1401,37 @@ describe("MessageText", () => {
     expect(screen.getByTestId("preview-request").textContent).toContain("mermaid:Mermaid 图表");
   });
 
+  it.each(["diff", "patch"])("opens %s fenced code through the shared diff preview request", async (language) => {
+    render(
+      <PreviewProvider>
+        <MessageText
+          message={message(
+            "assistant",
+            `\`\`\`${language}\ndiff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-old\n+new\n\`\`\``,
+            "completed",
+          )}
+        />
+        <PreviewProbe />
+      </PreviewProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "在预览面板打开 Diff 预览" }));
+
+    expect(screen.getByTestId("preview-request").textContent).toBe("diff-document:Diff 预览");
+    expect(screen.getByTestId("markdown-code-viewport")).not.toBeNull();
+  });
+
+  it("does not offer a Pierre preview entry for ordinary source code blocks", () => {
+    render(
+      <PreviewProvider>
+        <MessageText message={message("assistant", "```ts\nconst value = 1;\n```", "completed")} />
+      </PreviewProvider>,
+    );
+
+    expect(screen.queryByRole("button", { name: /在预览面板打开/u })).toBeNull();
+    expect(screen.getByTestId("markdown-code-viewport")).not.toBeNull();
+  });
+
   it("offers fullscreen preview for code blocks that can also open the side preview", () => {
     render(
       <MessageText
@@ -1972,7 +2003,11 @@ function PreviewProbe() {
   const request = preview.request;
   return (
     <output data-testid="preview-request">
-      {request?.type === "content" ? `${request.contentType}:${request.title}` : ""}
+      {request?.type === "content"
+        ? `${request.contentType}:${request.title}`
+        : request?.type === "diff-document"
+          ? `diff-document:${request.title}`
+          : ""}
     </output>
   );
 }

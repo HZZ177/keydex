@@ -13,7 +13,10 @@ from langchain_core.messages import (
 )
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
-from backend.app.agent.state import build_pending_tool_call_preset_update
+from backend.app.agent.state import (
+    build_pending_tool_call_preset_update,
+    build_structured_user_message_groups_update,
+)
 from backend.app.agent.tool_call_preset import ToolCallPreset, ToolCallPresetItem
 from backend.app.core.logger import logger
 from backend.app.core.request_context import (
@@ -27,6 +30,11 @@ from backend.app.events.event_types import DomainEventType
 from backend.app.services.chat_message_payload import (
     build_user_runtime_message,
     resolve_image_attachments,
+)
+from backend.app.services.structured_user_message_group import (
+    StructuredUserMessageGroup,
+    StructuredUserMessageMember,
+    build_structured_user_message_member,
 )
 from backend.app.storage import PendingInputRecord, StorageRepositories
 
@@ -80,6 +88,7 @@ class PendingUserInputInjectionMiddleware(AgentMiddleware):
         steering_messages: list[BaseMessage] = []
         slot_injected = False
         skill_activations: list[dict[str, str]] = []
+        structured_groups: list[dict[str, Any]] = []
 
         for record in records:
             record_messages, attachment_payloads = self._messages_for_record(
@@ -92,6 +101,14 @@ class PendingUserInputInjectionMiddleware(AgentMiddleware):
             skill_activation = _pending_skill_activation(record)
             if skill_activation and skill_activation not in skill_activations:
                 skill_activations.append(skill_activation)
+            structured_groups.append(
+                _pending_structured_user_message_group(
+                    record,
+                    attachment_payloads=attachment_payloads,
+                    trace_id=trace_id,
+                    turn_index=turn_index,
+                ).to_dict()
+            )
             await self._emit_user_message_event(
                 dispatcher,
                 record=record,
@@ -141,6 +158,7 @@ class PendingUserInputInjectionMiddleware(AgentMiddleware):
                 *steering_messages,
             ],
         }
+        update.update(build_structured_user_message_groups_update(structured_groups))
         if skill_activations:
             preset = ToolCallPreset(
                 type="force",
@@ -315,3 +333,155 @@ def _pending_skill_activation(record: PendingInputRecord) -> dict[str, str] | No
         return None
     source = str(activation.get("source") or "workspace").strip() or "workspace"
     return {"skill_name": skill_name, "source": source}
+
+
+def _pending_structured_user_message_group(
+    record: PendingInputRecord,
+    *,
+    attachment_payloads: list[dict[str, Any]],
+    trace_id: str,
+    turn_index: int,
+) -> StructuredUserMessageGroup:
+    members: list[StructuredUserMessageMember] = []
+    order = 0
+    members.append(
+        build_structured_user_message_member(
+            "pending_user_input_context",
+            order,
+            {
+                "pending_input_id": record.id,
+                "client_input_id": record.client_input_id,
+                "delivery_mode": record.mode,
+                "status": record.status,
+            },
+            source_id=record.id,
+        )
+    )
+    order += 1
+
+    runtime_params = record.runtime_params if isinstance(record.runtime_params, dict) else {}
+    raw_injections = runtime_params.get("message_injection")
+    if raw_injections is None:
+        raw_injections = runtime_params.get("messageInjection")
+    if isinstance(raw_injections, list):
+        for index, raw in enumerate(raw_injections):
+            if not isinstance(raw, dict):
+                continue
+            content = str(raw.get("content") or "").strip()
+            if not content:
+                continue
+            injection_type = str(raw.get("type") or "follow").strip()
+            role = str(raw.get("role") or "HumanMessage").strip()
+            members.append(
+                build_structured_user_message_member(
+                    (
+                        "message_injection_slot"
+                        if injection_type == "slot"
+                        else "message_injection_follow"
+                    ),
+                    order,
+                    {
+                        "type": "slot" if injection_type == "slot" else "follow",
+                        "role": (
+                            role
+                            if role in {"SystemMessage", "HumanMessage", "AIMessage"}
+                            else "HumanMessage"
+                        ),
+                        "content": content,
+                        "message_time": raw.get("message_time", raw.get("messageTime")),
+                        "metadata": dict(raw.get("metadata") or {}),
+                        "hidden_for_transcript": bool(
+                            raw.get("hidden_for_transcript", raw.get("hiddenForTranscript", False))
+                        ),
+                    },
+                    source_id=f"{record.id}:injection:{index}",
+                )
+            )
+            order += 1
+
+    activation = _pending_skill_activation(record)
+    if activation is not None:
+        members.append(
+            build_structured_user_message_member(
+                "skill_activation",
+                order,
+                activation,
+                source_id=f"{record.id}:skill",
+            )
+        )
+        order += 1
+
+    for index, item in enumerate(_pending_context_items(record)):
+        payload = {
+            key: item[key]
+            for key in (
+                "id",
+                "type",
+                "label",
+                "content",
+                "role",
+                "source",
+                "metadata",
+                "path",
+                "name",
+                "description",
+                "locator",
+            )
+            if key in item
+        }
+        if "file_type" in item or "fileType" in item:
+            payload["file_type"] = item.get("file_type", item.get("fileType"))
+        if "skill_name" in item or "skillName" in item:
+            payload["skill_name"] = item.get("skill_name", item.get("skillName"))
+        members.append(
+            build_structured_user_message_member(
+                "message_context_item",
+                order,
+                payload,
+                source_id=str(item.get("id") or f"{record.id}:context:{index}"),
+            )
+        )
+        order += 1
+
+    root = build_structured_user_message_member(
+        "root_user_message",
+        order,
+        {
+            "content": record.message,
+            "message_id": record.id,
+            "role": "HumanMessage",
+            "hidden_for_transcript": False,
+        },
+        source_id=record.id,
+    )
+    order += 1
+
+    for index, item in enumerate(attachment_payloads):
+        attachment_id = str(item.get("attachment_id") or item.get("id") or "").strip()
+        members.append(
+            build_structured_user_message_member(
+                "image_attachment" if str(item.get("type") or "") == "image" else "attachment",
+                order,
+                {
+                    **{
+                        key: item[key]
+                        for key in ("type", "source", "name", "mime_type", "size")
+                        if item.get(key) is not None
+                    },
+                    "attachment_id": attachment_id,
+                    "order": index,
+                },
+                source_id=attachment_id,
+            )
+        )
+        order += 1
+
+    return StructuredUserMessageGroup.create(
+        group_id=f"sug-pending-{record.id}",
+        root_user_message=root,
+        members=members,
+        source_session_id=record.session_id,
+        trace_id=trace_id,
+        turn_index=turn_index,
+        message_event_id=record.id,
+    )

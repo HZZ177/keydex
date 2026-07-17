@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ChatChannel, RuntimeBridge, SkillSummary, WsConnectionStatus } from "@/runtime";
 import { selectedQuoteFromText } from "@/renderer/components/chat/SendBox";
+import { fileReviewDocumentFromChanges } from "@/renderer/components/diff/adapters/fileReviewDocument";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import type { AgentSessionController } from "@/renderer/hooks/useAgentSessionController";
 import {
@@ -24,6 +25,33 @@ import type {
 } from "@/types/protocol";
 
 import { mockReducedMotionPreference } from "./helpers/motionPreference";
+
+let latestWorkbenchReviewProps: Record<string, unknown> | null = null;
+const workbenchReviewFiles = [
+  {
+    path: "src/main.ts",
+    additions: 1,
+    deletions: 1,
+    diff: "--- a/src/main.ts\n+++ b/src/main.ts\n@@\n-const value = 1;\n+const value = 2;",
+    operation: "update" as const,
+    source: "streaming" as const,
+  },
+];
+const workbenchReviewDocument = fileReviewDocumentFromChanges(workbenchReviewFiles, {
+  sessionId: "ses-1",
+  requestId: "workbench-source-message",
+});
+vi.mock("@/renderer/components/diff/wrappers/ReviewDiffView", () => ({
+  ReviewDiffView: (props: Record<string, unknown>) => {
+    latestWorkbenchReviewProps = props;
+    const document = props.document as { files: Array<{ displayPath: string; patch: string }> };
+    return (
+      <section aria-label="文件审阅" data-keydex-diff-wrapper="review">
+        {document.files.map((file) => <pre key={file.displayPath}>{file.displayPath}{file.patch}</pre>)}
+      </section>
+    );
+  },
+}));
 
 describe("WorkbenchAssistantSurface", () => {
   it("opens and focuses the bottom composer from page-level Enter", async () => {
@@ -150,18 +178,9 @@ describe("WorkbenchAssistantSurface", () => {
       expect.objectContaining({
         type: "goal",
         objective: "完成工作台目标",
-        metadata: {
-          seed_turn_context: expect.objectContaining({
-            schema_version: 1,
-            source: "goal_composer",
-            message: "完成工作台目标",
-            context_items: [],
-            runtime_params: {},
-            attachments: [],
-          }),
-        },
       }),
     );
+    expect(createThreadTask.mock.calls[0][1].metadata).toBeUndefined();
     await waitFor(() => {
       expect(sendText).toHaveBeenCalled();
     });
@@ -2360,10 +2379,19 @@ describe("WorkbenchAssistantSurface", () => {
     fireEvent.click(screen.getByRole("button", { name: "打开工作台审阅" }));
 
     await waitForSurfaceMode("drawer", 8000);
-    expect(await screen.findByTestId("workbench-review-panel")).not.toBeNull();
+    const workbenchReview = await screen.findByTestId("workbench-review-panel");
+    expect(workbenchReview).not.toBeNull();
+    expect(workbenchReview.getAttribute("data-review-host")).toBe("drawer");
     expect(screen.getByTestId("workbench-review-panel").textContent).toContain("src/main.ts");
-    expect(screen.getByLabelText("文件 diff").textContent).toContain("+const value = 2;");
-    expect(screen.getByLabelText("文件 diff").getAttribute("data-wrap")).toBe("true");
+    expect(screen.getByLabelText("文件审阅").textContent).toContain("+const value = 2;");
+    expect((latestWorkbenchReviewProps as { focusedPath: string }).focusedPath).toBe("src/main.ts");
+    expect((latestWorkbenchReviewProps as { document: unknown }).document).toBe(workbenchReviewDocument);
+    expect((latestWorkbenchReviewProps as { scrollScopeKey: string }).scrollScopeKey).toBe("workbench-review:ws-1:ses-1");
+    expect((latestWorkbenchReviewProps as { wrap: boolean }).wrap).toBe(true);
+    act(() => (latestWorkbenchReviewProps as { onWrapChange: (wrap: boolean) => void }).onWrapChange(false));
+    await waitFor(() => {
+      expect((latestWorkbenchReviewProps as { wrap: boolean }).wrap).toBe(false);
+    });
     expect(screen.getByRole("button", { name: "返回主对话" })).not.toBeNull();
     expect(screen.queryByTestId("workbench-assistant-drawer-input-surface")).toBeNull();
     expect(screen.queryByRole("textbox", { name: "工作台助手输入" })).toBeNull();
@@ -2375,6 +2403,7 @@ describe("WorkbenchAssistantSurface", () => {
     });
     expect(screen.getByTestId("workbench-assistant-drawer-input-surface")).not.toBeNull();
   });
+
 });
 
 async function waitForSurfaceMode(mode: string, timeout = 2000) {
@@ -2445,16 +2474,8 @@ function WorkbenchReviewProbe() {
       onClick={() =>
         preview.openReviewPanel(
           {
-            files: [
-              {
-                path: "src/main.ts",
-                additions: 1,
-                deletions: 1,
-                diff: "--- a/src/main.ts\n+++ b/src/main.ts\n@@\n-const value = 1;\n+const value = 2;",
-                operation: "update",
-                source: "streaming",
-              },
-            ],
+            files: workbenchReviewFiles,
+            document: workbenchReviewDocument,
             focusedPath: "src/main.ts",
             title: "审阅",
           },

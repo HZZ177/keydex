@@ -287,6 +287,7 @@ class AgentRunner:
                 dispatcher=tool_context.metadata.get("dispatcher"),
                 checkpointer=self.checkpointer,
                 model_http_transport=model_http_transport,
+                factory=self.factory,
             ),
             state_schema=KeydexAgentState,
             name="desktop_agent",

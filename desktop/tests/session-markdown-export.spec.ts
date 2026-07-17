@@ -35,6 +35,30 @@ describe("session Markdown export", () => {
     ).toBe("");
   });
 
+  it("excludes compact summaries and hidden replay messages from exports", () => {
+    expect(
+      buildSessionMarkdown("压缩会话", [
+        { role: "user", content: "真实用户请求" },
+        {
+          role: "user",
+          content: "synthetic compact summary",
+          metadata: {
+            keydex_context_compression: {
+              kind: "summary",
+              boundary_id: "boundary-1",
+            },
+          },
+        },
+        {
+          role: "user",
+          content: "hidden retained group replay",
+          metadata: { hidden_for_transcript: true },
+        },
+        { role: "assistant", content: "真实回答" },
+      ]),
+    ).toBe("# 压缩会话\n\n## 用户\n\n真实用户请求\n\n## 助手\n\n真实回答\n");
+  });
+
   it("creates a Windows-safe timestamped Markdown filename", () => {
     expect(
       createSessionMarkdownFilename(

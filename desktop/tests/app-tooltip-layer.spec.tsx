@@ -26,6 +26,29 @@ describe("AppTooltipLayer", () => {
     expect(screen.getByRole("tooltip").textContent).toBe("复制消息");
   });
 
+  it("lets a nested owned layer handle its target without duplicate ancestor tooltips", () => {
+    vi.useFakeTimers();
+    render(
+      <div data-tooltip-scope="parent">
+        <AppTooltipLayer scopeSelector="[data-tooltip-scope='parent']" delayMs={20} />
+        <div data-tooltip-scope="child" data-app-tooltip-owner="child-diff">
+          <AppTooltipLayer
+            scopeSelector="[data-tooltip-scope='child']"
+            ownerId="child-diff"
+            delayMs={20}
+          />
+          <button type="button" aria-label="复制补丁" data-tooltip-label="复制补丁">
+            copy
+          </button>
+        </div>
+      </div>,
+    );
+
+    fireEvent.pointerOver(screen.getByRole("button", { name: "复制补丁" }));
+    act(() => vi.advanceTimersByTime(20));
+    expect(screen.getAllByRole("tooltip", { name: "复制补丁" })).toHaveLength(1);
+  });
+
   it("suppresses native titles while hovering and restores them after hide", () => {
     vi.useFakeTimers();
     render(

@@ -161,6 +161,7 @@ class GitCommandService:
                     raise GitApiError(
                         "git_operation_conflict",
                         "Git reference changed after the operation was prepared; refresh and retry",
+                        retryable=True,
                         repository_id=repository.id,
                     )
 

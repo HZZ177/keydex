@@ -1,10 +1,23 @@
 from __future__ import annotations
 
+import subprocess
+
 from fastapi.testclient import TestClient
 
 from backend.app.core.config import AppSettings
 from backend.app.main import create_app
 from backend.app.services.file_history_service import FileMutationSpec
+
+
+def _assert_current_to_target_patch_applies(root, patch: str) -> None:
+    result = subprocess.run(
+        ["git", "apply", "--check", "--recount", "--unsafe-paths", "-"],
+        cwd=root,
+        input=(patch.rstrip("\r\n") + "\n").encode("utf-8"),
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
 
 
 def _workspace_session(tmp_path):
@@ -86,6 +99,14 @@ def test_reverse_preview_returns_real_diff_and_persisted_token(tmp_path) -> None
     assert payload["default_mode"] == "both"
     assert payload["files"][0]["path"] == "created.txt"
     assert payload["files"][0]["target_state"] == "missing"
+    assert payload["files"][0]["patch_direction"] == "current_to_target"
+    assert payload["files"][0]["patch_precision"] == "exact"
+    assert payload["files"][0]["patch_complete"] is True
+    assert payload["files"][0]["raw_patch"] == payload["files"][0]["diff"]
+    _assert_current_to_target_patch_applies(
+        project,
+        payload["files"][0]["raw_patch"],
+    )
     operation = client.app.state.repositories.file_history.get_operation(
         payload["operation_id"]
     )

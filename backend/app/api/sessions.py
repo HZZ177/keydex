@@ -130,6 +130,16 @@ class SessionReverseFileResponse(BaseModel):
     insertions: int = 0
     deletions: int = 0
     diff: str | None = None
+    raw_patch: str | None = None
+    status: str = "unknown"
+    content_kind: str = "text"
+    binary_reason: str | None = None
+    truncation_state: str = "complete"
+    truncation_reason: str | None = None
+    can_load_more: bool = False
+    patch_direction: str = "current_to_target"
+    patch_precision: str = "exact"
+    patch_complete: bool = True
     resource_id: str
     scope_kind: str
     scope_identity: str
@@ -697,6 +707,7 @@ async def compress_session_context(
     service = ManualContextCompressionService(
         repositories,
         checkpointer=checkpointer,
+        factory=agent_runner.factory,
         http_transport=http_transport,
         broadcaster=broadcast,
     )

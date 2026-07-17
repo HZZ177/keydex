@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import type { GitMergePreview, GitMergeStrategy, GitRef, GitStatusSnapshot } from "@/runtime/gitTypes";
 
+import { GitConfirmActionDialog } from "../dialogs";
 import styles from "./GitMergeView.module.css";
 
 export function GitMergeView({
@@ -25,6 +26,8 @@ export function GitMergeView({
   const [source, setSource] = useState("");
   const [strategy, setStrategy] = useState<GitMergeStrategy>("ff");
   const [message, setMessage] = useState("");
+  const [pendingMerge, setPendingMerge] = useState(false);
+  const [pendingAbort, setPendingAbort] = useState(false);
   const mergeOperation = status?.operation?.kind === "merge" ? status.operation : null;
   return (
     <section className={styles.root} aria-label="合并流程">
@@ -33,7 +36,7 @@ export function GitMergeView({
         <div className={styles.operation} role="status" data-state={mergeOperation.state}>
           <AlertTriangle size={14} />
           <div><strong>合并：{operationStateLabel(mergeOperation.state)}</strong><span>{mergeOperation.currentObjectId?.slice(0, 12) ?? "请解决冲突或中止合并。"}</span></div>
-          <button type="button" disabled={busy} onClick={onAbort}><X size={11} />中止合并</button>
+          <button type="button" disabled={busy} onClick={() => setPendingAbort(true)}><X size={11} />中止合并</button>
         </div>
       ) : null}
       <div className={styles.form}>
@@ -43,7 +46,7 @@ export function GitMergeView({
         {strategy !== "squash" ? <label><span>合并说明（可选）</span><input value={message} onChange={(event) => setMessage(event.target.value)} /></label> : null}
         <div className={styles.buttons}>
           <button type="button" disabled={busy || !source.trim()} onClick={() => onPreview(source.trim())}><Search size={11} />预览</button>
-          <button type="button" disabled={busy || !source.trim() || preview?.source !== source.trim() || preview.alreadyMerged} onClick={() => onMerge(source.trim(), strategy, message)}><GitMerge size={11} />{strategy === "squash" ? "压缩" : "合并"}</button>
+          <button type="button" disabled={busy || !source.trim() || preview?.source !== source.trim() || preview.alreadyMerged} onClick={() => setPendingMerge(true)}><GitMerge size={11} />{strategy === "squash" ? "压缩" : "合并"}</button>
         </div>
       </div>
       {preview ? (
@@ -56,8 +59,42 @@ export function GitMergeView({
           <div><dt>工作树</dt><dd className={preview.dirty ? styles.warning : undefined}>{preview.dirty ? "存在本地改动；Git 可能拒绝重叠路径" : "干净"}</dd></div>
         </dl>
       ) : null}
+      {pendingMerge && preview?.source === source.trim() ? (
+        <GitConfirmActionDialog
+          title={strategy === "squash" ? "确认压缩合并" : "确认合并"}
+          description="请核对来源、策略和预览结果。"
+          target={`${source.trim()} → ${status?.branch.head ?? "当前分支"}`}
+          details={[
+            `策略：${mergeStrategyLabel(strategy)}`,
+            `进入提交：${preview.incomingCommits} 个`,
+            `结果：${preview.fastForward ? "可以快进" : strategy === "squash" ? "写入暂存区" : "创建合并提交"}`,
+            ...(preview.dirty ? ["工作树存在本地改动，Git 可能拒绝重叠路径。"] : []),
+          ]}
+          confirmLabel={strategy === "squash" ? "确认压缩" : "确认合并"}
+          confirmTone="default"
+          busy={busy}
+          onCancel={() => setPendingMerge(false)}
+          onConfirm={() => { setPendingMerge(false); onMerge(source.trim(), strategy, message); }}
+        />
+      ) : null}
+      {pendingAbort && mergeOperation ? (
+        <GitConfirmActionDialog
+          title="确认中止合并"
+          description="中止会丢弃本次合并产生且尚未提交的改动，并恢复到合并开始前。"
+          target={mergeOperation.currentObjectId ? `当前对象：${mergeOperation.currentObjectId.slice(0, 12)}` : "当前合并操作"}
+          details={status?.files.filter((file) => file.conflicted).map((file) => `冲突路径：${file.path}`) ?? []}
+          confirmLabel="确认中止"
+          busy={busy}
+          onCancel={() => setPendingAbort(false)}
+          onConfirm={() => { setPendingAbort(false); onAbort(); }}
+        />
+      ) : null}
     </section>
   );
+}
+
+function mergeStrategyLabel(strategy: GitMergeStrategy): string {
+  return ({ ff: "允许快进", no_ff: "始终创建合并提交", squash: "压缩到暂存区" })[strategy];
 }
 
 function operationStateLabel(state: NonNullable<GitStatusSnapshot["operation"]>["state"]): string {

@@ -1,0 +1,103 @@
+.surface {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  border: 1px solid var(--diff-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--diff-surface-bg);
+  color: var(--diff-code-text);
+  box-shadow: none;
+  isolation: isolate;
+}
+
+.surface[data-scroll-owner="viewer"] {
+  overflow: hidden;
+}
+
+.surface[data-scroll-owner="host"] {
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--diff-scrollbar-thumb) var(--diff-scrollbar-track);
+}
+
+.surface[data-embedded="true"] {
+  border-color: transparent;
+  border-radius: 0;
+  background: transparent;
+}
+
+.surface[data-profile="compact"] {
+  border-color: transparent;
+  border-radius: 0;
+  background: transparent;
+}
+
+.surface[data-profile="review"]:not([data-embedded="true"]) {
+  border-color: color-mix(in srgb, var(--diff-border-subtle) 82%, transparent);
+}
+
+.surface[data-profile="git"],
+.surface[data-profile="preview"] {
+  background: var(--diff-surface-bg);
+}
+
+.surface[data-scroll-owner="host"]::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.surface[data-scroll-owner="host"]::-webkit-scrollbar-track {
+  background: var(--diff-scrollbar-track);
+}
+
+.surface[data-scroll-owner="host"]::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--diff-scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+.surface[data-scroll-owner="host"]::-webkit-scrollbar-thumb:hover {
+  background: var(--diff-scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
+.quietState {
+  display: grid;
+  min-height: 120px;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  padding: 20px;
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+.quietState strong {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.quietState span {
+  max-width: 42ch;
+  font-size: 12px;
+  line-height: var(--ui-line-height-body);
+}
+
+.quietState[data-tone="error"] strong {
+  color: var(--color-danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .surface,
+  .surface *,
+  .surface *::before,
+  .surface *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

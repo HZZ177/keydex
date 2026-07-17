@@ -5,6 +5,21 @@ import { ReverseDialog } from "../src/renderer/pages/conversation/ReverseDialog"
 import type { ReverseDialogState } from "../src/renderer/pages/conversation/useConversationPanelModel";
 import type { SessionReverseFilePreview } from "../src/runtime/conversation";
 
+vi.mock("@/renderer/components/diff/wrappers/ReviewDiffView", () => ({
+  ReviewDiffView: ({ document }: {
+    document: { files: Array<{ displayPath: string; patch: string; binary: boolean; truncated: boolean }> };
+  }) => (
+    <section aria-label="文件审阅" data-keydex-diff-wrapper="review">
+      {document.files.map((file) => (
+        <div key={file.displayPath}>
+          <span>{file.displayPath}</span>
+          <code>{file.patch}</code>
+        </div>
+      ))}
+    </section>
+  ),
+}));
+
 describe("ReverseDialog", () => {
   it("shows all three modes and disables code modes for legacy messages", () => {
     renderDialog({
@@ -95,7 +110,7 @@ describe("ReverseDialog", () => {
     expect(conflictDetails?.open).toBe(false);
     fireEvent.click(conflictDetails?.querySelector("summary") as HTMLElement);
     expect(conflictDetails?.open).toBe(true);
-    expect(screen.getByLabelText("文件 diff")).toBeTruthy();
+    expect(screen.getByLabelText("文件审阅")).toBeTruthy();
 
     fireEvent.mouseEnter(screen.getByRole("button", { name: "仅回溯其他文件" }));
     expect(screen.getByText("跳过上方文件，只回溯其他文件；对话按上方选择处理。")).toBeTruthy();
@@ -205,10 +220,10 @@ describe("ReverseDialog", () => {
     expect(screen.getByLabelText("新增 1 行，删除 1 行")).toBeTruthy();
     fireEvent.click(readyDetails?.querySelector("summary") as HTMLElement);
     expect(readyDetails?.open).toBe(true);
-    const diff = readyDetails?.querySelector('[aria-label="文件 diff"]') as HTMLElement;
+    const diff = readyDetails?.querySelector('[aria-label="文件审阅"]') as HTMLElement;
     expect(diff).toBeTruthy();
-    expect(diff.querySelector('[data-kind="delete"] code')?.textContent).toBe("new");
-    expect(diff.querySelector('[data-kind="add"] code')?.textContent).toBe("old");
+    expect(diff.textContent).toContain("-new");
+    expect(diff.textContent).toContain("+old");
     expect(container.querySelector("pre")).toBeNull();
     fireEvent.click(readyDetails?.querySelector("summary") as HTMLElement);
     expect(readyDetails?.open).toBe(false);

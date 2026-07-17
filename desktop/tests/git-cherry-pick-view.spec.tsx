@@ -29,24 +29,27 @@ describe("Git cherry-pick workflow", () => {
     const { rerender } = render(
       <GitCherryPickView refs={[]} status={null} busy={false} requestedCommits={[]} outcome={null} onCherryPick={onCherryPick} onControl={onControl} />,
     );
-    fireEvent.change(screen.getByLabelText("Commits"), { target: { value: "one\ntwo, three" } });
-    fireEvent.click(screen.getByLabelText("Append origin metadata (-x)"));
-    fireEvent.click(screen.getByRole("button", { name: "Cherry-pick commits" }));
+    fireEvent.change(screen.getByLabelText("要摘取的提交"), { target: { value: "one\ntwo, three" } });
+    fireEvent.click(screen.getByLabelText("附加来源信息（-x）"));
+    fireEvent.click(screen.getByRole("button", { name: "摘取提交" }));
+    expect(onCherryPick).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "确认摘取提交" }).textContent).toContain("one → two → three");
+    fireEvent.click(screen.getByRole("button", { name: "确认摘取" }));
     expect(onCherryPick).toHaveBeenCalledWith(["one", "two", "three"], true);
 
-    fireEvent.change(screen.getByLabelText("Commits"), { target: { value: "one one" } });
-    expect(screen.getByRole("alert").textContent).toContain("appears more than once");
-    expect((screen.getByRole("button", { name: "Cherry-pick commits" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("要摘取的提交"), { target: { value: "one one" } });
+    expect(screen.getByRole("alert").textContent).toContain("重复出现");
+    expect((screen.getByRole("button", { name: "摘取提交" }) as HTMLButtonElement).disabled).toBe(true);
 
     rerender(<GitCherryPickView refs={[]} status={conflictedStatus(commits[1])} busy={false} requestedCommits={commits} outcome={operation("failed")} onCherryPick={onCherryPick} onControl={onControl} />);
     expect(screen.getByText(commits[0].slice(0, 12)).closest("li")?.getAttribute("data-state")).toBe("applied");
     expect(screen.getByText(commits[1].slice(0, 12)).closest("li")?.getAttribute("data-state")).toBe("conflicted");
     expect(screen.getByText(commits[2].slice(0, 12)).closest("li")?.getAttribute("data-state")).toBe("pending");
-    expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm skip" }));
-    fireEvent.click(screen.getByRole("button", { name: "Abort" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm abort" }));
+    expect((screen.getByRole("button", { name: "继续" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "跳过" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认跳过" }));
+    fireEvent.click(screen.getByRole("button", { name: "中止" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认中止" }));
     expect(onControl.mock.calls.map((call) => call[0])).toEqual(["skip", "abort"]);
   });
 

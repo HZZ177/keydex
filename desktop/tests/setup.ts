@@ -4,6 +4,20 @@ class TestResizeObserver {
   disconnect() {}
 }
 
+if (typeof globalThis.CSS === "undefined") {
+  Object.defineProperty(globalThis, "CSS", {
+    configurable: true,
+    writable: true,
+    value: { escape: (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, "\\$&") },
+  });
+} else if (typeof globalThis.CSS.escape !== "function") {
+  Object.defineProperty(globalThis.CSS, "escape", {
+    configurable: true,
+    writable: true,
+    value: (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, "\\$&"),
+  });
+}
+
 Object.defineProperty(globalThis, "__KEYDEX_TEST_FILE_MARKDOWN_SNAPSHOT_LOADER__", {
   configurable: true,
   writable: true,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 if __package__ in {None, ""}:
@@ -15,6 +15,7 @@ if __package__ in {None, ""}:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.app.agent.factory import AgentFactory
 from backend.app.annotations.api import router as annotations_router
 from backend.app.api.approvals import router as approvals_router
 from backend.app.api.archive import router as archive_router
@@ -47,6 +48,7 @@ from backend.app.core.config import AppSettings, get_settings
 from backend.app.core.exception_handler import register_exception_handlers
 from backend.app.core.logger import configure_logging, logger
 from backend.app.core.middleware import RequestLoggingMiddleware
+from backend.app.core.system_proxy import SystemProxyState
 from backend.app.git.events import GitMetadataEventService
 from backend.app.keydex import (
     KeydexCapabilityRuntimeCache,
@@ -140,6 +142,9 @@ def create_app(
             await app.state.mcp_manager.shutdown()
             if not warmup_task.done():
                 warmup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await warmup_task
+            await app.state.agent_factory.aclose()
             killed = command_process_manager.shutdown()
             if killed:
                 logger.info(f"[App] 已清理运行中 command 进程 | count={killed}")
@@ -172,6 +177,10 @@ def create_app(
         default_workspace_root=resolved_settings.workspace_root,
     )
     app.state.repositories = StorageRepositories(app.state.database)
+    app.state.system_proxy_state = SystemProxyState()
+    app.state.agent_factory = AgentFactory(
+        system_proxy_state=app.state.system_proxy_state,
+    )
     e2e_web_providers = ()
     if resolved_settings.e2e_model_transport:
         from backend.app.web.testing import E2EWebProvider
@@ -215,6 +224,7 @@ def create_app(
     app.state.mcp_manager = McpManager(
         settings=resolved_settings,
         repositories=app.state.repositories,
+        system_proxy_state=app.state.system_proxy_state,
     )
     app.state.thread_task_state_locks = ThreadTaskStateLocks()
     app.state.thread_task_service = ThreadTaskService(
@@ -262,6 +272,7 @@ def create_app(
             model_http_transport_provider=lambda: getattr(app.state, "model_http_transport", None),
             checkpointer=checkpointer,
             tool_registry=app.state.tool_registry,
+            factory=app.state.agent_factory,
         )
         app.state.checkpointer = checkpointer
         app.state.agent_runner = agent_runner

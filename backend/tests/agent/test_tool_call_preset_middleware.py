@@ -112,6 +112,53 @@ async def test_state_preset_returns_tool_call_and_atomic_reset_command() -> None
 
 
 @pytest.mark.asyncio
+async def test_compression_state_preset_marks_boundary_consumed_only_after_tool_call() -> None:
+    middleware = ToolCallPresetMiddleware()
+    preset = ToolCallPreset(
+        type="force",
+        calls=[ToolCallPresetItem(name="load_skill", args={"skill_name": "dev-plan"})],
+        metadata={
+            "source": "context_compression",
+            "boundary_id": "boundary-1",
+            "selected_group_ids": ["group-1", "group-1"],
+        },
+    )
+
+    async def handler(request: ModelRequest) -> AIMessage:
+        return AIMessage(content="normal")
+
+    not_consumed = await middleware.awrap_model_call(
+        _request(
+            tools=[SimpleNamespace(name="read_file")],
+            state={"pending_tool_call_preset": preset.to_dict()},
+        ),
+        handler,
+    )
+    assert isinstance(not_consumed, AIMessage)
+    assert not_consumed.content == "normal"
+
+    consumed = await middleware.awrap_model_call(
+        _request(
+            tools=[SimpleNamespace(name="load_skill")],
+            state={"pending_tool_call_preset": preset.to_dict()},
+        ),
+        handler,
+    )
+    assert isinstance(consumed, ExtendedModelResponse)
+    assert consumed.command is not None
+    assert consumed.command.update == {
+        "pending_tool_call_preset": None,
+        "structured_user_group_replay_markers": {
+            "boundary-1:group-1": {
+                "boundary_id": "boundary-1",
+                "group_id": "group-1",
+                "status": "consumed",
+            }
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_force_preset_without_registered_tool_falls_back_without_consuming() -> None:
     middleware = ToolCallPresetMiddleware()
     preset = _force_preset()

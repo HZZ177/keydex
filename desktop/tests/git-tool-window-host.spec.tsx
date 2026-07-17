@@ -86,6 +86,7 @@ describe("Git primary content host", () => {
     expect(screen.getByText("conversation content")).not.toBeNull();
     expect(screen.getByText("conversation content").closest("[hidden]")).toBeNull();
     expect(onContentUnmount).not.toHaveBeenCalled();
+    expect(screen.getByTestId("git-tool-window").closest("[hidden]")).not.toBeNull();
     expect(onNavigate).toHaveBeenCalledWith("/guid?focus=prompt");
   });
 

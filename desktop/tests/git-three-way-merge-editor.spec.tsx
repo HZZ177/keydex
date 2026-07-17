@@ -35,10 +35,10 @@ describe("Git three-way merge editor", () => {
     const twice = `${marked}${marked}`;
     render(<GitThreeWayMergeEditor file={file(twice)} saving={false} onSave={vi.fn()} />);
     expect(screen.getByText("1 / 2")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Next conflict" }));
+    fireEvent.click(screen.getByRole("button", { name: "下一个冲突" }));
     expect(screen.getByText("2 / 2")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Take theirs" }));
-    expect((screen.getByRole("textbox", { name: "Merge result" }) as HTMLTextAreaElement).value).not.toContain(">>>>>>> feature\nafter\nbefore\n<<<<<<< HEAD");
+    fireEvent.click(screen.getByRole("button", { name: "采用传入版本" }));
+    expect((screen.getByRole("textbox", { name: "合并结果" }) as HTMLTextAreaElement).value).not.toContain(">>>>>>> feature\nafter\nbefore\n<<<<<<< HEAD");
   });
 
   it("tracks manual edits, warns before unload, and saves explicit encoding/EOL", async () => {
@@ -47,30 +47,30 @@ describe("Git three-way merge editor", () => {
     const addEventListener = vi.spyOn(window, "addEventListener");
     render(<GitThreeWayMergeEditor file={{ ...file(marked), resultEol: "mixed" }} saving={false} onSave={onSave} onDirtyChange={onDirtyChange} />);
 
-    fireEvent.change(screen.getByRole("textbox", { name: "Merge result" }), { target: { value: "manual\nresult\n" } });
-    fireEvent.change(screen.getByLabelText("Result encoding"), { target: { value: "utf-8-bom" } });
-    fireEvent.change(screen.getByLabelText("Result line endings"), { target: { value: "crlf" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "合并结果" }), { target: { value: "manual\nresult\n" } });
+    fireEvent.change(screen.getByLabelText("结果编码"), { target: { value: "utf-8-bom" } });
+    fireEvent.change(screen.getByLabelText("结果换行符"), { target: { value: "crlf" } });
     await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
     expect(addEventListener).toHaveBeenCalledWith("beforeunload", expect.any(Function));
-    expect(screen.getByText(/Mixed line endings detected/)).toBeTruthy();
+    expect(screen.getByText(/检测到混合换行符/)).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Save result" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存结果" }));
     await waitFor(() => expect(onSave).toHaveBeenCalledWith("manual\nresult\n", "utf-8-bom", "crlf"));
     await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false));
   });
 
   it("shows all source panes and keeps save disabled until result changes", () => {
     render(<GitThreeWayMergeEditor file={file(marked)} saving={false} onSave={vi.fn()} />);
-    expect(screen.getByLabelText("BASE content").textContent).toBe("base\n");
-    expect(screen.getByLabelText("OURS content").textContent).toBe("ours\n");
-    expect(screen.getByLabelText("THEIRS content").textContent).toBe("theirs\n");
-    expect((screen.getByRole("button", { name: "Save result" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByLabelText("共同基础内容").textContent).toBe("base\n");
+    expect(screen.getByLabelText("当前分支内容").textContent).toBe("ours\n");
+    expect(screen.getByLabelText("传入版本内容").textContent).toBe("theirs\n");
+    expect((screen.getByRole("button", { name: "保存结果" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("exposes screen-reader instructions and keyboard-only resolve/save shortcuts", async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     render(<GitThreeWayMergeEditor file={file(marked)} saving={false} onSave={onSave} />);
-    const result = screen.getByRole("textbox", { name: "Merge result" });
+    const result = screen.getByRole("textbox", { name: "合并结果" });
     expect(result.getAttribute("aria-describedby")).toBeTruthy();
     expect(screen.getByText(/Alt\+1.*Alt\+S/)).toBeTruthy();
 
@@ -78,7 +78,7 @@ describe("Git three-way merge editor", () => {
     expect((result as HTMLTextAreaElement).value).toBe("before\ntheirs\nafter\n");
     fireEvent.keyDown(result, { key: "s", altKey: true });
     await waitFor(() => expect(onSave).toHaveBeenCalledWith("before\ntheirs\nafter\n", "utf-8", "lf"));
-    expect(screen.getByRole("status").textContent).toMatch(/saved|Unsaved/);
+    expect(screen.getByRole("status").textContent).toMatch(/已保存|尚未保存/);
   });
 });
 

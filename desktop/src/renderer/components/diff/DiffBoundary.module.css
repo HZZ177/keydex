@@ -1,0 +1,115 @@
+.loading,
+.error {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--diff-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--diff-surface-bg);
+}
+
+.loading {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  overflow: hidden;
+}
+
+.loadingLine {
+  width: min(72%, 560px);
+  height: 12px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--diff-surface-muted),
+    var(--surface-hover),
+    var(--diff-surface-muted)
+  );
+  background-size: 220% 100%;
+  animation: diff-loading 1.4s var(--motion-ease-out) infinite;
+}
+
+.loadingLine:nth-child(2) { width: min(88%, 680px); }
+.loadingLine:nth-child(3) { width: min(54%, 420px); }
+
+.error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  color: var(--color-text-2);
+}
+
+.error[data-compact="true"] {
+  padding: var(--space-2);
+}
+
+.error > svg {
+  flex: 0 0 auto;
+  color: var(--color-warning);
+}
+
+.errorContent {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.errorContent > strong { color: var(--color-text-1); }
+.errorContent > span { color: var(--color-text-3); }
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+
+.actions button,
+.diagnostic button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--color-text-2);
+}
+
+.actions button:hover,
+.actions button:focus-visible,
+.diagnostic button:hover,
+.diagnostic button:focus-visible {
+  background: var(--surface-hover);
+  color: var(--color-text-1);
+}
+
+.diagnostic {
+  margin-top: var(--space-1);
+  color: var(--color-text-3);
+}
+
+.diagnostic summary { cursor: pointer; }
+
+.diagnostic pre {
+  max-width: min(100%, 680px);
+  margin: var(--space-2) 0;
+  padding: var(--space-2);
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--diff-surface-muted);
+  color: var(--color-text-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
+@keyframes diff-loading {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loadingLine { animation: none; }
+}

@@ -138,6 +138,10 @@ export interface GitPatchCommand extends GitCommandBase {
   reverse?: boolean;
   checkOnly?: boolean;
   reject?: boolean;
+  expectedSourceVersion?: string | null;
+  expectedSourcePatch?: string | null;
+  sourceKind?: "working_tree" | "index" | null;
+  sourcePaths?: readonly string[];
 }
 
 export type GitPatchExportMode = "working_tree" | "index" | "commit" | "range";
@@ -317,6 +321,7 @@ export interface GitPushCommand extends GitCommandBase {
   tagName?: string | null;
   setUpstream?: boolean;
   tags?: boolean;
+  followTags?: boolean;
   forceWithLease?: boolean;
 }
 
@@ -1006,6 +1011,10 @@ function commandPayload(command: GitCommandBase): Record<string, unknown> {
     payload.reverse = patch.reverse ?? false;
     payload.check_only = patch.checkOnly ?? false;
     payload.reject = patch.reject ?? false;
+    payload.expected_source_version = patch.expectedSourceVersion ?? null;
+    payload.expected_source_patch = patch.expectedSourcePatch ?? null;
+    payload.source_kind = patch.sourceKind ?? null;
+    payload.source_paths = patch.sourcePaths ?? [];
   }
   if (
     "message" in command
@@ -1086,6 +1095,7 @@ function commandPayload(command: GitCommandBase): Record<string, unknown> {
     payload.tag_name = push.tagName ?? null;
     payload.set_upstream = push.setUpstream ?? false;
     payload.tags = push.tags ?? false;
+    payload.follow_tags = push.followTags ?? false;
     payload.force_with_lease = push.forceWithLease ?? false;
     delete payload.refspec;
     delete payload.prune;

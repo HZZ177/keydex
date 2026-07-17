@@ -31,18 +31,21 @@ describe("Git reset and restore", () => {
   it("requires a matching preview, shows overwritten untracked paths, and executes the reviewed reset", () => {
     const onPreview = vi.fn();
     const onReset = vi.fn();
-    const props = { status: status(), busy: false, resetOutcome: null, restoreOutcome: null, onPreview, onReset, onRestore: vi.fn() };
+    const props = { status: status(), busy: false, onPreview, onReset, onRestore: vi.fn() };
     const { rerender } = render(<GitResetRestoreView {...props} preview={null} initialResetTarget="HEAD@{1}" />);
-    expect((screen.getByRole("button", { name: "Reset to target" }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText("Reset mode"), { target: { value: "hard" } });
-    fireEvent.click(screen.getByRole("button", { name: "Preview reset" }));
+    expect((screen.getByRole("button", { name: "重置到目标" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("重置模式"), { target: { value: "hard" } });
+    fireEvent.click(screen.getByRole("button", { name: "预览重置" }));
     expect(onPreview).toHaveBeenCalledWith("HEAD@{1}", "hard");
 
     rerender(<GitResetRestoreView {...props} preview={preview()} initialResetTarget="HEAD@{1}" />);
     expect(screen.getByRole("alert").textContent).toContain("collision.txt");
     expect(screen.getAllByText("src/a.ts").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("untracked-loss")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Reset to target" }));
+    expect(screen.getByText("可能丢失未跟踪数据")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "重置到目标" }));
+    expect(screen.getByRole("dialog", { name: "确认重置分支" }).textContent).toContain("collision.txt");
+    expect(onReset).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "确认重置" }));
     expect(onReset).toHaveBeenCalledWith("HEAD@{1}", "hard");
     expect(resetRisk("soft", ["x"])).toBe("history-rewrite");
     expect(resetRisk("hard", [])).toBe("destructive");
@@ -50,13 +53,14 @@ describe("Git reset and restore", () => {
 
   it("keeps path restore separate and maps index/worktree destinations", () => {
     const onRestore = vi.fn();
-    render(<GitResetRestoreView status={status()} preview={null} initialResetTarget="" busy={false} resetOutcome={null} restoreOutcome={null} onPreview={vi.fn()} onReset={vi.fn()} onRestore={onRestore} />);
-    fireEvent.change(screen.getByLabelText("Restore paths"), { target: { value: "src/a.ts\nsrc/b.ts" } });
-    fireEvent.change(screen.getByLabelText("Restore source"), { target: { value: "HEAD~1" } });
-    fireEvent.change(screen.getByLabelText("Restore destination"), { target: { value: "both" } });
-    fireEvent.click(screen.getByRole("button", { name: "Restore selected paths" }));
-    expect(screen.getByRole("alertdialog", { name: "Confirm path restore" }).textContent).toContain("src/a.ts, src/b.ts");
-    fireEvent.click(screen.getByRole("button", { name: "Confirm restore" }));
+    render(<GitResetRestoreView status={status()} preview={null} initialResetTarget="" busy={false} onPreview={vi.fn()} onReset={vi.fn()} onRestore={onRestore} />);
+    fireEvent.change(screen.getByLabelText("要还原的路径"), { target: { value: "src/a.ts\nsrc/b.ts" } });
+    fireEvent.change(screen.getByLabelText("还原来源"), { target: { value: "HEAD~1" } });
+    fireEvent.change(screen.getByLabelText("还原目标位置"), { target: { value: "both" } });
+    fireEvent.click(screen.getByRole("button", { name: "还原所选路径" }));
+    expect(screen.getByRole("dialog", { name: "确认还原路径" }).textContent).toContain("src/a.ts、src/b.ts");
+    expect(onRestore).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "确认还原" }));
     expect(onRestore).toHaveBeenCalledWith(["src/a.ts", "src/b.ts"], "HEAD~1", true, true);
   });
 });

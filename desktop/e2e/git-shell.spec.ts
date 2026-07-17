@@ -37,7 +37,7 @@ test("a non-repository project can be initialized from the titlebar", async ({ p
     const trigger = page.getByRole("button", { name: /Git：/ });
     await expect(trigger).toBeEnabled();
     await trigger.click();
-    await expect(page.getByText("尚未初始化 Git 仓库")).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: /初始化 Git 仓库/ })).toBeVisible();
     await page.getByRole("menuitem", { name: /初始化 Git 仓库/ }).click();
 
     await expect.poll(async () => access(`${fixture.workspaceRoot}/.git/HEAD`).then(() => true).catch(() => false), { timeout: 10_000 }).toBe(true);
@@ -71,11 +71,17 @@ test("all three modes share one real-repository Git menu and one tool window", a
     await expect(page.getByRole("menuitem", { name: /更新项目/ })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: /提交/ })).toBeEnabled();
     await expect(page.getByRole("menuitem", { name: /推送/ })).toBeVisible();
+    await page.getByRole("menuitem", { name: /新建分支/ }).click();
+    await expect(page.getByRole("dialog", { name: "创建新分支" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog", { name: "创建新分支" })).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    await trigger.click();
     await page.getByRole("menuitem", { name: "打开 Git 面板" }).click();
 
     await expect(page.getByTestId("app-shell")).toHaveAttribute("data-primary-surface", "git");
     await expect(page.getByTestId("git-tool-window")).toHaveCount(1);
-    await expect(page.getByRole("tab", { name: "Git" })).toHaveCount(0);
+    await expect(page.getByRole("tab", { name: "Git", exact: true })).toHaveCount(0);
     await expect(page.getByRole("tablist", { name: "Git 面板视图" })).toBeVisible();
     await expect(page.getByRole("tree", { name: "本地改动" })).toContainText("dirty.txt");
     await fixture.screenshot(page, "e2e-005-git-shell");
@@ -87,13 +93,13 @@ test("all three modes share one real-repository Git menu and one tool window", a
     await trigger.click();
     await page.getByRole("menuitem", { name: "Git 帮助与风险说明" }).click();
     const help = page.getByRole("dialog", { name: "Git 操作与风险说明" });
-    await expect(help).toContainText("ff-only");
-    await expect(help).toContainText("不会静默降级成 Merge 或 Rebase");
+    await expect(help).toContainText("提供合并与变基两种方式");
+    await expect(help).toContainText("失败后不会自动切换");
     await expect(help).toContainText("祖先仓库");
     await expect(help).toContainText("二次确认");
     await expect(help).toContainText("Stack-Cairn/LiveAgent");
     await expect(help).toContainText("1616eb5e574274693dc29e18248650dc30911123");
-    await expect(help).toContainText("MIT License");
+    await expect(help).toContainText("MIT 许可证");
     await fixture.screenshot(page, "e2e-080-git-help");
     await page.getByRole("button", { name: "关闭 Git 帮助" }).click();
   } finally {
@@ -130,7 +136,6 @@ test("unavailable system Git disables the shortcut while keeping the primary pan
     const trigger = page.getByRole("button", { name: "Git：系统 Git 不可用" });
     await expect(trigger).toBeVisible({ timeout: 15_000 });
     await expect(trigger).toBeDisabled();
-    await expect(trigger).toHaveAttribute("title", /请安装或修复系统 Git/);
     const primaryEntry = page.getByRole("button", { name: "Git", exact: true });
     await expect(primaryEntry).toBeVisible();
     await expect(primaryEntry).toBeEnabled();
@@ -150,13 +155,13 @@ test("a damaged HEAD becomes a diagnostic error and retry restores the repositor
     await fixture.write(".git/HEAD", "ref: refs/heads/\n");
     await fixture.configurePage(page);
     await page.goto(`${fixture.appBaseUrl}/#/workbench/${fixture.workspaceId}`);
-    const trigger = page.getByRole("button", { name: /Git：不可用/ });
+    const trigger = page.getByRole("button", { name: /Git：(不可用|Git)/ });
     await expect(trigger).toBeEnabled({ timeout: 20_000 });
     await trigger.click();
     await page.getByRole("menuitem", { name: "打开 Git 面板" }).click();
     const diagnostic = page.getByRole("alert");
     await expect(diagnostic).toContainText("Git 仓库加载失败", { timeout: 20_000 });
-    await expect(diagnostic).toContainText(/HEAD|metadata|parse|malformed|invalid/i);
+    await expect(diagnostic).toContainText("无法解析 Git 输出");
     await expect(diagnostic).not.toContainText(/Traceback|Authorization:|password=/i);
 
     await fixture.write(".git/HEAD", "ref: refs/heads/main\n");

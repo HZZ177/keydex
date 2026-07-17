@@ -146,6 +146,27 @@ describe("Git store controller", () => {
     controller.dispose();
   });
 
+  it("reports queued, running, and terminal command states to the action host", async () => {
+    const queued = commandResult({ operationId: "patch-1", state: "queued", retryable: false });
+    const running = commandResult({ operationId: "patch-1", state: "running", retryable: false });
+    const succeeded = commandResult({ operationId: "patch-1", state: "succeeded", retryable: false });
+    const runtime = {
+      subscribe: vi.fn(() => () => undefined),
+      operation: vi.fn().mockResolvedValueOnce(running).mockResolvedValueOnce(succeeded),
+      status: vi.fn().mockResolvedValue(status("after-patch")),
+      refs: vi.fn().mockResolvedValue({ repositoryId, repositoryVersion: version("after-patch"), refs: [] }),
+      history: vi.fn().mockResolvedValue({ repositoryId, repositoryVersion: version("after-patch"), commits: [], nextCursor: null }),
+      diff: vi.fn().mockResolvedValue({ repositoryId, repositoryVersion: version("after-patch"), files: [] }),
+    } as unknown as GitRuntime;
+    const controller = new GitStoreController(preparedStore(), runtime, { operationPollMs: 0 });
+    const onStateChange = vi.fn();
+
+    await expect(controller.runCommand(async () => queued, onStateChange)).resolves.toBe(succeeded);
+    expect(onStateChange.mock.calls.map(([operation]) => operation.state))
+      .toEqual(["queued", "running", "succeeded"]);
+    controller.dispose();
+  });
+
   it("coalesces external worktree changes into a lightweight status refresh", async () => {
     vi.useFakeTimers();
     const runtime = {
@@ -323,6 +344,82 @@ describe("Git store controller", () => {
       projectRoot: "C:/project",
     }, { includeNested: true });
     expect(runtime.history).not.toHaveBeenCalled();
+    controller.dispose();
+  });
+
+  it("surfaces a structured initial status failure and clears it after a successful retry", async () => {
+    const discovery = {
+      capability: {
+        available: true,
+        executable: "git",
+        version: "2.50.0",
+        supportsSwitch: true,
+        supportsRestore: true,
+        supportsPathspecFromFile: true,
+        lfsAvailable: false,
+      },
+      repositories: [{
+        id: repositoryId,
+        workspaceId: "workspace-a",
+        rootPath: "C:/project",
+        displayPath: ".",
+        gitDirPath: "C:/project/.git",
+        kind: "workspace" as const,
+        parentRepoId: null,
+        bare: false,
+        ancestorAuthorization: "not_required" as const,
+      }],
+      ancestorCandidate: null,
+    };
+    const damagedHead = Object.assign(new Error("fatal: invalid HEAD metadata"), {
+      code: "git_failed",
+    });
+    const runtime = {
+      subscribe: vi.fn(() => () => undefined),
+      discover: vi.fn().mockResolvedValue(discovery),
+      status: vi.fn().mockRejectedValueOnce(damagedHead).mockResolvedValueOnce(status("main")),
+      refs: vi.fn().mockResolvedValue({ repositoryId, repositoryVersion: version("ok"), refs: [] }),
+    } as unknown as GitRuntime;
+    const store = createGitStore();
+    const controller = new GitStoreController(store, runtime);
+    const scope = { workspaceId: "workspace-a", projectRoot: "C:/project" };
+
+    await controller.activateProject(scope);
+
+    expect(store.getState().projects[scope.workspaceId].error).toEqual({
+      code: "git_failed",
+      message: "fatal: invalid HEAD metadata",
+    });
+    expect(store.getState().statusByRepository[repositoryId]).toBeUndefined();
+
+    await controller.activateProject(scope);
+
+    expect(store.getState().projects[scope.workspaceId]).toMatchObject({ loading: false, error: null });
+    expect(store.getState().statusByRepository[repositoryId]?.branch.head).toBe("main");
+    expect(runtime.status).toHaveBeenCalledTimes(2);
+    controller.dispose();
+  });
+
+  it("keeps a cached status visible when a later structured refresh fails", async () => {
+    const store = preparedStore();
+    store.getState().setStatus(status("cached"));
+    const refreshError = Object.assign(new Error("temporary status failure"), {
+      code: "git_failed",
+    });
+    const runtime = {
+      subscribe: vi.fn(() => () => undefined),
+      status: vi.fn().mockRejectedValue(refreshError),
+    } as unknown as GitRuntime;
+    const controller = new GitStoreController(store, runtime);
+
+    await controller.refreshRepository({
+      workspaceId: "workspace-a",
+      projectRoot: "C:/project",
+      repositoryId,
+    }, ["status"]);
+
+    expect(store.getState().projects["workspace-a"].error).toBeNull();
+    expect(store.getState().statusByRepository[repositoryId]?.branch.head).toBe("cached");
     controller.dispose();
   });
 

@@ -35,7 +35,7 @@ describe("Git external change refresh", () => {
     );
 
     await waitFor(() => expect(fixture.channel.bindGitRepositoryWatch).toHaveBeenCalledTimes(1));
-    expect(fixture.gitRuntime.discover).toHaveBeenCalledTimes(1);
+    expect(fixture.gitRuntime.discover).toHaveBeenCalledTimes(2);
 
     act(() => fixture.emit({
       action: "pong",
@@ -45,10 +45,10 @@ describe("Git external change refresh", () => {
       await new Promise((resolve) => window.setTimeout(resolve, 120));
     });
 
-    expect(fixture.gitRuntime.discover).toHaveBeenCalledTimes(1);
+    expect(fixture.gitRuntime.discover).toHaveBeenCalledTimes(2);
     expect(fixture.gitRuntime.status).toHaveBeenCalledTimes(1);
     expect(fixture.gitRuntime.refs).toHaveBeenCalledTimes(1);
-    expect(fixture.gitRuntime.history).toHaveBeenCalledTimes(1);
+    expect(fixture.gitRuntime.history).not.toHaveBeenCalled();
     expect(fixture.channel.bindGitRepositoryWatch).toHaveBeenCalledTimes(1);
     expect(fixture.channel.unbindGitRepositoryWatch).not.toHaveBeenCalled();
 
@@ -80,7 +80,7 @@ describe("Git external change refresh", () => {
     expect(fixture.channel.bindWorkspaceWatch).toHaveBeenCalledWith("workspace-1");
     expect(fixture.gitRuntime.status).toHaveBeenCalledTimes(1);
     expect(fixture.gitRuntime.refs).toHaveBeenCalledTimes(1);
-    expect(fixture.gitRuntime.history).toHaveBeenCalledTimes(1);
+    expect(fixture.gitRuntime.history).not.toHaveBeenCalled();
     expect(fixture.gitRuntime.diff).not.toHaveBeenCalled();
 
     act(() => fixture.emit({
@@ -96,7 +96,7 @@ describe("Git external change refresh", () => {
     }));
     await waitFor(() => {
       expect(fixture.gitRuntime.refs).toHaveBeenCalledTimes(2);
-      expect(fixture.gitRuntime.history).toHaveBeenCalledTimes(2);
+      expect(fixture.gitRuntime.history).toHaveBeenCalledTimes(1);
     });
     expect(fixture.gitRuntime.status).toHaveBeenCalledTimes(1);
 
@@ -111,8 +111,8 @@ describe("Git external change refresh", () => {
     }));
     await waitFor(() => {
       expect(fixture.gitRuntime.status).toHaveBeenCalledTimes(2);
-      expect(fixture.gitRuntime.diff).toHaveBeenCalledTimes(1);
     });
+    expect(fixture.gitRuntime.diff).not.toHaveBeenCalled();
 
     rendered.unmount();
     expect(fixture.channel.close).toHaveBeenCalledTimes(1);

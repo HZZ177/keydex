@@ -47,7 +47,7 @@ export interface WorkspaceFileBrowserProps {
   initialState?: WorkspaceFileBrowserState | null;
   onQuoteSelection?: (request: PreviewQuoteSelectionRequest) => void;
   onStartChatFromAnnotation?: (request: PreviewAnnotationChatRequest | PreviewAnnotationChatRequest[]) => void;
-  onPreviewPathChange?: (path: string | null) => void;
+  onPreviewPathChange?: (path: string | null, refreshExisting?: boolean) => void;
   onPreviewOutlineReveal?: (item: MarkdownOutlineItem) => void;
   onStateChange?: (state: WorkspaceFileBrowserState) => void;
   markdownRuntimeSnapshotLoader?: FileMarkdownRuntimeSnapshotLoader;
@@ -464,7 +464,12 @@ export function WorkspaceFileBrowser({
               initialState={workspacePanelState}
               onSelectFile={openPreview}
               onStateChange={setWorkspacePanelState}
-              onManualRefresh={() => setPreviewRefreshRequestId((requestId) => requestId + 1)}
+              onManualRefresh={() => {
+                setPreviewRefreshRequestId((requestId) => requestId + 1);
+                if (previewPlacement === "external" && selectedPath) {
+                  onPreviewPathChange?.(selectedPath, true);
+                }
+              }}
             />
           </div>
           {outlineAvailable ? (

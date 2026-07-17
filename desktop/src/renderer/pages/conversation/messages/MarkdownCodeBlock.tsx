@@ -748,6 +748,9 @@ function previewEntryIdForRequest(request: PreviewRequest, scopeKey: string): st
   if (request.type === "diff") {
     return `${scopeKey}:diff:${request.path}:${hashPreviewText(request.diff)}`;
   }
+  if (request.type === "diff-document") {
+    return `${scopeKey}:diff-document:${request.document.id}:${request.document.sourceVersion}`;
+  }
   return `${scopeKey}:content:${request.contentType}:${request.title}:${hashPreviewText(request.content)}`;
 }
 

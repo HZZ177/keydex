@@ -407,13 +407,14 @@ async def test_context_compression_before_model_runs_blocking_compression(tmp_pa
 
     assert result is not None
     messages = result["messages"]
-    assert isinstance(messages[1], SystemMessage)
-    assert messages[2] is current_context
-    assert messages[3] is current_user
+    assert isinstance(messages[1], HumanMessage)
+    assert messages[2].content == "最近回答"
+    assert messages[3].content == current_context.content
+    assert messages[4].content == current_user.content
     assert "阻塞式摘要" in str(messages[1].content)
     assert "当前问题" not in str(messages[1].content)
     assert service.calls == ["automatic"]
-    assert service.message_batches == [["旧问题", "最近回答"]]
+    assert service.message_batches == [["旧问题"]]
     stages = [event.payload["stage"] for event in events]
     assert "compression_started" in stages
     assert "compression_completed" in stages
@@ -589,7 +590,7 @@ async def test_context_compression_before_model_adds_pending_estimate_to_latest_
 
     assert result is not None
     assert service.calls == ["automatic"]
-    assert service.message_batches == [["旧问题", "旧回答"]]
+    assert service.message_batches == [["旧问题"]]
     snapshots = [
         event.payload for event in events if event.payload["stage"] == "context_window_snapshot"
     ]
@@ -667,6 +668,7 @@ async def test_context_compression_before_model_estimates_only_after_latest_usag
                     AIMessage(
                         content="调用工具",
                         id="a_tool",
+                        tool_calls=[{"id": "call_1", "name": "list_dir", "args": {}}],
                         usage_metadata={
                             "input_tokens": 720,
                             "output_tokens": 40,
@@ -745,6 +747,7 @@ async def test_context_compression_before_model_compresses_current_turn_after_to
                     AIMessage(
                         content="我先查看目录",
                         id="a_tool",
+                        tool_calls=[{"id": "call_1", "name": "list_dir", "args": {}}],
                         usage_metadata={
                             "input_tokens": 720,
                             "output_tokens": 40,
@@ -761,11 +764,12 @@ async def test_context_compression_before_model_compresses_current_turn_after_to
 
     assert result is not None
     assert service.calls == ["automatic"]
-    assert service.message_batches == [["看下现在项目的情况", "我先查看目录", "y" * 80]]
+    assert service.message_batches == [["看下现在项目的情况"]]
     messages = result["messages"]
-    assert isinstance(messages[1], SystemMessage)
-    assert messages[2] is current_user
-    assert tool_result not in messages
+    assert isinstance(messages[1], HumanMessage)
+    assert messages[2].content == "我先查看目录"
+    assert messages[3].content == tool_result.content
+    assert messages[3].tool_call_id == tool_result.tool_call_id
     assert "当前轮工具结果摘要" in str(messages[1].content)
 
 
@@ -824,6 +828,13 @@ async def test_context_compression_before_model_uses_distinct_notice_per_operati
                         AIMessage(
                             content="读取工具结果",
                             id=f"a_tool_{index}",
+                            tool_calls=[
+                                {
+                                    "id": f"call_{index}",
+                                    "name": "read_file",
+                                    "args": {},
+                                }
+                            ],
                             usage_metadata={
                                 "input_tokens": 720,
                                 "output_tokens": 40,
@@ -1015,6 +1026,85 @@ async def test_context_compression_wrap_model_skips_snapshot_without_usage_metad
     persisted = repositories.sessions.get(session.id)
     assert persisted is not None
     assert persisted.context_window_usage is None
+
+
+@pytest.mark.asyncio
+async def test_context_compression_reports_first_materialized_final_request_once(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    session = repositories.sessions.create(
+        session_id="ses_final_request",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="最终请求诊断",
+    )
+    events: list[DomainEvent] = []
+
+    async def collect(event: DomainEvent) -> None:
+        events.append(event)
+
+    summary = build_context_compression_replacement_messages(
+        summary="较早历史摘要",
+        boundary_id="boundary-1",
+    ).replaced_messages[0]
+    state = {
+        "context_compression_diagnostics": {
+            "boundary_id": "boundary-1",
+            "replacement_actual_tokens": 9000,
+            "deferred_replay_reserve": 4000,
+            "deferred_replay_actual_tokens": 700,
+            "deferred_replay_delta_tokens": -3300,
+            "materialization_status": "materialized",
+        }
+    }
+    token = set_request_context(
+        session_id=session.id,
+        active_session_id=session.id,
+        trace_id="trace_final_request",
+        user_id=session.user_id,
+    )
+    try:
+        middleware = ContextCompressionMiddleware(
+            settings=ContextCompressionRuntimeSettings(
+                enabled=True,
+                context_window_tokens=100_000,
+            ),
+            repositories=repositories,
+            dispatcher=EventDispatcher([collect]),
+            checkpointer=object(),
+        )
+
+        async def handler(_: ModelRequest) -> ModelResponse:
+            return ModelResponse(result=[AIMessage(content="ok")], structured_response=None)
+
+        request = ModelRequest(
+            model=object(),
+            messages=[summary, HumanMessage(content="近期原始请求")],
+            system_message=SystemMessage(content="当前系统上下文"),
+            tool_choice=None,
+            tools=[],
+            response_format=None,
+            state=state,
+            runtime=None,
+            model_settings={},
+        )
+        await middleware.awrap_model_call(request, handler)
+        await middleware.awrap_model_call(request, handler)
+    finally:
+        reset_request_context(token)
+
+    reports = [
+        event.payload
+        for event in events
+        if event.payload.get("stage") == "compression_final_request"
+    ]
+    assert len(reports) == 1
+    assert reports[0]["boundary_id"] == "boundary-1"
+    assert reports[0]["replacement_actual_tokens"] == 9000
+    assert reports[0]["deferred_replay_reserve"] == 4000
+    assert reports[0]["deferred_replay_actual_tokens"] == 700
+    assert reports[0]["system_tool_actual_tokens"] > 0
+    assert reports[0]["final_request_actual_tokens"] > 0
+    assert reports[0]["provider_hard_window_margin"] > 0
 
 
 @pytest.mark.asyncio

@@ -1,48 +1,21 @@
-import { AlertTriangle, GitBranch, ShieldCheck, X } from "lucide-react";
-import { useEffect, useRef } from "react";
-import { createPortal } from "react-dom";
+import { AlertTriangle, GitBranch, ShieldCheck } from "lucide-react";
+
+import { AppDialog } from "@/renderer/components/dialog";
 
 import styles from "./ProjectGitMenu.module.css";
 
 export function GitHelpDialog({ onClose }: { onClose: () => void }) {
-  const closeRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    queueMicrotask(() => closeRef.current?.focus());
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      onClose();
-    };
-    document.addEventListener("keydown", handleKeyDown, true);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown, true);
-      previousFocus?.focus();
-    };
-  }, [onClose]);
-
-  return createPortal(
-    <div className={styles.helpOverlay} role="presentation" onMouseDown={(event) => {
-      if (event.target === event.currentTarget) onClose();
-    }}>
-      <section
-        className={styles.helpDialog}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="git-help-title"
-      >
-        <header className={styles.helpHeader}>
-          <div>
-            <span className={styles.helpEyebrow}><GitBranch size={13} /> Git 工作台</span>
-            <h2 id="git-help-title">Git 操作与风险说明</h2>
-          </div>
-          <button ref={closeRef} type="button" aria-label="关闭 Git 帮助" onClick={onClose}>
-            <X size={16} />
-          </button>
-        </header>
-
-        <div className={styles.helpBody}>
+  return (
+    <AppDialog
+      title="Git 操作与风险说明"
+      description={<span className={styles.helpEyebrow}><GitBranch size={13} /> Git 工作台</span>}
+      size="form"
+      backdrop="plain"
+      closeLabel="关闭 Git 帮助"
+      closeOnOverlayClick={false}
+      onClose={onClose}
+    >
+      <div className={styles.helpBody}>
           <section>
             <h3>两个入口，同一项目状态</h3>
             <p>顶部菜单用于更新、提交、推送、切换分支等高频动作；左侧 Git 入口会在主内容区打开完整面板，用于改动、历史、分支、远程、冲突和高级操作。所有命令只作用于当前项目中选定的 Git 根。</p>
@@ -54,7 +27,7 @@ export function GitHelpDialog({ onClose }: { onClose: () => void }) {
               <li><strong>写入：</strong>暂存、提交、切换、合并等会改变本地仓库，执行前展示目标和影响。</li>
               <li><strong>高风险：</strong>强制推送、硬重置、删除、中止、跳过等操作要求与当前任务绑定的二次确认。</li>
             </ul>
-            <p>“更新项目”默认仅允许快进；分支发生分叉时不会静默改用合并或变基，必须由用户重新选择策略。</p>
+            <p>“更新项目”按 PyCharm 的交互结构提供合并与变基两种方式；Keydex 只执行弹窗中确认的方式，失败后不会自动切换。</p>
           </section>
           <section>
             <h3><AlertTriangle size={14} /> 授权、认证与恢复</h3>
@@ -67,9 +40,7 @@ export function GitHelpDialog({ onClose }: { onClose: () => void }) {
           <footer>
             完整说明收录在内置 Keydex 产品指南的“Git 工作台”章节。开源参考：Stack-Cairn/LiveAgent，固定提交 1616eb5e574274693dc29e18248650dc30911123，采用 MIT 许可证；详细归属与改写边界见该章节末尾的 LiveAgent 归属说明。
           </footer>
-        </div>
-      </section>
-    </div>,
-    document.body,
+      </div>
+    </AppDialog>
   );
 }

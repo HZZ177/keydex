@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   GOAL_INITIAL_THREAD_TASK_KEY,
@@ -67,5 +70,23 @@ describe("goal seed context helpers", () => {
       type: "goal",
       trigger: "task_start",
     });
+  });
+
+  it("keeps Conversation Home and Workbench on the shared non-seed payload path", () => {
+    const rendererRoot = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../src/renderer",
+    );
+    const sources = [
+      "pages/conversation/ConversationSessionSurface.tsx",
+      "pages/home/HomePage.tsx",
+      "pages/workbench/WorkbenchAssistantSurface.tsx",
+    ].map((relativePath) => readFileSync(path.join(rendererRoot, relativePath), "utf8"));
+
+    for (const source of sources) {
+      expect(source).toContain("runtimeParamsWithGoalContextItem");
+      expect(source).toContain("runtimeParamsWithInitialGoalTask");
+      expect(source).not.toContain("seed_turn_context");
+    }
   });
 });

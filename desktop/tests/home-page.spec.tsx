@@ -701,16 +701,6 @@ describe("HomePage", () => {
       expect(createThreadTask).toHaveBeenCalledWith("ses-1", {
         type: "goal",
         objective: "完成新会话目标",
-        metadata: {
-          seed_turn_context: {
-            schema_version: 1,
-            source: "goal_composer",
-            message: "完成新会话目标",
-            context_items: [],
-            runtime_params: {},
-            attachments: [],
-          },
-        },
       });
     });
     expect(onNavigateToConversation).toHaveBeenCalledWith(

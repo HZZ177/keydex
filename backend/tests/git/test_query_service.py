@@ -76,6 +76,7 @@ async def test_query_service_routes_real_status_refs_history_diff_and_blame(
     history = await service.history(request, limit=1)
     diff = await service.diff(request)
     scoped_diff = await service.diff(request, path="README.md")
+    untracked_diff = await service.diff(request, path="new file.txt")
     blame = await service.blame(request, "README.md")
     reflog = await service.reflog(request, limit=20)
 
@@ -85,6 +86,13 @@ async def test_query_service_routes_real_status_refs_history_diff_and_blame(
     assert history.commits[0].subject == "ignore fixture file"
     assert diff.files[0].new_path == "README.md"
     assert [item.new_path for item in scoped_diff.files] == ["README.md"]
+    assert len(untracked_diff.files) == 1
+    assert untracked_diff.files[0].old_path is None
+    assert untracked_diff.files[0].new_path == "new file.txt"
+    assert untracked_diff.files[0].status == "untracked"
+    assert untracked_diff.files[0].additions == 1
+    assert untracked_diff.files[0].deletions == 0
+    assert "+new" in untracked_diff.files[0].raw_patch
     with pytest.raises(GitApiError, match="traversal"):
         await service.diff(request, path="../README.md")
     assert blame.lines[0].filename == "README.md"

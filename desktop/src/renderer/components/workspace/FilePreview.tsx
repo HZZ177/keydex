@@ -114,7 +114,11 @@ import {
   resolveHtmlPreviewFrameSource,
 } from "@/renderer/utils/htmlPreviewFrame";
 import { openSkillResourcePreview, skillResourcePreviewError } from "@/renderer/utils/skillResourcePreview";
-import { parseUnifiedDiffDisplayLines } from "@/renderer/utils/unifiedDiff";
+import {
+  diffDocumentRawSource,
+  normalizeDiffPreviewRequest,
+} from "@/renderer/components/diff/adapters/previewDocument";
+import { PreviewDiffView } from "@/renderer/components/diff/wrappers/PreviewDiffView";
 
 import { AnnotationRail } from "@/renderer/features/annotations/ui/AnnotationRail";
 import { AnnotationStatusSection } from "@/renderer/features/annotations/ui/AnnotationStatusSection";
@@ -288,6 +292,10 @@ export function FilePreview({
   const panelChrome = chrome === "panel";
   const usesFileOpenDelay = panelChrome && isPathPreviewRequest(request);
   const kind = useMemo(() => detectPreviewKind(request), [request]);
+  const canonicalDiffRequest = useMemo(() => {
+    const normalized = normalizeDiffPreviewRequest(request);
+    return normalized.type === "diff-document" ? normalized : null;
+  }, [request]);
   const immediateContent = useMemo(() => immediatePreviewContent(request), [request]);
   const [content, setContent] = useState(() => immediatePreviewContent(request) ?? "");
   const [persistedContent, setPersistedContent] = useState(() => immediatePreviewContent(request) ?? "");
@@ -437,6 +445,18 @@ export function FilePreview({
   const renderedPreviewRevision = splitMode && splitPreviewSnapshot.requestIdentity === requestIdentity
     ? splitPreviewSnapshot.revision
     : livePreviewRevision;
+  const renderedDiffRequest = useMemo(() => {
+    if (canonicalDiffRequest) return canonicalDiffRequest;
+    if (kind !== "diff" || !isPathPreviewRequest(request) || previewLoading) return null;
+    const normalized = normalizeDiffPreviewRequest({
+      type: "content",
+      title: fileName(request.path),
+      content: renderedPreviewContent,
+      contentType: "diff",
+      sourcePath: request.path,
+    });
+    return normalized.type === "diff-document" ? normalized : null;
+  }, [canonicalDiffRequest, kind, previewLoading, renderedPreviewContent, request]);
   useEffect(() => {
     const revision = previewContent === persistedContent
       ? livePreviewRevision
@@ -475,6 +495,7 @@ export function FilePreview({
   const editable = Boolean(
     isPathPreviewRequest(request)
     && kind !== "image"
+    && kind !== "diff"
     && runtime
     && (request.type === "local-file"
       ? typeof runtime.localPreview?.writeDocument === "function"
@@ -797,6 +818,18 @@ export function FilePreview({
       };
     }
 
+    if (request.type === "diff-document") {
+      const nextContent = diffDocumentRawSource(request) || "暂无 diff";
+      setPersistedContent(nextContent);
+      draftsRef.current.delete(requestIdentity);
+      setContent(nextContent);
+      setLoading(false);
+      setReloading(false);
+      return () => {
+        active = false;
+      };
+    }
+
     if (identityChanged) {
       setPersistedContent("");
       setContent("");
@@ -963,8 +996,8 @@ export function FilePreview({
   }, [requestIdentity, usesFileOpenDelay]);
 
   const title = previewTitle(request);
-  const canPreview = kind === "markdown" || kind === "html" || kind === "mermaid";
-  const canRenderPreview = canPreview || kind === "diff";
+  const canPreview = kind === "markdown" || kind === "html" || kind === "mermaid" || kind === "diff";
+  const canRenderPreview = canPreview;
   const canSplit = kind === "markdown" || kind === "html";
   const sourceLabel = previewSourceLabel(request);
   const formattedSource = previewContent;
@@ -2053,7 +2086,21 @@ export function FilePreview({
     }
 
     if (kind === "diff") {
-      return <DiffPreview diff={renderedPreviewContent || "暂无 diff"} />;
+      if (renderedDiffRequest) {
+        return (
+          <PreviewDiffView
+            document={renderedDiffRequest.document}
+            scrollScopeKey={requestIdentity}
+            actions={{
+              copyPatch: async (patch) => {
+                if (!navigator.clipboard?.writeText) throw new Error("剪贴板不可用");
+                await navigator.clipboard.writeText(patch);
+              },
+            }}
+          />
+        );
+      }
+      return null;
     }
 
     return renderSourcePane();
@@ -5567,29 +5614,15 @@ function markdownHeadingSlug(title: string): string {
     .replace(/\s+/gu, "-");
 }
 
-function DiffPreview({ diff }: { diff: string }) {
-  const lines = parseUnifiedDiffDisplayLines(diff);
-  return (
-    <PreviewScrollPane className={styles.diffPane} aria-label="Diff 渲染内容">
-      {lines.map((line) => (
-        <div key={line.key} className={styles.diffLine} data-kind={line.kind}>
-          <span className={styles.diffLineNo}>{line.lineNumber ?? ""}</span>
-          <code>
-            {line.sign}
-            {line.content || " "}
-          </code>
-        </div>
-      ))}
-    </PreviewScrollPane>
-  );
-}
-
 function immediatePreviewContent(request: FilePreviewRequest): string | null {
   if (request.type === "content" || request.type === "skill-resource") {
     return request.content || "";
   }
   if (request.type === "diff") {
     return request.diff || "暂无 diff";
+  }
+  if (request.type === "diff-document") {
+    return diffDocumentRawSource(request) || "暂无 diff";
   }
   return null;
 }
@@ -5609,7 +5642,7 @@ function detectPreviewKind(request: FilePreviewRequest): PreviewKind {
   if (request.type === "content" || request.type === "skill-resource") {
     return contentKindToPreviewKind(request.contentType);
   }
-  if (request.type === "diff") {
+  if (request.type === "diff" || request.type === "diff-document") {
     return "diff";
   }
   const path = isPathPreviewRequest(request) ? request.path : "";
@@ -5680,7 +5713,7 @@ function sourceLanguage(request: FilePreviewRequest, kind: PreviewKind): string 
     const ext = request.resourcePath.split(".").pop()?.toLowerCase() ?? "";
     return languageFromExtension(ext, kind);
   }
-  if (request.type === "diff") {
+  if (request.type === "diff" || request.type === "diff-document") {
     return "diff";
   }
   const ext = isPathPreviewRequest(request) ? request.path.split(".").pop()?.toLowerCase() ?? "" : "";
@@ -5781,6 +5814,9 @@ function previewRequestIdentity(
   if (request.type === "diff") {
     return `diff:${request.path}:${stableMarkdownIdentityHash(request.diff)}`;
   }
+  if (request.type === "diff-document") {
+    return `diff-document:${request.document.id}:${request.document.sourceVersion}`;
+  }
   if (request.type === "skill-resource") {
     return [
       "skill-resource",
@@ -5804,7 +5840,7 @@ function normalizePreviewEventPath(path: string): string {
 }
 
 function previewTitle(request: FilePreviewRequest): string {
-  if (request.type === "content" || request.type === "skill-resource") {
+  if (request.type === "content" || request.type === "skill-resource" || request.type === "diff-document") {
     return request.title;
   }
   return fileName(request.path);
@@ -5816,6 +5852,9 @@ function previewSourceLabel(request: FilePreviewRequest): string {
   }
   if (request.type === "content") {
     return request.sourcePath ?? "消息内容";
+  }
+  if (request.type === "diff-document") {
+    return request.sourceLabel ?? request.sourcePath ?? "差异内容";
   }
   return request.path;
 }

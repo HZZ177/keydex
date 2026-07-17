@@ -140,6 +140,16 @@ export interface SessionReverseFilePreview {
   insertions: number;
   deletions: number;
   diff?: string | null;
+  raw_patch?: string | null;
+  status?: "added" | "modified" | "deleted" | "unknown";
+  content_kind?: "text" | "binary" | "unknown_encoding";
+  binary_reason?: string | null;
+  truncation_state?: "complete" | "recoverable" | "unrecoverable";
+  truncation_reason?: string | null;
+  can_load_more?: boolean;
+  patch_direction?: "current_to_target";
+  patch_precision?: "exact" | "approximate";
+  patch_complete?: boolean;
 }
 
 export interface SessionReversePreview {

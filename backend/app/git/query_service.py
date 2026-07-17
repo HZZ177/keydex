@@ -58,6 +58,8 @@ from .models import (
     GitConflictsResponse,
     GitConflictStageResponse,
     GitDiffResponse,
+    GitFileDiffResponse,
+    GitFileStatusCode,
     GitDiscoveryRequest,
     GitDiscoveryResponse,
     GitHistoryPageResponse,
@@ -867,6 +869,7 @@ class GitQueryService:
         version = self.version(registered.response)
         base = ["diff", "--no-ext-diff", "--binary", "--find-renames"]
         numstat_args = ["diff", "--no-ext-diff", "--find-renames", "--numstat", "-z"]
+        normalized_path: str | None = None
         if cached:
             base.append("--cached")
             numstat_args.append("--cached")
@@ -885,11 +888,82 @@ class GitQueryService:
             parse_git_diff(patch.stdout, truncated=patch.stdout_truncated),
             parse_numstat_z(numstat.stdout),
         )
+        if not cached and normalized_path is not None and not files:
+            files = await self._untracked_path_diff(
+                registered,
+                normalized_path,
+                cancel_event=cancel_event,
+            )
         return GitDiffResponse(
             repository_id=registered.response.id,
             repository_version=version,
             files=files,
         )
+
+    async def _untracked_path_diff(
+        self,
+        registered: _RegisteredRepository,
+        path: str,
+        *,
+        cancel_event: asyncio.Event | None,
+    ) -> list[GitFileDiffResponse]:
+        untracked = await self._run(
+            registered,
+            ["ls-files", "--others", "--exclude-standard", "-z", "--", path],
+            cancel_event=cancel_event,
+        )
+        if path not in _nul_paths(untracked.stdout):
+            return []
+
+        result = await self._runner.run(
+            ("diff", "--no-ext-diff", "--no-index", "--binary", "--", "/dev/null", path),
+            cwd=registered.response.root_path,
+            env=_READ_ONLY_GIT_ENV,
+            cancel_event=cancel_event,
+            timeout_seconds=60,
+        )
+        if result.cancelled:
+            raise GitApiError("git_cancelled", "Git query was cancelled")
+        if result.timed_out:
+            raise GitApiError("git_timeout", "Git query timed out", retryable=True)
+        if result.returncode not in {0, 1}:
+            raise GitApiError(
+                "git_failed",
+                result.safe_stderr.strip() or "Git untracked file diff failed",
+                repository_id=registered.response.id,
+            )
+
+        files = parse_git_diff(result.stdout, truncated=result.stdout_truncated)
+        if not files:
+            return [GitFileDiffResponse(
+                old_path=None,
+                new_path=path,
+                status=GitFileStatusCode.UNTRACKED,
+                binary=False,
+                new_mode="100644",
+                additions=0,
+                deletions=0,
+                hunks=[],
+                raw_patch=(
+                    f"diff --git a/{path} b/{path}\n"
+                    "new file mode 100644\n"
+                    "--- /dev/null\n"
+                    f"+++ b/{path}\n"
+                ),
+                truncated=result.stdout_truncated,
+            )]
+        return [
+            file.model_copy(update={
+                "status": GitFileStatusCode.UNTRACKED,
+                "additions": None if file.binary else sum(
+                    1 for hunk in file.hunks for line in hunk.lines if line.startswith("+")
+                ),
+                "deletions": None if file.binary else sum(
+                    1 for hunk in file.hunks for line in hunk.lines if line.startswith("-")
+                ),
+            })
+            for file in files
+        ]
 
     async def compare(
         self,

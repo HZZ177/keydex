@@ -1,9 +1,21 @@
 from __future__ import annotations
 
 import json
+import subprocess
 
 from backend.app.tools import ToolExecutionContext, ToolRegistry
 from backend.app.tools.filesystem import MAX_LIST_RESULT_BYTES, register_filesystem_tools
+
+
+def _assert_final_patch_applies_in_reverse(root, patch: str) -> None:
+    result = subprocess.run(
+        ["git", "apply", "--check", "--reverse", "--recount", "--unsafe-paths", "-"],
+        cwd=root,
+        input=(patch.rstrip("\r\n") + "\n").encode("utf-8"),
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
 
 
 def _context(tmp_path, *, file_access_mode: str | None = None) -> ToolExecutionContext:
@@ -226,10 +238,27 @@ async def test_create_file_tool_creates_new_file_inside_workspace(tmp_path) -> N
     assert result.result["files"][0]["path"] == "out/result.txt"
     assert result.result["files"][0]["operation"] == "add"
     assert result.result["files"][0]["additions"] == 1
+    assert result.result["files"][0] == {
+        **result.result["files"][0],
+        "status": "added",
+        "old_path": None,
+        "new_path": "out/result.txt",
+        "binary": False,
+        "content_kind": "text",
+        "truncated": False,
+        "source": "final",
+        "patch_format": "canonical_unified",
+        "patch_precision": "exact",
+        "patch_complete": True,
+        "selectable_for_patch": False,
+    }
+    assert result.result["files"][0]["raw_patch"] == result.result["files"][0]["diff"]
     assert result.result["files"][0]["diff"] == (
-        "--- /dev/null\n+++ b/out/result.txt\n@@ -0,0 +1 @@\n+hello"
+        "--- /dev/null\n+++ b/out/result.txt\n@@ -0,0 +1 @@\n+hello\n"
+        "\\ No newline at end of file"
     )
     assert (tmp_path / "out" / "result.txt").read_text(encoding="utf-8") == "hello"
+    _assert_final_patch_applies_in_reverse(tmp_path, result.result["files"][0]["raw_patch"])
 
 
 def _tree_entry_names(tree: str) -> list[str]:

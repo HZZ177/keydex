@@ -553,6 +553,18 @@ def test_push_uses_explicit_source_target_and_never_bare_force() -> None:
     )
     assert "--force" not in prepared.argv
     assert "--force-with-lease" not in prepared.argv
+    current_branch_tags = request.model_copy(
+        update={"idempotency_key": "push-follow-tags-key", "tags": False, "follow_tags": True}
+    )
+    assert definition.prepare(current_branch_tags).argv == (
+        "push",
+        "--set-upstream",
+        "--follow-tags",
+        "origin",
+        "feature/demo:refs/heads/review/demo",
+    )
+    with pytest.raises(GitApiError, match="mutually exclusive"):
+        definition.prepare(request.model_copy(update={"follow_tags": True}))
     forced = request.model_copy(
         update={"idempotency_key": "push-force-key", "force_with_lease": True}
     )
@@ -669,6 +681,33 @@ def test_apply_patch_command_is_typed_index_only_and_rejects_traversal() -> None
         "-",
     )
     assert prepared.input_text.endswith("+new\n")
+
+    source_patch = (
+        "diff --git a/src/a.ts b/src/a.ts\n"
+        "--- a/src/a.ts\n+++ b/src/a.ts\n"
+        "@@ -1,1 +1,1 @@\n-old\n+new\n"
+    )
+    guarded = definition.prepare(
+        GitPatchCommandRequest(
+            **base,
+            patch=source_patch,
+            expected_source_version="diff-source:v1:test",
+            expected_source_patch=source_patch,
+            source_kind="working_tree",
+            source_paths=["src/a.ts", "src/a.ts"],
+        )
+    )
+    assert guarded.identity_checks == ((
+        ("diff", "--no-ext-diff", "--binary", "--find-renames", "--", "src/a.ts"),
+        source_patch.strip(),
+    ),)
+
+    with pytest.raises(ValueError, match="requires version"):
+        GitPatchCommandRequest(
+            **base,
+            patch=source_patch,
+            expected_source_version="diff-source:v1:test",
+        )
 
     with pytest.raises(GitApiError, match="inside the repository"):
         definition.prepare(

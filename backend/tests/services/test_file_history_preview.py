@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 
 from backend.app.services.file_history_service import FileHistoryService, FileMutationSpec
 from backend.app.storage import (
@@ -11,6 +12,17 @@ from backend.app.storage import (
 )
 
 NOW = "2026-07-14T00:00:00Z"
+
+
+def _assert_current_to_target_patch_applies(root, patch: str) -> None:
+    result = subprocess.run(
+        ["git", "apply", "--check", "--recount", "--unsafe-paths", "-"],
+        cwd=root,
+        input=(patch.rstrip("\r\n") + "\n").encode("utf-8"),
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
 
 
 def _service(tmp_path) -> tuple[FileHistoryService, StorageRepositories]:
@@ -88,19 +100,37 @@ def test_diff_preview_covers_text_create_delete_empty_binary_and_large(tmp_path)
     assert "unchanged.txt" not in by_path
     assert by_path["text.txt"].insertions == 1
     assert by_path["text.txt"].deletions == 1
+    assert by_path["text.txt"].patch_direction == "current_to_target"
+    assert by_path["text.txt"].patch_precision == "exact"
+    assert by_path["text.txt"].patch_complete is True
+    assert by_path["text.txt"].raw_patch == by_path["text.txt"].diff
     assert "-new" in (by_path["text.txt"].diff or "")
     assert "+old" in (by_path["text.txt"].diff or "")
     assert by_path["created.txt"].target_state == "missing"
     assert by_path["created.txt"].deletions == 1
+    assert by_path["created.txt"].status == "deleted"
     assert by_path["deleted.txt"].current_state == "missing"
     assert by_path["deleted.txt"].insertions == 1
+    assert by_path["deleted.txt"].status == "added"
     assert by_path["empty.txt"].deletions == 1
     assert by_path["binary.bin"].binary is True
     assert by_path["binary.bin"].diff is None
+    assert by_path["binary.bin"].content_kind == "binary"
+    assert by_path["binary.bin"].binary_reason == "binary_content"
     assert by_path["large.txt"].truncated is True
     assert by_path["large.txt"].diff is None
+    assert by_path["large.txt"].raw_patch is None
+    assert by_path["large.txt"].truncation_state == "unrecoverable"
+    assert by_path["large.txt"].truncation_reason == "preview_read_limit"
+    assert by_path["large.txt"].patch_complete is False
     assert insertions >= 2
     assert deletions >= 3
+    for item in by_path.values():
+        if item.raw_patch is not None:
+            assert item.patch_direction == "current_to_target"
+            assert item.patch_precision == "exact"
+            assert item.patch_complete is True
+            _assert_current_to_target_patch_applies(tmp_path, item.raw_patch)
 
 
 def test_conflict_classification_distinguishes_same_session_other_session_and_external(

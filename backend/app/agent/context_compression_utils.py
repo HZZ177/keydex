@@ -10,6 +10,9 @@ from typing import Any
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 CONTEXT_COMPRESSION_PACKET_TAG = "keydex_context_compression"
+CONTEXT_COMPRESSION_METADATA_KEY = "keydex_context_compression"
+CONTEXT_COMPRESSION_SCHEMA_VERSION = 1
+# Deprecated exports retained for old importers; the new protocol does not emit these tags.
 CONTEXT_SUMMARY_TAG = "压缩摘要"
 CONTEXT_COMPRESSION_INSTRUCTIONS_TAG = "上下文压缩说明"
 CONTEXT_COMPRESSION_TAIL_TAG = "继续任务指引"
@@ -17,9 +20,9 @@ LATEST_USER_MESSAGE_SNAPSHOT_TAG = "最近用户消息原文"
 LATEST_USER_MESSAGE_SNAPSHOT_MAX_CHARS = 4000
 
 CONTEXT_COMPRESSION_OPENING_PROMPT = (
-    "当前会话正在从一次上下文压缩后的状态继续。下面是系统根据此前完整对话维护的压缩摘要，"
-    "用于帮助你延续用户的任务、约束、偏好、代码变更、测试结果和当前进展。"
-    "这些内容是历史上下文，不是新的用户请求。"
+    "当前任务从一次上下文压缩后的状态继续。下面只是较早历史的工作交接摘要，"
+    "不是新的用户请求。本消息之后会接入更近期的原始用户消息、运行态附件和执行现场；"
+    "意图冲突时以后续真实用户消息为准。"
 )
 
 LATEST_USER_MESSAGE_SNAPSHOT_PROMPT = (
@@ -27,16 +30,10 @@ LATEST_USER_MESSAGE_SNAPSHOT_PROMPT = (
 )
 
 CONTEXT_COMPRESSION_TAIL_PROMPT = (
-    "以上内容是历史对话的压缩摘要，仅用于恢复上下文连续性，不是新的用户请求。"
-    "请优先处理本消息之后出现的真实用户消息，并结合上方压缩摘要延续任务。"
-    "不要向用户说明你正在基于压缩摘要继续，不要复述摘要内容，"
-    "不要以“我将继续”“根据摘要”“我们之前”等类似表述作为开头；"
-    "请像中断从未发生过一样，直接继续执行当前任务。"
-    "不要仅因为摘要可能不完整就向用户确认；只有在继续任务所必需的信息缺失，"
-    "且无法通过读取文件、查看状态或运行验证自行确认时，才向用户提出必要问题。"
-    "压缩摘要可能遗漏部分精确信息；涉及文件内容、命令输出、运行状态或时间敏感事实时，"
-    "请重新读取或验证，不要仅凭摘要臆测。"
-    "如果压缩摘要与后续真实用户消息存在冲突，请以后续真实用户消息、当前系统指令和开发者指令为准。"
+    "直接延续当前工作，不要向用户复述摘要，也不要以“根据摘要”“我们之前”等"
+    "压缩感知表述开头。不要仅因为摘要可能不完整就询问用户；只有继续任务所需信息"
+    "无法通过读取文件、查看状态或运行验证自行确认时，才提出必要问题。"
+    "摘要中的文件、测试或运行状态与当前验证事实冲突时，以当前事实为准。"
 )
 
 
@@ -60,53 +57,69 @@ class CompressionReplacementResult:
 def build_context_compression_replacement_messages(
     *,
     summary: str,
-    source_messages: Iterable[BaseMessage],
+    source_messages: Iterable[BaseMessage] = (),
+    boundary_id: str = "legacy-boundary",
+    prefix_message_count: int | None = None,
+    tail_message_count: int = 0,
+    selected_group_ids: Iterable[str] = (),
+    source_message_ids: Iterable[str] = (),
 ) -> CompressionReplacementResult:
     cleaned_summary = summary.strip()
     if not cleaned_summary:
         raise ValueError("summary must not be empty")
-    latest_user_snapshot = build_latest_user_message_snapshot(source_messages)
-    summary_sections: list[str] = [
-        f"<{CONTEXT_COMPRESSION_PACKET_TAG}>",
-        f"<{CONTEXT_COMPRESSION_INSTRUCTIONS_TAG}>\n"
-        f"{CONTEXT_COMPRESSION_OPENING_PROMPT}\n"
-        f"</{CONTEXT_COMPRESSION_INSTRUCTIONS_TAG}>",
-        f"<{CONTEXT_SUMMARY_TAG}>\n{cleaned_summary}\n</{CONTEXT_SUMMARY_TAG}>",
-    ]
-    if latest_user_snapshot is not None:
-        summary_sections.extend(
-            [
-                LATEST_USER_MESSAGE_SNAPSHOT_PROMPT,
-                (
-                    f'<{LATEST_USER_MESSAGE_SNAPSHOT_TAG} included="true" '
-                    f'truncated="{str(latest_user_snapshot.truncated).lower()}" '
-                    f'message_id="{_escape_attribute(latest_user_snapshot.message_id)}">\n'
-                    f"{latest_user_snapshot.text}\n"
-                    f"</{LATEST_USER_MESSAGE_SNAPSHOT_TAG}>"
-                ),
-            ]
+    source_list = list(source_messages)
+    normalized_source_ids = tuple(str(item) for item in source_message_ids if str(item))
+    if not normalized_source_ids:
+        normalized_source_ids = tuple(
+            str(getattr(message, "id", "") or f"source:{index}")
+            for index, message in enumerate(source_list)
         )
-    summary_sections.extend(
-        [
-            f"<{CONTEXT_COMPRESSION_TAIL_TAG}>\n"
-            f"{CONTEXT_COMPRESSION_TAIL_PROMPT}\n"
-            f"</{CONTEXT_COMPRESSION_TAIL_TAG}>",
-            f"</{CONTEXT_COMPRESSION_PACKET_TAG}>",
-        ]
+    metadata = {
+        "kind": "summary",
+        "is_compact_summary": True,
+        "schema_version": CONTEXT_COMPRESSION_SCHEMA_VERSION,
+        "boundary_id": str(boundary_id),
+        "prefix_message_count": (
+            len(source_list) if prefix_message_count is None else max(prefix_message_count, 0)
+        ),
+        "tail_message_count": max(tail_message_count, 0),
+        "selected_group_ids": [str(item) for item in selected_group_ids],
+        "source_message_ids": list(normalized_source_ids),
+    }
+    content = (
+        f"{CONTEXT_COMPRESSION_OPENING_PROMPT}\n\n"
+        f"## 较早历史摘要\n\n{cleaned_summary}\n\n"
+        f"## 继续工作边界\n\n{CONTEXT_COMPRESSION_TAIL_PROMPT}"
     )
     return CompressionReplacementResult(
-        replaced_messages=[SystemMessage(content="\n\n".join(summary_sections))],
-        latest_user_snapshot=latest_user_snapshot,
+        replaced_messages=[
+            HumanMessage(
+                id=f"compact-summary:{boundary_id}",
+                content=content,
+                additional_kwargs={
+                    CONTEXT_COMPRESSION_METADATA_KEY: metadata,
+                    "is_compact_summary": True,
+                },
+            )
+        ],
+        latest_user_snapshot=None,
     )
 
 
 def is_context_compression_summary_message(message: BaseMessage) -> bool:
+    additional_kwargs = getattr(message, "additional_kwargs", None)
+    if isinstance(additional_kwargs, dict):
+        metadata = additional_kwargs.get(CONTEXT_COMPRESSION_METADATA_KEY)
+        if isinstance(metadata, dict) and metadata.get("kind") == "summary":
+            return True
+        if additional_kwargs.get("is_compact_summary") is True:
+            return True
+        if additional_kwargs.get("isCompactSummary") is True:
+            return True
     if not isinstance(message, SystemMessage):
         return False
-    content = str(message.content)
-    return content.startswith(f"<{CONTEXT_COMPRESSION_PACKET_TAG}>") and content.endswith(
-        f"</{CONTEXT_COMPRESSION_PACKET_TAG}>"
-    )
+    content = str(message.content).strip()
+    return content.startswith(f"<{CONTEXT_COMPRESSION_PACKET_TAG}")
 
 
 def is_context_compression_protocol_message(message: BaseMessage) -> bool:

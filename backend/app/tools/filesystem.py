@@ -695,6 +695,7 @@ def _write_file_change(
         added_lines=count_text_lines(new_content),
         deleted_lines=0,
         diff=build_text_diff(path=path, before="", after=new_content, operation="add"),
+        completed=True,
     )
     change["change_type"] = "create"
     return change

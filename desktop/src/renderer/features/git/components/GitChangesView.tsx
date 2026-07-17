@@ -13,7 +13,7 @@ export interface GitChangesViewProps {
   virtualizationThreshold?: number;
   viewportHeight?: number;
   onSelectionChange?: (paths: readonly string[], entries: readonly GitChangeEntry[]) => void;
-  onPreviewChange?: (entry: GitChangeEntry) => void;
+  onPreviewChange?: (entry: GitChangeEntry | null) => void;
   onRefresh?: () => void;
   refreshing?: boolean;
   selectionResetKey?: number;
@@ -39,7 +39,23 @@ export function GitChangesView({
 
   useEffect(() => {
     setSelectedIds(new Set());
+    setPreviewedId(null);
   }, [selectionResetKey]);
+
+  useEffect(() => {
+    const entries = groups.flatMap((group) => group.entries);
+    if (entries.length === 0) {
+      if (previewedId !== null) {
+        setPreviewedId(null);
+        onPreviewChange?.(null);
+      }
+      return;
+    }
+    if (previewedId && entries.some((entry) => entry.id === previewedId)) return;
+    const firstEntry = entries[0]!;
+    setPreviewedId(firstEntry.id);
+    onPreviewChange?.(firstEntry);
+  }, [groups, onPreviewChange, previewedId]);
 
   const updateSelection = (next: Set<string>) => {
     setSelectedIds(next);

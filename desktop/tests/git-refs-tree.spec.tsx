@@ -31,8 +31,10 @@ describe("GitRefsTree", () => {
     expect(currentBranch.querySelector(".lucide-star")).not.toBeNull();
     expect(screen.getByRole("treeitem", { name: "main" }).querySelector(".lucide-star")).not.toBeNull();
     const divergence = screen.getByLabelText("传入 1 个提交，传出 2 个提交");
-    expect(divergence.querySelector('[data-direction="incoming"] .lucide-arrow-down-left')).not.toBeNull();
-    expect(divergence.querySelector('[data-direction="outgoing"] .lucide-arrow-up-right')).not.toBeNull();
+    const incomingIcon = divergence.querySelector('[data-direction="incoming"] .lucide-arrow-down-left');
+    const outgoingIcon = divergence.querySelector('[data-direction="outgoing"] .lucide-arrow-up-right');
+    expect(incomingIcon?.getAttribute("width")).toBe("13");
+    expect(outgoingIcon?.getAttribute("width")).toBe("13");
     const tagGroup = screen.getByRole("treeitem", { name: /^标签/ });
     const tagItems = tagGroup.parentElement?.querySelector('[data-ref-items="tag"]');
     expect(tagGroup.getAttribute("aria-expanded")).toBe("false");

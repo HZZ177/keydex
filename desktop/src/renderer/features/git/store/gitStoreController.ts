@@ -128,9 +128,11 @@ export class GitStoreController {
 
   async runCommand(
     submit: () => Promise<GitCommandResult>,
+    onStateChange?: (operation: GitCommandResult) => void,
   ): Promise<GitCommandResult> {
     let operation = await submit();
     this.store.getState().recordOperation(operation);
+    onStateChange?.(operation);
     if (RETRYABLE_COMMANDS.has(operation.command)) {
       this.retrySubmissions.set(operation.operationId, submit);
     }
@@ -138,6 +140,7 @@ export class GitStoreController {
       await delay(this.operationPollMs);
       operation = await this.runtime.operation(operation.operationId);
       this.store.getState().recordOperation(operation);
+      onStateChange?.(operation);
     }
     if (!operation.retryable || operation.state !== "failed") {
       this.retrySubmissions.delete(operation.operationId);
@@ -288,9 +291,35 @@ export class GitStoreController {
         if (domain === "diff") actions.setDiff(result as Awaited<ReturnType<GitRuntime["diff"]>>);
         actions.clearInvalidatedDomains(scope.repositoryId, [domain]);
       })
+      .catch((error: unknown) => {
+        this.surfaceInitialRepositoryLoadError(scope, domain, epoch, error);
+        throw error;
+      })
       .finally(() => this.inFlight.delete(key));
     this.inFlight.set(key, request);
     return request;
+  }
+
+  private surfaceInitialRepositoryLoadError(
+    scope: GitRepositoryScope,
+    domain: RefreshDomain,
+    epoch: number,
+    error: unknown,
+  ): void {
+    if (!isStructuredGitError(error)) return;
+    const state = this.store.getState();
+    if ((state.repositoryEpochs[scope.repositoryId] ?? 0) !== epoch) return;
+    const repository = state.repositories[scope.repositoryId];
+    const project = state.projects[scope.workspaceId];
+    if (!repository || !project || project.projectRoot !== scope.projectRoot) return;
+    if (project.selectedRepositoryId !== scope.repositoryId) return;
+    const requiredDomain: RefreshDomain = repository.bare ? "refs" : "status";
+    if (domain !== requiredDomain) return;
+    const hasRequiredSnapshot = repository.bare
+      ? state.refsByRepository[scope.repositoryId] !== undefined
+      : state.statusByRepository[scope.repositoryId] !== undefined;
+    if (hasRequiredSnapshot) return;
+    state.discoveryFailed(scope.workspaceId, scope.projectRoot, normalizeError(error));
   }
 
   private loadDomain(scope: GitRepositoryScope, domain: RefreshDomain): Promise<unknown> {
@@ -372,6 +401,15 @@ function normalizeError(error: unknown): { code: string; message: string } {
     }
   }
   return { code: "git_failed", message: error instanceof Error ? error.message : String(error) };
+}
+
+function isStructuredGitError(error: unknown): error is { code: string; message?: unknown } {
+  return Boolean(
+    error
+    && typeof error === "object"
+    && typeof (error as { code?: unknown }).code === "string"
+    && (error as { code: string }).code.startsWith("git_"),
+  );
 }
 
 function delay(milliseconds: number): Promise<void> {

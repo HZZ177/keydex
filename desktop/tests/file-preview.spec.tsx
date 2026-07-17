@@ -28,6 +28,25 @@ vi.mock("mermaid", () => ({
   },
 }));
 
+vi.mock("@/renderer/components/diff/wrappers/PreviewDiffView", () => ({
+  PreviewDiffView: ({ document, scrollScopeKey }: {
+    document: {
+      files: Array<{ displayPath: string; patch: string }>;
+      diagnostics: Array<{ message: string }>;
+    };
+    scrollScopeKey: string;
+  }) => (
+    <section
+      aria-label="差异文件预览"
+      data-keydex-diff-wrapper="preview"
+      data-scroll-scope={scrollScopeKey}
+    >
+      {document.files.map((file) => <pre key={file.displayPath}>{file.displayPath}{file.patch}</pre>)}
+      {document.diagnostics.map((item) => <p key={item.message}>{item.message}</p>)}
+    </section>
+  ),
+}));
+
 let restoreElementMetrics: (() => void) | null = null;
 let restorePreviewRangeMetrics: (() => void) | null = null;
 
@@ -2543,7 +2562,11 @@ describe("FilePreview", () => {
 
     render(
       <FilePreview
-        request={{ type: "diff", path: "src/main.py", diff: "@@\n-print('old')\n+print('new')" }}
+        request={{
+          type: "diff",
+          path: "src/main.py",
+          diff: "diff --git a/src/main.py b/src/main.py\n--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1 @@\n-print('old')\n+print('new')",
+        }}
         sessionId="ses-1"
         runtime={runtime}
       />,
@@ -2552,8 +2575,202 @@ describe("FilePreview", () => {
     expect(screen.getByTitle("src / main.py")).not.toBeNull();
     expect(screen.queryByText(/Diff 预览/)).toBeNull();
     expect(screen.getByLabelText("预览内容").textContent).toContain("+print('new')");
-    expect(screen.getByLabelText("Diff 渲染内容")).not.toBeNull();
+    expect(screen.getByLabelText("差异文件预览")).not.toBeNull();
+    expect(screen.queryByLabelText("Diff 渲染内容")).toBeNull();
     expect(runtime.workspace.readFile).not.toHaveBeenCalled();
+  });
+
+  it("shows an explicit diagnostic for malformed diff requests without falling back to old rows", () => {
+    const runtime = fakeRuntime();
+    render(
+      <FilePreview
+        request={{ type: "diff", path: "broken.patch", diff: "@@ broken" }}
+        sessionId="ses-1"
+        runtime={runtime}
+      />,
+    );
+    expect(screen.getByLabelText("差异文件预览").textContent).toContain("内容不是可识别的 unified diff");
+    expect(screen.queryByLabelText("Diff 渲染内容")).toBeNull();
+    expect(runtime.workspace.readFile).not.toHaveBeenCalled();
+  });
+
+  it("routes content diff previews through the canonical multi-file document", () => {
+    const runtime = fakeRuntime();
+    const multiFilePatch = [
+      "diff --git a/src/a.ts b/src/a.ts",
+      "--- a/src/a.ts",
+      "+++ b/src/a.ts",
+      "@@ -1 +1 @@",
+      "-oldA",
+      "+newA",
+      "diff --git a/src/b.ts b/src/b.ts",
+      "--- a/src/b.ts",
+      "+++ b/src/b.ts",
+      "@@ -1 +1 @@",
+      "-oldB",
+      "+newB",
+    ].join("\n");
+
+    render(
+      <FilePreview
+        request={{
+          type: "content",
+          title: "消息补丁",
+          content: multiFilePatch,
+          contentType: "diff",
+          sourcePath: "conversation/message.patch",
+        }}
+        sessionId="ses-1"
+        runtime={runtime}
+      />,
+    );
+
+    const preview = screen.getByLabelText("差异文件预览");
+    expect(preview.textContent).toContain("src/a.ts");
+    expect(preview.textContent).toContain("src/b.ts");
+    expect(screen.queryByLabelText("Diff 渲染内容")).toBeNull();
+    expect(runtime.workspace.readFile).not.toHaveBeenCalled();
+  });
+
+  it("routes Skill diff resources through the canonical document without workspace reads", () => {
+    const runtime = fakeRuntime();
+    render(
+      <FilePreview
+        request={{
+          type: "skill-resource",
+          title: "修复示例",
+          content: "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-old\n+new",
+          contentType: "diff",
+          skillName: "demo-skill",
+          skillSource: "workspace",
+          resourcePath: "examples/fix.patch",
+          locator: "workspace:demo-skill/examples/fix.patch",
+          revision: "sha256:fix",
+        }}
+        sessionId="ses-1"
+        runtime={runtime}
+      />,
+    );
+
+    expect(screen.getByLabelText("差异文件预览").textContent).toContain("a.ts");
+    expect(screen.queryByLabelText("Diff 渲染内容")).toBeNull();
+    expect(runtime.workspace.readFile).not.toHaveBeenCalled();
+  });
+
+  it("keeps malformed content diff inside the canonical diagnostic surface", () => {
+    render(
+      <FilePreview
+        request={{ type: "content", title: "损坏补丁", content: "@@ malformed", contentType: "diff" }}
+        sessionId="ses-1"
+        runtime={fakeRuntime()}
+      />,
+    );
+
+    expect(screen.getByLabelText("差异文件预览").textContent).toContain("内容不是可识别的 unified diff");
+    expect(screen.queryByLabelText("Diff 渲染内容")).toBeNull();
+  });
+
+  it("loads multi-file .patch files into the canonical preview and preserves read-only source mode", async () => {
+    const patch = [
+      "diff --git a/src/a.ts b/src/a.ts",
+      "--- a/src/a.ts",
+      "+++ b/src/a.ts",
+      "@@ -1 +1 @@",
+      "-oldA",
+      "+newA",
+      "diff --git a/src/b.ts b/src/b.ts",
+      "--- a/src/b.ts",
+      "+++ b/src/b.ts",
+      "@@ -1 +1 @@",
+      "-oldB",
+      "+newB",
+    ].join("\n");
+    const runtime = fakeRuntime({
+      readFile: vi.fn().mockResolvedValue({ path: "changes.patch", content: patch, encoding: "utf-8" }),
+      writeDocument: vi.fn(),
+    });
+
+    render(<FilePreview request={{ type: "file", path: "changes.patch" }} sessionId="ses-1" runtime={runtime} />);
+
+    const preview = await screen.findByLabelText("差异文件预览");
+    expect(preview.textContent).toContain("src/a.ts");
+    expect(preview.textContent).toContain("src/b.ts");
+    expect(screen.queryByLabelText("Diff 渲染内容")).toBeNull();
+    expect(screen.getByRole("button", { name: "预览" }).getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "源码" }));
+
+    const source = await screen.findByTestId("file-source-viewer");
+    expect(source.textContent).toContain("diff --git a/src/a.ts b/src/a.ts");
+    expect(source.getAttribute("data-editable")).toBe("false");
+    expect(screen.queryByLabelText("差异文件预览")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "预览" }));
+    expect(screen.getByLabelText("差异文件预览")).not.toBeNull();
+  });
+
+  it("rebuilds a .diff document from refreshed file content", async () => {
+    const readFile = vi.fn()
+      .mockResolvedValueOnce({
+        path: "changes.diff",
+        content: "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-old\n+first",
+        encoding: "utf-8",
+      })
+      .mockResolvedValueOnce({
+        path: "changes.diff",
+        content: "diff --git a/b.ts b/b.ts\n--- a/b.ts\n+++ b/b.ts\n@@ -1 +1 @@\n-old\n+second",
+        encoding: "utf-8",
+      });
+    const runtime = fakeRuntime({ readFile });
+    const { rerender } = render(
+      <FilePreview
+        request={{ type: "file", path: "changes.diff" }}
+        sessionId="ses-1"
+        runtime={runtime}
+        refreshRequestId={0}
+      />,
+    );
+
+    expect((await screen.findByLabelText("差异文件预览")).textContent).toContain("a.ts");
+
+    rerender(
+      <FilePreview
+        request={{ type: "file", path: "changes.diff" }}
+        sessionId="ses-1"
+        runtime={runtime}
+        refreshRequestId={1}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("差异文件预览").textContent).toContain("b.ts"));
+    expect(screen.getByLabelText("差异文件预览").textContent).not.toContain("a.ts");
+    expect(readFile).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["empty.patch", "", "内容为空"],
+    ["binary.diff", "diff --git a/logo.png b/logo.png\nBinary files a/logo.png and b/logo.png differ", "logo.png"],
+  ])("keeps %s inside the canonical diagnostic-capable preview", async (path, content, expected) => {
+    const runtime = fakeRuntime({
+      readFile: vi.fn().mockResolvedValue({ path, content, encoding: "utf-8" }),
+    });
+
+    render(<FilePreview request={{ type: "file", path }} sessionId="ses-1" runtime={runtime} />);
+
+    expect((await screen.findByLabelText("差异文件预览")).textContent).toContain(expected);
+    expect(screen.queryByLabelText("Diff 渲染内容")).toBeNull();
+  });
+
+  it("reports oversized .patch reads without instantiating either diff renderer", async () => {
+    const runtime = fakeRuntime({
+      readFile: vi.fn().mockRejectedValue(new Error("文件过大，暂不预览")),
+    });
+
+    render(<FilePreview request={{ type: "file", path: "large.patch" }} sessionId="ses-1" runtime={runtime} />);
+
+    expect((await screen.findByRole("alert")).textContent).toBe("文件过大，暂不预览");
+    expect(screen.queryByLabelText("差异文件预览")).toBeNull();
+    expect(screen.queryByLabelText("Diff 渲染内容")).toBeNull();
   });
 
   it("copies preview source content", async () => {

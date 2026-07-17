@@ -168,6 +168,16 @@ class FilePreviewItem:
     insertions: int = 0
     deletions: int = 0
     diff: str | None = None
+    raw_patch: str | None = None
+    status: str = "unknown"
+    content_kind: str = "text"
+    binary_reason: str | None = None
+    truncation_state: str = "complete"
+    truncation_reason: str | None = None
+    can_load_more: bool = False
+    patch_direction: str = "current_to_target"
+    patch_precision: str = "exact"
+    patch_complete: bool = True
     resource_id: str = ""
     scope_kind: str = "workspace"
     scope_identity: str = ""
@@ -2027,6 +2037,7 @@ class FileHistoryService:
                 )
             target_bytes = _read_preview_bytes(backup_path)
         truncated = current_bytes.truncated or target_bytes.truncated
+        truncation_reason = "preview_read_limit" if truncated else None
         binary = _looks_binary(current_bytes.data) or _looks_binary(target_bytes.data)
         insertions = 0
         deletions = 0
@@ -2051,7 +2062,17 @@ class FileHistoryService:
                     deletions += 1
             rendered = "".join(changes)
             diff = rendered[:100_000]
-            truncated = len(rendered) > len(diff)
+            if len(rendered) > len(diff):
+                truncated = True
+                truncation_reason = "render_limit"
+                diff = None
+        status = (
+            "added"
+            if current.state == "missing" and entry.state == "file"
+            else "deleted"
+            if current.state == "file" and entry.state == "missing"
+            else "modified"
+        )
         return FilePreviewItem(
             path=resolved.path.display_path,
             current_state=current.state,
@@ -2064,6 +2085,16 @@ class FileHistoryService:
             insertions=insertions,
             deletions=deletions,
             diff=diff,
+            raw_patch=diff,
+            status=status,
+            content_kind="binary" if binary else "text",
+            binary_reason="binary_content" if binary else None,
+            truncation_state="unrecoverable" if truncated else "complete",
+            truncation_reason=truncation_reason,
+            can_load_more=False,
+            patch_direction="current_to_target",
+            patch_precision="exact",
+            patch_complete=not truncated,
         )
 
     def prepare_writes(

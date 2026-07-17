@@ -1,8 +1,10 @@
 import { Check, RotateCcw, ShieldAlert } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import type { GitConflictFileAction } from "@/runtime/git";
 import type { GitConflictFile } from "@/runtime/gitTypes";
 
+import { GitConfirmActionDialog } from "../dialogs";
 import styles from "./GitConflictActions.module.css";
 
 export interface GitConflictActionOption {
@@ -48,6 +50,8 @@ export function GitConflictActions({
   onAction: (action: GitConflictFileAction) => void;
   onReopen?: () => void;
 }) {
+  const [pendingAction, setPendingAction] = useState<GitConflictActionOption | null>(null);
+  useEffect(() => setPendingAction(null), [file?.path, file?.resultRevision]);
   if (!file && !recentlyResolvedPath) return null;
   return (
     <section className={styles.root} aria-label="冲突解决操作">
@@ -59,7 +63,7 @@ export function GitConflictActions({
               type="button"
               key={option.action}
               disabled={busy}
-              onClick={() => { if (window.confirm(option.warning)) onAction(option.action); }}
+              onClick={() => setPendingAction(option)}
             >{option.label}</button>
           ))}</div>
           <button
@@ -75,6 +79,34 @@ export function GitConflictActions({
       {recentlyResolvedPath && onReopen ? (
         <button type="button" className={styles.reopen} disabled={busy} onClick={onReopen}><RotateCcw size={13} />重新打开 {recentlyResolvedPath}</button>
       ) : null}
+      {file && pendingAction ? (
+        <GitConfirmActionDialog
+          title={`确认${pendingAction.label}`}
+          description={pendingAction.warning}
+          target={file.path}
+          details={[
+            conflictActionEffect(pendingAction.action),
+            `冲突类型：${file.kind}`,
+            ...(file.resultBinary ? ["这是二进制文件，无法在文本编辑器中恢复未保存内容。"] : []),
+          ]}
+          confirmLabel={`确认${pendingAction.label}`}
+          busy={busy}
+          onCancel={() => setPendingAction(null)}
+          onConfirm={() => { const action = pendingAction.action; setPendingAction(null); onAction(action); }}
+        />
+      ) : null}
     </section>
   );
+}
+
+function conflictActionEffect(action: GitConflictFileAction): string {
+  return ({
+    accept_ours: "采用当前分支一侧，并覆盖工作树中的当前结果。",
+    accept_theirs: "采用传入分支一侧，并覆盖工作树中的当前结果。",
+    keep_modified: "保留仍存在的修改版本，并将它作为解决结果。",
+    accept_delete: "接受删除一侧，该路径会从工作树删除并暂存。",
+    delete: "删除该路径并将删除暂存为解决结果。",
+    mark_resolved: "将当前结果暂存为已解决。",
+    reopen: "重新打开已解决路径。",
+  })[action];
 }

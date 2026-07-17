@@ -53,7 +53,6 @@ export function GitCommitDetailsView({
   const { commit } = detail;
   const additions = detail.files.reduce((total, file) => total + (file.additions ?? 0), 0);
   const deletions = detail.files.reduce((total, file) => total + (file.deletions ?? 0), 0);
-  const tree = buildCommitFileTree(detail.files);
 
   const resizeFromClientY = (clientY: number, separator: HTMLDivElement) => {
     const root = separator.parentElement;
@@ -109,17 +108,12 @@ export function GitCommitDetailsView({
           <span className={styles.additions}>+{additions}</span>
           <span className={styles.deletions}>−{deletions}</span>
         </header>
-        {tree.length > 0 ? (
-          <ul className={styles.fileTree} role="tree" aria-label="变更文件树">
-            {tree.map((node) => (
-              <FileTreeNode
-                key={node.path}
-                node={node}
-                selectedFileIndex={selectedFileIndex}
-                onSelectFile={onSelectFile}
-              />
-            ))}
-          </ul>
+        {detail.files.length > 0 ? (
+          <GitCommitFileTree
+            files={detail.files}
+            selectedFileIndex={selectedFileIndex}
+            onSelectFile={onSelectFile}
+          />
         ) : loading
           ? <div className={styles.paneEmpty} role="status">正在加载变更文件…</div>
           : <div className={styles.paneEmpty}>此提交没有文件变更。</div>}
@@ -241,13 +235,54 @@ export function buildCommitFileTree(files: readonly GitFileDiff[]): readonly Git
   return freeze(roots);
 }
 
+export function GitCommitFileTree({
+  files,
+  selectedFileIndex = -1,
+  ariaLabel = "变更文件树",
+  rootLabel,
+  onSelectFile = () => undefined,
+}: {
+  files: readonly GitFileDiff[];
+  selectedFileIndex?: number;
+  ariaLabel?: string;
+  rootLabel?: string;
+  onSelectFile?: (index: number) => void;
+}) {
+  const tree = buildCommitFileTree(files);
+  const nodes: readonly GitCommitFileNode[] = rootLabel
+    ? [{
+        name: rootLabel,
+        path: `__repository_root__/${rootLabel}`,
+        kind: "directory",
+        status: aggregateDirectoryStatus(tree),
+        children: tree,
+        fileIndex: null,
+      }]
+    : tree;
+  return (
+    <ul className={styles.fileTree} role="tree" aria-label={ariaLabel}>
+      {nodes.map((node) => (
+        <FileTreeNode
+          key={node.path}
+          node={node}
+          selectedFileIndex={selectedFileIndex}
+          secondaryLabel={rootLabel && node.path.startsWith("__repository_root__/") ? `${files.length} 个文件` : undefined}
+          onSelectFile={onSelectFile}
+        />
+      ))}
+    </ul>
+  );
+}
+
 function FileTreeNode({
   node,
   selectedFileIndex,
+  secondaryLabel,
   onSelectFile,
 }: {
   node: GitCommitFileNode;
   selectedFileIndex: number;
+  secondaryLabel?: string;
   onSelectFile: (index: number) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
@@ -286,7 +321,10 @@ function FileTreeNode({
           draggable={false}
           data-icon-id={icon.id}
         />
-        <span className={styles.nodeName}>{node.name}</span>
+        <span className={styles.nodeLabel}>
+          <span className={styles.nodeName}>{node.name}</span>
+          {secondaryLabel ? <span className={styles.nodeMeta}>{secondaryLabel}</span> : null}
+        </span>
       </button>
       {node.kind === "directory" ? (
         <div className={styles.treeGroup} data-expanded={expanded ? "true" : undefined}>

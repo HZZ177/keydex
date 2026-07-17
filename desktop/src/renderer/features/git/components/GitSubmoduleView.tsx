@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import type { GitSubmodule, GitSubmodulesSnapshot } from "@/runtime/gitTypes";
 
+import { GitConfirmActionDialog } from "../dialogs";
 import styles from "./GitSubmoduleView.module.css";
 
 export type GitSubmoduleAction = "init" | "update" | "sync" | "deinit";
@@ -20,6 +21,7 @@ export function GitSubmoduleView({
 }) {
   const [selected, setSelected] = useState<readonly string[]>([]);
   const [recursive, setRecursive] = useState(false);
+  const [pendingAction, setPendingAction] = useState<GitSubmoduleAction | null>(null);
   useEffect(() => {
     setSelected((current) => {
       const available = new Set(snapshot?.submodules.map((module) => module.path) ?? []);
@@ -27,13 +29,17 @@ export function GitSubmoduleView({
       return retained.length ? retained : [...available];
     });
   }, [snapshot]);
+  useEffect(() => setPendingAction(null), [snapshot?.repositoryId, snapshot?.repositoryVersion]);
   const selectedModules = useMemo(
     () => snapshot?.submodules.filter((module) => selected.includes(module.path)) ?? [],
     [selected, snapshot],
   );
   if (loading) return <section className={styles.root} aria-label="Git 子模块"><p>正在读取子模块…</p></section>;
   if (!snapshot?.submodules.length) return <section className={styles.root} aria-label="Git 子模块"><header><Boxes size={14} /><strong>子模块</strong></header><p>此仓库尚未配置子模块。</p></section>;
-  const run = (action: GitSubmoduleAction) => onAction(action, selected, recursive, action === "deinit");
+  const run = (action: GitSubmoduleAction) => {
+    if (action === "deinit" || recursive) setPendingAction(action);
+    else onAction(action, selected, false, false);
+  };
   return (
     <section className={styles.root} aria-label="Git 子模块">
       <header><Boxes size={14} /><div><strong>子模块</strong><span>父仓库 {snapshot.repositoryId}</span></div></header>
@@ -53,8 +59,24 @@ export function GitSubmoduleView({
         <button type="button" disabled={busy || !selected.length} onClick={() => run("sync")}>同步地址</button>
         <button type="button" disabled={busy || !selected.length} onClick={() => run("deinit")}><Unplug size={12} />取消初始化</button>
       </div>
+      {pendingAction ? (
+        <GitConfirmActionDialog
+          title={pendingAction === "deinit" ? "确认取消初始化子模块" : `确认递归${submoduleActionLabel(pendingAction)}`}
+          description={pendingAction === "deinit" ? "已签出的子仓库文件会被移除，Git 元数据仍可用于恢复。" : "操作会递归进入所选根子模块下的嵌套仓库。"}
+          target={selected.join("、")}
+          details={[`根子模块：${selected.length} 个`, `递归：${recursive ? "是" : "否"}`, `动作：${submoduleActionLabel(pendingAction)}`]}
+          confirmLabel={pendingAction === "deinit" ? "确认取消初始化" : "确认递归执行"}
+          busy={busy}
+          onCancel={() => setPendingAction(null)}
+          onConfirm={() => { const action = pendingAction; setPendingAction(null); onAction(action, selected, recursive, action === "deinit"); }}
+        />
+      ) : null}
     </section>
   );
+}
+
+function submoduleActionLabel(action: GitSubmoduleAction): string {
+  return ({ init: "初始化", update: "更新", sync: "同步地址", deinit: "取消初始化" })[action];
 }
 
 function SubmoduleRow({ module, checked, onToggle }: { module: GitSubmodule; checked: boolean; onToggle: () => void }) {

@@ -1,5 +1,3 @@
-import { Check } from "lucide-react";
-
 import type { GitStatusSnapshot } from "@/runtime/gitTypes";
 import type { GitIdentity } from "@/runtime/git";
 
@@ -9,12 +7,6 @@ export interface GitCommitOptions {
   message: string;
   amend: boolean;
   sign: boolean;
-}
-
-export interface GitCommitOutcome {
-  oid: string | null;
-  summary: string;
-  status: string;
 }
 
 export interface GitCommitEditorProps {
@@ -27,7 +19,6 @@ export interface GitCommitEditorProps {
   onCommitAndPush?: (options: GitCommitOptions) => void | Promise<void>;
   identity?: GitIdentity | null;
   identityLoading?: boolean;
-  outcome?: GitCommitOutcome | null;
 }
 
 export function GitCommitEditor({
@@ -40,7 +31,6 @@ export function GitCommitEditor({
   onCommitAndPush,
   identity,
   identityLoading = false,
-  outcome = null,
 }: GitCommitEditorProps) {
   const validation = validateCommitMessage(draft);
   const identityReady = identity === undefined || Boolean(identity?.name && identity.email);
@@ -56,6 +46,7 @@ export function GitCommitEditor({
           <span
             className={styles.identity}
             data-ready={identityReady ? "true" : "false"}
+            data-loading={identityLoading ? "true" : undefined}
             title={identityLoading
               ? "正在读取 Git 提交身份…"
               : identityReady
@@ -79,13 +70,6 @@ export function GitCommitEditor({
         onChange={(event) => onDraftChange(event.currentTarget.value.replaceAll("\r\n", "\n"))}
       />
       <footer>
-        {outcome ? (
-          <output className={styles.outcome} aria-label="提交结果">
-            <Check size={13} />
-            <span>{outcome.summary}</span>
-            {outcome.oid ? <code>{outcome.oid.slice(0, 12)}</code> : null}
-          </output>
-        ) : null}
         <div className={styles.actions}>
           <button
             type="button"

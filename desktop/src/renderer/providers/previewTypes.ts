@@ -1,5 +1,6 @@
 import type { MarkdownViewDescriptor, MarkdownViewKind } from "@/renderer/markdownRuntime/view";
 import type { SkillSource } from "@/runtime";
+import type { KeydexDiffDocument } from "@/renderer/components/diff/model";
 
 export type PreviewContentKind = "markdown" | "html" | "diff" | "json" | "code" | "text" | "mermaid";
 
@@ -16,6 +17,14 @@ export type PreviewRequest =
   | { type: "file"; path: string }
   | { type: "local-file"; path: string }
   | { type: "diff"; path: string; diff: string }
+  | {
+      type: "diff-document";
+      title: string;
+      document: KeydexDiffDocument;
+      rawSource: string;
+      sourcePath?: string;
+      sourceLabel?: string;
+    }
   | {
       type: "content";
       title: string;

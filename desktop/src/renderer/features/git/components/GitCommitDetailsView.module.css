@@ -69,7 +69,7 @@
 
 .treeItem { min-width: 0; }
 
-.root .fileTree .treeRow {
+.fileTree .treeRow {
   position: relative;
   display: grid;
   width: 100%;
@@ -91,14 +91,14 @@
     color var(--motion-fast) var(--motion-ease-standard);
 }
 
-.root .fileTree .treeRow:hover,
-.root .fileTree .treeRow:focus-visible,
-.root .fileTree .treeRow[data-selected="true"] {
+.fileTree .treeRow:hover,
+.fileTree .treeRow:focus-visible,
+.fileTree .treeRow[data-selected="true"] {
   outline: 0;
   background: var(--surface-hover);
 }
 
-.root .fileTree .treeRow[data-selected="true"] {
+.fileTree .treeRow[data-selected="true"] {
   background: var(--surface-active);
 }
 
@@ -126,11 +126,25 @@
   user-select: none;
 }
 
+.nodeLabel {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+}
+
 .nodeName {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.nodeMeta {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  font-weight: 400;
 }
 
 .treeGroup {

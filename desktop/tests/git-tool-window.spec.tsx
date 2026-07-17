@@ -3,11 +3,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   GitToolWindow,
+  gitChangesDetailSurface,
   gitOperationFailureMessage,
   operationControlWarning,
   pushTargetFromStatus,
 } from "@/renderer/features/git/components/GitToolWindow";
-import type { GitRepositoryId, GitRepositoryVersion, GitStatusSnapshot } from "@/runtime/gitTypes";
+import type { GitConflictFile, GitRepositoryId, GitRepositoryVersion, GitStatusSnapshot } from "@/runtime/gitTypes";
 import type { ActiveProjectState } from "@/renderer/features/git/activeProject";
 import type { Workspace } from "@/types/protocol";
 
@@ -25,6 +26,13 @@ const readyProject: ActiveProjectState = {
 };
 
 describe("GitToolWindow", () => {
+  it("keeps the merge editor, read-only conflict diff, and ordinary change diff mutually exclusive", () => {
+    expect(gitChangesDetailSurface(null)).toBe("change_diff");
+    expect(gitChangesDetailSurface(conflictFile({ editable: true }))).toBe("merge_editor");
+    expect(gitChangesDetailSurface(conflictFile({ editable: false, resultBinary: true }))).toBe("conflict_diff");
+    expect(gitChangesDetailSurface(conflictFile({ editable: false, resultTooLarge: true }))).toBe("conflict_diff");
+  });
+
   it("preserves readable hook failures from a completed operation", () => {
     expect(gitOperationFailureMessage({
       summary: "commit",
@@ -115,6 +123,8 @@ describe("GitToolWindow", () => {
     expect(screen.queryByRole("tab", { name: "Reflog" })).toBeNull();
     expect(screen.queryByRole("tab", { name: "操作" })).toBeNull();
     expect(screen.getByRole("tabpanel", { name: "提交" }).getAttribute("data-view")).toBe("changes");
+    expect(screen.getByRole("complementary", { name: "Git 详情" }).getAttribute("data-detail-surface"))
+      .toBe("change_diff");
     changesTab.focus();
     fireEvent.keyDown(changesTab, { key: "ArrowRight" });
     const historyTab = screen.getByRole("tab", { name: "Git 日志" });
@@ -135,6 +145,18 @@ describe("GitToolWindow", () => {
     fireEvent.click(advanced);
     expect(screen.queryByRole("menu", { name: "更多 Git 视图" })).toBeNull();
     expect(screen.getByRole("tabpanel", { name: "高级 Git 工具" }).getAttribute("data-view")).toBe("operations");
+  });
+
+  it("retains controller state while releasing the hidden Git DOM", () => {
+    const { rerender } = render(<GitToolWindow project={readyProject} maximized active />);
+    fireEvent.click(screen.getByRole("tab", { name: "Git 日志" }));
+    expect(screen.getByRole("tab", { name: "Git 日志" }).getAttribute("aria-selected")).toBe("true");
+
+    rerender(<GitToolWindow project={readyProject} maximized active={false} />);
+    expect(screen.queryByTestId("git-tool-window")).toBeNull();
+
+    rerender(<GitToolWindow project={readyProject} maximized active />);
+    expect(screen.getByRole("tab", { name: "Git 日志" }).getAttribute("aria-selected")).toBe("true");
   });
 
   it("uses the shared workspace selector to switch the Git project", () => {
@@ -238,6 +260,35 @@ describe("GitToolWindow", () => {
     expect(screen.getByText(title)).not.toBeNull();
   });
 });
+
+function conflictFile(overrides: Partial<GitConflictFile>): GitConflictFile {
+  return {
+    path: "src/conflict.ts",
+    relatedPaths: [],
+    kind: "both_modified",
+    stages: [{
+      stage: 2,
+      label: "ours",
+      objectId: "a".repeat(40) as GitConflictFile["stages"][number]["objectId"],
+      mode: "100644",
+      size: 3,
+      content: "ours\n",
+      binary: false,
+      encoding: "utf-8",
+      eol: "lf",
+      tooLarge: false,
+    }],
+    resultContent: "ours\n",
+    resultBinary: false,
+    resultEncoding: "utf-8",
+    resultEol: "lf",
+    resultTooLarge: false,
+    resultRevision: "revision-1",
+    allowedActions: ["edit"],
+    editable: true,
+    ...overrides,
+  };
+}
 
 function statusWithUpstream(ahead: number): GitStatusSnapshot {
   return {

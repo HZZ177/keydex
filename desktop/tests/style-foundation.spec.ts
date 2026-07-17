@@ -41,7 +41,7 @@ describe("style foundation", () => {
 
   it("keeps the Git workbench aligned with the Keydex visual foundation", () => {
     const gitHost = readSource("renderer/features/git/components/GitToolWindow.module.css");
-    const gitDiff = readSource("renderer/features/git/components/GitDiffViewer.module.css");
+    const diffTheme = readSource("renderer/styles/themes/default-color-scheme.css");
     const gitHistory = readSource("renderer/features/git/components/GitHistoryView.module.css");
     const gitMenu = readSource("renderer/components/layout/Titlebar/ProjectGitMenu.module.css");
     const gitComponentStyles = collectCssFiles(resolve(srcDir, "renderer/features/git/components"))
@@ -65,10 +65,10 @@ describe("style foundation", () => {
     expect(gitMenu).toMatch(/\.refTree::-webkit-scrollbar-track,[\s\S]*?\.helpBody::-webkit-scrollbar-track\s*{[^}]*background:\s*transparent/s);
     expect(gitMenu).toMatch(/\.refTree::-webkit-scrollbar,[\s\S]*?\.helpBody::-webkit-scrollbar\s*{[^}]*width:\s*10px[^}]*height:\s*10px/s);
     expect(gitHost).toContain("background: var(--color-bg-elevated)");
-    expect(gitDiff).toContain("background: var(--diff-added-bg)");
-    expect(gitDiff).toContain("background: var(--diff-removed-bg)");
-    expect(gitDiff).not.toContain("color-mix(in srgb, #2b8a57");
-    expect(gitDiff).not.toContain("color-mix(in srgb, #d14343");
+    expect(diffTheme).toContain("--diff-added-bg");
+    expect(diffTheme).toContain("--diff-removed-bg");
+    expect(diffTheme).not.toContain("color-mix(in srgb, #2b8a57");
+    expect(diffTheme).not.toContain("color-mix(in srgb, #d14343");
   });
 
   it("does not define blue focus rings on interactive controls", () => {
@@ -163,6 +163,7 @@ describe("style foundation", () => {
     const messageText = readSource("renderer/pages/conversation/messages/MessageText.module.css");
     const sendBox = readSource("renderer/components/chat/SendBox/SendBox.module.css");
     const filePreview = readSource("renderer/components/workspace/FilePreview.module.css");
+    const diffSurface = readSource("renderer/components/diff/DiffSurface.module.css");
 
     expect(layout).toContain("overflow-y: auto");
     expect(layout).toContain("overflow-x: hidden");
@@ -292,7 +293,8 @@ describe("style foundation", () => {
     );
     expect(filePreview).toMatch(/\.sourceViewer\s*{[^}]*background:\s*var\(--color-bg-elevated\)/s);
     expect(filePreview).toMatch(/\.sourceLineNumbers\s*{[^}]*background:\s*var\(--surface-muted\)/s);
-    expect(filePreview).toMatch(/\.diffPane\s*{[^}]*background:\s*var\(--color-bg-elevated\)/s);
+    expect(filePreview).not.toMatch(/\.diff(?:Pane|Line)/s);
+    expect(diffSurface).toMatch(/\.surface\[data-profile="preview"\]\s*{[^}]*background:\s*var\(--diff-surface-bg\)/s);
     expect(filePreview).not.toContain("background: var(--code-bg)");
     expect(filePreview).not.toContain("background: #fff");
     expect(sider).toMatch(/\.historyMeta\s*{[^}]*white-space:\s*nowrap/s);

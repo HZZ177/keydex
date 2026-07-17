@@ -313,7 +313,8 @@ async def delete_file_tool(
                 "deleted_lines": 0,
                 "diff": None,
                 "binary": True,
-            }
+            },
+            completed=True,
         )
     )
     change["removed_bytes"] = removed_bytes
@@ -376,7 +377,8 @@ async def move_file_tool(
             "deleted_lines": 0,
             "diff": diff,
             "binary": before is None,
-        }
+        },
+        completed=True,
     )
     logger.info(f"[EditOpsTool] 移动文件完成 | old_path={old_path} | new_path={new_path}")
     return {
@@ -477,7 +479,8 @@ def _file_change(
                 after=after,
                 operation=diff_operation,
             ),
-        }
+        },
+        completed=True,
     )
 
 

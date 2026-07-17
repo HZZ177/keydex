@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 
 import type { GitBisectSnapshot, GitObjectId } from "@/runtime/gitTypes";
 
+import { GitConfirmActionDialog } from "../dialogs";
 import styles from "./GitBisectView.module.css";
 
 export function GitBisectView({
@@ -25,6 +26,7 @@ export function GitBisectView({
   const [good, setGood] = useState("");
   const [bad, setBad] = useState("HEAD");
   const [pendingStart, setPendingStart] = useState(false);
+  const [pendingReset, setPendingReset] = useState(false);
   useEffect(() => {
     if (!good && revisions.length) setGood(revisions.find((ref) => ref !== "HEAD") ?? revisions[0]);
   }, [good, revisions]);
@@ -49,7 +51,7 @@ export function GitBisectView({
             </div>
           )}
           <div className={styles.candidates}><strong>候选范围</strong><ol>{snapshot.candidateRevisions.slice(0, 12).map((revision) => <li key={revision} data-current={revision === snapshot.currentRevision ? "true" : "false"}><code>{revision}</code></li>)}</ol>{snapshot.remainingCount > 12 ? <span>另有 {snapshot.remainingCount - 12} 个</span> : null}</div>
-          <button type="button" className={styles.reset} disabled={busy} onClick={() => onControl("reset")}><RotateCcw size={13} />结束二分定位</button>
+          <button type="button" className={styles.reset} disabled={busy} onClick={() => setPendingReset(true)}><RotateCcw size={13} />结束二分定位</button>
         </>
       ) : (
         <form onSubmit={(event) => { event.preventDefault(); if (good.trim() && bad.trim()) setPendingStart(true); }}>
@@ -57,16 +59,32 @@ export function GitBisectView({
           <label>已知异常修订<input aria-label="已知异常修订" list="git-bisect-revisions" value={bad} onChange={(event) => setBad(event.target.value)} /></label>
           <datalist id="git-bisect-revisions">{revisions.map((revision) => <option key={revision} value={revision} />)}</datalist>
           <button type="submit" disabled={busy || !good.trim() || !bad.trim()}>开始二分定位</button>
-          {pendingStart ? (
-            <div className={styles.confirmation} role="alertdialog" aria-label="确认开始二分定位">
-              <strong>从正常修订 {good.trim()} 到异常修订 {bad.trim()} 开始定位吗？</strong>
-              <span>Git 会临时签出候选提交；结束二分定位后会恢复原分支。</span>
-              <button type="button" onClick={() => { setPendingStart(false); onStart(good.trim(), bad.trim()); }}>确认开始</button>
-              <button type="button" onClick={() => setPendingStart(false)}>取消</button>
-            </div>
-          ) : null}
         </form>
       )}
+      {pendingStart ? (
+        <GitConfirmActionDialog
+          title="确认开始二分定位"
+          description="Git 会临时签出候选提交；结束二分定位后会恢复原分支。"
+          target={`${good.trim()}（正常）→ ${bad.trim()}（异常）`}
+          confirmLabel="确认开始"
+          confirmTone="default"
+          busy={busy}
+          onCancel={() => setPendingStart(false)}
+          onConfirm={() => { setPendingStart(false); onStart(good.trim(), bad.trim()); }}
+        />
+      ) : null}
+      {pendingReset && snapshot?.active ? (
+        <GitConfirmActionDialog
+          title="确认结束二分定位"
+          description="将结束当前定位并恢复开始前的分支或指针。"
+          target={snapshot.originalHead ? `恢复到：${snapshot.originalHead}` : "恢复原始 HEAD"}
+          details={[`当前修订：${short(snapshot.currentRevision)}`, `剩余候选：${snapshot.remainingCount}`]}
+          confirmLabel="确认结束"
+          busy={busy}
+          onCancel={() => setPendingReset(false)}
+          onConfirm={() => { setPendingReset(false); onControl("reset"); }}
+        />
+      ) : null}
     </section>
   );
 }

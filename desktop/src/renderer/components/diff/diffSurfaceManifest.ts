@@ -1,0 +1,293 @@
+export type DiffSurfaceDecision = "migrate" | "retain";
+
+export type DiffSurfaceKind = "viewer" | "adjacent";
+
+export type DiffSurfaceOwner =
+  | "git"
+  | "conversation"
+  | "workspace"
+  | "history"
+  | "platform";
+
+export interface DiffSurfaceInventoryEntry {
+  id: string;
+  label: string;
+  kind: DiffSurfaceKind;
+  owner: DiffSurfaceOwner;
+  decision: DiffSurfaceDecision;
+  rendererPaths: readonly string[];
+  producerPaths: readonly string[];
+  stylePaths: readonly string[];
+  testPaths: readonly string[];
+  notes: string;
+}
+
+export const DIFF_INVENTORY_BASELINE = {
+  revision: "ebbe30efbebc9c23d9e60328d8c63cfc18c5f80a",
+  capturedAt: "2026-07-17",
+  scanCommands: [
+    "rg --files desktop/src/renderer/components/diff/wrappers",
+    "rg --files desktop/src/renderer/features/git/components",
+    "rg -n '\\.diff|\\.patch|contentType.*diff|type.*diff' desktop/src/renderer",
+  ],
+} as const;
+
+export const DIFF_SURFACE_INVENTORY = [
+  {
+    id: "git-worktree-unstaged",
+    label: "Git 提交页未暂存文件",
+    kind: "viewer",
+    owner: "git",
+    decision: "migrate",
+    rendererPaths: [
+      "src/renderer/features/git/components/GitToolWindow.tsx",
+      "src/renderer/features/git/components/GitSelectedChangeDiff.tsx",
+      "src/renderer/components/diff/wrappers/GitDiffView.tsx",
+    ],
+    producerPaths: ["../backend/app/git/diff.py", "src/runtime/gitTypes.ts"],
+    stylePaths: ["src/renderer/components/diff/wrappers/GitDiffView.module.css"],
+    testPaths: ["tests/git-selected-change-diff.spec.tsx", "e2e/git-local-changes.spec.ts"],
+    notes: "迁移到 git profile，只保留文件级暂存；块和行操作不进入当前产品界面。",
+  },
+  {
+    id: "git-index-staged",
+    label: "Git 提交页已暂存文件",
+    kind: "viewer",
+    owner: "git",
+    decision: "migrate",
+    rendererPaths: [
+      "src/renderer/features/git/components/GitToolWindow.tsx",
+      "src/renderer/features/git/components/GitSelectedChangeDiff.tsx",
+      "src/renderer/components/diff/wrappers/GitDiffView.tsx",
+    ],
+    producerPaths: ["../backend/app/git/diff.py", "src/runtime/gitTypes.ts"],
+    stylePaths: ["src/renderer/components/diff/wrappers/GitDiffView.module.css"],
+    testPaths: ["tests/git-selected-change-diff.spec.tsx", "e2e/git-local-changes.spec.ts"],
+    notes: "迁移到 git profile，保留取消暂存和仓库版本保护。",
+  },
+  {
+    id: "git-stash-detail",
+    label: "Git stash 详情",
+    kind: "viewer",
+    owner: "git",
+    decision: "migrate",
+    rendererPaths: [
+      "src/renderer/features/git/components/GitToolWindow.tsx",
+      "src/renderer/features/git/components/GitReadOnlyDiff.tsx",
+      "src/renderer/components/diff/wrappers/GitDiffView.tsx",
+    ],
+    producerPaths: ["../backend/app/git/diff.py", "src/runtime/gitTypes.ts"],
+    stylePaths: ["src/renderer/components/diff/wrappers/GitDiffView.module.css"],
+    testPaths: ["tests/git-read-only-diff.spec.tsx", "e2e/git-local-changes.spec.ts"],
+    notes: "迁移为只读 git profile，不暴露暂存动作。",
+  },
+  {
+    id: "git-patch-export",
+    label: "Git 补丁导出结果",
+    kind: "viewer",
+    owner: "git",
+    decision: "migrate",
+    rendererPaths: [
+      "src/renderer/features/git/components/GitToolWindow.tsx",
+      "src/renderer/features/git/components/GitPatchExchangeView.tsx",
+    ],
+    producerPaths: ["../backend/app/git/diff.py"],
+    stylePaths: ["src/renderer/features/git/components/GitPatchExchangeView.module.css"],
+    testPaths: ["tests/git-patch-exchange-view.spec.tsx"],
+    notes: "只迁移导出结果；补丁导入 textarea 保持可编辑原文。",
+  },
+  {
+    id: "conversation-file-change",
+    label: "对话文件变更卡片",
+    kind: "viewer",
+    owner: "conversation",
+    decision: "migrate",
+    rendererPaths: [
+      "src/renderer/pages/conversation/messages/FileChangeBlock.tsx",
+      "src/renderer/components/review/FileReviewDiff.tsx",
+    ],
+    producerPaths: [
+      "../backend/app/agent/tool_call_progress.py",
+      "../backend/app/tools/patch.py",
+      "../backend/app/tools/edit_ops.py",
+    ],
+    stylePaths: ["src/renderer/components/review/FileReviewDiff.module.css"],
+    testPaths: ["tests/file-change-block.spec.tsx"],
+    notes: "迁移为 compact profile，保留单文件、多文件和延迟详情。",
+  },
+  {
+    id: "tool-call-file-change",
+    label: "文件工具调用详情",
+    kind: "viewer",
+    owner: "conversation",
+    decision: "migrate",
+    rendererPaths: [
+      "src/renderer/pages/conversation/messages/ToolCallBlock.tsx",
+      "src/renderer/components/review/FileReviewDiff.tsx",
+    ],
+    producerPaths: [
+      "../backend/app/agent/tool_call_progress.py",
+      "../backend/app/tools/patch.py",
+      "../backend/app/tools/edit_ops.py",
+    ],
+    stylePaths: ["src/renderer/components/review/FileReviewDiff.module.css"],
+    testPaths: ["tests/tool-call-block.spec.tsx"],
+    notes: "迁移为 compact profile，非文件工具不得加载 Diff 引擎。",
+  },
+  {
+    id: "agent-review-panel",
+    label: "Agent 审阅侧栏",
+    kind: "viewer",
+    owner: "conversation",
+    decision: "migrate",
+    rendererPaths: [
+      "src/renderer/components/layout/Layout.tsx",
+      "src/renderer/components/review/FileReviewDiff.tsx",
+    ],
+    producerPaths: ["src/renderer/utils/fileReview.ts"],
+    stylePaths: ["src/renderer/components/review/FileReviewDiff.module.css"],
+    testPaths: ["tests/layout.spec.tsx"],
+    notes: "迁移为 review profile，保留 focusedPath 与侧栏状态。",
+  },
+  {
+    id: "workbench-review-drawer",
+    label: "Workbench 审阅抽屉",
+    kind: "viewer",
+    owner: "workspace",
+    decision: "migrate",
+    rendererPaths: [
+      "src/renderer/pages/workbench/WorkbenchAssistantSurface.tsx",
+      "src/renderer/components/review/FileReviewDiff.tsx",
+    ],
+    producerPaths: ["src/renderer/utils/fileReview.ts"],
+    stylePaths: ["src/renderer/components/review/FileReviewDiff.module.css"],
+    testPaths: ["tests/workbench-assistant-surface.spec.tsx", "e2e/workbench-assistant-shell.spec.ts"],
+    notes: "迁移为 review profile，与覆盖层共享受控视图状态。",
+  },
+  {
+    id: "workbench-review-overlay",
+    label: "Workbench 审阅覆盖层",
+    kind: "viewer",
+    owner: "workspace",
+    decision: "migrate",
+    rendererPaths: [
+      "src/renderer/pages/workbench/WorkbenchAssistantSurface.tsx",
+      "src/renderer/components/review/FileReviewDiff.tsx",
+    ],
+    producerPaths: ["src/renderer/utils/fileReview.ts"],
+    stylePaths: ["src/renderer/components/review/FileReviewDiff.module.css"],
+    testPaths: ["tests/workbench-assistant-surface.spec.tsx", "e2e/workbench-assistant-shell.spec.ts"],
+    notes: "迁移为 review profile，同一时刻只保留一个滚动 owner。",
+  },
+  {
+    id: "reverse-preview",
+    label: "回退与反转预览",
+    kind: "viewer",
+    owner: "history",
+    decision: "migrate",
+    rendererPaths: [
+      "src/renderer/pages/conversation/ReverseDialog.tsx",
+      "src/renderer/components/review/FileReviewDiff.tsx",
+    ],
+    producerPaths: ["../backend/app/services/file_history_service.py"],
+    stylePaths: ["src/renderer/components/review/FileReviewDiff.module.css"],
+    testPaths: ["tests/reverse-dialog.spec.tsx", "../backend/tests/services/test_file_history_preview.py"],
+    notes: "迁移为 review profile，保留方向、二进制和截断安全语义。",
+  },
+  {
+    id: "explicit-diff-preview",
+    label: "显式 Diff 预览请求",
+    kind: "viewer",
+    owner: "workspace",
+    decision: "migrate",
+    rendererPaths: [
+      "src/renderer/providers/previewTypes.ts",
+      "src/renderer/components/workspace/FilePreview.tsx",
+    ],
+    producerPaths: ["src/renderer/providers/PreviewProvider.tsx"],
+    stylePaths: ["src/renderer/components/workspace/FilePreview.module.css"],
+    testPaths: ["tests/file-preview.spec.tsx"],
+    notes: "迁移为 preview profile，保持 tab identity、刷新和源码入口。",
+  },
+  {
+    id: "content-diff-preview",
+    label: "Diff 内容与代码块打开预览",
+    kind: "viewer",
+    owner: "workspace",
+    decision: "migrate",
+    rendererPaths: [
+      "src/renderer/pages/conversation/messages/MarkdownCodeBlock.tsx",
+      "src/renderer/components/workspace/FilePreview.tsx",
+    ],
+    producerPaths: ["src/renderer/providers/PreviewProvider.tsx"],
+    stylePaths: ["src/renderer/components/workspace/FilePreview.module.css"],
+    testPaths: ["tests/file-preview.spec.tsx"],
+    notes: "只迁移打开后的完整预览；行内代码块继续按代码语义渲染。",
+  },
+  {
+    id: "patch-file-preview",
+    label: ".diff 与 .patch 文件预览",
+    kind: "viewer",
+    owner: "workspace",
+    decision: "migrate",
+    rendererPaths: ["src/renderer/components/workspace/FilePreview.tsx"],
+    producerPaths: ["src/renderer/providers/PreviewProvider.tsx"],
+    stylePaths: ["src/renderer/components/workspace/FilePreview.module.css"],
+    testPaths: ["tests/file-preview.spec.tsx"],
+    notes: "迁移为支持多文件导航的 preview profile，并保留原始源码模式。",
+  },
+  {
+    id: "commit-compare-audit",
+    label: "Git 提交详情与比较结果",
+    kind: "adjacent",
+    owner: "git",
+    decision: "retain",
+    rendererPaths: [
+      "src/renderer/features/git/components/GitCommitDetailsView.tsx",
+      "src/renderer/features/git/components/GitCompareView.tsx",
+    ],
+    producerPaths: ["src/runtime/gitTypes.ts"],
+    stylePaths: ["src/renderer/features/git/components/GitCompareView.module.css"],
+    testPaths: ["tests/git-compare-view.spec.tsx"],
+    notes: "相邻的比较参数与文件清单组件，不渲染 Diff；无生产挂载但由 Git 功能线程继续维护。",
+  },
+  {
+    id: "git-three-way-conflict-editor",
+    label: "Git 三方冲突编辑器",
+    kind: "adjacent",
+    owner: "git",
+    decision: "retain",
+    rendererPaths: ["src/renderer/features/git/components/GitThreeWayMergeEditor.tsx"],
+    producerPaths: ["src/runtime/gitTypes.ts"],
+    stylePaths: ["src/renderer/features/git/components/GitThreeWayMergeEditor.module.css"],
+    testPaths: ["tests/git-three-way-merge-editor.spec.tsx"],
+    notes: "可编辑冲突解决器不由只读 Diff Viewer 替换。",
+  },
+  {
+    id: "markdown-inline-diff-code",
+    label: "Markdown fenced diff 行内代码块",
+    kind: "adjacent",
+    owner: "conversation",
+    decision: "retain",
+    rendererPaths: ["src/renderer/pages/conversation/messages/MarkdownCodeBlock.tsx"],
+    producerPaths: ["src/renderer/markdownRuntime/streaming/StreamTailPatch.ts"],
+    stylePaths: [],
+    testPaths: ["tests/file-preview.spec.tsx"],
+    notes: "继续按流式代码字面量渲染；只有打开预览后进入统一 Diff 链路。",
+  },
+  {
+    id: "non-diff-graph-and-text",
+    label: "Blame、Git 日志拓扑线与普通文本比较",
+    kind: "adjacent",
+    owner: "platform",
+    decision: "retain",
+    rendererPaths: [
+      "src/renderer/features/git/components/GitBlameView.tsx",
+      "src/renderer/features/git/components/GitHistoryView.tsx",
+    ],
+    producerPaths: ["src/runtime/gitTypes.ts"],
+    stylePaths: [],
+    testPaths: ["tests/git-history-view.spec.tsx"],
+    notes: "不属于 Diff Viewer，本计划不改。",
+  },
+] as const satisfies readonly DiffSurfaceInventoryEntry[];

@@ -1,0 +1,230 @@
+.fileHeader {
+  display: flex;
+  min-width: 0;
+  min-height: 36px;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-block: 1px solid var(--diff-toolbar-border);
+  background: var(--diff-header-bg);
+  color: var(--diff-code-text);
+}
+
+.fileHeader:hover {
+  background: color-mix(in srgb, var(--diff-header-bg) 74%, var(--diff-context-hover-bg));
+}
+
+.fileHeader[data-selected="true"] {
+  border-color: var(--diff-selection-border);
+  background: var(--diff-selection-bg);
+}
+
+.fileHeader[data-density="compact"] {
+  min-height: 34px;
+  gap: 6px;
+  padding: 5px 7px;
+  border-block: 0;
+}
+
+.fileHeader[data-density="compact"][role="button"] {
+  cursor: pointer;
+}
+
+.fileHeader[data-density="compact"][role="button"]:focus-visible {
+  outline: 2px solid var(--diff-focus-ring);
+  outline-offset: -2px;
+}
+
+.fileHeader[data-density="compact"] .identity {
+  gap: 6px;
+}
+
+.fileHeader[data-density="compact"] .fileIcon {
+  width: 14px;
+  height: 14px;
+  flex-basis: 14px;
+}
+
+.fileHeader[data-density="compact"] .fileName {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.fileHeader[data-density="compact"] .directoryPath {
+  font-size: 12px;
+}
+
+.fileHeader[data-density="compact"] .lineStats {
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+
+.identity {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: 7px;
+  overflow: hidden;
+}
+
+.fileIcon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  align-items: center;
+  align-self: center;
+  justify-content: center;
+}
+
+.fileIcon > :is(img, svg) {
+  width: 100%;
+  height: 100%;
+}
+
+.fileName {
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.directoryPath {
+  min-width: 24px;
+  flex: 1 10000 auto;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 0.92em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.secondary,
+.actions,
+.hunkActions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+}
+
+.status,
+.statusIcon,
+.metadata,
+.lineStats {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.status[data-status="added"],
+.statusIcon[data-status="added"],
+.lineStats [data-kind="added"] {
+  color: var(--diff-added-text);
+}
+
+.status[data-status="deleted"],
+.statusIcon[data-status="deleted"],
+.lineStats [data-kind="removed"] {
+  color: var(--diff-removed-text);
+}
+
+.status[data-status="modified"],
+.statusIcon[data-status="modified"],
+.statusIcon[data-status="renamed"],
+.statusIcon[data-status="copied"],
+.statusIcon[data-status="unknown"],
+.status[data-status="type_changed"] {
+  color: var(--diff-gutter-text-active);
+}
+
+.statusIcon {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+}
+
+.statusIcon > svg {
+  width: 100%;
+  height: 100%;
+}
+
+.lineStats {
+  display: inline-flex;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.hunkSeparator {
+  display: flex;
+  min-width: 0;
+  min-height: 30px;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+  border-block: 1px solid var(--diff-hunk-border);
+  background: var(--diff-hunk-bg);
+  color: var(--diff-hunk-text);
+}
+
+.hunkLabel {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: inherit;
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contextButton {
+  display: inline-flex;
+  min-height: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--diff-hunk-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.contextButton:hover:not(:disabled) {
+  border-color: var(--diff-hunk-border);
+  background: var(--diff-toolbar-control-hover);
+  color: var(--diff-gutter-text-active);
+}
+
+.contextButton:focus-visible {
+  outline: 2px solid var(--diff-focus-ring);
+  outline-offset: 1px;
+}
+
+.contextButton:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.contextHint {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+@media (max-width: 560px) {
+  .secondary .metadata {
+    display: none;
+  }
+
+  .directoryPath {
+    min-width: 0;
+  }
+}

@@ -5,8 +5,8 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from backend.app.core.time import to_iso_z, utc_now
 from backend.app.core.logger import logger
+from backend.app.core.time import to_iso_z, utc_now
 from backend.app.events import DomainEventType
 from backend.app.services.thread_task_runtime import ThreadTaskStateLocks
 from backend.app.storage import (
@@ -28,7 +28,6 @@ THREAD_TASK_TYPE_LABELS = {
     THREAD_TASK_TYPE_GOAL: "目标",
 }
 THREAD_TASK_AGENT_STATUSES = frozenset({"complete", "blocked"})
-THREAD_TASK_SEED_CONTEXT_METADATA_KEY = "seed_turn_context"
 THREAD_TASK_ACTIVE_TIMER_METADATA_KEY = "active_timer"
 THREAD_TASK_ACTIVE_STARTED_AT_KEY = "active_started_at"
 _CUSTOM_THREAD_TASK_TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_:-]{0,63}$")
@@ -119,14 +118,13 @@ class ThreadTaskService:
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         with self._state_locks.acquire(session_id):
-            session = self._require_session(session_id)
+            self._require_session(session_id)
             task_type = self._clean_type(type)
             cleaned_objective = self._clean_objective(objective)
             if self._tasks.get_open_by_session(session_id) is not None:
                 raise ThreadTaskConflictError("当前会话已有未结束的长程任务")
             normalized_metadata = self._metadata_for_create(
                 metadata,
-                context_compression_epoch=session.context_compression_epoch,
                 active_started_at=self._now_iso(),
             )
             record = self._tasks.create(
@@ -552,21 +550,16 @@ class ThreadTaskService:
         self,
         metadata: dict[str, Any] | None,
         *,
-        context_compression_epoch: int,
         active_started_at: str,
     ) -> dict[str, Any]:
         normalized = dict(metadata or {})
-        seed = normalized.get(THREAD_TASK_SEED_CONTEXT_METADATA_KEY)
-        if isinstance(seed, dict):
-            seed_metadata = dict(seed)
-            epoch = max(0, int(context_compression_epoch or 0))
-            seed_metadata["created_compression_epoch"] = epoch
-            seed_metadata["last_replayed_compression_epoch"] = epoch
-            normalized[THREAD_TASK_SEED_CONTEXT_METADATA_KEY] = seed_metadata
+        normalized.pop("seed_turn_context", None)
         return self._metadata_with_active_timer(normalized, active_started_at)
 
     @staticmethod
-    def _metadata_with_active_timer(metadata: dict[str, Any], active_started_at: str | None) -> dict[str, Any]:
+    def _metadata_with_active_timer(
+        metadata: dict[str, Any], active_started_at: str | None
+    ) -> dict[str, Any]:
         normalized = dict(metadata or {})
         timer = normalized.get(THREAD_TASK_ACTIVE_TIMER_METADATA_KEY)
         timer = dict(timer) if isinstance(timer, dict) else {}
@@ -600,7 +593,11 @@ class ThreadTaskService:
         metadata: dict[str, Any] | None = None,
     ) -> tuple[int, dict[str, Any]]:
         next_metadata = dict(task.metadata if metadata is None else metadata)
-        elapsed_seconds = self._elapsed_seconds_for_record(task, now=self._now(), metadata=next_metadata)
+        elapsed_seconds = self._elapsed_seconds_for_record(
+            task,
+            now=self._now(),
+            metadata=next_metadata,
+        )
         return elapsed_seconds, self._metadata_with_active_timer(next_metadata, None)
 
     def _elapsed_seconds_for_record(

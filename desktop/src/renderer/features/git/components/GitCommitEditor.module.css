@@ -10,7 +10,6 @@
 
 .root header,
 .root footer,
-.outcome,
 .actions {
   display: flex;
   align-items: center;
@@ -39,7 +38,7 @@
   white-space: nowrap;
 }
 
-.identity[data-ready="false"] {
+.identity[data-ready="false"]:not([data-loading="true"]) {
   color: var(--color-danger, #d14343);
 }
 
@@ -76,25 +75,6 @@
   gap: 10px;
   padding: 5px 8px 7px 10px;
   background: var(--color-bg-1);
-}
-
-.outcome {
-  min-width: 0;
-  gap: 6px;
-  overflow: hidden;
-  color: var(--color-success, #2f9e64);
-  font-size: 10px;
-}
-
-.outcome span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.outcome code {
-  flex: 0 0 auto;
-  color: var(--color-text-3);
 }
 
 .actions {

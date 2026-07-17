@@ -1,5 +1,5 @@
-import { expect, test, type Dialog, type Page } from "@playwright/test";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { expect, test, type Page } from "@playwright/test";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 
 import { startGitE2EFixture } from "./git-e2e-fixtures";
@@ -20,37 +20,62 @@ test("submodule, worktree and LFS capabilities load independently with exact pat
     await fixture.commit("test: add local submodule", [".gitmodules", "modules/local"]);
     const worktreeRoot = path.join(fixture.runDir, "external-worktree");
     await fixture.git(["worktree", "add", "-b", "worktree/e2e", worktreeRoot, "HEAD"]);
+    await writeFile(path.join(worktreeRoot, "dirty-worktree.txt"), "dirty worktree content\n", "utf8");
 
     await fixture.configurePage(page);
     await page.goto(`${fixture.appBaseUrl}/#/workbench/${fixture.workspaceId}`);
     await openGitToolWindow(page);
-    await page.getByRole("tab", { name: "操作" }).click();
+    await openAdvancedGitView(page);
 
-    const submodules = page.getByRole("region", { name: "Git submodules" });
+    const submodules = page.getByRole("region", { name: "Git 子模块" });
     await expect(submodules).toContainText("modules/local", { timeout: 30_000 });
-    await expect(submodules).toContainText("clean");
+    await expect(submodules).toContainText("状态未知");
     await expect(submodules).toContainText(submoduleSource);
-    await expect(submodules.getByRole("checkbox", { name: "Select modules/local" })).toBeChecked();
+    await expect(submodules.getByRole("checkbox", { name: "选择 modules/local" })).toBeChecked();
 
-    const worktrees = page.getByRole("region", { name: "Git worktrees" });
+    const worktrees = page.getByRole("region", { name: "Git 工作树" });
     await expect(worktrees).toContainText(worktreeRoot.replaceAll("\\", "/"), { timeout: 30_000 });
     await expect(worktrees).toContainText("worktree/e2e");
-    await expect(worktrees).toContainText("external");
-    await expect(worktrees.getByRole("button", { name: "Authorize", exact: true })).toBeVisible();
+    await expect(worktrees).toContainText("外部路径");
+    await worktrees.getByRole("button", { name: "授权", exact: true }).click();
+    const authorizeDialog = page.getByRole("dialog", { name: "确认授权外部工作树" });
+    await expect(authorizeDialog).toContainText(worktreeRoot.replaceAll("\\", "/"));
+    await authorizeDialog.getByRole("button", { name: "取消" }).click();
+    await expect(worktrees.getByRole("button", { name: "移除" })).toBeDisabled();
+    await worktrees.getByRole("button", { name: "授权", exact: true }).click();
+    await authorizeDialog.getByRole("button", { name: "确认授权" }).click();
+    await expect(worktrees.getByRole("button", { name: "撤销授权" })).toBeVisible({ timeout: 30_000 });
+    await expect(worktrees).toContainText("有改动");
+    await worktrees.getByRole("button", { name: "移除" }).click();
+    const removeWorktreeDialog = page.getByRole("dialog", { name: "确认移除工作树" });
+    await expect(removeWorktreeDialog).toContainText("强制丢弃这些改动");
+    await removeWorktreeDialog.getByRole("button", { name: "取消" }).click();
+    await expect.poll(async () => accessExists(worktreeRoot)).toBe(true);
+    await worktrees.getByRole("button", { name: "移除" }).click();
+    await removeWorktreeDialog.getByRole("button", { name: "确认移除" }).click();
+    await expect.poll(async () => accessExists(worktreeRoot), { timeout: 30_000 }).toBe(false);
 
-    const lfs = page.getByRole("region", { name: "Git LFS" });
-    await expect(lfs).not.toContainText("Loading Git LFS status", { timeout: 30_000 });
+    await submodules.getByRole("button", { name: "取消初始化" }).click();
+    const deinitDialog = page.getByRole("dialog", { name: "确认取消初始化子模块" });
+    await deinitDialog.getByRole("button", { name: "取消", exact: true }).click();
+    await expect.poll(async () => accessExists(path.join(fixture.repositoryRoot, "modules", "local", "module.txt"))).toBe(true);
+    await submodules.getByRole("button", { name: "取消初始化" }).click();
+    await deinitDialog.getByRole("button", { name: "确认取消初始化" }).click();
+    await expect.poll(async () => (await fixture.git(["submodule", "status", "modules/local"])).stdout.trim(), { timeout: 30_000 }).toMatch(/^-/);
+
+    const lfs = page.getByRole("region", { name: "Git 大文件存储" });
+    await expect(lfs).not.toContainText("正在读取 Git 大文件存储状态", { timeout: 30_000 });
     const unavailable = lfs.getByRole("status");
     if (await unavailable.isVisible().catch(() => false)) {
-      await expect(unavailable).toContainText("Git LFS unavailable");
-      await expect(lfs).toContainText("never installs Git LFS automatically");
-      await expect(lfs.getByRole("button", { name: "Fetch objects" })).toBeDisabled();
-      await expect(lfs.getByRole("button", { name: "Pull & checkout" })).toBeDisabled();
-      await expect(lfs.getByRole("button", { name: "Push objects" })).toBeDisabled();
+      await expect(unavailable).toContainText("Git 大文件存储不可用");
+      await expect(lfs).toContainText("请单独安装 Git 大文件存储扩展");
+      await expect(lfs.getByRole("button", { name: "获取对象" })).toBeDisabled();
+      await expect(lfs.getByRole("button", { name: "拉取并签出" })).toBeDisabled();
+      await expect(lfs.getByRole("button", { name: "推送对象…" })).toBeDisabled();
     } else {
-      await expect(lfs).toContainText("LFS files");
-      await expect(lfs).toContainText("tracked patterns");
-      await expect(lfs.getByRole("button", { name: "Fetch objects" })).toBeEnabled();
+      await expect(lfs).toContainText("个大文件");
+      await expect(lfs).toContainText("个跟踪模式");
+      await expect(lfs.getByRole("button", { name: "获取对象" })).toBeEnabled();
     }
     await fixture.screenshot(page, "e2e-075-submodule-worktree-lfs-capabilities");
   } finally {
@@ -58,7 +83,7 @@ test("submodule, worktree and LFS capabilities load independently with exact pat
   }
 });
 
-test("high-risk reset rejects option injection and requires both confirmations before untracked data loss", async ({ page }) => {
+test("high-risk reset rejects option injection and requires formal confirmation before untracked data loss", async ({ page }) => {
   test.setTimeout(120_000);
   const fixture = await startGitE2EFixture("high-risk-confirmation-injection");
   try {
@@ -74,39 +99,33 @@ test("high-risk reset rejects option injection and requires both confirmations b
     await fixture.configurePage(page);
     await page.goto(`${fixture.appBaseUrl}/#/workbench/${fixture.workspaceId}`);
     await openGitToolWindow(page);
-    await page.getByRole("tab", { name: "操作" }).click();
-    const reset = page.getByRole("region", { name: "Reset and restore" });
-    await reset.getByRole("textbox", { name: "Reset target" }).fill("--hard");
-    await reset.getByRole("combobox", { name: "Reset mode" }).selectOption("hard");
-    await reset.getByRole("button", { name: "Preview reset" }).click();
-    await expect(page.getByTestId("git-tool-window").getByRole("alert").first()).toContainText(/unsafe|valid Git revision|invalid/i, { timeout: 20_000 });
+    await openAdvancedGitView(page);
+    const reset = page.getByRole("region", { name: "重置与还原" });
+    await reset.getByRole("textbox", { name: "重置目标" }).fill("--hard");
+    await reset.getByRole("combobox", { name: "重置模式" }).selectOption("hard");
+    await reset.getByRole("button", { name: "预览重置" }).click();
+    await expect(page.getByTestId("git-tool-window").getByRole("alert").first()).toContainText(/输入不符合要求|参数.*未通过校验/, { timeout: 20_000 });
     expect((await fixture.git(["rev-parse", "HEAD"])).stdout.trim()).toBe(originalHead);
     expect(await readFile(path.join(fixture.repositoryRoot, "sentinel.keep"), "utf8")).toContain("never touch");
 
-    await reset.getByRole("textbox", { name: "Reset target" }).fill(target);
-    await reset.getByRole("button", { name: "Preview reset" }).click();
-    await expect(reset).toContainText("untracked-loss", { timeout: 20_000 });
-    await expect(reset.getByRole("alert")).toContainText("Untracked data will be overwritten");
+    await reset.getByRole("textbox", { name: "重置目标" }).fill(target);
+    await reset.getByRole("button", { name: "预览重置" }).click();
+    await expect(reset).toContainText("可能丢失未跟踪数据", { timeout: 20_000 });
+    await expect(reset.getByRole("alert")).toContainText("未跟踪数据将被覆盖");
     await expect(reset.getByRole("alert")).toContainText("collision.txt");
-    await expect(reset.getByRole("list", { name: "Reset affected files" })).toContainText("collision.txt");
-    await expect(reset).toContainText("HEAD@{1}");
-    await expect(reset).toContainText("ORIG_HEAD");
+    await expect(reset.getByRole("list", { name: "重置影响的文件" })).toContainText("collision.txt");
 
-    let dialogCount = 0;
-    const cancelSecondConfirmation = (dialog: Dialog) => {
-      dialogCount += 1;
-      if (dialogCount === 1) void dialog.accept();
-      else void dialog.dismiss();
-    };
-    page.on("dialog", cancelSecondConfirmation);
-    await reset.getByRole("button", { name: "Reset to target" }).click();
-    await expect.poll(() => dialogCount, { timeout: 10_000 }).toBe(2);
-    page.off("dialog", cancelSecondConfirmation);
+    await reset.getByRole("button", { name: "重置到目标" }).click();
+    const resetDialog = page.getByRole("dialog", { name: "确认重置分支" });
+    await expect(resetDialog).toContainText("collision.txt");
+    await expect(resetDialog).toContainText("HEAD@{1}");
+    await expect(resetDialog).toContainText(target.slice(0, 12));
+    await resetDialog.getByRole("button", { name: "取消" }).click();
     expect((await fixture.git(["rev-parse", "HEAD"])).stdout.trim()).toBe(originalHead);
     expect(await readFile(path.join(fixture.repositoryRoot, "collision.txt"), "utf8")).toContain("untracked sentinel");
 
-    page.on("dialog", (dialog) => dialog.accept());
-    await reset.getByRole("button", { name: "Reset to target" }).click();
+    await reset.getByRole("button", { name: "重置到目标" }).click();
+    await resetDialog.getByRole("button", { name: "确认重置" }).click();
     await expect.poll(async () => (await fixture.git(["rev-parse", "HEAD"])).stdout.trim(), { timeout: 30_000 }).toBe(target);
     expect(await readFile(path.join(fixture.repositoryRoot, "collision.txt"), "utf8")).toBe("tracked target content\n");
     expect(await readFile(path.join(fixture.repositoryRoot, "sentinel.keep"), "utf8")).toContain("never touch");
@@ -124,4 +143,14 @@ async function openGitToolWindow(page: Page): Promise<void> {
   await trigger.click();
   await page.getByRole("menuitem", { name: "打开 Git 面板" }).click();
   await expect(page.getByRole("tablist", { name: "Git 面板视图" })).toBeVisible();
+}
+
+async function openAdvancedGitView(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "更多 Git 视图" }).click();
+  await page.getByRole("menuitem", { name: /高级 Git 工具/ }).click();
+  await expect(page.getByRole("region", { name: "合并流程" })).toBeVisible();
+}
+
+async function accessExists(target: string): Promise<boolean> {
+  return access(target).then(() => true).catch(() => false);
 }

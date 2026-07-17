@@ -9,6 +9,7 @@ from typing import Any
 from backend.app.core.config import AppSettings
 from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
+from backend.app.core.system_proxy import SystemProxySnapshot, SystemProxyState
 from backend.app.core.time import to_iso_z, utc_now
 from backend.app.mcp.approval import (
     McpApprovalService,
@@ -61,6 +62,7 @@ class McpManagerStatus:
 class _CachedClient:
     client: McpClient
     server_updated_at: str
+    proxy_fingerprint: str | None
 
 
 @dataclass(frozen=True)
@@ -108,6 +110,7 @@ class McpManager:
         approval_decider: McpToolApprovalDecider | None = None,
         elicitation_service: McpElicitationService | None = None,
         sampling_service: McpSamplingService | None = None,
+        system_proxy_state: SystemProxyState | None = None,
     ) -> None:
         self.settings = settings
         self.repositories = repositories
@@ -115,6 +118,7 @@ class McpManager:
         self.approval_decider = approval_decider or McpApprovalService(repositories)
         self.elicitation_service = elicitation_service
         self.sampling_service = sampling_service
+        self.system_proxy_state = system_proxy_state or SystemProxyState()
         self.audit_writer = McpAuditWriter.from_repositories(repositories)
         self.discovery_service = McpDiscoveryService(repositories)
         self.resources_service = McpResourcesReservedService(repositories)
@@ -122,6 +126,7 @@ class McpManager:
         self._running_calls: dict[str, _RunningToolCall] = {}
         self._refresh_tasks: dict[str, _ScheduledRefresh] = {}
         self._refresh_locks: dict[str, asyncio.Lock] = {}
+        self._connect_locks: dict[str, asyncio.Lock] = {}
         self._lock = asyncio.Lock()
         self._scheduler_lock = asyncio.Lock()
         self._started = False
@@ -220,18 +225,66 @@ class McpManager:
         if not server.enabled:
             self.repositories.mcp_server_status.upsert(server.id, status="disabled")
             raise McpRuntimeError(McpErrorCode.SERVER_DISABLED)
+        proxy_snapshot = self._proxy_snapshot_for_server(server)
+        proxy_fingerprint = proxy_snapshot.fingerprint if proxy_snapshot is not None else None
         async with self._lock:
             cached = self._clients.get(server_id)
-            if cached is not None and cached.server_updated_at == server.updated_at:
+            if cached is not None and self._cached_client_matches(
+                cached,
+                server=server,
+                proxy_fingerprint=proxy_fingerprint,
+            ):
                 return cached.client
             if cached is not None:
-                await self._shutdown_cached_client(server_id, cached)
+                route_changed = (
+                    proxy_snapshot is not None
+                    and cached.proxy_fingerprint != proxy_fingerprint
+                )
+                if route_changed:
+                    summary = proxy_snapshot.safe_summary()
+                    logger.info(
+                        "[MCP Manager] rebuilding client for network route | "
+                        "code=network_route_changed | server_id={} | transport={} | "
+                        "mode={} | generation={} | schemes={} | fingerprint={}",
+                        server.id,
+                        server.transport,
+                        summary["mode"],
+                        summary["generation"],
+                        ",".join(summary["schemes"]) or "-",
+                        summary["fingerprint"],
+                    )
+                await self._shutdown_cached_client(
+                    server_id,
+                    cached,
+                    record_error=route_changed,
+                )
             client = self.client_factory.create_client(server)
             self._clients[server_id] = _CachedClient(
                 client=client,
                 server_updated_at=server.updated_at,
+                proxy_fingerprint=proxy_fingerprint,
             )
             return client
+
+    def _proxy_snapshot_for_server(
+        self,
+        server: McpServerRecord,
+    ) -> SystemProxySnapshot | None:
+        if server.transport not in {"streamable_http", "sse"}:
+            return None
+        return self.system_proxy_state.current()
+
+    @staticmethod
+    def _cached_client_matches(
+        cached: _CachedClient,
+        *,
+        server: McpServerRecord,
+        proxy_fingerprint: str | None,
+    ) -> bool:
+        return (
+            cached.server_updated_at == server.updated_at
+            and cached.proxy_fingerprint == proxy_fingerprint
+        )
 
     async def get_or_connect_client(
         self,
@@ -239,21 +292,22 @@ class McpManager:
         *,
         cancellation: McpCancellationToken | None = None,
     ) -> McpClient:
-        server = self._load_server(server_id)
-        client = await self.get_or_create_client(server_id)
-        if client.status == McpServerStatus.ONLINE:
+        async with self._connect_lock(server_id):
+            server = self._load_server(server_id)
+            client = await self.get_or_create_client(server_id)
+            if client.status == McpServerStatus.ONLINE:
+                return client
+            try:
+                init_result = await client.initialize(
+                    timeout_sec=server.startup_timeout_sec,
+                    cancellation=cancellation,
+                )
+            except Exception as exc:
+                self._record_client_error(server_id, exc)
+                await self.drop_client(server_id)
+                raise
+            self._record_client_online(server_id, init_result)
             return client
-        try:
-            init_result = await client.initialize(
-                timeout_sec=server.startup_timeout_sec,
-                cancellation=cancellation,
-            )
-        except Exception as exc:
-            self._record_client_error(server_id, exc)
-            await self.drop_client(server_id)
-            raise
-        self._record_client_online(server_id, init_result)
-        return client
 
     async def drop_client(self, server_id: str) -> bool:
         async with self._lock:
@@ -765,6 +819,13 @@ class McpManager:
             self._refresh_locks[server_id] = lock
         return lock
 
+    def _connect_lock(self, server_id: str) -> asyncio.Lock:
+        lock = self._connect_locks.get(server_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._connect_locks[server_id] = lock
+        return lock
+
     def _load_server(self, server_id: str) -> McpServerRecord:
         server = self.repositories.mcp_servers.get(server_id)
         if server is None:
@@ -774,19 +835,38 @@ class McpManager:
             )
         return server
 
-    async def _shutdown_cached_client(self, server_id: str, cached: _CachedClient) -> None:
-        await self._shutdown_client(server_id, cached.client)
+    async def _shutdown_cached_client(
+        self,
+        server_id: str,
+        cached: _CachedClient,
+        *,
+        record_error: bool = False,
+    ) -> None:
+        await self._shutdown_client(
+            server_id,
+            cached.client,
+            record_error=record_error,
+        )
 
-    async def _shutdown_client(self, server_id: str, client: McpClient) -> None:
+    async def _shutdown_client(
+        self,
+        server_id: str,
+        client: McpClient,
+        *,
+        record_error: bool = False,
+    ) -> None:
         try:
             await client.shutdown(timeout_sec=self._shutdown_timeout(server_id))
         except Exception as exc:
+            if record_error:
+                self._record_client_error(server_id, exc)
+            runtime_error = to_mcp_runtime_error(exc)
             logger.warning(
                 "[MCP Manager] client shutdown failed | "
-                "server_id={} | error_type={} | error={}",
+                "server_id={} | error_type={} | error_code={}",
                 server_id,
                 type(exc).__name__,
-                exc,
+                runtime_error.code.value,
             )
 
     def _shutdown_timeout(self, server_id: str) -> float:

@@ -6,6 +6,7 @@ import httpx
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents.middleware import AgentMiddleware
 
+from backend.app.agent.factory import AgentFactory, agent_factory
 from backend.app.agent.keydex_markdown_context_middleware import (
     KeydexMarkdownContextMiddleware,
 )
@@ -37,6 +38,7 @@ def build_default_middleware(
     dispatcher: EventDispatcher | None = None,
     checkpointer: Any | None = None,
     model_http_transport: httpx.BaseTransport | httpx.AsyncBaseTransport | None = None,
+    factory: AgentFactory = agent_factory,
 ) -> tuple[AgentMiddleware, ...]:
     """按运行时配置装配默认中间件链。"""
 
@@ -66,6 +68,7 @@ def build_default_middleware(
                     dispatcher=dispatcher,
                     checkpointer=checkpointer,
                     http_transport=model_http_transport,
+                    factory=factory,
                 )
             )
     middlewares.append(KeydexMarkdownContextMiddleware())
@@ -79,6 +82,7 @@ def build_default_middleware(
                     repositories=repositories,
                     dispatcher=dispatcher,
                     http_transport=model_http_transport,
+                    factory=factory,
                 )
             )
     middlewares.append(ToolErrorHandlingMiddleware())

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+
 from langchain_core.messages import AIMessageChunk
 
 from backend.app.agent.tool_call_progress import (
@@ -8,6 +10,17 @@ from backend.app.agent.tool_call_progress import (
     parse_apply_patch_file_changes,
     parse_partial_json_object,
 )
+
+
+def _assert_git_accepts_patch(root, patch: str) -> None:
+    result = subprocess.run(
+        ["git", "apply", "--check", "--recount", "--unsafe-paths", "-"],
+        cwd=root,
+        input=(patch.rstrip("\r\n") + "\n").encode("utf-8"),
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
 
 
 def test_partial_json_string_field_returns_incomplete_streamed_value() -> None:
@@ -133,8 +146,13 @@ def test_pipeline_emits_progress_for_streamed_apply_patch_chunks() -> None:
     assert first_progress[0]["files"][0]["path"] == "src/app.py"
     assert first_progress[0]["files"][0]["operation"] == "update"
     assert first_progress[0]["files"][0]["added_lines"] == 1
+    assert first_progress[0]["files"][0]["patch_format"] == "relaxed_apply_patch"
+    assert first_progress[0]["files"][0]["patch_precision"] == "approximate"
+    assert first_progress[0]["files"][0]["patch_complete"] is False
+    assert first_progress[0]["files"][0]["selectable_for_patch"] is False
     assert second_progress[0]["files"][0]["operation"] == "update"
     assert second_progress[0]["files"][0]["added_lines"] == 2
+    assert second_progress[0]["files"][0]["patch_complete"] is True
 
 
 def test_pipeline_merges_openai_argument_chunks_by_index_after_first_id() -> None:
@@ -301,8 +319,22 @@ def test_pipeline_handles_interleaved_write_file_tool_calls() -> None:
         for item in progress
     ]
     assert actual == [
-        ("call_a", "a.txt", "add", 2, "--- /dev/null\n+++ b/a.txt\n@@ -0,0 +1,2 @@\n+one\n+two"),
-        ("call_b", "b.txt", "add", 1, "--- /dev/null\n+++ b/b.txt\n@@ -0,0 +1 @@\n+three"),
+        (
+            "call_a",
+            "a.txt",
+            "add",
+            2,
+            "--- /dev/null\n+++ b/a.txt\n@@ -0,0 +1,2 @@\n+one\n+two\n"
+            "\\ No newline at end of file",
+        ),
+        (
+            "call_b",
+            "b.txt",
+            "add",
+            1,
+            "--- /dev/null\n+++ b/b.txt\n@@ -0,0 +1 @@\n+three\n"
+            "\\ No newline at end of file",
+        ),
     ]
 
 
@@ -382,7 +414,10 @@ def test_pipeline_marks_write_file_progress_as_create_for_new_targets() -> None:
     assert file_change["operation"] == "add"
     assert file_change["added_lines"] == 1
     assert file_change["deleted_lines"] == 0
-    assert file_change["diff"] == "--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1 @@\n+hello"
+    assert file_change["diff"] == (
+        "--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1 @@\n+hello\n"
+        "\\ No newline at end of file"
+    )
 
 
 def test_pipeline_distinguishes_legacy_patch_edit_file_from_claude_edit_file() -> None:
@@ -452,3 +487,84 @@ def test_pipeline_emits_progress_for_delete_and_move_file() -> None:
     assert progress[1]["files"][0]["operation"] == "move"
     assert progress[1]["files"][0]["old_path"] == "old.txt"
     assert progress[1]["files"][0]["new_path"] == "new.txt"
+    assert progress[0]["files"][0]["patch_format"] == "none"
+    assert progress[1]["files"][0]["patch_format"] == "none"
+    assert progress[1]["files"][0]["patch_precision"] == "approximate"
+    assert progress[1]["files"][0]["selectable_for_patch"] is False
+
+
+def test_streaming_canonical_producers_emit_git_parseable_patches(tmp_path) -> None:
+    add_root = tmp_path / "add"
+    add_root.mkdir()
+    add_progress = ToolCallChunkPipeline().process_chunk(
+        AIMessageChunk(
+            content="",
+            tool_call_chunks=[
+                {
+                    "id": "call_write",
+                    "index": 0,
+                    "name": "write_file",
+                    "args": '{"path":"new.txt","content":"first\\nsecond\\n"}',
+                }
+            ],
+        ),
+        model_run_id="model_run",
+    )[0]["files"][0]
+
+    edit_root = tmp_path / "edit"
+    edit_root.mkdir()
+    (edit_root / "note.txt").write_text("old\n", encoding="utf-8")
+    edit_progress = ToolCallChunkPipeline().process_chunk(
+        AIMessageChunk(
+            content="",
+            tool_call_chunks=[
+                {
+                    "id": "call_edit",
+                    "index": 0,
+                    "name": "edit_file",
+                    "args": (
+                        '{"path":"note.txt","old_string":"old\\n",'
+                        '"new_string":"new\\nnext\\n"}'
+                    ),
+                }
+            ],
+        ),
+        model_run_id="model_run",
+    )[0]["files"][0]
+
+    for root, change in ((add_root, add_progress), (edit_root, edit_progress)):
+        assert change["patch_format"] == "canonical_unified"
+        assert change["patch_precision"] == "approximate"
+        assert change["patch_complete"] is True
+        _assert_git_accepts_patch(root, change["diff"])
+
+
+def test_streaming_apply_patch_keeps_cross_file_contract_and_never_claims_exactness() -> None:
+    pipeline = ToolCallChunkPipeline()
+    progress = pipeline.process_chunk(
+        AIMessageChunk(
+            content="",
+            tool_call_chunks=[
+                {
+                    "id": "call_multi",
+                    "index": 0,
+                    "name": "apply_patch",
+                    "args": (
+                        '{"patch":"*** Begin Patch\\n'
+                        "*** Update File: a.txt\\n@@\\n-old\\n+new\\n"
+                        "*** Add File: b.txt\\n+created\\n*** End Patch" 
+                        '"}'
+                    ),
+                }
+            ],
+        ),
+        model_run_id="model_run",
+    )
+
+    assert [file["path"] for file in progress[0]["files"]] == ["a.txt", "b.txt"]
+    assert {file["operation"] for file in progress[0]["files"]} == {"update", "add"}
+    assert all(file["source"] == "streaming" for file in progress[0]["files"])
+    assert all(file["patch_format"] == "relaxed_apply_patch" for file in progress[0]["files"])
+    assert all(file["patch_precision"] == "approximate" for file in progress[0]["files"])
+    assert all(file["patch_complete"] is True for file in progress[0]["files"])
+    assert all(file["selectable_for_patch"] is False for file in progress[0]["files"])

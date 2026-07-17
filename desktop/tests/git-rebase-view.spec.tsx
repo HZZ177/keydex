@@ -43,16 +43,16 @@ describe("Git rebase workflow", () => {
     const { rerender } = render(
       <GitRebaseView refs={refs()} status={status()} preview={preview()} busy={false} onPreview={onPreview} onRebase={onRebase} onControl={onControl} />,
     );
-    fireEvent.change(screen.getByLabelText("Upstream"), { target: { value: "main" } });
-    fireEvent.change(screen.getByLabelText("Onto (optional)"), { target: { value: "release" } });
-    fireEvent.click(screen.getByLabelText("Edit interactive todo"));
-    fireEvent.change(screen.getByLabelText("Action for one"), { target: { value: "reword" } });
-    expect(screen.getByRole("alert").textContent).toContain("new commit message");
-    fireEvent.change(screen.getByLabelText("New message for one"), { target: { value: "one rewritten" } });
-    fireEvent.change(screen.getByLabelText("Action for two"), { target: { value: "squash" } });
-    fireEvent.click(screen.getByRole("button", { name: "Rebase" }));
-    expect(screen.getByRole("alertdialog", { name: "Confirm rebase" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Confirm rebase" }));
+    fireEvent.change(screen.getByLabelText("变基上游修订"), { target: { value: "main" } });
+    fireEvent.change(screen.getByLabelText("变基目标修订"), { target: { value: "release" } });
+    fireEvent.click(screen.getByLabelText("编辑交互式任务列表"));
+    fireEvent.change(screen.getByLabelText("one 的操作"), { target: { value: "reword" } });
+    expect(screen.getByRole("alert").textContent).toContain("新的提交说明");
+    fireEvent.change(screen.getByLabelText("one 的新提交说明"), { target: { value: "one rewritten" } });
+    fireEvent.change(screen.getByLabelText("two 的操作"), { target: { value: "squash" } });
+    fireEvent.click(screen.getByRole("button", { name: "变基" }));
+    expect(screen.getByRole("dialog", { name: "确认变基" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "确认变基" }));
     expect(onRebase).toHaveBeenCalledWith(
       "main",
       "release",
@@ -63,19 +63,19 @@ describe("Git rebase workflow", () => {
       ]),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Move two up" }));
-    expect(screen.getByRole("alert").textContent).toContain("previous non-dropped");
+    fireEvent.click(screen.getByRole("button", { name: "上移 two" }));
+    expect(screen.getByRole("alert").textContent).toContain("未丢弃的提交");
     expect(validateRebaseTodo([
       { action: "squash", objectId: "b".repeat(40) as never, subject: "two" },
       { action: "pick", objectId: "a".repeat(40) as never, subject: "one" },
-    ])).toContain("previous");
+    ])).toContain("未丢弃");
 
     rerender(<GitRebaseView refs={refs()} status={status("continuable")} preview={preview()} busy={false} onPreview={onPreview} onRebase={onRebase} onControl={onControl} />);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm skip" }));
-    fireEvent.click(screen.getByRole("button", { name: "Abort" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm abort" }));
+    fireEvent.click(screen.getByRole("button", { name: "继续" }));
+    fireEvent.click(screen.getByRole("button", { name: "跳过" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认跳过" }));
+    fireEvent.click(screen.getByRole("button", { name: "中止" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认中止" }));
     expect(onControl.mock.calls.map((call) => call[0])).toEqual(["continue", "skip", "abort"]);
   });
 });

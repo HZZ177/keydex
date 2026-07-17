@@ -3,6 +3,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from backend.app.services.structured_user_message_group import (
+    StructuredUserMessageGroup,
+    StructuredUserMessageMember,
+)
+
+__all__ = [
+    "ChatCancellationToken",
+    "ChatRequest",
+    "ChatTurnResult",
+    "StructuredUserMessageGroup",
+    "StructuredUserMessageMember",
+]
+
 PendingInputMode = Literal["steer", "queue"]
 PENDING_INPUT_MODE_STEER = "steer"
 PENDING_INPUT_MODE_QUEUE = "queue"

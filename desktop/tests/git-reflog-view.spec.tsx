@@ -52,20 +52,20 @@ describe("Git reflog", () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText("Reference"), { target: { value: "topic" } });
-    fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    fireEvent.change(screen.getByLabelText("引用"), { target: { value: "topic" } });
+    fireEvent.click(screen.getByRole("button", { name: "读取" }));
     expect(onLoad).toHaveBeenCalledWith("topic");
 
     fireEvent.click(screen.getAllByRole("option")[1]);
-    fireEvent.click(screen.getByRole("button", { name: "Copy hash" }));
+    fireEvent.click(screen.getByRole("button", { name: "复制哈希" }));
     expect(onCopy).toHaveBeenCalledWith("b".repeat(40));
-    fireEvent.change(screen.getByLabelText("New branch"), { target: { value: "recovery/topic" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create branch" }));
+    fireEvent.change(screen.getByLabelText("新分支"), { target: { value: "recovery/topic" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建分支" }));
     expect(onCreateBranch).toHaveBeenCalledWith("recovery/topic", "b".repeat(40));
 
-    fireEvent.click(screen.getByRole("button", { name: "Reset here" }));
+    fireEvent.click(screen.getByRole("button", { name: "重置到此处" }));
     expect(onReset).toHaveBeenCalledWith("b".repeat(40));
-    fireEvent.click(screen.getByRole("button", { name: "Load older entries" }));
+    fireEvent.click(screen.getByRole("button", { name: "读取更早记录" }));
     expect(onLoadMore).toHaveBeenCalledTimes(1);
   });
 });

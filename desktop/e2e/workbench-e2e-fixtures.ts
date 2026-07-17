@@ -26,6 +26,18 @@ export interface MockBackendState {
   workspaceReadRequests: Array<{ workspaceId: string; path: string }>;
   toolDetailsRequests: Array<{ sessionId: string; startEventId: string; endEventId: string }>;
   approvalDecisions: Array<{ approvalId: string; body: Record<string, unknown> }>;
+  reversePreviewRequests: Array<{ sessionId: string; body: Record<string, unknown> }>;
+  reverseExecuteRequests: Array<{ sessionId: string; body: Record<string, unknown> }>;
+  workspaceFiles: Record<string, string>;
+  workspaceTreeEntries: E2EWorkspaceTreeEntry[];
+}
+
+export interface E2EWorkspaceTreeEntry {
+  name: string;
+  path: string;
+  type: "file" | "directory";
+  size: number | null;
+  modified_at: string | null;
 }
 
 export interface E2ESession {
@@ -40,6 +52,7 @@ interface E2EWorkspace {
   id: string;
   name: string;
   root_path: string;
+  archived_at: null;
 }
 
 type AgentMessagePayload = Record<string, unknown> & {
@@ -76,6 +89,8 @@ export function createWorkbenchBackend(
     historyBySession?: Record<string, AgentMessagePayload[]>;
     historyPagesBySession?: Record<string, Record<string, AgentHistoryPage>>;
     toolDetailsByRef?: Record<string, AgentToolDetails>;
+    workspaceFiles?: Record<string, string>;
+    workspaceTreeEntries?: E2EWorkspaceTreeEntry[];
   } = {},
 ): MockBackendState {
   return {
@@ -110,6 +125,10 @@ export function createWorkbenchBackend(
     workspaceReadRequests: [],
     toolDetailsRequests: [],
     approvalDecisions: [],
+    reversePreviewRequests: [],
+    reverseExecuteRequests: [],
+    workspaceFiles: { ...(options.workspaceFiles ?? {}) },
+    workspaceTreeEntries: options.workspaceTreeEntries ?? defaultWorkspaceTreeEntries(),
   };
 }
 
@@ -267,6 +286,22 @@ export async function mockWorkbenchBackend(page: Page, backend: MockBackendState
       return fulfillJson(route, { session: sessionResponse(created) });
     }
 
+    const reversePreviewMatch = requestPath.match(/^\/api\/sessions\/([^/]+)\/reverse\/preview$/);
+    if (reversePreviewMatch && method === "POST") {
+      const sessionId = decodeURIComponent(reversePreviewMatch[1]);
+      const body = request.postDataJSON() as Record<string, unknown>;
+      backend.reversePreviewRequests.push({ sessionId, body });
+      return fulfillJson(route, reversePreviewResponse());
+    }
+
+    const reverseExecuteMatch = requestPath.match(/^\/api\/sessions\/([^/]+)\/reverse$/);
+    if (reverseExecuteMatch && method === "POST") {
+      const sessionId = decodeURIComponent(reverseExecuteMatch[1]);
+      const body = request.postDataJSON() as Record<string, unknown>;
+      backend.reverseExecuteRequests.push({ sessionId, body });
+      return fulfillJson(route, reverseResultResponse(body));
+    }
+
     const toolDetailsMatch = requestPath.match(/^\/api\/sessions\/([^/]+)\/tool-details$/);
     if (toolDetailsMatch && method === "GET") {
       const sessionId = decodeURIComponent(toolDetailsMatch[1]);
@@ -321,20 +356,21 @@ export async function mockWorkbenchBackend(page: Page, backend: MockBackendState
       const sessionId = decodeURIComponent(sessionWorkspaceMatch[1]);
       const sessionWorkspaceId = backend.sessions[sessionId]?.workspace_id ?? WORKSPACE_A;
       const suffix = sessionWorkspaceMatch[2] ?? "";
+      if (suffix === "/read/document" && method === "POST") {
+        const readRequest = request.postDataJSON() as DocumentReadRequest;
+        backend.workspaceReadRequests.push({ workspaceId: sessionWorkspaceId, path: readRequest.path });
+        return fulfillDocumentRead(route, readRequest, workspaceFileContent(readRequest.path, backend));
+      }
       if (suffix === "/tree") {
         return fulfillJson(route, {
           root: workspace(sessionWorkspaceId, sessionWorkspaceId).root_path,
-          entries: [
-            { name: "README.md", path: "README.md", type: "file", size: 1024, modified_at: null },
-            { name: "context.md", path: "docs/context.md", type: "file", size: 512, modified_at: null },
-            { name: "src", path: "src", type: "directory", size: null, modified_at: null },
-          ],
+          entries: backend.workspaceTreeEntries,
         });
       }
       if (suffix === "/read") {
         const filePath = url.searchParams.get("path") ?? "";
         backend.workspaceReadRequests.push({ workspaceId: sessionWorkspaceId, path: filePath });
-        return fulfillJson(route, { path: filePath, content: workspaceFileContent(filePath), encoding: "utf-8" });
+        return fulfillJson(route, { path: filePath, content: workspaceFileContent(filePath, backend), encoding: "utf-8" });
       }
       if (suffix === "/annotations") {
         return fulfillJson(route, []);
@@ -348,20 +384,21 @@ export async function mockWorkbenchBackend(page: Page, backend: MockBackendState
       if (method === "GET" && !suffix) {
         return fulfillJson(route, { workspace: workspace(workspaceId, workspaceId === WORKSPACE_A ? "keydex" : "other") });
       }
+      if (suffix === "/read/document" && method === "POST") {
+        const readRequest = request.postDataJSON() as DocumentReadRequest;
+        backend.workspaceReadRequests.push({ workspaceId, path: readRequest.path });
+        return fulfillDocumentRead(route, readRequest, workspaceFileContent(readRequest.path, backend));
+      }
       if (suffix === "/tree") {
         return fulfillJson(route, {
           root: workspace(workspaceId, workspaceId).root_path,
-          entries: [
-            { name: "README.md", path: "README.md", type: "file", size: 1024, modified_at: null },
-            { name: "context.md", path: "docs/context.md", type: "file", size: 512, modified_at: null },
-            { name: "src", path: "src", type: "directory", size: null, modified_at: null },
-          ],
+          entries: backend.workspaceTreeEntries,
         });
       }
       if (suffix === "/read") {
         const filePath = url.searchParams.get("path") ?? "";
         backend.workspaceReadRequests.push({ workspaceId, path: filePath });
-        return fulfillJson(route, { path: filePath, content: workspaceFileContent(filePath), encoding: "utf-8" });
+        return fulfillJson(route, { path: filePath, content: workspaceFileContent(filePath, backend), encoding: "utf-8" });
       }
       if (suffix === "/search") {
         const query = url.searchParams.get("q") ?? "";
@@ -776,7 +813,10 @@ function visibleCodeMarkdown(): string {
   ].join("\n");
 }
 
-function workspaceFileContent(filePath: string): string {
+function workspaceFileContent(filePath: string, backend?: MockBackendState): string {
+  if (backend && Object.prototype.hasOwnProperty.call(backend.workspaceFiles, filePath)) {
+    return backend.workspaceFiles[filePath] ?? "";
+  }
   if (filePath.endsWith("SKILL.md")) {
     return "# dev-plan\n\n用于计划拆分。";
   }
@@ -786,11 +826,91 @@ function workspaceFileContent(filePath: string): string {
   return "# README\n\nE2E Workbench File\n\nSource quote context preview";
 }
 
+function defaultWorkspaceTreeEntries(): E2EWorkspaceTreeEntry[] {
+  return [
+    { name: "README.md", path: "README.md", type: "file", size: 1024, modified_at: null },
+    { name: "context.md", path: "docs/context.md", type: "file", size: 512, modified_at: null },
+    { name: "src", path: "src", type: "directory", size: null, modified_at: null },
+  ];
+}
+
+function reversePreviewResponse() {
+  const rawPatch = [
+    "diff --git a/src/reverse.ts b/src/reverse.ts",
+    "--- a/src/reverse.ts",
+    "+++ b/src/reverse.ts",
+    "@@ -1 +1 @@",
+    "-current",
+    "+target",
+    "",
+  ].join("\n");
+  return {
+    operation_id: "e2e-reverse-operation",
+    source: { message_event_id: "e2e-reverse-event" },
+    conversation_available: true,
+    code_available: true,
+    default_mode: "both",
+    snapshot_id: "e2e-reverse-snapshot",
+    preview_token: "e2e-reverse-token",
+    files: [
+      {
+        resource_id: "workspace-a:src/reverse.ts",
+        scope_kind: "workspace",
+        scope_identity: WORKSPACE_A,
+        scope_label: "当前项目",
+        display_path: "src/reverse.ts",
+        absolute_path: "D:/repo/keydex/src/reverse.ts",
+        requires_full_access: false,
+        path: "src/reverse.ts",
+        current_state: "file",
+        target_state: "file",
+        classification: "ready",
+        binary: false,
+        truncated: false,
+        insertions: 1,
+        deletions: 1,
+        diff: rawPatch,
+        raw_patch: rawPatch,
+        status: "modified",
+        content_kind: "text",
+        truncation_state: "complete",
+        can_load_more: false,
+        patch_direction: "current_to_target",
+        patch_precision: "exact",
+        patch_complete: true,
+      },
+    ],
+    insertions: 1,
+    deletions: 1,
+    warnings: [],
+    requires_external_confirmation: false,
+    external_paths: [],
+  };
+}
+
+function reverseResultResponse(body: Record<string, unknown>) {
+  return {
+    operation_id: "e2e-reverse-operation",
+    status: "full",
+    mode: body.mode ?? "both",
+    decision: body.decision ?? "full",
+    conversation_rewound: body.mode !== "code",
+    restored_files: ["src/reverse.ts"],
+    skipped_files: [],
+    forced_files: [],
+    failed_files: [],
+    restored_input: "请恢复到稳定版本",
+    source: { message_event_id: body.message_event_id ?? "e2e-reverse-event" },
+    error_code: null,
+  };
+}
+
 function workspace(id: string, name: string): E2EWorkspace {
   return {
     id,
     name,
     root_path: `D:/repo/${name}`,
+    archived_at: null,
   };
 }
 
@@ -834,5 +954,59 @@ function fulfillJson(route: Route, body: unknown, status = 200) {
     status,
     contentType: "application/json",
     body: JSON.stringify(body),
+  });
+}
+
+interface DocumentReadRequest {
+  protocol_version: "document-read/v1";
+  request_id: string;
+  document_id: string;
+  source: string;
+  path: string;
+}
+
+function fulfillDocumentRead(route: Route, request: DocumentReadRequest, content: string) {
+  const revision = `sha256:e2e-${request.path.replaceAll(/[^a-z0-9]/giu, "-")}-${content.length}`;
+  const totalBytes = new TextEncoder().encode(content).byteLength;
+  const messages = [
+    {
+      protocol_version: "document-read/v1",
+      type: "start",
+      request_id: request.request_id,
+      document_id: request.document_id,
+      source: request.source,
+      path: request.path,
+      revision,
+      encoding: "utf-8",
+      transport: "whole",
+      total_bytes: totalBytes,
+      chunk_size_bytes: Math.max(1, totalBytes),
+      chunk_count: 1,
+    },
+    {
+      protocol_version: "document-read/v1",
+      type: "chunk",
+      request_id: request.request_id,
+      document_id: request.document_id,
+      revision,
+      chunk_index: 0,
+      offset_bytes: 0,
+      byte_length: totalBytes,
+      content,
+    },
+    {
+      protocol_version: "document-read/v1",
+      type: "complete",
+      request_id: request.request_id,
+      document_id: request.document_id,
+      revision,
+      total_bytes: totalBytes,
+      chunk_count: 1,
+    },
+  ];
+  return route.fulfill({
+    status: 200,
+    contentType: "application/x-ndjson",
+    body: messages.map((message) => JSON.stringify(message)).join("\n"),
   });
 }

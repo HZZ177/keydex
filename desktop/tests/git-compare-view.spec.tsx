@@ -52,19 +52,19 @@ describe("Git compare", () => {
       />,
     );
 
-    expect(screen.getByText("(merge base)")).toBeTruthy();
+    expect(screen.getByText("（合并基准）")).toBeTruthy();
     expect(screen.getByText("+1")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "three_dot" } });
-    fireEvent.change(screen.getByLabelText("Base branch (A)"), { target: { value: "main" } });
-    fireEvent.change(screen.getByLabelText("Target branch (B)"), { target: { value: "topic" } });
-    fireEvent.click(screen.getByRole("button", { name: "Compare" }));
+    fireEvent.change(screen.getByLabelText("比较方式"), { target: { value: "three_dot" } });
+    fireEvent.change(screen.getByLabelText("基准分支（A）"), { target: { value: "main" } });
+    fireEvent.change(screen.getByLabelText("目标分支（B）"), { target: { value: "topic" } });
+    fireEvent.click(screen.getByRole("button", { name: "比较" }));
     expect(onCompare).toHaveBeenCalledWith("three_dot", "main", "topic");
 
     fireEvent.click(screen.getByRole("button", { name: /topic\.txt/ }));
     expect(onSelectFile).toHaveBeenCalledWith(0);
 
-    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "working_tree" } });
-    expect(screen.getByText("Right: Working tree")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("比较方式"), { target: { value: "working_tree" } });
+    expect(screen.getByText("右侧：工作树")).toBeTruthy();
   });
 });
 

@@ -1,22 +1,32 @@
 import { AlertTriangle, ChevronDown, FileClock, GitBranch, GitCommitHorizontal, GitPullRequest, History, ListChecks, MoreHorizontal } from "lucide-react";
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import type { ActiveProjectState, GitRepositoryRoot } from "@/renderer/features/git/activeProject";
 import type { GitProjectStoreState, GitStoreState } from "@/renderer/features/git/store/gitStore";
 import { useOptionalGitController, useOptionalGitRuntime, useOptionalGitStoreSelector } from "@/renderer/providers/GitProvider";
 import { useOptionalGitStore } from "@/renderer/providers/GitProvider";
-import type { GitBisectSnapshot, GitBlamePage, GitCommandResult, GitCommitDetail, GitCommitSummary, GitConflictFile, GitConflictsSnapshot, GitLfsSnapshot, GitMergePreview, GitMergeStrategy, GitObjectId, GitRebasePreview, GitRebaseTodoItem, GitReflogPage, GitRepositoryDescriptor, GitRepositoryId, GitResetMode, GitResetPreview, GitStatusSnapshot, GitSubmodulesSnapshot, GitWorktree, GitWorktreesSnapshot } from "@/runtime/gitTypes";
+import { useOptionalPreview, type PreviewRenderContext } from "@/renderer/providers/PreviewProvider";
+import type { GitBisectSnapshot, GitBlamePage, GitCommandResult, GitCommitDetail, GitCommitSummary, GitConflictFile, GitConflictsSnapshot, GitDiffSnapshot, GitLfsSnapshot, GitMergePreview, GitMergeStrategy, GitObjectId, GitRebasePreview, GitRebaseTodoItem, GitReflogPage, GitRepositoryDescriptor, GitRepositoryId, GitResetMode, GitResetPreview, GitStatusSnapshot, GitSubmodulesSnapshot, GitWorktree, GitWorktreesSnapshot } from "@/runtime/gitTypes";
 import type { GitCommitCommand, GitConflictActionCommand, GitConflictFileAction, GitHistoryFilters, GitIdentity, GitPatchExport, GitPatchExportMode, GitPushCommand, GitRemoteInfo, GitStashDetail, GitStashEntry, GitStashEntryCommand } from "@/runtime/git";
 import { GIT_HISTORY_PAGE_SIZE } from "@/renderer/features/git/performancePolicy";
 import { gitOperationErrorMessage, gitUiErrorMessage } from "@/renderer/features/git/errorPresentation";
+import { useGitErrorNotificationState } from "@/renderer/features/git/GitNotifications";
 import { WorkspaceSelector, type WorkspaceSelectorProps } from "@/renderer/components/workspace";
+import { useRafPanelResize } from "@/renderer/components/layout/useRafPanelResize";
+import {
+  GitCommitPushDialog,
+  GitConfirmActionDialog,
+  type GitCommitPushTarget,
+  type GitPushTagMode,
+} from "../dialogs";
 
 import styles from "./GitToolWindow.module.css";
 import { GitChangesView } from "./GitChangesView";
-import { GitDiffViewer } from "./GitDiffViewer";
-import { GitCommitEditor, type GitCommitOptions, type GitCommitOutcome } from "./GitCommitEditor";
+import { GitSelectedChangeDiff } from "./GitSelectedChangeDiff";
+import { GitReadOnlyDiff } from "./GitReadOnlyDiff";
+import { GitCommitEditor, type GitCommitOptions } from "./GitCommitEditor";
 import { GitRefsTree, type GitRefAction } from "./GitRefsTree";
-import { GitBranchActions, branchDeletionRisk } from "./GitBranchActions";
+import { GitBranchActions } from "./GitBranchActions";
 import { GitRemoteManager } from "./GitRemoteManager";
 import { GitSyncActions, type GitFetchOptions, type GitPushOptions, type GitUpdateStrategy } from "./GitSyncActions";
 import { GitStashView } from "./GitStashView";
@@ -36,13 +46,26 @@ import { GitThreeWayMergeEditor, parseConflictBlocks, type GitConflictSaveEncodi
 import { GitConflictActions } from "./GitConflictActions";
 import { GitBisectView } from "./GitBisectView";
 import { GitSubmoduleView, type GitSubmoduleAction } from "./GitSubmoduleView";
-import { confirmWorktreeRemoval, GitWorktreeView, type GitWorktreeAddOptions } from "./GitWorktreeView";
+import { GitWorktreeView, type GitWorktreeAddOptions } from "./GitWorktreeView";
 import { GitLfsView, type GitLfsAction } from "./GitLfsView";
 import { GitRepositoryList } from "./GitRepositoryList";
 import { GitOperationLog } from "./GitOperationLog";
 import { commitSelectionFromEntries, type GitChangeEntry } from "../changesTree";
+import { gitDocumentFromFiles } from "@/renderer/components/diff/adapters/gitDocument";
+import type { KeydexGitDiffActionStatus } from "@/renderer/components/diff/profiles";
+import {
+  validateGitPatchActionIdentity,
+  resolveGitPatchRefreshTarget,
+  type GitPatchActionIdentity,
+} from "../diffPatchActions";
+import { gitWorkspacePreviewPath } from "../gitDiffFileActions";
 
 export type GitToolWindowView = "changes" | "history" | "blame" | "reflog" | "branches" | "stash" | "operations";
+
+type PendingMergeDraftDiscard =
+  | { kind: "view"; view: GitToolWindowView }
+  | { kind: "repository"; repositoryId: GitRepositoryId }
+  | { kind: "conflict"; path: string };
 
 const COMMIT_PANE_MIN_PERCENT = 18;
 const COMMIT_PANE_MAX_PERCENT = 80;
@@ -72,8 +95,16 @@ const VIEW_LABELS: Readonly<Record<GitToolWindowView, string>> = {
 export interface GitToolWindowProps {
   project: ActiveProjectState | null;
   maximized: boolean;
+  active?: boolean;
   initialView?: GitToolWindowView;
   projectSelector?: GitProjectSelectorProps;
+}
+
+export type GitChangesDetailSurface = "merge_editor" | "conflict_diff" | "change_diff";
+
+export function gitChangesDetailSurface(file: GitConflictFile | null): GitChangesDetailSurface {
+  if (!file) return "change_diff";
+  return file.editable ? "merge_editor" : "conflict_diff";
 }
 
 export type GitProjectSelectorProps = Pick<
@@ -89,32 +120,40 @@ export type GitProjectSelectorProps = Pick<
 export function GitToolWindow({
   project,
   maximized,
+  active = true,
   initialView = "changes",
   projectSelector,
 }: GitToolWindowProps) {
-  const storeSnapshot = useOptionalGitStoreSelector(selectToolWindowSnapshot);
+  const toolWindowSnapshotSelector = useMemo(createToolWindowSnapshotSelector, []);
+  const storeSnapshot = useOptionalGitStoreSelector(toolWindowSnapshotSelector);
   const resolvedProject = resolveGitToolWindowProject(project, storeSnapshot);
   const controller = useOptionalGitController();
   const runtime = useOptionalGitRuntime();
   const gitStore = useOptionalGitStore();
+  const previewContext = useOptionalPreview();
   const projectKey = resolvedProject && resolvedProject.status !== "none" ? resolvedProject.workspaceId : "none";
-  const [view, setView] = useState<GitToolWindowView>(initialView);
+  const [view, setView] = useState<GitToolWindowView>(() => storeSnapshot?.ui?.activeTab ?? initialView);
   const [moreOpen, setMoreOpen] = useState(false);
   const [projectAction, setProjectAction] = useState<"init" | "grant" | "retry" | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionError] = useGitErrorNotificationState();
   const [identity, setIdentity] = useState<GitIdentity | null>(null);
   const [identityLoading, setIdentityLoading] = useState(false);
-  const [commitOutcome, setCommitOutcome] = useState<GitCommitOutcome | null>(null);
+  const [commitPushOpen, setCommitPushOpen] = useState(false);
+  const [commitPushTarget, setCommitPushTarget] = useState<GitCommitPushTarget | null>(null);
+  const [commitPushCommits, setCommitPushCommits] = useState<readonly GitCommitSummary[]>([]);
+  const [selectedCommitPushObjectId, setSelectedCommitPushObjectId] = useState<GitObjectId | null>(null);
+  const [commitPushDetail, setCommitPushDetail] = useState<GitCommitDetail | null>(null);
+  const [commitPushLoading, setCommitPushLoading] = useState(false);
   const [selectedCommitPaths, setSelectedCommitPaths] = useState<readonly string[]>([]);
   const [selectedUntrackedCommitPaths, setSelectedUntrackedCommitPaths] = useState<readonly string[]>([]);
   const [selectedCommitFileCount, setSelectedCommitFileCount] = useState(0);
   const [changeSelectionResetKey, setChangeSelectionResetKey] = useState(0);
   const [changesRefreshing, setChangesRefreshing] = useState(false);
+  const [selectedChangeDiff, setSelectedChangeDiff] = useState<GitDiffSnapshot | null>(null);
+  const [selectedChangeDiffLoading, setSelectedChangeDiffLoading] = useState(false);
   const [selectedChangePatchAction, setSelectedChangePatchAction] = useState<"stage" | "unstage">("stage");
+  const [patchActionStatus, setPatchActionStatus] = useState<KeydexGitDiffActionStatus>("idle");
   const [remotes, setRemotes] = useState<readonly GitRemoteInfo[]>([]);
-  const [syncProgress, setSyncProgress] = useState<readonly string[]>([]);
-  const [updateOutcome, setUpdateOutcome] = useState<"up_to_date" | "updated" | "conflict" | null>(null);
-  const [pushOutcome, setPushOutcome] = useState<"pushed" | "rejected" | null>(null);
   const [outgoingCommits, setOutgoingCommits] = useState<readonly GitCommitSummary[]>([]);
   const [replacedCommits, setReplacedCommits] = useState<readonly GitCommitSummary[]>([]);
   const [stashEntries, setStashEntries] = useState<readonly GitStashEntry[]>([]);
@@ -126,14 +165,15 @@ export function GitToolWindow({
   const [historyCommits, setHistoryCommits] = useState<readonly GitCommitSummary[]>([]);
   const [historyAuthors, setHistoryAuthors] = useState<readonly string[]>([]);
   const [historyCursor, setHistoryCursor] = useState<string | null>(null);
-  const [selectedHistoryObjectId, setSelectedHistoryObjectId] = useState<GitObjectId | null>(null);
-  const [navigationPanePercent, setNavigationPanePercent] = useState(19);
-  const [detailPanePercent, setDetailPanePercent] = useState(28);
+  const [selectedHistoryObjectId, setSelectedHistoryObjectId] = useState<GitObjectId | null>(
+    () => (storeSnapshot?.ui?.selectedHistoryObjectId as GitObjectId | null | undefined) ?? null,
+  );
+  const [navigationPanePercent, setNavigationPanePercent] = useState(() => storeSnapshot?.ui?.navigationPanePercent ?? 19);
+  const [detailPanePercent, setDetailPanePercent] = useState(() => storeSnapshot?.ui?.detailPanePercent ?? 28);
   const [commitPanePercent, setCommitPanePercent] = useState(28);
   const [commitEditorPercent, setCommitEditorPercent] = useState(34);
-  const [draggingSplitter, setDraggingSplitter] = useState<"navigation" | "details" | "commit" | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyFilters, setHistoryFilters] = useState<GitHistoryFilters>({ ...EMPTY_GIT_HISTORY_FILTERS });
+  const [historyFilters, setHistoryFilters] = useState<GitHistoryFilters>(() => storeSnapshot?.ui?.historyFilters ?? { ...EMPTY_GIT_HISTORY_FILTERS });
   const [historyDetail, setHistoryDetail] = useState<GitCommitDetail | null>(null);
   const [historyDetailLoading, setHistoryDetailLoading] = useState(false);
   const [historyFileIndex, setHistoryFileIndex] = useState(0);
@@ -158,15 +198,13 @@ export function GitToolWindow({
   const [revertOutcome, setRevertOutcome] = useState<GitCommandResult | null>(null);
   const [resetPreview, setResetPreview] = useState<GitResetPreview | null>(null);
   const [resetTargetSeed, setResetTargetSeed] = useState("");
-  const [resetOutcome, setResetOutcome] = useState<GitCommandResult | null>(null);
-  const [restoreOutcome, setRestoreOutcome] = useState<GitCommandResult | null>(null);
   const [patchExport, setPatchExport] = useState<GitPatchExport | null>(null);
   const [patchDryRunSignature, setPatchDryRunSignature] = useState<string | null>(null);
-  const [patchOutcome, setPatchOutcome] = useState<GitCommandResult | null>(null);
   const [conflicts, setConflicts] = useState<GitConflictsSnapshot | null>(null);
   const [conflictsLoading, setConflictsLoading] = useState(false);
   const [selectedConflictPath, setSelectedConflictPath] = useState<string | null>(null);
   const [mergeEditorDirty, setMergeEditorDirty] = useState(false);
+  const [pendingMergeDraftDiscard, setPendingMergeDraftDiscard] = useState<PendingMergeDraftDiscard | null>(null);
   const [recentlyResolvedConflict, setRecentlyResolvedConflict] = useState<{
     file: GitConflictFile;
     resolvedIndexEntry: string;
@@ -178,18 +216,37 @@ export function GitToolWindow({
   const workspaceRef = useRef<HTMLDivElement | null>(null);
   const changesWorkspaceRef = useRef<HTMLDivElement | null>(null);
   const changeDiffAbortRef = useRef<AbortController | null>(null);
+  const selectedChangeDiffRef = useRef<GitDiffSnapshot | null>(null);
+  const commitPushPreviewAbortRef = useRef<AbortController | null>(null);
+  const commitPushDetailAbortRef = useRef<AbortController | null>(null);
+  const patchActionInFlightRef = useRef(false);
+  const patchActionFeedbackTimerRef = useRef<number | null>(null);
   const historyDetailCacheRef = useRef(new Map<string, GitCommitDetail>());
+  const initializedProjectKeyRef = useRef(projectKey);
 
-  useEffect(() => () => changeDiffAbortRef.current?.abort(), []);
+  useEffect(() => () => {
+    changeDiffAbortRef.current?.abort();
+    commitPushPreviewAbortRef.current?.abort();
+    commitPushDetailAbortRef.current?.abort();
+    if (patchActionFeedbackTimerRef.current !== null) {
+      window.clearTimeout(patchActionFeedbackTimerRef.current);
+    }
+  }, []);
 
-  const activateView = (nextView: GitToolWindowView): boolean => {
-    if (nextView === view) return true;
-    if (mergeEditorDirty && !window.confirm("合并结果存在未保存的改动。确定不保存并离开吗？")) return false;
+  const applyView = (nextView: GitToolWindowView) => {
     setMergeEditorDirty(false);
     setView(nextView);
     if (storeSnapshot?.project) {
       gitStore?.getState().updateProjectUi(storeSnapshot.project.workspaceId, { activeTab: nextView });
     }
+  };
+  const activateView = (nextView: GitToolWindowView): boolean => {
+    if (nextView === view) return true;
+    if (mergeEditorDirty) {
+      setPendingMergeDraftDiscard({ kind: "view", view: nextView });
+      return false;
+    }
+    applyView(nextView);
     return true;
   };
 
@@ -237,7 +294,7 @@ export function GitToolWindow({
     });
   };
 
-  const updatePanePercent = (pane: "navigation" | "details", requestedPercent: number) => {
+  const updatePanePercent = useCallback((pane: "navigation" | "details", requestedPercent: number) => {
     if (pane === "details" && view === "changes") {
       setCommitPanePercent(Math.min(COMMIT_PANE_MAX_PERCENT, Math.max(COMMIT_PANE_MIN_PERCENT, requestedPercent)));
       return;
@@ -253,39 +310,72 @@ export function GitToolWindow({
         ? { navigationPanePercent: next }
         : { detailPanePercent: next });
     }
-  };
+  }, [detailPanePercent, gitStore, navigationPanePercent, storeSnapshot?.project, view]);
 
-  const handleSplitterPointerDown = (
-    pane: "navigation" | "details",
-    event: ReactPointerEvent<HTMLDivElement>,
-  ) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    const splitter = event.currentTarget;
-    const pointerId = event.pointerId;
-    splitter.setPointerCapture?.(pointerId);
-    setDraggingSplitter(pane);
-    const updateFromClientX = (clientX: number) => {
-      const bounds = workspaceRef.current?.getBoundingClientRect();
-      if (!bounds || bounds.width <= 0) return;
-      const percent = pane === "navigation" || (pane === "details" && view === "changes")
-        ? ((clientX - bounds.left) / bounds.width) * 100
-        : ((bounds.right - clientX) / bounds.width) * 100;
-      updatePanePercent(pane, percent);
-    };
-    const handleMove = (moveEvent: PointerEvent) => updateFromClientX(moveEvent.clientX);
-    const handleEnd = () => {
-      if (splitter.hasPointerCapture?.(pointerId)) splitter.releasePointerCapture(pointerId);
-      setDraggingSplitter(null);
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", handleEnd);
-      window.removeEventListener("pointercancel", handleEnd);
-    };
-    updateFromClientX(event.clientX);
-    window.addEventListener("pointermove", handleMove);
-    window.addEventListener("pointerup", handleEnd);
-    window.addEventListener("pointercancel", handleEnd);
-  };
+  const workspaceResizeExtentRef = useRef(1);
+  const changesResizeExtentRef = useRef(1);
+  const previewWorkspacePercent = useCallback((property: string, value: number) => {
+    workspaceRef.current?.style.setProperty(property, `${value}%`);
+  }, []);
+  const previewCommitEditorPercent = useCallback((value: number) => {
+    changesWorkspaceRef.current?.style.setProperty("--git-commit-editor-height", `${value}%`);
+  }, []);
+  const clampNavigationPanePercent = useCallback((requestedPercent: number) => (
+    Math.min(35, Math.max(12, Math.min(requestedPercent, 72 - detailPanePercent)))
+  ), [detailPanePercent]);
+  const clampDetailPanePercent = useCallback((requestedPercent: number) => {
+    if (view === "changes") {
+      return Math.min(COMMIT_PANE_MAX_PERCENT, Math.max(COMMIT_PANE_MIN_PERCENT, requestedPercent));
+    }
+    return Math.min(72 - navigationPanePercent, Math.max(18, requestedPercent));
+  }, [navigationPanePercent, view]);
+  const clampCommitEditorPercent = useCallback((requestedPercent: number) => (
+    Math.min(65, Math.max(22, requestedPercent))
+  ), []);
+
+  const navigationResize = useRafPanelResize({
+    disabled: view === "changes",
+    width: navigationPanePercent,
+    getWidth: (startPercent, startX, clientX) => clampNavigationPanePercent(
+      startPercent + ((clientX - startX) / workspaceResizeExtentRef.current) * 100,
+    ),
+    onPreview: (value) => previewWorkspacePercent("--git-navigation-pane-width", value),
+    onCommit: (value) => updatePanePercent("navigation", value),
+  });
+  const detailResize = useRafPanelResize({
+    disabled: !maximized,
+    width: view === "changes" ? commitPanePercent : detailPanePercent,
+    getWidth: (startPercent, startX, clientX) => {
+      const direction = view === "changes" ? 1 : -1;
+      return clampDetailPanePercent(
+        startPercent + direction * ((clientX - startX) / workspaceResizeExtentRef.current) * 100,
+      );
+    },
+    onPreview: (value) => previewWorkspacePercent("--git-detail-pane-width", value),
+    onCommit: (value) => updatePanePercent("details", value),
+  });
+  const commitEditorResize = useRafPanelResize({
+    axis: "y",
+    disabled: view !== "changes",
+    width: commitEditorPercent,
+    getWidth: (startPercent, startY, clientY) => clampCommitEditorPercent(
+      startPercent - ((clientY - startY) / changesResizeExtentRef.current) * 100,
+    ),
+    onPreview: previewCommitEditorPercent,
+    onCommit: (value) => setCommitEditorPercent(clampCommitEditorPercent(value)),
+  });
+  const startNavigationResize = useCallback((event: Parameters<typeof navigationResize.startDrag>[0]) => {
+    workspaceResizeExtentRef.current = Math.max(1, workspaceRef.current?.getBoundingClientRect().width ?? 1);
+    navigationResize.startDrag(event);
+  }, [navigationResize.startDrag]);
+  const startDetailResize = useCallback((event: Parameters<typeof detailResize.startDrag>[0]) => {
+    workspaceResizeExtentRef.current = Math.max(1, workspaceRef.current?.getBoundingClientRect().width ?? 1);
+    detailResize.startDrag(event);
+  }, [detailResize.startDrag]);
+  const startCommitEditorResize = useCallback((event: Parameters<typeof commitEditorResize.startDrag>[0]) => {
+    changesResizeExtentRef.current = Math.max(1, changesWorkspaceRef.current?.getBoundingClientRect().height ?? 1);
+    commitEditorResize.startDrag(event);
+  }, [commitEditorResize.startDrag]);
 
   const handleSplitterKeyDown = (
     pane: "navigation" | "details",
@@ -314,33 +404,7 @@ export function GitToolWindow({
   };
 
   const updateCommitEditorPercent = (requestedPercent: number) => {
-    setCommitEditorPercent(Math.min(65, Math.max(22, requestedPercent)));
-  };
-
-  const handleCommitSplitterPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    const splitter = event.currentTarget;
-    const pointerId = event.pointerId;
-    splitter.setPointerCapture?.(pointerId);
-    setDraggingSplitter("commit");
-    const updateFromClientY = (clientY: number) => {
-      const bounds = changesWorkspaceRef.current?.getBoundingClientRect();
-      if (!bounds || bounds.height <= 0) return;
-      updateCommitEditorPercent(((bounds.bottom - clientY) / bounds.height) * 100);
-    };
-    const handleMove = (moveEvent: PointerEvent) => updateFromClientY(moveEvent.clientY);
-    const handleEnd = () => {
-      if (splitter.hasPointerCapture?.(pointerId)) splitter.releasePointerCapture(pointerId);
-      setDraggingSplitter(null);
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", handleEnd);
-      window.removeEventListener("pointercancel", handleEnd);
-    };
-    updateFromClientY(event.clientY);
-    window.addEventListener("pointermove", handleMove);
-    window.addEventListener("pointerup", handleEnd);
-    window.addEventListener("pointercancel", handleEnd);
+    setCommitEditorPercent(clampCommitEditorPercent(requestedPercent));
   };
 
   const handleCommitSplitterKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -357,7 +421,8 @@ export function GitToolWindow({
   const retryLoggedOperation = async (operationId: string) => {
     if (!controller) return;
     try {
-      await controller.retryOperation(operationId);
+      const result = await controller.retryOperation(operationId);
+      if (result.state === "failed") setActionError(gitOperationFailureMessage(result));
     } catch (error) {
       setActionError(gitUiErrorMessage(error));
     }
@@ -365,13 +430,16 @@ export function GitToolWindow({
   const cancelLoggedOperation = async (operationId: string) => {
     if (!controller) return;
     try {
-      await controller.cancelOperation(operationId);
+      const result = await controller.cancelOperation(operationId);
+      if (result.state === "failed") setActionError(gitOperationFailureMessage(result));
     } catch (error) {
       setActionError(gitUiErrorMessage(error));
     }
   };
 
   useEffect(() => {
+    if (initializedProjectKeyRef.current === projectKey) return;
+    initializedProjectKeyRef.current = projectKey;
     setView(storeSnapshot?.ui?.activeTab ?? initialView);
     setHistoryFilters(storeSnapshot?.ui?.historyFilters ?? { ...EMPTY_GIT_HISTORY_FILTERS });
     setHistoryAuthors([]);
@@ -382,10 +450,27 @@ export function GitToolWindow({
   }, [initialView, projectKey]);
 
   useEffect(() => {
+    changeDiffAbortRef.current?.abort();
+    commitPushPreviewAbortRef.current?.abort();
+    commitPushDetailAbortRef.current?.abort();
+    if (patchActionFeedbackTimerRef.current !== null) {
+      window.clearTimeout(patchActionFeedbackTimerRef.current);
+      patchActionFeedbackTimerRef.current = null;
+    }
+    setPatchActionStatus("idle");
+    setCommitPushOpen(false);
+    setCommitPushTarget(null);
+    setCommitPushCommits([]);
+    setSelectedCommitPushObjectId(null);
+    setCommitPushDetail(null);
+    setCommitPushLoading(false);
     setSelectedCommitPaths([]);
     setSelectedUntrackedCommitPaths([]);
     setSelectedCommitFileCount(0);
     setChangeSelectionResetKey((current) => current + 1);
+    selectedChangeDiffRef.current = null;
+    setSelectedChangeDiff(null);
+    setSelectedChangeDiffLoading(false);
   }, [projectKey, storeSnapshot?.project?.selectedRepositoryId]);
 
   useEffect(() => {
@@ -704,6 +789,10 @@ export function GitToolWindow({
     }
   };
 
+  // Keep the lightweight controller state and request caches mounted across
+  // first-level page switches, but release the expensive Git DOM while hidden.
+  if (!active) return null;
+
   if (!resolvedProject || resolvedProject.status === "none") {
     return <GitToolWindowState kind="empty" title="未加载项目" detail="加载项目后即可使用 Git 面板。" />;
   }
@@ -760,13 +849,34 @@ export function GitToolWindow({
   }
 
   const selectedRepository = resolvedProject.repoRoots.find((repository) => repository.id === resolvedProject.selectedRepoId);
+  const copyGitDiffText = async (text: string) => {
+    if (!navigator.clipboard?.writeText) throw new Error("剪贴板不可用");
+    await navigator.clipboard.writeText(text);
+  };
+  const openGitDiffFile = (repositoryPath: string) => {
+    const workspaceId = storeSnapshot?.project?.workspaceId;
+    const projectRoot = storeSnapshot?.project?.projectRoot;
+    const previewPath = projectRoot && selectedRepository
+      ? gitWorkspacePreviewPath(projectRoot, selectedRepository.rootPath, repositoryPath)
+      : null;
+    if (!workspaceId || !projectRoot || !previewPath) {
+      throw new Error("此 Git 文件不在当前工作区内，无法打开");
+    }
+    if (!previewContext) throw new Error("文件预览当前不可用");
+    const renderContext: PreviewRenderContext = {
+      panelScopeKey: `git:${workspaceId}`,
+      workspaceId,
+      workspaceRootPath: projectRoot,
+      workspaceAvailable: true,
+      workspaceLabel: resolvedProject.name,
+    };
+    previewContext.openFilePanel(previewPath, renderContext);
+  };
   const activeViewLabel = VIEW_LABELS[view];
-  const selectRepository = (repositoryId: GitRepositoryId) => {
-    if (!storeSnapshot?.project || storeSnapshot.project.selectedRepositoryId === repositoryId) return;
-    if (mergeEditorDirty && !window.confirm("合并结果存在未保存的改动。确定切换仓库并丢弃编辑草稿吗？")) return;
+  const applyRepositorySelection = (repositoryId: GitRepositoryId) => {
+    if (!storeSnapshot?.project) return;
     setMergeEditorDirty(false);
     setActionError(null);
-    setCommitOutcome(null);
     setMergePreview(null);
     setRebasePreview(null);
     setResetPreview(null);
@@ -784,6 +894,14 @@ export function GitToolWindow({
       projectRoot: storeSnapshot.project.projectRoot,
       repositoryId,
     }, ["status", "refs"]);
+  };
+  const selectRepository = (repositoryId: GitRepositoryId) => {
+    if (!storeSnapshot?.project || storeSnapshot.project.selectedRepositoryId === repositoryId) return;
+    if (mergeEditorDirty) {
+      setPendingMergeDraftDiscard({ kind: "repository", repositoryId });
+      return;
+    }
+    applyRepositorySelection(repositoryId);
   };
   const updateCommitSelection = (
     _paths: readonly string[],
@@ -809,10 +927,31 @@ export function GitToolWindow({
       setChangesRefreshing(false);
     }
   };
-  const loadChangeDiff = async (entry: GitChangeEntry) => {
+  const loadChangeDiff = async (entry: GitChangeEntry | null) => {
+    if (!gitStore || !storeSnapshot?.project?.selectedRepositoryId) return;
+    const workspaceId = storeSnapshot.project.workspaceId;
+    if (!entry) {
+      changeDiffAbortRef.current?.abort();
+      changeDiffAbortRef.current = null;
+      gitStore.getState().updateProjectUi(workspaceId, { selectedPath: null });
+      selectedChangeDiffRef.current = null;
+      setSelectedChangeDiff(null);
+      setSelectedChangeDiffLoading(false);
+      return;
+    }
+    if (!runtime) return;
     const selectedPath = entry.path;
-    if (!runtime || !gitStore || !storeSnapshot?.project?.selectedRepositoryId) return;
-    gitStore.getState().updateProjectUi(storeSnapshot.project.workspaceId, { selectedPath });
+    const repositoryId = storeSnapshot.project.selectedRepositoryId;
+    const projectRoot = storeSnapshot.project.projectRoot;
+    if (patchActionFeedbackTimerRef.current !== null) {
+      window.clearTimeout(patchActionFeedbackTimerRef.current);
+      patchActionFeedbackTimerRef.current = null;
+    }
+    setPatchActionStatus("idle");
+    gitStore.getState().updateProjectUi(workspaceId, { selectedPath });
+    selectedChangeDiffRef.current = null;
+    setSelectedChangeDiff(null);
+    setSelectedChangeDiffLoading(true);
     const file = storeSnapshot.status?.files.find((candidate) => candidate.path === selectedPath || candidate.originalPath === selectedPath);
     changeDiffAbortRef.current?.abort();
     const abortController = new AbortController();
@@ -822,46 +961,347 @@ export function GitToolWindow({
         || Boolean(file?.indexStatus && !file.worktreeStatus);
       setSelectedChangePatchAction(cached ? "unstage" : "stage");
       const diff = await runtime.diff({
-        workspaceId: storeSnapshot.project.workspaceId,
-        projectRoot: storeSnapshot.project.projectRoot,
-        repositoryId: storeSnapshot.project.selectedRepositoryId,
+        workspaceId,
+        projectRoot,
+        repositoryId,
       }, { cached, path: selectedPath, signal: abortController.signal });
       if (abortController.signal.aborted) return;
+      const currentState = gitStore.getState();
+      if (currentState.projects[workspaceId]?.selectedRepositoryId !== repositoryId
+          || currentState.uiByProject[workspaceId]?.selectedPath !== selectedPath) return;
       const selected = diff.files.find((candidate) => candidate.newPath === selectedPath || candidate.oldPath === selectedPath);
-      gitStore.getState().setDiff(selected ? { ...diff, files: [selected] } : diff);
+      const selectedDiff = selected ? { ...diff, files: [selected] } : { ...diff, files: [] };
+      selectedChangeDiffRef.current = selectedDiff;
+      setSelectedChangeDiff(selectedDiff);
     } catch (error) {
       if (!isAbortError(error)) setActionError(gitUiErrorMessage(error));
     } finally {
-      if (changeDiffAbortRef.current === abortController) changeDiffAbortRef.current = null;
+      if (changeDiffAbortRef.current === abortController) {
+        changeDiffAbortRef.current = null;
+        setSelectedChangeDiffLoading(false);
+      }
     }
   };
-  const runStagePatches = async (patches: readonly string[]) => {
+  const refreshStalePatchSource = async (identity: GitPatchActionIdentity) => {
+    if (!controller || !runtime || !gitStore || storeSnapshot?.project?.workspaceId !== identity.workspaceId) return;
+    const projectRoot = storeSnapshot.project.projectRoot;
+    const repositoryId = identity.repositoryId as GitRepositoryId;
+    const scope = {
+      workspaceId: identity.workspaceId,
+      projectRoot,
+      repositoryId,
+    };
+    await controller.refreshRepository(scope, ["status"]);
+    const state = gitStore.getState();
+    const project = state.projects[identity.workspaceId];
+    if (project?.projectRoot !== projectRoot || project.selectedRepositoryId !== repositoryId) return;
+    const status = state.statusByRepository[repositoryId];
+    const target = resolveGitPatchRefreshTarget(
+      status,
+      state.uiByProject[identity.workspaceId]?.selectedPath,
+      identity.sourcePaths,
+    );
+    if (!status || !target) {
+      state.updateProjectUi(identity.workspaceId, { selectedPath: null });
+      const emptyDiff: GitDiffSnapshot = {
+        repositoryId,
+        repositoryVersion: (status?.repositoryVersion ?? identity.repositoryVersion) as GitStatusSnapshot["repositoryVersion"],
+        files: [],
+      };
+      selectedChangeDiffRef.current = emptyDiff;
+      setSelectedChangeDiff(emptyDiff);
+      return;
+    }
+    state.updateProjectUi(identity.workspaceId, { selectedPath: target.path });
+    const diff = await runtime.diff(scope, {
+      cached: target.sourceKind === "index",
+      path: target.path,
+    });
+    const current = gitStore.getState();
+    if (current.projects[identity.workspaceId]?.selectedRepositoryId !== repositoryId
+        || current.uiByProject[identity.workspaceId]?.selectedPath !== target.path) return;
+    const selected = diff.files.find((file) => file.newPath === target.path || file.oldPath === target.path);
+    setSelectedChangePatchAction(target.action);
+    const selectedDiff = selected ? { ...diff, files: [selected] } : { ...diff, files: [] };
+    selectedChangeDiffRef.current = selectedDiff;
+    setSelectedChangeDiff(selectedDiff);
+  };
+  const showPatchActionFeedback = (status: KeydexGitDiffActionStatus) => {
+    if (patchActionFeedbackTimerRef.current !== null) {
+      window.clearTimeout(patchActionFeedbackTimerRef.current);
+      patchActionFeedbackTimerRef.current = null;
+    }
+    setPatchActionStatus(status);
+    if (status === "success" || status === "error") {
+      patchActionFeedbackTimerRef.current = window.setTimeout(() => {
+        setPatchActionStatus("idle");
+        patchActionFeedbackTimerRef.current = null;
+      }, 1_000);
+    }
+  };
+  const runStagePatches = async (
+    patches: readonly string[],
+    identity: GitPatchActionIdentity,
+  ) => {
     if (!controller || !runtime || !storeSnapshot?.project || !storeSnapshot.project.selectedRepositoryId || patches.length === 0) return;
+    if (patchActionInFlightRef.current) return;
+    patchActionInFlightRef.current = true;
+    const actionIsCurrent = () => {
+      const state = gitStore?.getState();
+      return state?.projects[identity.workspaceId]?.selectedRepositoryId === identity.repositoryId;
+    };
+    const latestState = gitStore?.getState();
+    const latestProject = latestState?.projects[identity.workspaceId] ?? null;
+    const latestRepositoryId = latestProject?.selectedRepositoryId ?? null;
+    const latestSelectedDiff = selectedChangeDiffRef.current;
+    const latestDiff = latestRepositoryId && latestSelectedDiff?.repositoryId === latestRepositoryId
+      ? latestSelectedDiff
+      : null;
+    const latestSourceKind = selectedChangePatchAction === "unstage" ? "index" : "working_tree";
+    const latestDocument = latestDiff && latestDiff.files.length > 0
+      ? gitDocumentFromFiles({
+          repositoryId: latestDiff.repositoryId,
+          repositoryVersion: latestDiff.repositoryVersion,
+          sourceKind: latestSourceKind,
+          files: latestDiff.files,
+        })
+      : null;
+    const identityResult = validateGitPatchActionIdentity(identity, {
+      workspaceId: latestProject?.workspaceId ?? null,
+      repositoryId: latestRepositoryId ? String(latestRepositoryId) : null,
+      repositoryVersion: latestRepositoryId
+        ? String(latestState?.statusByRepository[latestRepositoryId]?.repositoryVersion
+          ?? latestDiff?.repositoryVersion
+          ?? "") || null
+        : null,
+      sourceVersion: latestDocument?.sourceVersion ?? null,
+      sourceKind: latestSourceKind,
+    });
+    if (!identityResult.ok) {
+      setActionError(identityResult.message);
+      showPatchActionFeedback("error");
+      try {
+        await refreshStalePatchSource(identity);
+      } finally {
+        patchActionInFlightRef.current = false;
+      }
+      return;
+    }
     setMutation("patch");
+    showPatchActionFeedback("queued");
     setActionError(null);
+    let conflictRefreshed = false;
     try {
       for (const [index, patch] of patches.entries()) {
-        await controller.runCommand(() => runtime.applyPatch({
-          workspaceId: storeSnapshot.project!.workspaceId,
+        const result = await controller.runCommand(() => runtime.applyPatch({
+          workspaceId: identity.workspaceId,
           projectRoot: storeSnapshot.project!.projectRoot,
-          repositoryId: storeSnapshot.project!.selectedRepositoryId!,
+          repositoryId: identity.repositoryId as GitRepositoryId,
           idempotencyKey: `tool-window-patch-${Date.now()}-${index}`,
+          expectedRepositoryVersion: identity.repositoryVersion,
+          expectedSourceVersion: identity.sourceVersion,
+          expectedSourcePatch: identity.sourcePatch,
+          sourceKind: identity.sourceKind,
+          sourcePaths: identity.sourcePaths,
           patch,
           cached: true,
           reverse: selectedChangePatchAction === "unstage",
-        }));
+        }), (operation) => {
+          if (actionIsCurrent() && (operation.state === "queued" || operation.state === "running")) {
+            showPatchActionFeedback(operation.state);
+          }
+        });
+        if (result.state !== "succeeded") {
+          const message = gitOperationFailureMessage(result);
+          if (actionIsCurrent()) {
+            setActionError(message);
+            showPatchActionFeedback("error");
+          }
+          if (result.result.error_code === "git_operation_conflict") {
+            await refreshStalePatchSource(identity);
+            conflictRefreshed = true;
+          }
+          return;
+        }
       }
+      await refreshStalePatchSource(identity);
+      if (actionIsCurrent()) showPatchActionFeedback("success");
+    } catch (error) {
+      if (actionIsCurrent()) {
+        setActionError(gitUiErrorMessage(error));
+        showPatchActionFeedback("error");
+      }
+      if (!conflictRefreshed && isGitOperationConflict(error)) {
+        await refreshStalePatchSource(identity);
+      }
+    } finally {
+      patchActionInFlightRef.current = false;
+      setMutation(null);
+    }
+  };
+  const closeCommitPushDialog = () => {
+    commitPushPreviewAbortRef.current?.abort();
+    commitPushDetailAbortRef.current?.abort();
+    commitPushPreviewAbortRef.current = null;
+    commitPushDetailAbortRef.current = null;
+    setCommitPushOpen(false);
+    setCommitPushTarget(null);
+    setCommitPushCommits([]);
+    setSelectedCommitPushObjectId(null);
+    setCommitPushDetail(null);
+    setCommitPushLoading(false);
+    setActionError(null);
+  };
+
+  const selectCommitForPush = async (commit: GitCommitSummary) => {
+    if (!runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
+    commitPushDetailAbortRef.current?.abort();
+    const abortController = new AbortController();
+    commitPushDetailAbortRef.current = abortController;
+    const repositoryId = storeSnapshot.project.selectedRepositoryId;
+    const cacheKey = `${repositoryId}:${commit.objectId}`;
+    const cachedDetail = historyDetailCacheRef.current.get(cacheKey) ?? null;
+    setSelectedCommitPushObjectId(commit.objectId);
+    setCommitPushDetail(cachedDetail);
+    if (cachedDetail) {
+      setCommitPushLoading(false);
+      return;
+    }
+    setCommitPushLoading(true);
+    try {
+      const detail = await runtime.commit({
+        workspaceId: storeSnapshot.project.workspaceId,
+        projectRoot: storeSnapshot.project.projectRoot,
+        repositoryId,
+      }, commit.objectId, { signal: abortController.signal });
+      if (abortController.signal.aborted) return;
+      historyDetailCacheRef.current.set(cacheKey, detail);
+      trimMap(historyDetailCacheRef.current, 100);
+      setCommitPushDetail(detail);
+    } catch (error) {
+      if (!isAbortError(error)) setActionError(gitUiErrorMessage(error));
+    } finally {
+      if (commitPushDetailAbortRef.current === abortController) {
+        commitPushDetailAbortRef.current = null;
+        setCommitPushLoading(false);
+      }
+    }
+  };
+
+  const prepareCommitPushPreview = async () => {
+    if (!runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
+    commitPushPreviewAbortRef.current?.abort();
+    const abortController = new AbortController();
+    commitPushPreviewAbortRef.current = abortController;
+    const scope = {
+      workspaceId: storeSnapshot.project.workspaceId,
+      projectRoot: storeSnapshot.project.projectRoot,
+      repositoryId: storeSnapshot.project.selectedRepositoryId,
+    };
+    const upstreamTarget = pushTargetFromStatus(storeSnapshot.status ?? null);
+    setCommitPushOpen(true);
+    setCommitPushTarget(null);
+    setCommitPushCommits([]);
+    setSelectedCommitPushObjectId(null);
+    setCommitPushDetail(null);
+    setCommitPushLoading(true);
+    setActionError(null);
+    try {
+      let target: GitCommitPushTarget;
+      let revision: string;
+      if (upstreamTarget) {
+        target = {
+          remote: upstreamTarget.remote,
+          source: upstreamTarget.branch,
+          target: upstreamTarget.target,
+          upstream: upstreamTarget.upstream,
+          setUpstream: false,
+        };
+        revision = `${upstreamTarget.upstream}..HEAD`;
+      } else {
+        const source = storeSnapshot.status?.branch.head;
+        if (!source || storeSnapshot.status?.branch.detachedAt) {
+          throw new Error("提交已成功，但当前处于分离指针状态，无法推送分支。");
+        }
+        const availableRemotes = await runtime.remotes(scope, { signal: abortController.signal });
+        const remote = availableRemotes[0]?.name;
+        if (!remote) throw new Error("提交已成功，但当前仓库没有可用的远程仓库。");
+        target = {
+          remote,
+          source,
+          target: source,
+          upstream: `${remote}/${source}`,
+          setUpstream: true,
+        };
+        const hasRemoteTrackingRef = (storeSnapshot.refs ?? []).some((ref) =>
+          ref.kind === "remote"
+          && (ref.shortName === target.upstream || ref.fullName === `refs/remotes/${target.upstream}`),
+        );
+        revision = hasRemoteTrackingRef ? `${target.upstream}..HEAD` : "HEAD";
+      }
+      if (abortController.signal.aborted) return;
+      setCommitPushTarget(target);
+
+      const commits: GitCommitSummary[] = [];
+      let cursor: string | null = null;
+      do {
+        const page = await runtime.history(scope, {
+          revision,
+          cursor,
+          limit: 200,
+          signal: abortController.signal,
+        });
+        commits.push(...page.commits);
+        cursor = page.nextCursor;
+      } while (cursor && !abortController.signal.aborted);
+      if (abortController.signal.aborted) return;
+      setCommitPushCommits(commits);
+      setCommitPushLoading(false);
+      if (commits[0]) void selectCommitForPush(commits[0]);
+    } catch (error) {
+      if (!isAbortError(error)) setActionError(gitUiErrorMessage(error));
+      setCommitPushLoading(false);
+    } finally {
+      if (commitPushPreviewAbortRef.current === abortController) {
+        commitPushPreviewAbortRef.current = null;
+      }
+    }
+  };
+
+  const confirmCommitPush = async ({ tagMode }: { tagMode: GitPushTagMode }) => {
+    if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId || !commitPushTarget) return;
+    setMutation("push");
+    setActionError(null);
+    try {
+      const result = await controller.runCommand(() => runtime.push({
+        workspaceId: storeSnapshot.project!.workspaceId,
+        projectRoot: storeSnapshot.project!.projectRoot,
+        repositoryId: storeSnapshot.project!.selectedRepositoryId!,
+        idempotencyKey: `tool-window-commit-push-${Date.now()}`,
+        expectedRepositoryVersion: null,
+        remote: commitPushTarget.remote,
+        source: commitPushTarget.source,
+        target: commitPushTarget.target,
+        setUpstream: commitPushTarget.setUpstream,
+        tags: tagMode === "all",
+        followTags: tagMode === "current_branch",
+      }));
+      if (result.state !== "succeeded") {
+        setActionError(`提交已成功，但推送失败：${gitOperationFailureMessage(result)}`);
+        return;
+      }
+      closeCommitPushDialog();
     } catch (error) {
       setActionError(gitUiErrorMessage(error));
     } finally {
       setMutation(null);
     }
   };
+
   const runCommit = async (options: GitCommitOptions, pushAfter = false) => {
     if (!controller || !runtime || !storeSnapshot?.project || !storeSnapshot.project.selectedRepositoryId) return;
-    setMutation(pushAfter ? "push" : "commit");
+    setMutation("commit");
     setActionError(null);
-    setCommitOutcome(null);
     try {
       const command: GitCommitCommand = {
         workspaceId: storeSnapshot.project!.workspaceId,
@@ -881,51 +1321,14 @@ export function GitToolWindow({
       if (result.state !== "succeeded") {
         throw new Error(gitOperationFailureMessage(result));
       }
-      setCommitOutcome({
-          oid: typeof result.result.oid === "string" ? result.result.oid : null,
-          summary: "提交成功",
-          status: typeof result.result.status === "string" ? result.result.status : result.state,
-        });
-        setSelectedCommitPaths([]);
-        setSelectedUntrackedCommitPaths([]);
-        setSelectedCommitFileCount(0);
-        setChangeSelectionResetKey((current) => current + 1);
-        gitStore?.getState().updateProjectUi(storeSnapshot.project.workspaceId, { commitDraft: "" });
-        if (pushAfter) {
-          const target = pushTargetFromStatus(storeSnapshot.status ?? null);
-          if (!target) {
-            setCommitOutcome({
-              oid: typeof result.result.oid === "string" ? result.result.oid : null,
-              summary: "提交成功，但推送需要先设置上游",
-              status: "commit_succeeded_push_blocked",
-            });
-            setActionError("提交已成功，但当前分支没有上游。请先在分支视图明确设置上游后再推送。");
-            return;
-          }
-          const pushed = await controller.runCommand(() => runtime.push({
-            workspaceId: storeSnapshot.project!.workspaceId,
-            projectRoot: storeSnapshot.project!.projectRoot,
-            repositoryId: storeSnapshot.project!.selectedRepositoryId!,
-            idempotencyKey: `tool-window-push-${Date.now()}`,
-            remote: target.remote,
-            source: target.branch,
-            target: target.target,
-          }));
-          if (pushed.state === "succeeded") {
-            setCommitOutcome({
-              oid: typeof result.result.oid === "string" ? result.result.oid : null,
-              summary: `已提交并推送到 ${target.upstream}`,
-              status: "committed_and_pushed",
-            });
-          } else {
-            setCommitOutcome({
-              oid: typeof result.result.oid === "string" ? result.result.oid : null,
-              summary: "提交成功，但推送失败",
-              status: "commit_succeeded_push_failed",
-            });
-            setActionError(`提交已成功，但推送失败：${gitOperationFailureMessage(pushed)}`);
-          }
-        }
+      setSelectedCommitPaths([]);
+      setSelectedUntrackedCommitPaths([]);
+      setSelectedCommitFileCount(0);
+      setChangeSelectionResetKey((current) => current + 1);
+      gitStore?.getState().updateProjectUi(storeSnapshot.project.workspaceId, { commitDraft: "" });
+      if (pushAfter) {
+        await prepareCommitPushPreview();
+      }
     } catch (error) {
       setActionError(gitUiErrorMessage(error));
     } finally {
@@ -1012,7 +1415,6 @@ export function GitToolWindow({
   };
   const runDeleteBranch = async (ref: GitRefsSnapshotRef, force: boolean) => {
     if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
-    const risk = branchDeletionRisk(ref, storeSnapshot.status ?? null);
     const remoteFullName = ref.fullName.startsWith("refs/remotes/")
       ? ref.fullName.slice("refs/remotes/".length)
       : null;
@@ -1023,9 +1425,6 @@ export function GitToolWindow({
       : ref.fullName.startsWith("refs/heads/")
         ? ref.fullName.slice("refs/heads/".length)
         : ref.shortName;
-    const preview = remote ? `${remote}/${branchName}` : branchName;
-    if (!window.confirm(`即将删除 ${preview}。此操作不会删除工作区文件，是否继续？`)) return;
-    if ((force || risk === "protected") && !window.confirm(`这是${risk === "protected" ? "受保护" : "未合并"}分支操作。请再次确认删除 ${preview}。`)) return;
     setMutation("branch");
     setActionError(null);
     try {
@@ -1077,8 +1476,6 @@ export function GitToolWindow({
   };
   const runDeleteTag = async (ref: GitRefsSnapshotRef, remote: string | null) => {
     if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
-    const target = remote ? `${remote}/${ref.shortName}` : ref.shortName;
-    if (!window.confirm(`即将删除标签 ${target}。远程标签删除不会自动恢复，是否继续？`)) return;
     setMutation("branch");
     setActionError(null);
     try {
@@ -1120,7 +1517,6 @@ export function GitToolWindow({
         tagName: ref.shortName,
       }));
       if (result.state !== "succeeded") throw new Error(gitOperationFailureMessage(result));
-      setPushOutcome("pushed");
     } catch (error) {
       setActionError(gitUiErrorMessage(error));
     } finally {
@@ -1135,8 +1531,8 @@ export function GitToolWindow({
       repositoryId: storeSnapshot.project.selectedRepositoryId,
     }));
   };
-  const runAddRemote = async (name: string, fetchUrl: string, pushUrl: string | null) => {
-    if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
+  const runAddRemote = async (name: string, fetchUrl: string, pushUrl: string | null): Promise<boolean> => {
+    if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return false;
     setMutation("branch");
     setActionError(null);
     const scope = {
@@ -1163,14 +1559,16 @@ export function GitToolWindow({
         if (updated.state !== "succeeded") throw new Error(gitOperationFailureMessage(updated));
       }
       await reloadRemotes();
+      return true;
     } catch (error) {
       setActionError(gitUiErrorMessage(error));
+      return false;
     } finally {
       setMutation(null);
     }
   };
-  const runRenameRemote = async (oldName: string, newName: string) => {
-    if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
+  const runRenameRemote = async (oldName: string, newName: string): Promise<boolean> => {
+    if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return false;
     setMutation("branch");
     try {
       const result = await controller.runCommand(() => runtime.renameRemote({
@@ -1183,14 +1581,16 @@ export function GitToolWindow({
       }));
       if (result.state !== "succeeded") throw new Error(gitOperationFailureMessage(result));
       await reloadRemotes();
+      return true;
     } catch (error) {
       setActionError(gitUiErrorMessage(error));
+      return false;
     } finally {
       setMutation(null);
     }
   };
-  const runSetRemoteUrl = async (name: string, url: string, push: boolean) => {
-    if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
+  const runSetRemoteUrl = async (name: string, url: string, push: boolean): Promise<boolean> => {
+    if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return false;
     setMutation("branch");
     try {
       const result = await controller.runCommand(() => runtime.setRemoteUrl({
@@ -1204,18 +1604,16 @@ export function GitToolWindow({
       }));
       if (result.state !== "succeeded") throw new Error(gitOperationFailureMessage(result));
       await reloadRemotes();
+      return true;
     } catch (error) {
       setActionError(gitUiErrorMessage(error));
+      return false;
     } finally {
       setMutation(null);
     }
   };
   const runRemoveRemote = async (remote: GitRemoteInfo) => {
     if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
-    const impact = remote.trackingBranches.length
-      ? `以下本地分支将失去上游：${remote.trackingBranches.join("、")}。`
-      : "没有本地分支跟踪此远程仓库。";
-    if (!window.confirm(`删除远程仓库 ${remote.name}？${impact}`)) return;
     setMutation("branch");
     try {
       const command = {
@@ -1260,7 +1658,6 @@ export function GitToolWindow({
     if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
     setMutation("fetch");
     setActionError(null);
-    setSyncProgress([]);
     try {
       const result = await controller.runCommand(() => runtime.fetch({
         workspaceId: storeSnapshot.project!.workspaceId,
@@ -1271,8 +1668,6 @@ export function GitToolWindow({
         ...options,
       }));
       if (result.state !== "succeeded") throw new Error(gitOperationFailureMessage(result));
-      const lines = Array.isArray(result.result.progress_lines) ? result.result.progress_lines.map(String) : [];
-      setSyncProgress(lines.length > 0 ? lines : ["远程数据获取完成"]);
     } catch (error) {
       setActionError(gitUiErrorMessage(error));
     } finally {
@@ -1291,21 +1686,20 @@ export function GitToolWindow({
       },
     });
   };
-  const runUpdate = async () => {
-    if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
+  const runUpdate = async (strategy: GitUpdateStrategy): Promise<boolean> => {
+    if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return false;
     const upstream = storeSnapshot.status?.branch.upstream;
     if (!upstream) {
       setActionError("当前分支没有上游，请先明确设置后再更新。");
-      return;
+      return false;
     }
     const separator = upstream.indexOf("/");
     if (separator <= 0 || separator === upstream.length - 1) {
       setActionError(`无法解析上游：${upstream}`);
-      return;
+      return false;
     }
     setMutation("update");
     setActionError(null);
-    setUpdateOutcome(null);
     try {
       const result = await controller.runCommand(() => runtime.update({
         workspaceId: storeSnapshot.project!.workspaceId,
@@ -1315,33 +1709,25 @@ export function GitToolWindow({
         expectedRepositoryVersion: storeSnapshot.status?.repositoryVersion ?? null,
         remote: upstream.slice(0, separator),
         refspec: upstream.slice(separator + 1),
-        strategy: updateStrategy,
+        strategy,
       }));
       if (result.state !== "succeeded") {
         const message = gitOperationFailureMessage(result);
-        setUpdateOutcome(/conflict/i.test(message) ? "conflict" : null);
         throw new Error(message);
       }
-      const status = result.result.status === "up_to_date" ? "up_to_date" : "updated";
-      setUpdateOutcome(status);
+      return true;
     } catch (error) {
       const message = gitUiErrorMessage(error);
-      if (/conflict/i.test(message)) setUpdateOutcome("conflict");
       setActionError(message);
+      return false;
     } finally {
       setMutation(null);
     }
   };
-  const runPush = async (options: GitPushOptions) => {
-    if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
-    if (options.forceWithLease) {
-      const remoteLoss = storeSnapshot.status?.branch.behind ?? 0;
-      if (!window.confirm(`带租约强制推送将改写 ${options.remote}/${options.target}，最多替换 ${remoteLoss} 个远程提交。是否继续？`)) return;
-      if (!window.confirm("请再次确认：仅在你已检查远端提交且确定要改写远端历史时继续。")) return;
-    }
+  const runPush = async (options: GitPushOptions): Promise<boolean> => {
+    if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return false;
     setMutation("push");
     setActionError(null);
-    setPushOutcome(null);
     try {
       const command: GitPushCommand = {
         workspaceId: storeSnapshot.project!.workspaceId,
@@ -1359,14 +1745,14 @@ export function GitToolWindow({
       if (result.state !== "succeeded") {
         const message = gitOperationFailureMessage(result);
         if (/non-fast-forward|rejected|fetch first/i.test(message)) {
-          setPushOutcome("rejected");
           throw new Error(`${message}。请先获取或更新，确认远程提交后再重试。`);
         }
         throw new Error(message);
       }
-      setPushOutcome("pushed");
+      return true;
     } catch (error) {
       setActionError(gitUiErrorMessage(error));
+      return false;
     } finally {
       setMutation(null);
     }
@@ -1422,8 +1808,8 @@ export function GitToolWindow({
     setStashFileIndex(0);
     setStashDetail(nextSelected ? await runtime.stashDetail(scope, nextSelected.selector, nextSelected.objectId) : null);
   };
-  const runCreateStash = async (options: { message: string; staged: boolean; includeUntracked: boolean }) => {
-    if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
+  const runCreateStash = async (options: { message: string; staged: boolean; includeUntracked: boolean }): Promise<boolean> => {
+    if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return false;
     setMutation("stash");
     setActionError(null);
     try {
@@ -1439,8 +1825,10 @@ export function GitToolWindow({
       }));
       if (result.state !== "succeeded") throw new Error(gitOperationFailureMessage(result));
       await reloadStashes();
+      return true;
     } catch (error) {
       setActionError(gitUiErrorMessage(error));
+      return false;
     } finally {
       setMutation(null);
     }
@@ -1482,12 +1870,8 @@ export function GitToolWindow({
       setMutation(null);
     }
   };
-  const runStashEntryAction = async (action: "apply" | "pop" | "drop", entry: GitStashEntry, reinstateIndex = false) => {
-    if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
-    if (action === "drop") {
-      if (!window.confirm(`要删除储藏 ${entry.selector}（${entry.objectId.slice(0, 8)}）吗？`)) return;
-      if (!window.confirm("此储藏记录删除后无法从储藏列表恢复，请再次确认删除。")) return;
-    }
+  const runStashEntryAction = async (action: "apply" | "pop" | "drop", entry: GitStashEntry, reinstateIndex = false): Promise<boolean> => {
+    if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return false;
     setMutation("stash");
     setActionError(null);
     try {
@@ -1512,14 +1896,16 @@ export function GitToolWindow({
           : runtime.dropStash(command));
       if (result.state !== "succeeded") throw new Error(gitOperationFailureMessage(result));
       await reloadStashes();
+      return true;
     } catch (error) {
       setActionError(gitUiErrorMessage(error));
+      return false;
     } finally {
       setMutation(null);
     }
   };
-  const runStashBranch = async (entry: GitStashEntry, branchName: string) => {
-    if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
+  const runStashBranch = async (entry: GitStashEntry, branchName: string): Promise<boolean> => {
+    if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return false;
     setMutation("stash");
     setActionError(null);
     try {
@@ -1535,16 +1921,16 @@ export function GitToolWindow({
       }));
       if (result.state !== "succeeded") throw new Error(gitOperationFailureMessage(result));
       await reloadStashes();
+      return true;
     } catch (error) {
       setActionError(gitUiErrorMessage(error));
+      return false;
     } finally {
       setMutation(null);
     }
   };
   const runClearStashes = async () => {
     if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId || stashEntries.length === 0) return;
-    if (!window.confirm(`要清空全部 ${stashEntries.length} 条储藏记录吗？`)) return;
-    if (!window.confirm("此操作会删除所有储藏记录，请再次确认清空。")) return;
     setMutation("stash");
     setActionError(null);
     try {
@@ -1734,7 +2120,6 @@ export function GitToolWindow({
   };
   const abortMerge = async () => {
     if (!runtime || !controller || !storeSnapshot?.project?.selectedRepositoryId) return;
-    if (!window.confirm(operationControlWarning("merge", "abort", storeSnapshot.status ?? null))) return;
     setMutation("merge");
     setActionError(null);
     try {
@@ -1949,7 +2334,6 @@ export function GitToolWindow({
     if (!runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
     setMutation("reset");
     setActionError(null);
-    setResetOutcome(null);
     try {
       setResetPreview(await runtime.resetPreview({
         workspaceId: storeSnapshot.project.workspaceId,
@@ -1999,7 +2383,6 @@ export function GitToolWindow({
   };
   const controlBisect = async (action: "good" | "bad" | "skip" | "reset") => {
     if (!runtime || !controller || !storeSnapshot?.project?.selectedRepositoryId) return;
-    if (action === "reset" && !window.confirm("要结束二分定位并恢复原始分支或指针吗？")) return;
     setMutation("bisect");
     setActionError(null);
     try {
@@ -2026,7 +2409,6 @@ export function GitToolWindow({
   ) => {
     if (!runtime || !controller || !storeSnapshot?.project?.selectedRepositoryId) return;
     const highRisk = action === "deinit" || recursive;
-    if (highRisk && !window.confirm(`${action === "deinit" ? "要取消初始化" : "要递归处理"} ${paths.join(", ")} 吗？${recursive ? "此操作包含嵌套子模块仓库。" : "已签出的子仓库文件将被移除，但 Git 元数据仍可恢复。"}`)) return;
     setMutation("submodule");
     setActionError(null);
     try {
@@ -2070,7 +2452,6 @@ export function GitToolWindow({
   };
   const authorizeWorktree = async (path: string) => {
     if (!runtime || !storeSnapshot?.project?.selectedRepositoryId || !path) return;
-    if (!window.confirm(`要为所选父仓库授权这个外部工作树精确路径吗？\n${path}`)) return;
     setMutation("worktree");
     setActionError(null);
     try {
@@ -2089,7 +2470,6 @@ export function GitToolWindow({
   };
   const revokeWorktree = async (path: string) => {
     if (!runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
-    if (!window.confirm(`要撤销 Keydex 对此外部工作树的访问权限吗？\n${path}`)) return;
     setMutation("worktree");
     setActionError(null);
     try {
@@ -2116,8 +2496,6 @@ export function GitToolWindow({
   ) => {
     if (!runtime || !controller || !storeSnapshot?.project?.selectedRepositoryId) return;
     const path = options.path ?? null;
-    if (action === "remove" && !confirmWorktreeRemoval({ path: path ?? "", dirty: options.dirty ?? null })) return;
-    if (action === "prune" && !window.confirm("要清理失效的工作树元数据吗？只会影响 Git 判定为可清理的登记信息。")) return;
     setMutation("worktree");
     setActionError(null);
     try {
@@ -2180,8 +2558,6 @@ export function GitToolWindow({
   };
   const runReset = async (target: string, mode: GitResetMode) => {
     if (!runtime || !controller || !storeSnapshot?.project?.selectedRepositoryId || !resetPreview) return;
-    if (!window.confirm(`要执行${resetModeLabel(mode)}，将 ${resetPreview.headObjectId?.slice(0, 12) ?? "尚无提交"} 重置到 ${resetPreview.targetObjectId.slice(0, 12)} 吗？之前的分支端点仍可通过引用记录恢复。`)) return;
-    if (mode === "hard" && resetPreview.untrackedOverwrites.length > 0 && !window.confirm(`确认丢失以下未跟踪数据：${resetPreview.untrackedOverwrites.join(", ")}`)) return;
     setMutation("reset");
     setActionError(null);
     try {
@@ -2196,7 +2572,6 @@ export function GitToolWindow({
       };
       const confirmation = await runtime.confirmation("reset", command);
       const result = await controller.runCommand(() => runtime.reset({ ...command, confirmationToken: confirmation.token }));
-      setResetOutcome(result);
       if (result.state !== "succeeded") setActionError(gitOperationFailureMessage(result));
       else setResetPreview(null);
     } catch (error) {
@@ -2209,7 +2584,6 @@ export function GitToolWindow({
     if (!runtime || !controller || !storeSnapshot?.project?.selectedRepositoryId) return;
     setMutation("restore");
     setActionError(null);
-    setRestoreOutcome(null);
     try {
       const command = {
         workspaceId: storeSnapshot.project.workspaceId,
@@ -2224,7 +2598,6 @@ export function GitToolWindow({
       };
       const confirmationToken = worktree ? (await runtime.confirmation("restore", command)).token : null;
       const result = await controller.runCommand(() => runtime.restore({ ...command, confirmationToken }));
-      setRestoreOutcome(result);
       if (result.state !== "succeeded") setActionError(gitOperationFailureMessage(result));
     } catch (error) {
       setActionError(gitUiErrorMessage(error));
@@ -2254,7 +2627,6 @@ export function GitToolWindow({
     setMutation("patch");
     setActionError(null);
     setPatchDryRunSignature(null);
-    setPatchOutcome(null);
     try {
       const result = await controller.runCommand(() => runtime.applyPatch({
         workspaceId: storeSnapshot.project!.workspaceId,
@@ -2268,7 +2640,6 @@ export function GitToolWindow({
         checkOnly: true,
         reject: false,
       }));
-      setPatchOutcome(result);
       if (result.state === "succeeded") setPatchDryRunSignature(patchImportSignature(patch, options));
       else setActionError(gitOperationFailureMessage(result));
     } catch (error) {
@@ -2294,13 +2665,11 @@ export function GitToolWindow({
       };
       const recheck = await controller.runCommand(() => runtime.applyPatch({ ...base, idempotencyKey: `tool-window-patch-recheck-${Date.now()}`, checkOnly: true, reject: false }));
       if (recheck.state !== "succeeded") {
-        setPatchOutcome(recheck);
         setPatchDryRunSignature(null);
         setActionError(gitOperationFailureMessage(recheck));
         return;
       }
       const result = await controller.runCommand(() => runtime.applyPatch({ ...base, idempotencyKey: `tool-window-patch-apply-${Date.now()}`, checkOnly: false, reject: options.reject }));
-      setPatchOutcome(result);
       setPatchDryRunSignature(null);
       if (result.state !== "succeeded") setActionError(gitOperationFailureMessage(result));
     } catch (error) {
@@ -2427,9 +2796,19 @@ export function GitToolWindow({
   const unresolvedConflictBlocks = selectedConflict
     ? parseConflictBlocks(selectedConflict.resultContent ?? "").length
     : 0;
+  const changesDetailSurface = gitChangesDetailSurface(selectedConflict);
+  const selectedConflictDiffFiles = selectedConflict
+    ? (storeSnapshot?.diff?.files ?? []).filter((file) =>
+        file.newPath === selectedConflict.path || file.oldPath === selectedConflict.path)
+    : [];
 
   return (
-    <section className={styles.root} data-layout={maximized ? "maximized" : "split"} data-testid="git-tool-window">
+    <section
+      className={styles.root}
+      data-layout={maximized ? "maximized" : "split"}
+      data-resizing={navigationResize.dragging || detailResize.dragging || commitEditorResize.dragging ? "true" : undefined}
+      data-testid="git-tool-window"
+    >
       <div className={styles.tabs} data-testid="git-tool-tabs">
         {projectSelector ? (
           <div className={styles.projectSelector} data-testid="git-project-name">
@@ -2565,10 +2944,10 @@ export function GitToolWindow({
               aria-valuemin={12}
               aria-valuemax={35}
               aria-valuenow={Math.round(navigationPanePercent)}
-              data-dragging={draggingSplitter === "navigation" ? "true" : undefined}
+              data-dragging={navigationResize.dragging ? "true" : undefined}
               tabIndex={0}
               onKeyDown={(event) => handleSplitterKeyDown("navigation", event)}
-              onPointerDown={(event) => handleSplitterPointerDown("navigation", event)}
+              onPointerDown={startNavigationResize}
             />
           </>
         ) : null}
@@ -2585,7 +2964,6 @@ export function GitToolWindow({
               <strong>{activeViewLabel}</strong>
             </div>
           ) : null}
-          {actionError ? <div className={styles.actionError} role="alert">{actionError}</div> : null}
           {view === "changes" ? (
             <div
               className={styles.changesWorkspace}
@@ -2609,10 +2987,10 @@ export function GitToolWindow({
                 aria-valuemin={22}
                 aria-valuemax={65}
                 aria-valuenow={Math.round(commitEditorPercent)}
-                data-dragging={draggingSplitter === "commit" ? "true" : undefined}
+                data-dragging={commitEditorResize.dragging ? "true" : undefined}
                 tabIndex={0}
                 onKeyDown={handleCommitSplitterKeyDown}
-                onPointerDown={handleCommitSplitterPointerDown}
+                onPointerDown={startCommitEditorResize}
               />
               <GitCommitEditor
                 status={storeSnapshot?.status ?? null}
@@ -2626,7 +3004,6 @@ export function GitToolWindow({
                 onCommitAndPush={(options) => runCommit(options, true)}
                 identity={identity}
                 identityLoading={identityLoading}
-                outcome={commitOutcome}
               />
             </div>
           ) : view === "history" ? (
@@ -2683,13 +3060,12 @@ export function GitToolWindow({
             <GitSyncActions
               remotes={remotes}
               busy={mutation === "fetch"}
-              progress={syncProgress}
               status={storeSnapshot?.status ?? null}
               updateStrategy={updateStrategy}
               updateBusy={mutation === "update"}
-              updateOutcome={updateOutcome}
+              updateError={mutation === "update" ? null : actionError}
               pushBusy={mutation === "push"}
-              pushOutcome={pushOutcome}
+              pushError={mutation === "push" ? null : actionError}
               outgoingCommits={outgoingCommits}
               replacedCommits={replacedCommits}
               onFetch={runFetch}
@@ -2699,6 +3075,7 @@ export function GitToolWindow({
             />
             <GitBranchActions
               refs={storeSnapshot?.refs ?? []}
+              remotes={remotes.map((remote) => remote.name)}
               selectedRef={storeSnapshot?.ui?.selectedRef ?? null}
               status={storeSnapshot?.status ?? null}
               busy={mutation === "branch" || mutation === "checkout"}
@@ -2714,8 +3091,10 @@ export function GitToolWindow({
               onStashAndCheckout={runStashAndCheckout}
             />
             <GitRemoteManager
+              repositoryId={storeSnapshot?.project?.selectedRepositoryId ?? null}
               remotes={remotes}
               busy={mutation === "branch"}
+              error={mutation === "branch" ? null : actionError}
               onAdd={runAddRemote}
               onRename={runRenameRemote}
               onSetUrl={runSetRemoteUrl}
@@ -2724,6 +3103,7 @@ export function GitToolWindow({
             </div>
           ) : view === "stash" ? (
             <GitStashView
+              repositoryId={storeSnapshot?.project?.selectedRepositoryId ?? null}
               entries={stashEntries}
               selected={selectedStash}
               detail={stashDetail}
@@ -2734,10 +3114,11 @@ export function GitToolWindow({
               onSelectFile={setStashFileIndex}
               onLoadMore={() => void loadMoreStashes()}
               busy={mutation === "stash"}
-              onCreate={(options) => void runCreateStash(options)}
-              onApply={(entry, reinstateIndex) => void runStashEntryAction("apply", entry, reinstateIndex)}
-              onPop={(entry, reinstateIndex) => void runStashEntryAction("pop", entry, reinstateIndex)}
-              onBranch={(entry, branchName) => void runStashBranch(entry, branchName)}
+              error={mutation === "stash" ? null : actionError}
+              onCreate={runCreateStash}
+              onApply={(entry, reinstateIndex) => runStashEntryAction("apply", entry, reinstateIndex)}
+              onPop={(entry, reinstateIndex) => runStashEntryAction("pop", entry, reinstateIndex)}
+              onBranch={runStashBranch}
               onDrop={(entry) => void runStashEntryAction("drop", entry)}
               onClear={() => void runClearStashes()}
             />
@@ -2803,7 +3184,6 @@ export function GitToolWindow({
                 exported={patchExport}
                 busy={mutation === "patch"}
                 dryRunSignature={patchDryRunSignature}
-                outcome={patchOutcome}
                 rejectFiles={(storeSnapshot?.status?.files ?? []).map((file) => file.path).filter((path) => path.endsWith(".rej"))}
                 onExport={(mode, left, right, paths) => void exportPatch(mode, left, right, paths)}
                 onCheck={(patch, options) => void checkImportedPatch(patch, options)}
@@ -2814,8 +3194,6 @@ export function GitToolWindow({
                 preview={resetPreview}
                 initialResetTarget={resetTargetSeed}
                 busy={mutation === "reset" || mutation === "restore"}
-                resetOutcome={resetOutcome}
-                restoreOutcome={restoreOutcome}
                 onPreview={(target, mode) => void previewReset(target, mode)}
                 onReset={(target, mode) => void runReset(target, mode)}
                 onRestore={(paths, source, staged, worktree) => void runRestore(paths, source, staged, worktree)}
@@ -2870,13 +3248,17 @@ export function GitToolWindow({
           aria-valuemin={COMMIT_PANE_MIN_PERCENT}
           aria-valuemax={view === "changes" ? COMMIT_PANE_MAX_PERCENT : Math.round(72 - navigationPanePercent)}
           aria-valuenow={Math.round(view === "changes" ? commitPanePercent : detailPanePercent)}
-          data-dragging={draggingSplitter === "details" ? "true" : undefined}
+          data-dragging={detailResize.dragging ? "true" : undefined}
           tabIndex={0}
           onKeyDown={(event) => handleSplitterKeyDown("details", event)}
-          onPointerDown={(event) => handleSplitterPointerDown("details", event)}
+          onPointerDown={startDetailResize}
         />
-        <aside className={styles.details} data-view={view} aria-label="Git 详情">
-          {view === "history" ? null : <span className={styles.paneTitle}>详情</span>}
+        <aside
+          className={styles.details}
+          data-detail-surface={view === "changes" ? changesDetailSurface : undefined}
+          data-view={view}
+          aria-label="Git 详情"
+        >
           {view === "changes" ? (
             <>
               <GitConflictOverview
@@ -2885,7 +3267,10 @@ export function GitToolWindow({
                 selectedPath={selectedConflictPath}
                 onSelect={(file) => {
                   if (file.path === selectedConflictPath) return;
-                  if (mergeEditorDirty && !window.confirm("合并结果存在未保存的改动。确定不保存并切换文件吗？")) return;
+                  if (mergeEditorDirty) {
+                    setPendingMergeDraftDiscard({ kind: "conflict", path: file.path });
+                    return;
+                  }
                   setMergeEditorDirty(false);
                   setSelectedConflictPath(file.path);
                 }}
@@ -2899,7 +3284,7 @@ export function GitToolWindow({
                 onAction={(action) => void runConflictAction(action)}
                 onReopen={() => void runConflictAction("reopen")}
               />
-              {selectedConflict?.editable ? (
+              {changesDetailSurface === "merge_editor" && selectedConflict ? (
                 <GitThreeWayMergeEditor
                   file={selectedConflict}
                   saving={mutation === "conflict_save"}
@@ -2907,15 +3292,50 @@ export function GitToolWindow({
                   onSave={saveConflictResult}
                 />
               ) : null}
-              <GitDiffViewer
-                diff={storeSnapshot?.diff?.files[0] ?? null}
-                staging={mutation === "patch"}
-                onStagePatches={runStagePatches}
-                patchAction={selectedChangePatchAction}
-              />
+              {changesDetailSurface === "conflict_diff" && selectedConflict && conflicts ? (
+                <GitReadOnlyDiff
+                  repositoryId={conflicts.repositoryId}
+                  repositoryVersion={conflicts.repositoryVersion}
+                  sourceKind="compare"
+                  files={selectedConflictDiffFiles}
+                  emptyMessage="当前冲突文件没有可显示的文本差异"
+                  scrollScopeKey={`git-conflict:${conflicts.repositoryId}:${selectedConflict.path}:${selectedConflict.resultRevision}`}
+                  onCopyText={copyGitDiffText}
+                  onOpenFile={openGitDiffFile}
+                />
+              ) : null}
+              {changesDetailSurface === "change_diff" ? (
+                <GitSelectedChangeDiff
+                  workspaceId={storeSnapshot?.project?.workspaceId ?? ""}
+                  snapshot={selectedChangeDiff}
+                  loading={selectedChangeDiffLoading}
+                  busy={mutation === "patch"}
+                  actionStatus={patchActionStatus}
+                  disabledReason={
+                    patchActionStatus === "queued"
+                      ? "Git 操作已进入队列"
+                      : patchActionStatus === "running"
+                        ? "Git 操作正在进行"
+                        : undefined
+                  }
+                  onApplyPatches={runStagePatches}
+                  onCopyText={copyGitDiffText}
+                  onOpenFile={openGitDiffFile}
+                  action={selectedChangePatchAction}
+                />
+              ) : null}
             </>
           ) : view === "stash" ? (
-            <GitDiffViewer diff={stashDetail?.files[stashFileIndex] ?? null} />
+            stashDetail ? (
+              <GitReadOnlyDiff
+                repositoryId={stashDetail.repositoryId}
+                repositoryVersion={stashDetail.repositoryVersion}
+                sourceKind="stash"
+                files={stashDetail.files[stashFileIndex] ? [stashDetail.files[stashFileIndex]] : []}
+                emptyMessage="选择储藏文件查看差异"
+                scrollScopeKey={`git-stash:${stashDetail.repositoryId}:${stashDetail.entry.objectId}:${stashFileIndex}`}
+              />
+            ) : <div className={styles.placeholder}>选择储藏文件查看差异</div>
           ) : view === "history" ? (
             <GitCommitDetailsView
               detail={historyDetail}
@@ -2928,8 +3348,46 @@ export function GitToolWindow({
           )}
         </aside>
       </div>
+      <GitCommitPushDialog
+        open={commitPushOpen}
+        projectName={resolvedProject.name}
+        target={commitPushTarget}
+        commits={commitPushCommits}
+        selectedObjectId={selectedCommitPushObjectId}
+        detail={commitPushDetail}
+        loading={commitPushLoading}
+        busy={mutation === "push"}
+        error={commitPushOpen ? actionError : null}
+        onSelectCommit={(commit) => void selectCommitForPush(commit)}
+        onCancel={closeCommitPushDialog}
+        onConfirm={confirmCommitPush}
+      />
+      {pendingMergeDraftDiscard ? (
+        <GitConfirmActionDialog
+          title="丢弃未保存的合并结果？"
+          description="当前合并编辑器中的草稿尚未保存到工作树。继续后无法从编辑器恢复这些改动。"
+          target={pendingMergeDraftTarget(pendingMergeDraftDiscard)}
+          confirmLabel="丢弃并继续"
+          busy={false}
+          onCancel={() => setPendingMergeDraftDiscard(null)}
+          onConfirm={() => {
+            const pending = pendingMergeDraftDiscard;
+            setPendingMergeDraftDiscard(null);
+            setMergeEditorDirty(false);
+            if (pending.kind === "view") applyView(pending.view);
+            else if (pending.kind === "repository") applyRepositorySelection(pending.repositoryId);
+            else setSelectedConflictPath(pending.path);
+          }}
+        />
+      ) : null}
     </section>
   );
+}
+
+function pendingMergeDraftTarget(pending: PendingMergeDraftDiscard): string {
+  if (pending.kind === "view") return `切换到：${VIEW_LABELS[pending.view]}`;
+  if (pending.kind === "repository") return `切换仓库：${pending.repositoryId}`;
+  return `切换冲突文件：${pending.path}`;
 }
 
 function GitToolWindowState({
@@ -2976,6 +3434,16 @@ interface GitToolWindowStoreSnapshot {
   operations: readonly GitCommandResult[];
 }
 
+function createToolWindowSnapshotSelector(): (state: GitStoreState) => GitToolWindowStoreSnapshot {
+  let previous: GitToolWindowStoreSnapshot | null = null;
+  return (state) => {
+    const next = selectToolWindowSnapshot(state);
+    if (previous && sameToolWindowSnapshot(previous, next)) return previous;
+    previous = next;
+    return next;
+  };
+}
+
 function selectToolWindowSnapshot(state: GitStoreState): GitToolWindowStoreSnapshot {
   const project = state.activeWorkspaceId ? state.projects[state.activeWorkspaceId] ?? null : null;
   const selectedRepositoryId = project?.selectedRepositoryId ?? null;
@@ -3004,6 +3472,33 @@ function selectToolWindowSnapshot(state: GitStoreState): GitToolWindowStoreSnaps
           )
       : [],
   };
+}
+
+function sameToolWindowSnapshot(
+  left: GitToolWindowStoreSnapshot,
+  right: GitToolWindowStoreSnapshot,
+): boolean {
+  return left.project === right.project
+    && left.status === right.status
+    && left.diff === right.diff
+    && left.refs === right.refs
+    && left.ui === right.ui
+    && sameReferenceList(left.repositories, right.repositories)
+    && sameRepositoryItems(left.repositoryItems, right.repositoryItems)
+    && sameReferenceList(left.operations, right.operations);
+}
+
+function sameReferenceList<T>(left: readonly T[], right: readonly T[]): boolean {
+  return left.length === right.length && left.every((item, index) => item === right[index]);
+}
+
+function sameRepositoryItems(
+  left: GitToolWindowStoreSnapshot["repositoryItems"],
+  right: GitToolWindowStoreSnapshot["repositoryItems"],
+): boolean {
+  return left.length === right.length && left.every((item, index) => (
+    item.repository === right[index]?.repository && item.status === right[index]?.status
+  ));
 }
 
 export function adjacentGitToolView(
@@ -3119,6 +3614,18 @@ function isAbortError(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "name" in error && error.name === "AbortError");
 }
 
+function isGitOperationConflict(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const value = error as {
+    code?: unknown;
+    detail?: { code?: unknown };
+    details?: { code?: unknown };
+  };
+  return value.code === "git_operation_conflict"
+    || value.detail?.code === "git_operation_conflict"
+    || value.details?.code === "git_operation_conflict";
+}
+
 export function gitOperationFailureMessage(result: { summary: string; result: Record<string, unknown> }): string {
   return gitOperationErrorMessage(result);
 }
@@ -3140,10 +3647,6 @@ export function operationControlWarning(
     return `要跳过当前${kindLabel}步骤${current ? ` ${current}` : ""}吗？该步骤的改动不会被应用。${impact}`;
   }
   return `要中止正在进行的${kindLabel}吗？Git 将恢复操作前状态，并丢弃冲突解决编辑。${impact}`;
-}
-
-function resetModeLabel(mode: GitResetMode): string {
-  return ({ soft: "软重置", mixed: "混合重置", hard: "硬重置" } as Record<GitResetMode, string>)[mode];
 }
 
 export function pushTargetFromStatus(

@@ -211,7 +211,7 @@ def test_thread_task_service_creates_goal_and_lists_open_task(tmp_path) -> None:
     assert [item["id"] for item in service.list_tasks("session-1")] == [task["id"]]
 
 
-def test_thread_task_service_stamps_seed_context_compression_epoch(tmp_path) -> None:
+def test_thread_task_service_drops_legacy_seed_context_from_new_task(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     repositories.sessions.increment_context_compression_epoch("session-1")
     service = _service(repositories)
@@ -229,9 +229,7 @@ def test_thread_task_service_stamps_seed_context_compression_epoch(tmp_path) -> 
         },
     )
 
-    seed = task["metadata"]["seed_turn_context"]
-    assert seed["created_compression_epoch"] == 1
-    assert seed["last_replayed_compression_epoch"] == 1
+    assert "seed_turn_context" not in task["metadata"]
 
 
 def test_thread_task_service_create_emits_task_updated_event(tmp_path) -> None:
@@ -361,7 +359,9 @@ def test_thread_task_service_pause_resume_cancel_and_delete(tmp_path) -> None:
         service.list_runs(session_id="session-1", task_id=task["id"])
 
 
-def test_thread_task_service_elapsed_uses_active_lifecycle_and_excludes_paused_time(tmp_path) -> None:
+def test_thread_task_service_elapsed_uses_active_lifecycle_and_excludes_paused_time(
+    tmp_path,
+) -> None:
     clock = MutableClock(datetime(2026, 7, 3, 0, 0, 0, tzinfo=UTC))
     service = _service(_repositories(tmp_path), now_provider=clock)
     task = service.create_task(session_id="session-1", type="goal", objective="目标")
@@ -847,7 +847,6 @@ async def test_thread_task_runtime_starts_hidden_continuation_for_active_idle_ta
         "trigger": "task_continue",
         "type": "goal",
         "reason": "auto_continue",
-        "context_compression_epoch": 0,
     }
     injection = request.runtime_params["message_injection"][0]
     assert injection["hidden_for_transcript"] is True
@@ -857,7 +856,7 @@ async def test_thread_task_runtime_starts_hidden_continuation_for_active_idle_ta
 
 
 @pytest.mark.asyncio
-async def test_thread_task_runtime_does_not_replay_seed_context_without_new_compression(
+async def test_thread_task_runtime_ignores_legacy_seed_context_without_new_compression(
     tmp_path,
 ) -> None:
     repositories = _repositories(tmp_path)
@@ -867,7 +866,8 @@ async def test_thread_task_runtime_does_not_replay_seed_context_without_new_comp
         session_id="session-1",
         type="goal",
         objective="完成目标",
-        metadata={
+    )
+    legacy_metadata = {
             "seed_turn_context": {
                 "message": "完成目标",
                 "runtime_params": {
@@ -886,8 +886,8 @@ async def test_thread_task_runtime_does_not_replay_seed_context_without_new_comp
                 },
                 "attachments": [{"attachment_id": "image-1", "type": "image"}],
             }
-        },
-    )
+        }
+    repositories.thread_tasks.update(task["id"], metadata=legacy_metadata)
     manager = RecordingChatStreamManager()
     runtime = ThreadTaskRuntime(
         state_locks=state_locks,
@@ -903,16 +903,16 @@ async def test_thread_task_runtime_does_not_replay_seed_context_without_new_comp
     assert request.message == ""
     assert request.attachments is None
     assert "skill_activation" not in request.runtime_params
-    assert request.runtime_params["thread_task"]["context_compression_epoch"] == 0
     assert request.runtime_params["message_injection"][0]["metadata"]["source"] == "thread_task"
     run = repositories.thread_task_runs.get(result["run_id"])
-    assert run.summary["seed_context_replayed"] is False
+    assert "seed_context_replayed" not in run.summary
+    assert "context_compression_epoch" not in run.summary
     seed = repositories.thread_tasks.get(task["id"]).metadata["seed_turn_context"]
-    assert seed["last_replayed_compression_epoch"] == 0
+    assert "replay_history" not in seed
 
 
 @pytest.mark.asyncio
-async def test_thread_task_runtime_replays_structured_seed_context_after_compression_epoch_advances(
+async def test_thread_task_runtime_ignores_structured_legacy_seed_after_compression(
     tmp_path,
 ) -> None:
     repositories = _repositories(tmp_path)
@@ -922,7 +922,8 @@ async def test_thread_task_runtime_replays_structured_seed_context_after_compres
         session_id="session-1",
         type="goal",
         objective="完成目标",
-        metadata={
+    )
+    legacy_metadata = {
             "seed_turn_context": {
                 "message": "完成目标，请参考这些上下文",
                 "runtime_params": {
@@ -949,8 +950,8 @@ async def test_thread_task_runtime_replays_structured_seed_context_after_compres
                     }
                 ],
             }
-        },
-    )
+        }
+    repositories.thread_tasks.update(task["id"], metadata=legacy_metadata)
     repositories.sessions.increment_context_compression_epoch("session-1")
     manager = RecordingChatStreamManager()
     runtime = ThreadTaskRuntime(
@@ -965,33 +966,19 @@ async def test_thread_task_runtime_replays_structured_seed_context_after_compres
     assert result["status"] == "started"
     request = manager.requests[0]
     assert request.message == ""
-    assert request.attachments == [
-        {"attachment_id": "image-1", "type": "image", "name": "screenshot.png"}
-    ]
-    assert request.runtime_params["hide_user_message_for_transcript"] is True
-    assert request.runtime_params["thread_task"]["seed_context_replayed"] is True
-    assert request.runtime_params["thread_task"]["context_compression_epoch"] == 1
-    assert request.runtime_params["skill_activation"] == {
-        "skill_name": "dev-plan-execute",
-        "source": "workspace",
-        "origin": "slash",
-    }
+    assert request.attachments is None
+    assert "hide_user_message_for_transcript" not in request.runtime_params
+    assert "seed_context_replayed" not in request.runtime_params["thread_task"]
+    assert "context_compression_epoch" not in request.runtime_params["thread_task"]
+    assert "skill_activation" not in request.runtime_params
     assert request.runtime_params["thread_task"]["task_id"] == task["id"]
-    assert (
-        request.runtime_params["message_injection"][0]["content"]
-        == "用户通过 @ 引用了文件：README.md"
-    )
     assert request.runtime_params["message_injection"][0]["hidden_for_transcript"] is True
-    assert (
-        request.runtime_params["message_injection"][0]["metadata"]["source"]
-        == "thread_task_seed_context"
-    )
-    assert request.runtime_params["message_injection"][1]["metadata"]["source"] == "thread_task"
+    assert request.runtime_params["message_injection"][0]["metadata"]["source"] == "thread_task"
     run = repositories.thread_task_runs.get(result["run_id"])
-    assert run.summary["seed_context_replayed"] is True
+    assert "seed_context_replayed" not in run.summary
     seed = repositories.thread_tasks.get(task["id"]).metadata["seed_turn_context"]
-    assert seed["last_replayed_compression_epoch"] == 1
-    assert seed["replay_history"][-1]["run_id"] == result["run_id"]
+    assert "last_replayed_compression_epoch" not in seed
+    assert "replay_history" not in seed
 
 
 @pytest.mark.asyncio
@@ -1005,6 +992,9 @@ async def test_thread_task_runtime_does_not_replay_raw_seed_message_after_compre
         session_id="session-1",
         type="goal",
         objective="完成目标",
+    )
+    repositories.thread_tasks.update(
+        task["id"],
         metadata={
             "seed_turn_context": {
                 "message": "这是一段只应该作为目标正文存在的原始用户输入",
@@ -1029,13 +1019,12 @@ async def test_thread_task_runtime_does_not_replay_raw_seed_message_after_compre
     assert request.message == ""
     assert request.attachments is None
     assert "hide_user_message_for_transcript" not in request.runtime_params
-    assert request.runtime_params["thread_task"]["context_compression_epoch"] == 1
     assert "seed_context_replayed" not in request.runtime_params["thread_task"]
     assert request.runtime_params["message_injection"][0]["metadata"]["source"] == "thread_task"
     run = repositories.thread_task_runs.get(result["run_id"])
-    assert run.summary["seed_context_replayed"] is False
+    assert "seed_context_replayed" not in run.summary
     seed = repositories.thread_tasks.get(task["id"]).metadata["seed_turn_context"]
-    assert seed["last_replayed_compression_epoch"] == 0
+    assert "replay_history" not in seed
 
 
 @pytest.mark.asyncio

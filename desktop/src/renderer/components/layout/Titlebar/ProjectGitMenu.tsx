@@ -1,7 +1,6 @@
 import {
   ArrowDownLeft,
   ArrowUpRight,
-  Check,
   ChevronDown,
   ChevronRight,
   GitBranch,
@@ -21,10 +20,19 @@ import { useOptionalActiveProjectState } from "@/renderer/providers/ActiveProjec
 import {
   useOptionalGitController,
   useOptionalGitRuntime,
+  useOptionalGitStore,
   useOptionalGitStoreSelector,
 } from "@/renderer/providers/GitProvider";
 import type { GitProjectStoreState, GitStoreState } from "@/renderer/features/git/store/gitStore";
-import type { GitRef, GitRepositoryDescriptor, GitStatusSnapshot } from "@/runtime/gitTypes";
+import type { GitPushCommand } from "@/runtime/git";
+import type {
+  GitCommitDetail,
+  GitCommitSummary,
+  GitObjectId,
+  GitRef,
+  GitRepositoryDescriptor,
+  GitStatusSnapshot,
+} from "@/runtime/gitTypes";
 import { isConventionalMainBranch } from "@/renderer/features/git/refPresentation";
 import {
   isEditableGitShortcutTarget,
@@ -33,7 +41,21 @@ import {
   type GitShortcutCommand,
 } from "@/renderer/features/git/gitShortcuts";
 import { gitOperationErrorMessage, gitUiErrorMessage } from "@/renderer/features/git/errorPresentation";
+import { useGitErrorNotificationState } from "@/renderer/features/git/GitNotifications";
 import { GitDivergenceIndicator } from "@/renderer/features/git/components/GitDivergenceIndicator";
+import {
+  GitDialogField,
+  GitChoiceDialog,
+  GitCommitPushDialog,
+  GitDialogSummary,
+  GitFormDialog,
+  GitUpdateDialog,
+  requiredGitDialogValue,
+  type GitCommitPushTarget,
+  type GitPushTagMode,
+  type GitUpdateStrategy,
+  validateGitBranchName,
+} from "@/renderer/features/git/dialogs";
 
 import styles from "./ProjectGitMenu.module.css";
 import { GitHelpDialog } from "./GitHelpDialog";
@@ -58,7 +80,7 @@ export interface ProjectGitMenuModel {
 
 type GitCommandForm =
   | { kind: "branch"; startPoint: string }
-  | { kind: "checkout" }
+  | { kind: "checkout"; detach: boolean }
   | { kind: "rename"; ref: GitRef };
 
 type GitRefMenuAction = "checkout" | "create_branch" | "compare" | "update" | "push" | "rename" | "manage";
@@ -78,18 +100,26 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
   const [commandForm, setCommandForm] = useState<GitCommandForm | null>(null);
   const [commandValue, setCommandValue] = useState("");
   const [busyAction, setBusyAction] = useState<GitQuickActionId | "checkout" | "rename" | "init" | null>(null);
-  const [commandError, setCommandError] = useState<string | null>(null);
+  const [commandError, setCommandError] = useGitErrorNotificationState();
+  const [pendingDirtyCheckout, setPendingDirtyCheckout] = useState<{ ref: string; detach: boolean } | null>(null);
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
+  const [pushDialogOpen, setPushDialogOpen] = useState(false);
+  const [pushTarget, setPushTarget] = useState<GitCommitPushTarget | null>(null);
+  const [pushCommits, setPushCommits] = useState<readonly GitCommitSummary[]>([]);
+  const [selectedPushObjectId, setSelectedPushObjectId] = useState<GitObjectId | null>(null);
+  const [pushDetail, setPushDetail] = useState<GitCommitDetail | null>(null);
+  const [pushPreviewLoading, setPushPreviewLoading] = useState(false);
   const [refMenu, setRefMenu] = useState<GitRefMenuState | null>(null);
-  const [successfulAction, setSuccessfulAction] = useState<"update" | null>(null);
-  const [menuClosing, setMenuClosing] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const successHoldTimerRef = useRef<number | null>(null);
-  const menuCloseTimerRef = useRef<number | null>(null);
+  const pushPreviewAbortRef = useRef<AbortController | null>(null);
+  const pushDetailAbortRef = useRef<AbortController | null>(null);
+  const pushDetailCacheRef = useRef(new Map<string, GitCommitDetail>());
   const controller = useOptionalGitController();
   const runtime = useOptionalGitRuntime();
+  const gitStore = useOptionalGitStore();
   const model = useMemo(
     () => deriveProjectGitMenuModel(activeProject, snapshot),
     [activeProject, snapshot],
@@ -123,19 +153,25 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
   }, [model.enabled]);
 
   useEffect(() => {
-    if (open) return;
-    if (successHoldTimerRef.current !== null) window.clearTimeout(successHoldTimerRef.current);
-    if (menuCloseTimerRef.current !== null) window.clearTimeout(menuCloseTimerRef.current);
-    successHoldTimerRef.current = null;
-    menuCloseTimerRef.current = null;
-    setSuccessfulAction(null);
-    setMenuClosing(false);
-  }, [open]);
-
-  useEffect(() => () => {
-    if (successHoldTimerRef.current !== null) window.clearTimeout(successHoldTimerRef.current);
-    if (menuCloseTimerRef.current !== null) window.clearTimeout(menuCloseTimerRef.current);
-  }, []);
+    pushPreviewAbortRef.current?.abort();
+    pushDetailAbortRef.current?.abort();
+    pushPreviewAbortRef.current = null;
+    pushDetailAbortRef.current = null;
+    setCommandForm(null);
+    setPendingDirtyCheckout(null);
+    setUpdateDialogOpen(false);
+    setPushDialogOpen(false);
+    setPushTarget(null);
+    setPushCommits([]);
+    setSelectedPushObjectId(null);
+    setPushDetail(null);
+    setPushPreviewLoading(false);
+    setCommandError(null);
+    return () => {
+      pushPreviewAbortRef.current?.abort();
+      pushDetailAbortRef.current?.abort();
+    };
+  }, [snapshot?.repository?.id]);
 
   const stateLabel = model.nonRepository
     ? "非仓库"
@@ -150,62 +186,219 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
   const visibleActions = filterGitQuickActions(projectGitQuickActions(model, resolvedShortcuts.bindings), query);
 
   const closeMenu = () => {
-    if (successHoldTimerRef.current !== null) window.clearTimeout(successHoldTimerRef.current);
-    if (menuCloseTimerRef.current !== null) window.clearTimeout(menuCloseTimerRef.current);
-    successHoldTimerRef.current = null;
-    menuCloseTimerRef.current = null;
     setOpen(false);
     setRefMenu(null);
     setCommandForm(null);
     setCommandValue("");
     setCommandError(null);
-    setSuccessfulAction(null);
-    setMenuClosing(false);
   };
 
-  const showSuccessfulUpdateAndClose = () => {
-    setSuccessfulAction("update");
-    successHoldTimerRef.current = window.setTimeout(() => {
-      setMenuClosing(true);
-      menuCloseTimerRef.current = window.setTimeout(closeMenu, 150);
-    }, 1_000);
+  const openCommandDialog = (form: GitCommandForm, value = "") => {
+    setOpen(false);
+    setRefMenu(null);
+    setCommandForm(form);
+    setCommandValue(value);
+    setCommandError(null);
   };
 
-  const runRemoteAction = async (action: "update" | "push") => {
+  const closeCommandDialog = () => {
+    setCommandForm(null);
+    setCommandValue("");
+    setCommandError(null);
+    window.requestAnimationFrame(() => triggerRef.current?.focus());
+  };
+
+  const openUpdateDialog = () => {
+    closeMenu();
+    setCommandError(null);
+    setUpdateDialogOpen(true);
+  };
+
+  const closePushDialog = () => {
+    pushPreviewAbortRef.current?.abort();
+    pushDetailAbortRef.current?.abort();
+    pushPreviewAbortRef.current = null;
+    pushDetailAbortRef.current = null;
+    setPushDialogOpen(false);
+    setPushTarget(null);
+    setPushCommits([]);
+    setSelectedPushObjectId(null);
+    setPushDetail(null);
+    setPushPreviewLoading(false);
+    setCommandError(null);
+    window.requestAnimationFrame(() => triggerRef.current?.focus());
+  };
+
+  const selectPushCommit = async (commit: GitCommitSummary) => {
     const commandScope = commandScopeFromSnapshot(snapshot);
-    if (!controller || !runtime || !commandScope || !snapshot) return;
-    setBusyAction(action);
+    if (!runtime || !commandScope) return;
+    pushDetailAbortRef.current?.abort();
+    const abortController = new AbortController();
+    pushDetailAbortRef.current = abortController;
+    const cacheKey = `${commandScope.repositoryId}:${commit.objectId}`;
+    const cachedDetail = pushDetailCacheRef.current.get(cacheKey) ?? null;
+    setSelectedPushObjectId(commit.objectId);
+    setPushDetail(cachedDetail);
+    if (cachedDetail) {
+      setPushPreviewLoading(false);
+      return;
+    }
+    setPushPreviewLoading(true);
+    try {
+      const detail = await runtime.commit(commandScope, commit.objectId, { signal: abortController.signal });
+      if (abortController.signal.aborted) return;
+      pushDetailCacheRef.current.set(cacheKey, detail);
+      trimMap(pushDetailCacheRef.current, 100);
+      setPushDetail(detail);
+    } catch (error) {
+      if (!isAbortError(error)) setCommandError(gitUiErrorMessage(error));
+    } finally {
+      if (pushDetailAbortRef.current === abortController) {
+        pushDetailAbortRef.current = null;
+        setPushPreviewLoading(false);
+      }
+    }
+  };
+
+  const preparePushPreview = async () => {
+    const commandScope = commandScopeFromSnapshot(snapshot);
+    if (!runtime || !commandScope || !snapshot?.status) return;
+    pushPreviewAbortRef.current?.abort();
+    pushDetailAbortRef.current?.abort();
+    const abortController = new AbortController();
+    pushPreviewAbortRef.current = abortController;
+    setPushDialogOpen(true);
+    setPushTarget(null);
+    setPushCommits([]);
+    setSelectedPushObjectId(null);
+    setPushDetail(null);
+    setPushPreviewLoading(true);
     setCommandError(null);
     try {
-      const upstream = snapshot?.status?.branch.upstream ?? null;
+      const source = snapshot.status.branch.head;
+      if (!source || snapshot.status.branch.detachedAt || snapshot.status.branch.unborn) {
+        throw new Error("当前不在可推送的本地分支上。");
+      }
+
+      const upstream = snapshot.status.branch.upstream;
+      const separator = upstream?.indexOf("/") ?? -1;
+      let target: GitCommitPushTarget;
+      let revision: string;
+      if (upstream && separator > 0 && separator < upstream.length - 1) {
+        target = {
+          remote: upstream.slice(0, separator),
+          source,
+          target: upstream.slice(separator + 1),
+          upstream,
+          setUpstream: false,
+        };
+        revision = `${upstream}..HEAD`;
+      } else {
+        const remotes = await runtime.remotes(commandScope, { signal: abortController.signal });
+        const remote = remotes[0]?.name;
+        if (!remote) throw new Error("当前仓库没有可用的远程仓库。");
+        target = {
+          remote,
+          source,
+          target: source,
+          upstream: `${remote}/${source}`,
+          setUpstream: true,
+        };
+        const hasRemoteTrackingRef = snapshot.refs.some((ref) =>
+          ref.kind === "remote"
+          && (ref.shortName === target.upstream || ref.fullName === `refs/remotes/${target.upstream}`),
+        );
+        revision = hasRemoteTrackingRef ? `${target.upstream}..HEAD` : "HEAD";
+      }
+      if (abortController.signal.aborted) return;
+      setPushTarget(target);
+
+      const commits: GitCommitSummary[] = [];
+      let cursor: string | null = null;
+      do {
+        const page = await runtime.history(commandScope, {
+          revision,
+          cursor,
+          limit: 200,
+          signal: abortController.signal,
+        });
+        commits.push(...page.commits);
+        cursor = page.nextCursor;
+      } while (cursor && !abortController.signal.aborted);
+      if (abortController.signal.aborted) return;
+      setPushCommits(commits);
+      setPushPreviewLoading(false);
+      if (commits[0]) void selectPushCommit(commits[0]);
+    } catch (error) {
+      if (!isAbortError(error)) setCommandError(gitUiErrorMessage(error));
+      setPushPreviewLoading(false);
+    } finally {
+      if (pushPreviewAbortRef.current === abortController) pushPreviewAbortRef.current = null;
+    }
+  };
+
+  const openPushDialog = () => {
+    closeMenu();
+    void preparePushPreview();
+  };
+
+  const runUpdateAction = async (strategy: GitUpdateStrategy): Promise<boolean> => {
+    const commandScope = commandScopeFromSnapshot(snapshot);
+    if (!controller || !runtime || !commandScope || !snapshot) return false;
+    setBusyAction("update");
+    setCommandError(null);
+    try {
+      const upstream = snapshot.status?.branch.upstream ?? null;
       const separator = upstream?.indexOf("/") ?? -1;
       if (!upstream || separator <= 0 || separator === upstream.length - 1) {
-        throw new Error(`当前分支没有可用的上游，请先在 Git 面板设置后再${action === "update" ? "更新" : "推送"}。`);
+        throw new Error("当前分支没有可用的上游，请先在 Git 面板设置后再更新。");
       }
-      const remote = upstream.slice(0, separator);
-      const branch = upstream.slice(separator + 1);
-      const base = {
+      gitStore?.getState().updateProjectUi(commandScope.workspaceId, {
+        updateStrategyByRepository: {
+          ...(snapshot.ui?.updateStrategyByRepository ?? {}),
+          [commandScope.repositoryId]: strategy,
+        },
+      });
+      const operation = await controller.runCommand(() => runtime.update({
         ...commandScope,
-        idempotencyKey: createGitIdempotencyKey(action),
-        expectedRepositoryVersion: snapshot?.status?.repositoryVersion ?? null,
-        remote,
+        idempotencyKey: createGitIdempotencyKey("update"),
+        expectedRepositoryVersion: snapshot.status?.repositoryVersion ?? null,
+        remote: upstream.slice(0, separator),
+        refspec: upstream.slice(separator + 1),
+        strategy,
+      }));
+      if (operation.state === "failed") throw new Error(gitOperationErrorMessage(operation));
+      setUpdateDialogOpen(false);
+      window.requestAnimationFrame(() => triggerRef.current?.focus());
+      return true;
+    } catch (error) {
+      setCommandError(gitUiErrorMessage(error));
+      return false;
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const runPushAction = async ({ tagMode }: { tagMode: GitPushTagMode }): Promise<void> => {
+    const commandScope = commandScopeFromSnapshot(snapshot);
+    if (!controller || !runtime || !commandScope || !snapshot || !pushTarget) return;
+    setBusyAction("push");
+    setCommandError(null);
+    try {
+      const command: GitPushCommand = {
+        ...commandScope,
+        idempotencyKey: createGitIdempotencyKey("push"),
+        expectedRepositoryVersion: snapshot.status?.repositoryVersion ?? null,
+        remote: pushTarget.remote,
+        source: pushTarget.source,
+        target: pushTarget.target,
+        setUpstream: pushTarget.setUpstream,
+        tags: tagMode === "all",
+        followTags: tagMode === "current_branch",
       };
-      const operation = await controller.runCommand(() => action === "update"
-        ? runtime.update({
-            ...base,
-            refspec: branch,
-            strategy: snapshot.ui?.updateStrategyByRepository[commandScope.repositoryId] ?? "ff_only",
-          })
-        : runtime.push({
-            ...base,
-            source: snapshot.status?.branch.head ?? branch,
-            target: branch,
-          }));
-      if (operation.state === "failed") {
-        throw new Error(gitOperationErrorMessage(operation));
-      }
-      if (action === "update") showSuccessfulUpdateAndClose();
-      else closeMenu();
+      const operation = await controller.runCommand(() => runtime.push(command));
+      if (operation.state === "failed") throw new Error(gitOperationErrorMessage(operation));
+      closePushDialog();
     } catch (error) {
       setCommandError(gitUiErrorMessage(error));
     } finally {
@@ -244,6 +437,49 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
       }));
       if (operation.state === "failed") throw new Error(gitOperationErrorMessage(operation));
       closeMenu();
+    } catch (error) {
+      setCommandError(gitUiErrorMessage(error));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const requestRefCheckout = (ref: string, detach = false) => {
+    const normalized = ref.trim();
+    if (!normalized) return;
+    if ((snapshot?.status?.files.length ?? 0) > 0) {
+      setCommandForm(null);
+      setPendingDirtyCheckout({ ref: normalized, detach });
+      setCommandError(null);
+      return;
+    }
+    void runRefCheckout(normalized, detach);
+  };
+
+  const stashAndCheckout = async (ref: string, detach: boolean) => {
+    const commandScope = commandScopeFromSnapshot(snapshot);
+    if (!controller || !runtime || !commandScope) return;
+    setBusyAction("checkout");
+    setCommandError(null);
+    try {
+      const stashed = await controller.runCommand(() => runtime.createStash({
+        ...commandScope,
+        idempotencyKey: createGitIdempotencyKey("stash-before-checkout"),
+        expectedRepositoryVersion: snapshot?.status?.repositoryVersion ?? null,
+        message: `Keydex：切换到 ${ref} 前的自动储藏`,
+        staged: false,
+        includeUntracked: true,
+      }));
+      if (stashed.state !== "succeeded") throw new Error(gitOperationErrorMessage(stashed));
+      const checkedOut = await controller.runCommand(() => runtime.checkout({
+        ...commandScope,
+        idempotencyKey: createGitIdempotencyKey("checkout-after-stash"),
+        expectedRepositoryVersion: null,
+        ref,
+        detach,
+      }));
+      if (checkedOut.state !== "succeeded") throw new Error(gitOperationErrorMessage(checkedOut));
+      setPendingDirtyCheckout(null);
     } catch (error) {
       setCommandError(gitUiErrorMessage(error));
     } finally {
@@ -309,23 +545,23 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
   const activateRefMenuAction = (action: GitRefMenuAction, ref: GitRef) => {
     setRefMenu(null);
     if (action === "checkout") {
-      void runRefCheckout(ref.shortName, ref.kind !== "local");
+      openCommandDialog({ kind: "checkout", detach: ref.kind !== "local" }, ref.shortName);
       return;
     }
     if (action === "create_branch") {
-      setCommandForm({ kind: "branch", startPoint: ref.shortName });
-      setCommandValue("");
-      setCommandError(null);
+      openCommandDialog({ kind: "branch", startPoint: ref.shortName });
       return;
     }
     if (action === "rename" && ref.kind === "local") {
-      setCommandForm({ kind: "rename", ref });
-      setCommandValue(ref.shortName);
-      setCommandError(null);
+      openCommandDialog({ kind: "rename", ref }, ref.shortName);
       return;
     }
-    if (action === "update" || action === "push") {
-      void runRemoteAction(action);
+    if (action === "update") {
+      openUpdateDialog();
+      return;
+    }
+    if (action === "push") {
+      openPushDialog();
       return;
     }
     closeMenu();
@@ -345,13 +581,14 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
       return;
     }
     if (action.id === "create_branch" || action.id === "checkout") {
-      setOpen(true);
-      setCommandForm(action.id === "create_branch" ? { kind: "branch", startPoint: "HEAD" } : { kind: "checkout" });
-      setCommandValue("");
-      setCommandError(null);
+      openCommandDialog(action.id === "create_branch" ? { kind: "branch", startPoint: "HEAD" } : { kind: "checkout", detach: false });
       return;
     }
-    void runRemoteAction(action.id);
+    if (action.id === "update") {
+      openUpdateDialog();
+      return;
+    }
+    openPushDialog();
   };
 
   useEffect(() => {
@@ -395,18 +632,14 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
       >
         <GitBranch size={14} />
         <span className={styles.branch}>{stateLabel}</span>
-        {model.ahead > 0 || model.behind > 0 ? (
-          <span className={styles.sync} aria-label={`领先 ${model.ahead}，落后 ${model.behind}`}>
-            {model.ahead > 0 ? `↑${model.ahead}` : ""}{model.behind > 0 ? `↓${model.behind}` : ""}
-          </span>
-        ) : null}
+        <GitDivergenceIndicator ahead={model.ahead} behind={model.behind} />
         <ChevronDown size={12} aria-hidden="true" />
       </button>
 
       {open ? (
         <div
           className={styles.menu}
-          data-state={menuClosing ? "closing" : successfulAction ? "success" : "open"}
+          data-state="open"
           role="menu"
           aria-label="项目 Git 菜单"
           onKeyDown={(event) => {
@@ -439,7 +672,6 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
             {visibleActions.map((action) => {
               const Icon = action.icon;
               const isBusy = busyAction === action.id;
-              const isSuccessful = successfulAction === action.id;
               return (
                 <button
                   type="button"
@@ -447,13 +679,11 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
                   className={styles.item}
                   data-risk={action.risk}
                   aria-busy={isBusy || undefined}
-                  disabled={!action.enabled || Boolean(busyAction) || Boolean(successfulAction) || menuClosing}
+                  disabled={!action.enabled || Boolean(busyAction)}
                   key={action.id}
                   onClick={() => activateQuickAction(action)}
                 >
-                  {isSuccessful ? (
-                    <Check className={styles.successIcon} size={14} aria-hidden="true" />
-                  ) : isBusy ? (
+                  {isBusy ? (
                     <LoaderCircle className={styles.busyIcon} size={14} aria-hidden="true" />
                   ) : (
                     <Icon size={14} />
@@ -464,28 +694,6 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
               );
             })}
           </div>
-          {commandForm ? (
-            <form
-              className={styles.commandForm}
-              onSubmit={(event) => {
-                event.preventDefault();
-                if (commandForm.kind === "branch") void runCreateBranch(commandForm.startPoint);
-                else if (commandForm.kind === "rename") void runRenameBranch(commandForm.ref);
-                else void runRefCheckout(commandValue);
-              }}
-            >
-              <input
-                value={commandValue}
-                aria-label={commandForm.kind === "branch" ? "新分支名称" : commandForm.kind === "rename" ? "重命名分支" : "标记或修订"}
-                placeholder={commandForm.kind === "branch" ? "功能/名称" : commandForm.kind === "rename" ? "新分支名称" : "标签、分支或提交"}
-                onChange={(event) => setCommandValue(event.currentTarget.value)}
-                autoFocus
-              />
-              <button type="submit" disabled={!commandValue.trim() || Boolean(busyAction)}>确定</button>
-              <button type="button" onClick={() => setCommandForm(null)}>取消</button>
-            </form>
-          ) : null}
-          {commandError ? <div className={styles.commandError} role="alert">{commandError}</div> : null}
           {resolvedShortcuts.conflicts.length > 0 ? (
             <div className={styles.shortcutConflict} role="status">
               快捷键冲突：{resolvedShortcuts.conflicts.map((conflict) => conflict.commands.join(" / ")).join("；")}
@@ -518,6 +726,97 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
           ) : null}
         </div>
       ) : null}
+      {commandForm ? (
+        <GitFormDialog
+          title={commandForm.kind === "branch" ? "创建新分支" : commandForm.kind === "rename" ? `重命名分支 ${commandForm.ref.shortName}` : "签出标记或修订"}
+          description={commandForm.kind === "branch"
+            ? `基于 ${commandForm.startPoint} 创建分支。`
+            : commandForm.kind === "rename"
+              ? "输入新的本地分支名称。"
+              : "输入分支、标签名称或提交哈希。"}
+          confirmLabel={busyAction ? "正在处理…" : commandForm.kind === "branch" ? "创建" : commandForm.kind === "rename" ? "重命名" : "签出"}
+          busy={Boolean(busyAction)}
+          valid={commandForm.kind === "checkout" ? requiredGitDialogValue(commandValue).valid : validateGitBranchName(commandValue).valid}
+          error={commandError}
+          onCancel={closeCommandDialog}
+          onSubmit={() => commandForm.kind === "branch"
+            ? runCreateBranch(commandForm.startPoint)
+            : commandForm.kind === "rename"
+              ? runRenameBranch(commandForm.ref)
+              : requestRefCheckout(commandValue, commandForm.detach)}
+        >
+          {commandForm.kind !== "checkout" ? (
+            <GitDialogSummary>{commandForm.kind === "branch" ? `起点：${commandForm.startPoint}` : `原名称：${commandForm.ref.shortName}`}</GitDialogSummary>
+          ) : commandForm.detach ? (
+            <GitDialogSummary tone="warning">签出该引用后将进入分离指针状态。</GitDialogSummary>
+          ) : null}
+          <GitDialogField
+            label={commandForm.kind === "branch" ? "分支名称" : commandForm.kind === "rename" ? "新分支名称" : "引用"}
+            error={commandForm.kind !== "checkout" && commandValue && !validateGitBranchName(commandValue).valid
+              ? validateGitBranchName(commandValue).message
+              : undefined}
+          >
+            <input
+              autoFocus
+              value={commandValue}
+              aria-label={commandForm.kind === "branch" ? "新分支名称" : commandForm.kind === "rename" ? "重命名分支" : "标记或修订"}
+              placeholder={commandForm.kind === "checkout" ? "标签、分支或提交" : "feature/name"}
+              onChange={(event) => setCommandValue(event.currentTarget.value)}
+            />
+          </GitDialogField>
+        </GitFormDialog>
+      ) : null}
+      {pendingDirtyCheckout ? (
+        <GitChoiceDialog
+          title="工作树存在本地改动"
+          description={`签出 ${pendingDirtyCheckout.ref} 前请选择如何处理当前改动。Keydex 不会自动储藏。`}
+          busy={busyAction === "checkout"}
+          error={commandError}
+          actions={[
+            { label: "提交改动", tone: "secondary", onSelect: () => { setPendingDirtyCheckout(null); onOpenToolWindow(); } },
+            { label: "储藏并签出", tone: "primary", onSelect: () => void stashAndCheckout(pendingDirtyCheckout.ref, pendingDirtyCheckout.detach) },
+          ]}
+          onCancel={() => { setPendingDirtyCheckout(null); setCommandError(null); window.requestAnimationFrame(() => triggerRef.current?.focus()); }}
+        >
+          <GitDialogSummary tone="warning">
+            <strong>{snapshot?.status?.files.length ?? 0} 个本地改动</strong>
+            <span>目标：{pendingDirtyCheckout.ref}{pendingDirtyCheckout.detach ? "（分离指针）" : ""}</span>
+          </GitDialogSummary>
+        </GitChoiceDialog>
+      ) : null}
+      <GitUpdateDialog
+        open={updateDialogOpen}
+        status={snapshot?.status ?? null}
+        initialStrategy={snapshot?.repository
+          ? snapshot.ui?.updateStrategyByRepository[snapshot.repository.id] ?? "ff_only"
+          : "ff_only"}
+        busy={busyAction === "update"}
+        error={commandError}
+        onCancel={() => {
+          setUpdateDialogOpen(false);
+          setCommandError(null);
+          window.requestAnimationFrame(() => triggerRef.current?.focus());
+        }}
+        onConfirm={runUpdateAction}
+        onOpenBranchSettings={() => {
+          setUpdateDialogOpen(false);
+          onOpenToolWindow();
+        }}
+      />
+      {pushDialogOpen ? <GitCommitPushDialog
+        open={pushDialogOpen}
+        projectName={activeProject && activeProject.status !== "none" ? activeProject.name : model.repositoryLabel}
+        target={pushTarget}
+        commits={pushCommits}
+        selectedObjectId={selectedPushObjectId}
+        detail={pushDetail}
+        loading={pushPreviewLoading}
+        busy={busyAction === "push"}
+        error={commandError}
+        onSelectCommit={(commit) => void selectPushCommit(commit)}
+        onCancel={closePushDialog}
+        onConfirm={runPushAction}
+      /> : null}
       {helpOpen ? <GitHelpDialog onClose={() => setHelpOpen(false)} /> : null}
     </div>
   );
@@ -785,6 +1084,18 @@ function commandScopeFromSnapshot(snapshot: MenuSnapshot | null) {
     projectRoot: snapshot.project.projectRoot,
     repositoryId: snapshot.repository.id,
   };
+}
+
+function trimMap<Key, Value>(map: Map<Key, Value>, limit: number): void {
+  while (map.size > limit) {
+    const oldest = map.keys().next().value as Key | undefined;
+    if (oldest === undefined) return;
+    map.delete(oldest);
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "name" in error && error.name === "AbortError");
 }
 
 let idempotencySequence = 0;

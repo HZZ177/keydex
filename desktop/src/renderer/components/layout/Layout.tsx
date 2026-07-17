@@ -51,7 +51,8 @@ import { useOptionalActiveProjectState } from "@/renderer/providers/ActiveProjec
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { ConnectionStatus } from "@/renderer/components/runtime";
 import { LoadingSkeleton } from "@/renderer/components/loading";
-import { FileReviewPanel } from "@/renderer/components/review/FileReviewDiff";
+import { AgentReviewDiffPanel } from "@/renderer/components/review/AgentReviewDiffPanel";
+import type { KeydexDiffDocument } from "@/renderer/components/diff/model";
 import {
   GitToolWindow,
   type GitProjectSelectorProps,
@@ -147,6 +148,7 @@ interface RightSidebarReviewPanelState {
   id: string;
   title: string;
   files: FileReviewChange[];
+  document: KeydexDiffDocument | null;
   focusedPath: string | null;
   panelKey: string;
   sourceMessageId: string | null;
@@ -323,6 +325,8 @@ export function Layout({
   const [rightSidebarResizeActive, setRightSidebarResizeActive] = useState(false);
   const [localPrimarySurface, setLocalPrimarySurface] = useState<"content" | "git">("content");
   const primarySurface = routePrimarySurface ?? localPrimarySurface;
+  const [gitSurfaceRetained, setGitSurfaceRetained] = useState(primarySurface === "git");
+  const gitSurfaceMounted = gitSurfaceRetained || primarySurface === "git";
   const [agentGitWorkspaces, setAgentGitWorkspaces] = useState<Workspace[]>([]);
   const [agentGitWorkspacesLoading, setAgentGitWorkspacesLoading] = useState(false);
   const [agentGitWorkspaceCatalogLoaded, setAgentGitWorkspaceCatalogLoaded] = useState(false);
@@ -335,6 +339,9 @@ export function Layout({
   const runtimeConnection = useOptionalRuntimeConnection();
   const activeProjectState = useOptionalActiveProjectState();
   const notifications = useNotifications();
+  useEffect(() => {
+    if (primarySurface === "git") setGitSurfaceRetained(true);
+  }, [primarySurface]);
   const agentGitOverrideDiscovery = useMemo(
     () => activeProjectDiscoveryFromWorkspace(agentGitOverrideWorkspace, false),
     [agentGitOverrideWorkspace],
@@ -1078,9 +1085,10 @@ export function Layout({
               >
                 {children}
               </div>
-              {primarySurface === "git" ? (
-                <div className={styles.gitPrimarySurface}>
+              {gitSurfaceMounted ? (
+                <div className={styles.gitPrimarySurface} hidden={primarySurface !== "git"}>
                   <GitToolWindow
+                    active={primarySurface === "git"}
                     project={activeProjectState}
                     maximized
                     projectSelector={gitProjectSelector}
@@ -1440,6 +1448,7 @@ function RightSidebarPanel({
         requestId: 0,
         scopeKey: activeScopeKey,
         files: [],
+        document: null,
         focusedPath: null,
         panelKey: "manual",
         sourceMessageId: null,
@@ -2246,10 +2255,12 @@ function RightSidebarPanel({
           {!showConversationPanel ? (
             showReviewPanel && activeReviewPanel ? (
               <div className={styles.rightSidebarBody} data-content="review">
-                <FileReviewPanel
+                <AgentReviewDiffPanel
                   files={activeReviewPanel.files}
+                  document={activeReviewPanel.document}
                   focusedPath={activeReviewPanel.focusedPath}
                   title={activeReviewPanel.title}
+                  scopeKey={`${activeScopeKey}:${activeReviewPanel.id}`}
                   onFocusPath={updateReviewPanelFocusedPath}
                   onOpenFile={canOpenFiles ? openReviewFile : undefined}
                 />
@@ -2594,6 +2605,7 @@ function activateExistingReviewPanel(
         ...panel,
         title: request.title || panel.title,
         files: request.files,
+        document: request.document,
         focusedPath: request.focusedPath ?? request.files[0]?.path ?? panel.focusedPath,
         sourceMessageId: request.sourceMessageId,
         toolCallId: request.toolCallId,
@@ -2608,6 +2620,7 @@ function reviewPanelState(panelId: string, request: ReviewPanelRequest): RightSi
     id: panelId,
     title: request.title || "审阅",
     files: request.files,
+    document: request.document,
     focusedPath: request.focusedPath ?? request.files[0]?.path ?? null,
     panelKey: request.panelKey,
     sourceMessageId: request.sourceMessageId,

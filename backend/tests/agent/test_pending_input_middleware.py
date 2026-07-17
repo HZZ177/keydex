@@ -12,6 +12,7 @@ from backend.app.services.chat_types import (
     PENDING_INPUT_STATUS_DELIVERED,
     PENDING_INPUT_STATUS_PENDING_STEER,
 )
+from backend.app.services.structured_user_message_group import StructuredUserMessageGroup
 from backend.app.storage import StorageRepositories, init_database
 
 
@@ -108,6 +109,21 @@ async def test_pending_input_middleware_injects_all_steers_before_model(tmp_path
         and message.additional_kwargs.get("keydex_running_steer_instruction") is True
         for message in messages
     ) == 1
+    groups = [
+        StructuredUserMessageGroup.from_dict(item)
+        for item in result["structured_user_message_groups"]
+    ]
+    assert [group.group_id for group in groups] == [
+        f"sug-pending-{first.id}",
+        f"sug-pending-{second.id}",
+    ]
+    assert [group.root_user_message.payload["content"] for group in groups] == [
+        "补充第一条约束",
+        "补充第二条约束",
+    ]
+    assert groups[0].ordered_members[0].member_kind == "pending_user_input_context"
+    assert groups[0].ordered_members[1].member_kind == "message_injection_follow"
+    assert groups[0].ordered_members[2].member_kind == "message_context_item"
 
     assert [event.event_type for event in events] == [
         DomainEventType.MESSAGE_USER_CREATED.value,
@@ -215,6 +231,17 @@ async def test_pending_input_middleware_keeps_images_and_skill_activation(tmp_pa
             ],
         },
     }
+    group = StructuredUserMessageGroup.from_dict(
+        result["structured_user_message_groups"][0]
+    )
+    assert [member.member_kind for member in group.ordered_members] == [
+        "pending_user_input_context",
+        "skill_activation",
+        "message_context_item",
+        "root_user_message",
+        "image_attachment",
+    ]
+    assert group.ordered_members[-1].payload["attachment_id"] == attachment.id
     user_event = next(
         event for event in events if event.event_type == DomainEventType.MESSAGE_USER_CREATED.value
     )

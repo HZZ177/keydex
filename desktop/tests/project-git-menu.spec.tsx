@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Titlebar } from "@/renderer/components/layout/Titlebar";
@@ -6,7 +6,13 @@ import { ProjectGitMenu } from "@/renderer/components/layout/Titlebar/ProjectGit
 import { ActiveProjectProvider } from "@/renderer/providers/ActiveProjectProvider";
 import { GitProvider } from "@/renderer/providers/GitProvider";
 import type { GitRuntime } from "@/runtime/git";
-import type { GitRepositoryId, GitRepositoryVersion } from "@/runtime/gitTypes";
+import type {
+  GitCommitDetail,
+  GitCommitSummary,
+  GitFileDiff,
+  GitRepositoryId,
+  GitRepositoryVersion,
+} from "@/runtime/gitTypes";
 
 afterEach(cleanup);
 
@@ -73,7 +79,9 @@ describe("ProjectGitMenu", () => {
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Git：main" })).not.toBeNull());
     expect(screen.queryByLabelText("2 个改动")).toBeNull();
-    expect(screen.getByLabelText("领先 2，落后 1")).not.toBeNull();
+    const titlebarDivergence = screen.getByLabelText("传入 1 个提交，传出 2 个提交");
+    expect(titlebarDivergence.querySelector('[data-direction="incoming"] .lucide-arrow-down-left')?.getAttribute("width")).toBe("13");
+    expect(titlebarDivergence.querySelector('[data-direction="outgoing"] .lucide-arrow-up-right')?.getAttribute("width")).toBe("13");
 
     const trigger = screen.getByRole("button", { name: "Git：main" });
     expect(trigger.hasAttribute("title")).toBe(false);
@@ -146,16 +154,16 @@ describe("ProjectGitMenu", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Git：main" }));
     fireEvent.click(screen.getByRole("menuitem", { name: /更新项目/ }));
-    await waitFor(() => expect(runtime.update).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(
-      screen.getByRole("menuitem", { name: /更新项目/ }).querySelector("svg.lucide-check"),
-    ).not.toBeNull());
-    expect(screen.getByRole("menuitem", { name: /更新项目/ }).textContent).not.toContain("处理中");
-    expect(screen.getByRole("menu", { name: "项目 Git 菜单" }).getAttribute("data-state")).toBe("success");
-    await waitFor(
-      () => expect(screen.queryByRole("menu", { name: "项目 Git 菜单" })).toBeNull(),
-      { timeout: 1_500 },
-    );
+    expect(runtime.update).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "更新项目" }).textContent).toContain("main ← origin/main");
+    fireEvent.click(screen.getByRole("radio", { name: /将传入更改合并到当前分支/ }));
+    fireEvent.click(screen.getByRole("button", { name: "更新" }));
+    await waitFor(() => expect(runtime.update).toHaveBeenCalledWith(expect.objectContaining({ strategy: "merge" })));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "更新项目" })).toBeNull());
+
+    fireEvent.keyDown(window, { key: "t", ctrlKey: true });
+    expect(screen.getByRole("dialog", { name: "更新项目" })).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Git：main" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "打开 Git 面板" }));
@@ -169,9 +177,109 @@ describe("ProjectGitMenu", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Git 操作与风险说明" })).toBeNull());
 
     fireEvent.keyDown(window, { key: "k", ctrlKey: true, shiftKey: true });
+    const pushDialog = await screen.findByRole("dialog", { name: "将提交推送到 repo" });
+    expect(pushDialog.textContent).toContain("main → origin/main");
+    await screen.findByRole("option", { name: /Ready to push/ });
+    expect(runtime.push).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "推送" }));
     await waitFor(() => expect(runtime.push).toHaveBeenCalledTimes(1));
     fireEvent.keyDown(screen.getByRole("textbox", { name: "commit editor" }), { key: "t", ctrlKey: true });
     expect(runtime.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens real dialogs for create and rename instead of embedding inputs in the menu", async () => {
+    const runtime = readyRuntime();
+    render(
+      <ActiveProjectProvider
+        discovery={{
+          project: { workspaceId: "workspace-1", projectPath: "D:/repo", name: "repo" },
+          repoRoots: [{ id: "repo-1", rootPath: "D:/repo", displayPath: ".", kind: "workspace" }],
+        }}
+      >
+        <GitProvider runtime={runtime}><ProjectGitMenu onOpenToolWindow={vi.fn()} /></GitProvider>
+      </ActiveProjectProvider>,
+    );
+    const trigger = await screen.findByRole("button", { name: "Git：main" });
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("menuitem", { name: /新建分支/ }));
+    expect(screen.queryByRole("menu", { name: "项目 Git 菜单" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "创建新分支" })).not.toBeNull();
+    fireEvent.change(screen.getByLabelText("新分支名称"), { target: { value: "feature/dialog" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建" }));
+    await waitFor(() => expect(runtime.createBranch).toHaveBeenCalledWith(expect.objectContaining({
+      branchName: "feature/dialog",
+      startPoint: "HEAD",
+    })));
+
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("treeitem", { name: "feature/git-menu（本地）" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "重命名…" }));
+    expect(screen.getByRole("dialog", { name: "重命名分支 feature/git-menu" })).not.toBeNull();
+    fireEvent.change(screen.getByLabelText("重命名分支"), { target: { value: "feature/renamed" } });
+    fireEvent.click(screen.getByRole("button", { name: "重命名" }));
+    await waitFor(() => expect(runtime.renameBranch).toHaveBeenCalledWith(expect.objectContaining({
+      oldName: "feature/git-menu",
+      newName: "feature/renamed",
+    })));
+  });
+
+  it("reuses the commit-and-push preview with outgoing commits, a directory tree and tag scope", async () => {
+    const runtime = readyRuntime();
+    const outgoingCommit = commitSummary("Feature commit", "d");
+    vi.mocked(runtime.status).mockResolvedValue({
+      repositoryId: "repo-1" as GitRepositoryId,
+      repositoryVersion: "version-1" as GitRepositoryVersion,
+      branch: { head: "feature/demo", detachedAt: null, upstream: "origin/feature/demo", ahead: 2, behind: 2, unborn: false },
+      files: [],
+      operation: null,
+    });
+    vi.mocked(runtime.history).mockResolvedValue({
+      repositoryId: "repo-1" as GitRepositoryId,
+      repositoryVersion: "version-1" as GitRepositoryVersion,
+      commits: [outgoingCommit],
+      nextCursor: null,
+    });
+    vi.mocked(runtime.commit).mockResolvedValue(commitDetail(outgoingCommit, [fileDiff("desktop/src/feature.ts")]));
+    render(
+      <ActiveProjectProvider
+        discovery={{
+          project: { workspaceId: "workspace-1", projectPath: "D:/repo", name: "repo" },
+          repoRoots: [{ id: "repo-1", rootPath: "D:/repo", displayPath: ".", kind: "workspace" }],
+        }}
+      >
+        <GitProvider runtime={runtime}><ProjectGitMenu onOpenToolWindow={vi.fn()} /></GitProvider>
+      </ActiveProjectProvider>,
+    );
+
+    const trigger = await screen.findByRole("button", { name: "Git：feature/demo" });
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("menuitem", { name: /推送…/ }));
+    const dialog = await screen.findByRole("dialog", { name: "将提交推送到 repo" });
+    await within(dialog).findByRole("option", { name: /Feature commit/ });
+    await waitFor(() => expect(within(dialog).getByRole("tree", { name: "待推送提交改动文件树" })).not.toBeNull());
+    const tree = within(dialog).getByRole("tree", { name: "待推送提交改动文件树" });
+    expect(within(tree).getByText("repo")).not.toBeNull();
+    expect(within(tree).getByText("desktop")).not.toBeNull();
+    expect(within(tree).getByText("src")).not.toBeNull();
+    expect(within(tree).getByText("feature.ts")).not.toBeNull();
+    expect(runtime.history).toHaveBeenCalledWith(
+      expect.objectContaining({ repositoryId: "repo-1" }),
+      expect.objectContaining({ revision: "origin/feature/demo..HEAD" }),
+    );
+
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "推送标签" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "推送标签范围" }));
+    fireEvent.click(screen.getByRole("option", { name: "当前分支" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "推送" }));
+
+    await waitFor(() => expect(runtime.push).toHaveBeenCalledWith(expect.objectContaining({
+      source: "feature/demo",
+      target: "feature/demo",
+      remote: "origin",
+      tags: false,
+      followTags: true,
+    })));
+    expect(runtime.confirmation).not.toHaveBeenCalled();
   });
 });
 
@@ -225,15 +333,24 @@ function readyRuntime(): GitRuntime {
         { fullName: "refs/tags/v1.0.0", shortName: "v1.0.0", kind: "tag", objectId: "c".repeat(40), peeledObjectId: null, upstream: null, ahead: null, behind: null, current: false },
       ],
     }),
-    history: vi.fn().mockResolvedValue({ repositoryId, repositoryVersion, commits: [], nextCursor: null }),
+    history: vi.fn().mockResolvedValue({
+      repositoryId,
+      repositoryVersion,
+      commits: [commitSummary("Ready to push", "a")],
+      nextCursor: null,
+    }),
     diff: vi.fn().mockResolvedValue({ repositoryId, repositoryVersion, files: [] }),
-    commit: vi.fn(),
+    remotes: vi.fn().mockResolvedValue([{ name: "origin", fetchUrl: "D:/origin.git", pushUrl: "D:/origin.git", trackingBranches: ["main"] }]),
+    commit: vi.fn().mockImplementation((_, revision) => Promise.resolve(
+      commitDetail(commitSummary("Ready to push", String(revision).slice(0, 1)), [fileDiff("desktop/src/app.ts")]),
+    )),
     stage: vi.fn(),
     unstage: vi.fn(),
     discard: vi.fn(),
     createCommit: vi.fn(),
-    createBranch: vi.fn(),
-    checkout: vi.fn(),
+    createBranch: vi.fn().mockResolvedValue(commandSucceeded(repositoryId, repositoryVersion, "Created branch")),
+    renameBranch: vi.fn().mockResolvedValue(commandSucceeded(repositoryId, repositoryVersion, "Renamed branch")),
+    checkout: vi.fn().mockResolvedValue(commandSucceeded(repositoryId, repositoryVersion, "Checked out")),
     fetch: vi.fn(),
     update: vi.fn().mockResolvedValue({
       operationId: "operation-update",
@@ -257,4 +374,58 @@ function readyRuntime(): GitRuntime {
     subscribe: vi.fn(() => () => undefined),
     acceptEvent: vi.fn(() => false),
   } as unknown as GitRuntime;
+}
+
+function commitSummary(subject: string, seed: string): GitCommitSummary {
+  return {
+    objectId: seed.repeat(40) as never,
+    parentIds: [],
+    authorName: "Alice",
+    authorEmail: "alice@example.invalid",
+    authoredAt: "2026-07-17T00:00:00Z",
+    committerName: "Alice",
+    committerEmail: "alice@example.invalid",
+    committedAt: "2026-07-17T00:00:00Z",
+    subject,
+    body: "",
+    decorations: [],
+    signature: "unsigned",
+  };
+}
+
+function commitDetail(commit: GitCommitSummary, files: readonly GitFileDiff[]): GitCommitDetail {
+  return {
+    repositoryId: "repo-1" as never,
+    repositoryVersion: "version-1" as never,
+    commit,
+    selectedParentId: null,
+    files,
+  };
+}
+
+function fileDiff(path: string): GitFileDiff {
+  return {
+    oldPath: path,
+    newPath: path,
+    status: "modified",
+    binary: false,
+    oldMode: null,
+    newMode: null,
+    additions: 1,
+    deletions: 0,
+    hunks: [],
+    rawPatch: "",
+    truncated: false,
+  };
+}
+
+function commandSucceeded(repositoryId: GitRepositoryId, repositoryVersion: GitRepositoryVersion, summary: string) {
+  return {
+    operationId: `operation-${summary}`,
+    repositoryId,
+    repositoryVersion,
+    state: "succeeded" as const,
+    summary,
+    result: { refresh_domains: ["status", "refs"] },
+  };
 }

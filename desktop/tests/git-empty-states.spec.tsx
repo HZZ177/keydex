@@ -1,11 +1,19 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GitToolWindow } from "@/renderer/features/git/components/GitToolWindow";
 import { ActiveProjectProvider, useActiveProjectState } from "@/renderer/providers/ActiveProjectProvider";
 import { GitProvider } from "@/renderer/providers/GitProvider";
-import type { GitRuntime } from "@/runtime/git";
-import type { GitRepositoryId, GitRepositoryVersion } from "@/runtime/gitTypes";
+import type { GitMetadataListener, GitRuntime } from "@/runtime/git";
+import type { GitDiffSnapshot, GitFileDiff, GitRepositoryId, GitRepositoryVersion } from "@/runtime/gitTypes";
+
+vi.mock("@/renderer/features/git/components/GitSelectedChangeDiff", () => ({
+  GitSelectedChangeDiff: ({ snapshot }: { snapshot: GitDiffSnapshot | null }) => (
+    <div data-testid="selected-change-diff">
+      {snapshot?.files.map((file) => file.newPath ?? file.oldPath).join(",") ?? "empty"}
+    </div>
+  ),
+}));
 
 afterEach(cleanup);
 
@@ -53,18 +61,43 @@ describe("Git empty and recovery states", () => {
     await waitFor(() => expect(featureBranch.getAttribute("aria-selected")).toBe("false"));
   });
 
-  it("loads only the clicked file diff and does not prefetch a repository-wide diff", async () => {
+  it("automatically loads only the first changed file diff", async () => {
     const runtime = stateRuntime({ readyOnDiscover: true, changedFile: true });
     renderTool(runtime);
 
-    const row = await screen.findByRole("treeitem", { name: "src/a.ts modified" });
-    expect(runtime.diff).not.toHaveBeenCalled();
-    fireEvent.click(row);
+    await screen.findByRole("treeitem", { name: "src/a.ts modified" });
 
     await waitFor(() => expect(runtime.diff).toHaveBeenCalledWith(
       expect.objectContaining({ repositoryId: "repo-1" }),
       expect.objectContaining({ cached: false, path: "src/a.ts", signal: expect.any(AbortSignal) }),
     ));
+    expect(screen.getByTestId("selected-change-diff").textContent).toBe("src/a.ts");
+  });
+
+  it("keeps the selected-file preview when a later repository-wide diff refresh completes", async () => {
+    const metadataListeners = new Set<GitMetadataListener>();
+    const runtime = stateRuntime({ readyOnDiscover: true, changedFile: true, metadataListeners });
+    renderTool(runtime);
+
+    await screen.findByRole("treeitem", { name: "src/a.ts modified" });
+    await waitFor(() => expect(screen.getByTestId("selected-change-diff").textContent).toBe("src/a.ts"));
+
+    act(() => {
+      metadataListeners.forEach((listener) => listener({
+        repositoryId: "repo-1" as GitRepositoryId,
+        repositoryVersion: "version-2" as GitRepositoryVersion,
+        sequence: 1,
+        domains: ["diff"],
+        paths: [],
+        resyncRequired: false,
+      }));
+    });
+
+    await waitFor(() => expect(runtime.diff).toHaveBeenCalledWith(
+      expect.objectContaining({ repositoryId: "repo-1" }),
+    ));
+    await waitFor(() => expect(screen.getByTestId("selected-change-diff").textContent).toBe("src/a.ts"));
+    expect(screen.getByTestId("selected-change-diff").textContent).not.toContain("src/b.ts");
   });
 });
 
@@ -84,7 +117,12 @@ function renderTool(runtime: GitRuntime, initialView?: "history") {
   );
 }
 
-function stateRuntime(options: { gitUnavailable?: boolean; readyOnDiscover?: boolean; changedFile?: boolean } = {}): GitRuntime {
+function stateRuntime(options: {
+  gitUnavailable?: boolean;
+  readyOnDiscover?: boolean;
+  changedFile?: boolean;
+  metadataListeners?: Set<GitMetadataListener>;
+} = {}): GitRuntime {
   const repositoryId = "repo-1" as GitRepositoryId;
   const repositoryVersion = "version-1" as GitRepositoryVersion;
   const capability = options.gitUnavailable
@@ -180,7 +218,15 @@ function stateRuntime(options: { gitUnavailable?: boolean; readyOnDiscover?: boo
       ] : [],
     }),
     history: vi.fn().mockResolvedValue({ repositoryId, repositoryVersion, commits: [], nextCursor: null }),
-    diff: vi.fn().mockResolvedValue({ repositoryId, repositoryVersion, files: [] }),
+    diff: vi.fn().mockImplementation((_scope, query?: { path?: string }) => Promise.resolve({
+      repositoryId,
+      repositoryVersion,
+      files: query?.path === "src/a.ts"
+        ? [changedFileDiff("src/a.ts")]
+        : options.changedFile
+          ? [changedFileDiff("src/a.ts"), changedFileDiff("src/b.ts")]
+          : [],
+    })),
     commit: vi.fn(),
     stage: vi.fn(),
     unstage: vi.fn(),
@@ -194,7 +240,33 @@ function stateRuntime(options: { gitUnavailable?: boolean; readyOnDiscover?: boo
     confirmation: vi.fn(),
     operation: vi.fn(),
     cancel: vi.fn(),
-    subscribe: vi.fn(() => () => undefined),
+    subscribe: vi.fn((listener: GitMetadataListener) => {
+      options.metadataListeners?.add(listener);
+      return () => options.metadataListeners?.delete(listener);
+    }),
     acceptEvent: vi.fn(() => false),
   } as unknown as GitRuntime;
+}
+
+function changedFileDiff(path: string): GitFileDiff {
+  return {
+    oldPath: path,
+    newPath: path,
+    status: "modified",
+    binary: false,
+    oldMode: "100644",
+    newMode: "100644",
+    additions: 1,
+    deletions: 1,
+    hunks: [{
+      header: "@@ -1 +1 @@",
+      oldStart: 1,
+      oldLines: 1,
+      newStart: 1,
+      newLines: 1,
+      lines: ["-old", "+new"],
+    }],
+    rawPatch: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n`,
+    truncated: false,
+  };
 }

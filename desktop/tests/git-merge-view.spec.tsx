@@ -45,22 +45,27 @@ describe("Git merge workflow", () => {
       <GitMergeView refs={refs()} status={status()} preview={null} busy={false} onPreview={onPreview} onMerge={onMerge} onAbort={onAbort} />,
     );
 
-    fireEvent.change(screen.getByLabelText("Source branch or revision"), { target: { value: "refs/heads/topic" } });
-    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+    fireEvent.change(screen.getByLabelText("来源分支或修订"), { target: { value: "refs/heads/topic" } });
+    fireEvent.click(screen.getByRole("button", { name: "预览" }));
     expect(onPreview).toHaveBeenCalledWith("refs/heads/topic");
-    expect((screen.getByRole("button", { name: "Merge" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "合并" }) as HTMLButtonElement).disabled).toBe(true);
 
     rerender(<GitMergeView refs={refs()} status={status()} preview={preview()} busy={false} onPreview={onPreview} onMerge={onMerge} onAbort={onAbort} />);
-    fireEvent.change(screen.getByLabelText("Source branch or revision"), { target: { value: "refs/heads/topic" } });
-    fireEvent.change(screen.getByLabelText("Strategy"), { target: { value: "no_ff" } });
-    fireEvent.change(screen.getByLabelText("Merge message (optional)"), { target: { value: "Merge topic" } });
-    fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    fireEvent.change(screen.getByLabelText("来源分支或修订"), { target: { value: "refs/heads/topic" } });
+    fireEvent.change(screen.getByLabelText("策略"), { target: { value: "no_ff" } });
+    fireEvent.change(screen.getByLabelText("合并说明（可选）"), { target: { value: "Merge topic" } });
+    fireEvent.click(screen.getByRole("button", { name: "合并" }));
+    expect(onMerge).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "确认合并" }).textContent).toContain("2 个");
+    fireEvent.click(screen.getByRole("button", { name: "确认合并" }));
     expect(onMerge).toHaveBeenCalledWith("refs/heads/topic", "no_ff", "Merge topic");
-    expect(screen.getByText("Merge base")).toBeTruthy();
-    expect(screen.getByText("Merge commit required")).toBeTruthy();
+    expect(screen.getByText("合并基准")).toBeTruthy();
+    expect(screen.getByText("需要创建合并提交")).toBeTruthy();
 
     rerender(<GitMergeView refs={refs()} status={status(true)} preview={preview()} busy={false} onPreview={onPreview} onMerge={onMerge} onAbort={onAbort} />);
-    fireEvent.click(screen.getByRole("button", { name: "Abort merge" }));
+    fireEvent.click(screen.getByRole("button", { name: "中止合并" }));
+    expect(onAbort).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "确认中止" }));
     expect(onAbort).toHaveBeenCalledTimes(1);
   });
 });

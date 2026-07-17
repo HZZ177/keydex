@@ -1,6 +1,7 @@
 import type { GitInProgressOperation } from "@/runtime/gitTypes";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
+import { GitConfirmActionDialog } from "../dialogs";
 import styles from "./GitOperationRecoveryBanner.module.css";
 
 export type GitRecoveryAction = "resolve" | "continue" | "skip" | "abort" | "complete";
@@ -17,6 +18,7 @@ export function GitOperationRecoveryBanner({
   onAction: (action: GitRecoveryAction) => void;
 }) {
   const [pendingAction, setPendingAction] = useState<"skip" | "abort" | null>(null);
+  useEffect(() => setPendingAction(null), [operation?.kind, operation?.currentObjectId, operation?.currentStep]);
   if (!operation) return null;
   const actions = recoveryActions(operation);
   return (
@@ -24,12 +26,16 @@ export function GitOperationRecoveryBanner({
       <div><strong>已恢复{operationKindLabel(operation.kind)}</strong><span>{operationStateLabel(operation.state)}{operation.currentStep && operation.totalSteps ? ` · 第 ${operation.currentStep}/${operation.totalSteps} 步` : ""}。仓库元数据是当前状态的判断依据。</span></div>
       <div className={styles.actions}>{actions.map((action) => <button type="button" key={action.id} disabled={busy || !action.enabled} onClick={() => action.id === "skip" || action.id === "abort" ? setPendingAction(action.id) : onAction(action.id)}>{action.label}</button>)}</div>
       {pendingAction ? (
-        <div className={styles.confirmation} role="alertdialog" aria-label="确认恢复操作">
-          <strong>{pendingAction === "abort" ? "要中止已恢复的操作吗？" : "要跳过当前步骤吗？"}</strong>
-          <span>仓库元数据仍是当前状态的判断依据；此操作将发送到正在进行的{operationKindLabel(operation.kind)}任务。</span>
-          <button type="button" onClick={() => { const action = pendingAction; setPendingAction(null); onAction(action); }}>{pendingAction === "abort" ? "确认中止" : "确认跳过"}</button>
-          <button type="button" onClick={() => setPendingAction(null)}>取消</button>
-        </div>
+        <GitConfirmActionDialog
+          title={pendingAction === "abort" ? `确认中止${operationKindLabel(operation.kind)}` : "确认跳过当前步骤"}
+          description={pendingAction === "abort" ? "将丢弃当前操作中尚未提交的进度，并按 Git 元数据恢复。" : "当前对象不会被应用，其余步骤继续执行。"}
+          target={operation.currentObjectId ? `当前对象：${operation.currentObjectId.slice(0, 12)}` : `当前${operationKindLabel(operation.kind)}任务`}
+          details={operation.currentStep && operation.totalSteps ? [`进度：${operation.currentStep}/${operation.totalSteps}`] : []}
+          confirmLabel={pendingAction === "abort" ? "确认中止" : "确认跳过"}
+          busy={busy}
+          onCancel={() => setPendingAction(null)}
+          onConfirm={() => { const action = pendingAction; setPendingAction(null); onAction(action); }}
+        />
       ) : null}
     </section>
   );
