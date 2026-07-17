@@ -7,6 +7,10 @@ on:
         description: "Release version, for example 0.1.1"
         required: true
         type: string
+      release_notes:
+        description: "Release notes shown on GitHub and in the in-app updater (Markdown supported)"
+        required: true
+        type: string
       draft:
         description: "Create the GitHub Release as a draft. Draft releases are not visible to the in-app updater."
         required: true
@@ -40,6 +44,8 @@ jobs:
           fetch-depth: 0
 
       - name: Prepare release metadata
+        env:
+          KEYDEX_RELEASE_NOTES: ${{ inputs.release_notes }}
         run: |
           $version = "${{ inputs.version }}".Trim()
           if ($version.StartsWith("v", [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -47,6 +53,9 @@ jobs:
           }
           if ($version -notmatch '^\d+\.\d+\.\d+([\-+][0-9A-Za-z.-]+)?$') {
             throw "Invalid release version '${{ inputs.version }}'. Use SemVer such as 0.1.1 or 0.1.1-beta.1."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:KEYDEX_RELEASE_NOTES)) {
+            throw "Release notes must not be empty."
           }
 
           "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -86,6 +95,7 @@ jobs:
 
       - name: Build Windows package
         env:
+          KEYDEX_RELEASE_NOTES: ${{ inputs.release_notes }}
           TAURI_CONFIG: '{"bundle":{"createUpdaterArtifacts":true}}'
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -160,6 +170,6 @@ jobs:
             artifacts/windows/manifest.json
             artifacts/windows/README.txt
           body: |
-            Keydex ${{ env.RELEASE_VERSION }} Windows package.
+            ${{ inputs.release_notes }}
 
             Built from commit ${{ github.sha }}.

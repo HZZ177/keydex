@@ -91,6 +91,7 @@ $ReleaseApp = Join-Path $Root "desktop\src-tauri\target\release\keydex-desktop.e
 $ArtifactDir = Join-Path $Root "artifacts\windows"
 $ReleaseRepository = if ([string]::IsNullOrWhiteSpace($env:GITHUB_REPOSITORY)) { "HZZ177/keydex" } else { $env:GITHUB_REPOSITORY }
 $ReleaseTag = if ([string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) { "v$AppVersion" } else { $env:RELEASE_TAG }
+$ReleaseNotes = if ([string]::IsNullOrWhiteSpace($env:KEYDEX_RELEASE_NOTES)) { "Keydex $AppVersion" } else { $env:KEYDEX_RELEASE_NOTES.Trim() }
 $ExpectUpdaterArtifacts = $false
 
 function Invoke-Step {
@@ -648,7 +649,7 @@ Invoke-Step "复制发布产物到快速目录" {
     if ($hasV1UpdaterBundle -or $hasV2UpdaterSignature) {
         $latest = [ordered]@{
             version = $AppVersion
-            notes = "Keydex $AppVersion"
+            notes = $ReleaseNotes
             pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
             platforms = [ordered]@{
                 "windows-x86_64" = [ordered]@{
