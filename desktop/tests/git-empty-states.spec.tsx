@@ -99,19 +99,37 @@ describe("Git empty and recovery states", () => {
     await waitFor(() => expect(screen.getByTestId("selected-change-diff").textContent).toBe("src/a.ts"));
     expect(screen.getByTestId("selected-change-diff").textContent).not.toContain("src/b.ts");
   });
+
+  it("does not start view-specific queries while the Git tool window is hidden", async () => {
+    const runtime = stateRuntime({ readyOnDiscover: true });
+    renderTool(runtime, "history", false);
+
+    await waitFor(() => expect(runtime.status).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(runtime.refs).toHaveBeenCalledTimes(1));
+    expect(runtime.history).not.toHaveBeenCalled();
+    expect(runtime.diff).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("git-tool-window")).toBeNull();
+  });
 });
 
-function Tool({ initialView }: { initialView?: "history" }) {
-  return <GitToolWindow project={useActiveProjectState()} maximized initialView={initialView} />;
+function Tool({ initialView, active = true }: { initialView?: "history"; active?: boolean }) {
+  return (
+    <GitToolWindow
+      project={useActiveProjectState()}
+      maximized
+      initialView={initialView}
+      active={active}
+    />
+  );
 }
 
-function renderTool(runtime: GitRuntime, initialView?: "history") {
+function renderTool(runtime: GitRuntime, initialView?: "history", active = true) {
   return render(
     <ActiveProjectProvider
       discovery={{ project: { workspaceId: "workspace-1", projectPath: "D:/repo", name: "repo" } }}
     >
       <GitProvider runtime={runtime}>
-        <Tool initialView={initialView} />
+        <Tool initialView={initialView} active={active} />
       </GitProvider>
     </ActiveProjectProvider>,
   );

@@ -3913,6 +3913,18 @@ class SessionsRepository:
             row = conn.execute(query, (session_id,)).fetchone()
         return self._from_row(row) if row else None
 
+    def get_many(self, session_ids: list[str]) -> list[SessionRecord]:
+        resolved_ids = list(dict.fromkeys(session_id for session_id in session_ids if session_id))
+        if not resolved_ids:
+            return []
+        placeholders = ", ".join("?" for _ in resolved_ids)
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                f"select * from sessions where id in ({placeholders}) and archived_at is null",
+                resolved_ids,
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
     def get_archived(self, session_id: str) -> SessionRecord | None:
         with self.db.connect() as conn:
             row = conn.execute(
@@ -3977,9 +3989,77 @@ class SessionsRepository:
         session_tag: str | None = None,
         workspace_id: str | None = None,
         session_type: str | None = None,
+        title: str | None = None,
         include_internal: bool = False,
         limit: int = 100,
+        offset: int = 0,
     ) -> list[SessionRecord]:
+        where, params = self._list_filters(
+            user_id=user_id,
+            scene_id=scene_id,
+            status=status,
+            session_tag=session_tag,
+            workspace_id=workspace_id,
+            session_type=session_type,
+            title=title,
+            include_internal=include_internal,
+        )
+        params.extend((max(1, min(limit, 500)), max(0, int(offset))))
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                f"""
+                select * from sessions
+                {where}
+                order by
+                  pinned_at is null,
+                  pinned_at desc,
+                  updated_at desc,
+                  created_at desc,
+                  id desc
+                limit ? offset ?
+                """,
+                params,
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    def count(
+        self,
+        *,
+        user_id: str | None = None,
+        scene_id: str | None = None,
+        status: str | None = None,
+        session_tag: str | None = None,
+        workspace_id: str | None = None,
+        session_type: str | None = None,
+        title: str | None = None,
+        include_internal: bool = False,
+    ) -> int:
+        where, params = self._list_filters(
+            user_id=user_id,
+            scene_id=scene_id,
+            status=status,
+            session_tag=session_tag,
+            workspace_id=workspace_id,
+            session_type=session_type,
+            title=title,
+            include_internal=include_internal,
+        )
+        with self.db.connect() as conn:
+            row = conn.execute(f"select count(*) as total from sessions {where}", params).fetchone()
+        return int(row["total"] if row is not None else 0)
+
+    def _list_filters(
+        self,
+        *,
+        user_id: str | None,
+        scene_id: str | None,
+        status: str | None,
+        session_tag: str | None,
+        workspace_id: str | None,
+        session_type: str | None,
+        title: str | None,
+        include_internal: bool,
+    ) -> tuple[str, list[Any]]:
         filters: list[str] = []
         params: list[Any] = []
         if user_id is not None:
@@ -4002,6 +4082,9 @@ class SessionsRepository:
             self._validate_session_type(session_type)
             filters.append("session_type = ?")
             params.append(session_type)
+        if title:
+            filters.append("instr(lower(coalesce(title, '')), ?) > 0")
+            params.append(title.strip().lower())
         if not include_internal and session_tag is None:
             filters.append("(session_tag is null or session_tag != ?)")
             params.append(self.INTERNAL_CONTEXT_COMPRESSION_SESSION_TAG)
@@ -4018,23 +4101,7 @@ class SessionsRepository:
         filters.append("archived_at is null")
 
         where = f"where {' and '.join(filters)}" if filters else ""
-        params.append(max(1, min(limit, 500)))
-        with self.db.connect() as conn:
-            rows = conn.execute(
-                f"""
-                select * from sessions
-                {where}
-                order by
-                  pinned_at is null,
-                  pinned_at desc,
-                  updated_at desc,
-                  created_at desc,
-                  id desc
-                limit ?
-                """,
-                params,
-            ).fetchall()
-        return [self._from_row(row) for row in rows]
+        return where, params
 
     def list_archived(
         self,
@@ -4459,6 +4526,36 @@ class SessionForksRepository:
         with self.db.connect() as conn:
             row = conn.execute(query, params).fetchone()
         return self._from_row(row) if row else None
+
+    def list_by_targets(
+        self,
+        target_session_ids: list[str],
+        *,
+        relation_type: str = "fork",
+        include_deleted: bool = False,
+    ) -> list[SessionForkRecord]:
+        self._validate_relation_type(relation_type)
+        resolved_ids = list(
+            dict.fromkeys(session_id for session_id in target_session_ids if session_id)
+        )
+        if not resolved_ids:
+            return []
+        placeholders = ", ".join("?" for _ in resolved_ids)
+        query = (
+            f"select * from session_forks where target_session_id in ({placeholders}) "
+            "and relation_type = ?"
+        )
+        params: list[Any] = [*resolved_ids, relation_type]
+        if not include_deleted:
+            query += " and is_deleted = 0"
+        query += " order by target_session_id, created_at desc, id desc"
+        with self.db.connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        latest_by_target: dict[str, SessionForkRecord] = {}
+        for row in rows:
+            record = self._from_row(row)
+            latest_by_target.setdefault(record.target_session_id, record)
+        return list(latest_by_target.values())
 
     def list_by_source(
         self,

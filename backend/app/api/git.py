@@ -142,9 +142,11 @@ def get_git_command_service(request: Request) -> GitCommandService:
     if isinstance(service, GitCommandService):
         return service
     confirmations = get_git_confirmation_service(request)
+    queries = get_git_query_service(request)
     service = GitCommandService(
-        query_service=get_git_query_service(request),
+        query_service=queries,
         registry=get_git_command_registry(request),
+        runner=queries.runner,
         confirmation_validator=confirmations.validate,
     )
     request.app.state.git_command_service = service

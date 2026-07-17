@@ -827,7 +827,8 @@ describe("ConversationPage", () => {
 
     fireEvent.click(screen.getByLabelText("更多对话操作"));
     fireEvent.click(screen.getByRole("menuitem", { name: "从对话派生" }));
-    await waitFor(() => expect(forkSession).toHaveBeenCalledWith("ses-1", { messageEventId: "evt-ai-1" }));
+    await waitFor(() => expect(forkSession).toHaveBeenCalledWith("ses-1", {}));
+    expect(runtime.conversation.loadHistory).toHaveBeenCalledTimes(2);
     expect(onNavigateToConversation).toHaveBeenCalledWith("ses-fork");
 
     fireEvent.click(screen.getByLabelText("更多对话操作"));
@@ -2322,7 +2323,7 @@ describe("ConversationPage", () => {
       historyMessage("user", "历史问题 3", { messageEventId: "evt-user-3", turnIndex: 3 }),
       historyMessage("assistant", "可以旁路追问的回答", { messageEventId: "evt-ai-3", turnIndex: 3 }),
     ];
-    const sidecarHistory = sourceHistory.slice(2);
+    const sidecarHistory: AgentChatMessagePayload[] = [];
     const loadHistory = vi.fn((sessionId: string) =>
       Promise.resolve(
         historyResponse(
@@ -2365,7 +2366,6 @@ describe("ConversationPage", () => {
     expect(screen.queryByTestId("btw-conversation-panel")).toBeNull();
     await waitFor(() => {
       expect(forkSession).toHaveBeenCalledWith("ses-1", {
-        messageEventId: "evt-ai-3",
         sessionTag: "btw",
         title: "旁路对话",
       });
@@ -2373,15 +2373,15 @@ describe("ConversationPage", () => {
     await act(async () => {
       resolveFork?.({
         session: forkedSession,
-        source: branchSource(),
+        source: branchSource({
+          message_event_id: null,
+          source_type: "latest_checkpoint",
+          turn_index: null,
+        }),
       });
     });
     const panel = await screen.findByTestId("btw-conversation-panel");
-    await waitFor(() => {
-      expect(within(panel).getByTestId("btw-conversation-history-notice").textContent).toContain(
-        "该会话前置3轮历史消息已加载",
-      );
-    });
+    expect(within(panel).queryByTestId("btw-conversation-history-notice")).toBeNull();
     const sidecarInput = within(panel).getByLabelText("继续输入");
     await waitFor(() => {
       expect(document.activeElement).toBe(sidecarInput);
@@ -2981,7 +2981,6 @@ describe("ConversationPage", () => {
     expect(screen.queryByTestId("btw-conversation-panel")).toBeNull();
     await waitFor(() => {
       expect(forkSession).toHaveBeenCalledWith("ses-1", {
-        messageEventId: "evt-ai-1",
         sessionTag: "btw",
         title: "旁路对话",
       });

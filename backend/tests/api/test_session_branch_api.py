@@ -75,7 +75,7 @@ def test_session_fork_api_returns_new_session_and_source_metadata(tmp_path) -> N
     with TestClient(app) as client:
         response = client.post(
             "/api/sessions/ses_source/fork",
-            json={"message_event_id": "evt_ai_1", "title": "API 分支"},
+            json={"title": "API 分支"},
         )
         source_history_response = client.get("/api/sessions/ses_source/history?all_turns=true")
         forked_session_id = response.json()["session"]["id"]
@@ -94,6 +94,7 @@ def test_session_fork_api_returns_new_session_and_source_metadata(tmp_path) -> N
     assert body["session"]["fork_source"]["target_message_event_id"] != "evt_ai_1"
     assert body["session"]["fork_source"]["source_checkpoint_id"] == "ckpt_1"
     assert body["source"]["checkpoint_id"] == "ckpt_1"
+    assert body["source"]["source_type"] == "latest_completed"
     source_messages = source_history_response.json()["list"]
     assert all("forkSource" not in item for item in source_messages)
     forked_messages = forked_history_response.json()["list"]
@@ -152,7 +153,11 @@ def test_session_fork_api_can_create_tagged_branch_outside_default_list(tmp_path
     with TestClient(app) as client:
         response = client.post(
             "/api/sessions/ses_source/fork",
-            json={"message_event_id": "evt_ai_1", "title": "临时分支", "session_tag": "btw"},
+            json={"title": "临时分支", "session_tag": "btw"},
+        )
+        forked_session_id = response.json()["session"]["id"]
+        forked_history = client.get(
+            f"/api/sessions/{forked_session_id}/history?all_turns=true"
         )
         default_list = client.get("/api/sessions")
         tagged_list = client.get("/api/sessions", params={"session_tag": "btw"})
@@ -160,6 +165,10 @@ def test_session_fork_api_can_create_tagged_branch_outside_default_list(tmp_path
     assert response.status_code == 200
     forked_session = response.json()["session"]
     assert forked_session["session_tag"] == "btw"
+    assert forked_session["fork_source"] is None
+    assert response.json()["source"]["source_type"] == "latest_checkpoint"
+    assert response.json()["source"]["message_event_id"] is None
+    assert forked_history.json()["list"] == []
     assert [item["id"] for item in default_list.json()["list"]] == ["ses_source"]
     assert [item["id"] for item in tagged_list.json()["list"]] == [forked_session["id"]]
 

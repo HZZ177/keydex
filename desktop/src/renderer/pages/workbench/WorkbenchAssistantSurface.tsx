@@ -404,7 +404,7 @@ export function WorkbenchAssistantSurface({
   );
   const btwHistoryNotice = useMemo(
     () =>
-      btwActive && activeBtwHistorySnapshot
+      btwActive && activeBtwHistorySnapshot && resolvedBtwLoadedHistoryTurnCount > 0
         ? {
             content: `该会话前置${resolvedBtwLoadedHistoryTurnCount}轮历史消息已加载`,
             tone: "success" as const,

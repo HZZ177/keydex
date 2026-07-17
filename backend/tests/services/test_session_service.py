@@ -24,6 +24,7 @@ def _service(repositories: StorageRepositories) -> SessionService:
         repositories.sessions,
         repositories.message_events,
         repositories.workspaces,
+        repositories.session_forks,
     )
 
 
@@ -76,6 +77,70 @@ def test_session_service_lists_sessions_with_sort_filter_and_current_marker(tmp_
 
     filtered = service.list_sessions(ListSessionsRequest(title="旧"))
     assert [item["id"] for item in filtered["list"]] == [first.id]
+
+
+def test_session_service_pages_in_sql_and_batches_related_session_metadata(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    repositories = _repositories(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    workspace = repositories.workspaces.create(
+        workspace_id="ws_paged",
+        root_path=project,
+        name="Paged",
+    )
+    for index in range(21):
+        repositories.sessions.create(
+            session_id=f"ses_{index:02d}",
+            user_id="local-user",
+            scene_id="desktop-agent",
+            title=f"分页会话 {index:02d}",
+            session_type="workspace",
+            workspace_id=workspace.id,
+            cwd=str(project),
+            workspace_roots=[str(project)],
+        )
+    repositories.session_forks.create(
+        fork_id="fork_paged",
+        source_session_id="ses_06",
+        target_session_id="ses_05",
+        source_message_event_id="evt_source",
+        target_message_event_id="evt_target",
+        source_turn_index=1,
+        target_turn_index=1,
+    )
+
+    connect_calls = 0
+    original_connect = repositories.db.connect
+
+    def counted_connect():
+        nonlocal connect_calls
+        connect_calls += 1
+        return original_connect()
+
+    monkeypatch.setattr(repositories.db, "connect", counted_connect)
+
+    result = _service(repositories).list_sessions(
+        ListSessionsRequest(
+            workspace_id=workspace.id,
+            session_type="workspace",
+            title="分页会话",
+            page=2,
+            page_size=10,
+        )
+    )
+
+    assert result["total"] == 21
+    assert [item["id"] for item in result["list"]] == [
+        f"ses_{index:02d}" for index in range(10, 0, -1)
+    ]
+    assert {item["workspace"]["id"] for item in result["list"]} == {workspace.id}
+    forked = next(item for item in result["list"] if item["id"] == "ses_05")
+    assert forked["fork_source"]["source_title"] == "分页会话 06"
+    assert forked["fork_source"]["target_title"] == "分页会话 05"
+    assert connect_calls == 5
 
 
 def test_session_service_serializes_context_window_usage(tmp_path) -> None:

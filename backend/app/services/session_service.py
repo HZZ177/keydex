@@ -126,21 +126,28 @@ class SessionService:
     def list_sessions(self, request: ListSessionsRequest) -> dict[str, Any]:
         page = max(1, int(request.page or 1))
         page_size = min(max(1, int(request.page_size or 20)), 100)
-        records = self._load_session_records(request)
-
-        total = len(records)
         start = (page - 1) * page_size
-        page_records = records[start : start + page_size]
+        filters = {
+            "user_id": request.user_id,
+            "scene_id": request.scene_id,
+            "status": request.status,
+            "session_tag": request.session_tag,
+            "workspace_id": request.workspace_id,
+            "session_type": request.session_type,
+            "title": request.title,
+        }
+        total = self._sessions.count(**filters)
+        page_records = self._sessions.list(**filters, limit=page_size, offset=start)
         logger.debug(
             f"[SessionService] 查询会话列表 | total={total} | page={page} | "
             f"page_size={page_size} | user_id={request.user_id or '-'} | "
             f"scene_id={request.scene_id or '-'}"
         )
         return {
-            "list": [
-                self._serialize_session(record, current_session_id=request.current_session_id)
-                for record in page_records
-            ],
+            "list": self._serialize_sessions(
+                page_records,
+                current_session_id=request.current_session_id,
+            ),
             "total": total,
             "page": page,
             "page_size": page_size,
@@ -148,11 +155,18 @@ class SessionService:
 
     def group_sessions(self, request: ListSessionsRequest) -> dict[str, Any]:
         records = self._load_session_records(request)
+        serialized_by_id = {
+            item["id"]: item
+            for item in self._serialize_sessions(
+                records,
+                current_session_id=request.current_session_id,
+            )
+        }
         groups: dict[str, dict[str, Any]] = {}
         for record in records:
             if record.session_type == "workspace" and record.workspace_id:
                 key = f"workspace:{record.workspace_id}"
-                workspace = self._workspace_summary(record.workspace_id)
+                workspace = serialized_by_id[record.id]["workspace"]
                 title = workspace["name"] if workspace else "已移除工作区"
                 group = groups.setdefault(
                     key,
@@ -177,9 +191,7 @@ class SessionService:
                         "total": 0,
                     },
                 )
-            group["list"].append(
-                self._serialize_session(record, current_session_id=request.current_session_id)
-            )
+            group["list"].append(serialized_by_id[record.id])
             group["total"] += 1
 
         return {
@@ -188,19 +200,16 @@ class SessionService:
         }
 
     def _load_session_records(self, request: ListSessionsRequest) -> list[SessionRecord]:
-        records = self._sessions.list(
+        return self._sessions.list(
             user_id=request.user_id,
             scene_id=request.scene_id,
             status=request.status,
             session_tag=request.session_tag,
             workspace_id=request.workspace_id,
             session_type=request.session_type,
+            title=request.title,
             limit=500,
         )
-        if request.title:
-            keyword = request.title.strip().lower()
-            records = [record for record in records if keyword in str(record.title or "").lower()]
-        return records
 
     def get_session_detail(
         self,
@@ -491,6 +500,69 @@ class SessionService:
         workspace = None
         if record.workspace_id and self._workspace_service is not None:
             workspace = self._workspace_summary(record.workspace_id)
+        fork_source = self._serialize_fork_record(
+            self._session_forks.get_by_target(record.id)
+            if self._session_forks is not None
+            else None
+        )
+        return self._serialize_session_payload(
+            record,
+            workspace=workspace,
+            fork_source=fork_source,
+            current_session_id=current_session_id,
+        )
+
+    def _serialize_sessions(
+        self,
+        records: list[SessionRecord],
+        *,
+        current_session_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        workspace_by_id = {
+            workspace_id: self._workspace_summary(workspace_id)
+            for workspace_id in dict.fromkeys(
+                record.workspace_id for record in records if record.workspace_id
+            )
+        }
+        fork_records = (
+            self._session_forks.list_by_targets([record.id for record in records])
+            if self._session_forks is not None and records
+            else []
+        )
+        related_session_ids = [
+            session_id
+            for fork_record in fork_records
+            for session_id in (fork_record.target_session_id, fork_record.source_session_id)
+        ]
+        related_sessions = {
+            related.id: related
+            for related in self._sessions.get_many(related_session_ids)
+        }
+        fork_source_by_target = {
+            fork_record.target_session_id: self._serialize_fork_record(
+                fork_record,
+                sessions_by_id=related_sessions,
+            )
+            for fork_record in fork_records
+        }
+        return [
+            self._serialize_session_payload(
+                record,
+                workspace=workspace_by_id.get(record.workspace_id) if record.workspace_id else None,
+                fork_source=fork_source_by_target.get(record.id),
+                current_session_id=current_session_id,
+            )
+            for record in records
+        ]
+
+    @staticmethod
+    def _serialize_session_payload(
+        record: SessionRecord,
+        *,
+        workspace: dict[str, Any] | None,
+        fork_source: dict[str, Any] | None,
+        current_session_id: str | None,
+    ) -> dict[str, Any]:
         return {
             "id": record.id,
             "user_id": record.user_id,
@@ -517,11 +589,7 @@ class SessionService:
             "pinned": record.pinned_at is not None,
             "pinned_at": record.pinned_at,
             "workspace": workspace,
-            "fork_source": self._serialize_fork_record(
-                self._session_forks.get_by_target(record.id)
-                if self._session_forks is not None
-                else None
-            ),
+            "fork_source": fork_source,
             "created_at": record.created_at,
             "updated_at": record.updated_at,
             "archived_at": record.archived_at,
@@ -543,11 +611,24 @@ class SessionService:
             if message_event_id == fork_record.target_message_event_id:
                 message["forkSource"] = serialized
 
-    def _serialize_fork_record(self, record: SessionForkRecord | None) -> dict[str, Any] | None:
+    def _serialize_fork_record(
+        self,
+        record: SessionForkRecord | None,
+        *,
+        sessions_by_id: dict[str, SessionRecord] | None = None,
+    ) -> dict[str, Any] | None:
         if record is None:
             return None
-        target = self._sessions.get(record.target_session_id)
-        source = self._sessions.get(record.source_session_id)
+        target = (
+            sessions_by_id.get(record.target_session_id)
+            if sessions_by_id is not None
+            else self._sessions.get(record.target_session_id)
+        )
+        source = (
+            sessions_by_id.get(record.source_session_id)
+            if sessions_by_id is not None
+            else self._sessions.get(record.source_session_id)
+        )
         return {
             "id": record.id,
             "source_session_id": record.source_session_id,

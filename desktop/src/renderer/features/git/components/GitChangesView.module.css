@@ -120,7 +120,7 @@
 .groupHeader {
   display: grid;
   min-height: 28px;
-  grid-template-columns: 16px 16px max-content max-content minmax(0, 1fr);
+  grid-template-columns: 16px 13px max-content max-content minmax(0, 1fr);
   align-items: center;
   gap: 5px;
   padding: 0;
@@ -166,10 +166,10 @@ button.groupToggle[aria-label]:active {
 
 .groupHeader > input[type="checkbox"],
 .row > input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
+  width: 13px;
+  height: 13px;
   margin: 0;
-  flex: 0 0 16px;
+  flex: 0 0 13px;
   accent-color: #1677ff;
   cursor: pointer;
 }
@@ -188,7 +188,7 @@ button.groupToggle[aria-label]:active {
 .row {
   display: flex;
   min-width: 0;
-  min-height: 31px;
+  min-height: 29px;
   align-items: center;
   gap: 7px;
   padding: 0 8px 0 42px;
@@ -304,13 +304,13 @@ button.groupToggle[aria-label]:active {
   top: 0;
   left: 0;
   width: 100%;
-  height: 31px;
+  height: 30px;
   box-sizing: border-box;
 }
 
 .virtualItem > .row {
   width: 100%;
-  height: 31px;
+  height: 29px;
   box-sizing: border-box;
 }
 

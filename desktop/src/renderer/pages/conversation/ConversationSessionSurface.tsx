@@ -57,7 +57,6 @@ import { ComposerApprovalCard } from "./ComposerApprovalCard";
 import {
   createBtwConversationHistorySnapshot,
   filterBtwConversationVisibleMessages,
-  latestCompleteForkSource,
   type BtwConversationHistorySnapshot,
 } from "./conversationForkSource";
 import { consumeQuickChatSend, type QueuedQuickChatSend } from "./quickSend";
@@ -253,7 +252,7 @@ export function ConversationSessionSurface({
   }, [focusTurnIndex, focusTurnRequestId]);
   const sidecarHistoryNotice = useMemo(
     () =>
-      isSidecar && activeSidecarHistorySnapshot
+      isSidecar && activeSidecarHistorySnapshot && resolvedSidecarLoadedHistoryTurnCount > 0
         ? {
             content: `该会话前置${resolvedSidecarLoadedHistoryTurnCount}轮历史消息已加载`,
             tone: "success" as const,
@@ -335,13 +334,7 @@ export function ConversationSessionSurface({
     }
     setForkingSession(true);
     try {
-      const history = await runtime.conversation.loadHistory(sessionId, { pageSize: 100 });
-      const source = latestCompleteForkSource(history.list);
-      if (!source) {
-        notifications.warning("没有可派生的完整回合");
-        return;
-      }
-      const response = await runtime.conversation.forkSession(sessionId, source);
+      const response = await runtime.conversation.forkSession(sessionId, {});
       emitSessionCreated(response.session);
       notifications.success("已创建派生会话");
       onNavigateToConversation?.(response.session.id);

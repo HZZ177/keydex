@@ -1,84 +1,37 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createBtwConversationFromSession,
   createBtwConversationHistorySnapshot,
   filterBtwConversationVisibleMessages,
-  latestCompleteForkSource,
 } from "@/renderer/pages/conversation/conversationForkSource";
 import type { RuntimeBridge } from "@/runtime";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
-import type { AgentChatMessagePayload, AgentSession } from "@/types/protocol";
-
-describe("latestCompleteForkSource", () => {
-  it("uses the latest complete assistant message and skips incomplete turns", () => {
-    const messages: AgentChatMessagePayload[] = [
-      message("user", "问题 1", { messageEventId: "evt-user-1", turnIndex: 1 }),
-      message("assistant", "回答 1", { messageEventId: "evt-ai-1", turnIndex: 1 }),
-      message("user", "问题 2", { messageEventId: "evt-user-2", turnIndex: 2 }),
-      message("assistant", "回答 2", {
-        messageEventId: "evt-ai-2",
-        status: "streaming",
-        streaming: true,
-        turnIndex: 2,
-      }),
-    ];
-
-    expect(latestCompleteForkSource(messages)).toEqual({ messageEventId: "evt-ai-1" });
-  });
-
-  it("falls back to turn index when the complete assistant message has no event id", () => {
-    expect(
-      latestCompleteForkSource([
-        message("user", "问题", { turnIndex: 3 }),
-        message("assistant", "回答", { turnIndex: 3 }),
-      ]),
-    ).toEqual({ turnIndex: 3 });
-  });
-
-  it("returns null when no complete assistant message exists", () => {
-    expect(
-      latestCompleteForkSource([
-        message("user", "问题", { messageEventId: "evt-user", turnIndex: 1 }),
-        message("assistant", "失败回答", {
-          messageEventId: "evt-ai",
-          status: "failed",
-          turnIndex: 1,
-        }),
-      ]),
-    ).toBeNull();
-  });
-});
+import type { AgentSession } from "@/types/protocol";
 
 describe("bypass conversation history snapshot", () => {
-  it("returns the fork source turn count when creating a bypass conversation", async () => {
+  it("creates a checkpoint-only bypass conversation without loading source history", async () => {
     const forkedSession = agentSession({ id: "btw-1", session_tag: "btw" });
+    const loadHistory = vi.fn();
+    const forkSession = vi.fn().mockResolvedValue({
+      session: forkedSession,
+      source: { source_type: "latest_checkpoint", turn_index: null },
+    });
     const runtime = {
       conversation: {
-        loadHistory: () =>
-          Promise.resolve({
-            session: agentSession({ id: "source-1" }),
-            list: [
-              message("user", "问题 1", { turnIndex: 1 }),
-              message("assistant", "回答 1", { messageEventId: "evt-ai-1", turnIndex: 1 }),
-              message("user", "问题 2", { turnIndex: 2 }),
-              message("assistant", "回答 2", { messageEventId: "evt-ai-2", turnIndex: 2 }),
-              message("user", "问题 3", { turnIndex: 3 }),
-              message("assistant", "回答 3", { messageEventId: "evt-ai-3", turnIndex: 3 }),
-            ],
-            total: 6,
-            page: 1,
-            page_size: 100,
-            event_total: 6,
-            turn_indexes: [1, 2, 3],
-          }),
-        forkSession: () => Promise.resolve({ session: forkedSession, source: {} }),
+        loadHistory,
+        forkSession,
       },
     } as unknown as RuntimeBridge;
 
     await expect(createBtwConversationFromSession(runtime, "source-1")).resolves.toMatchObject({
       session: forkedSession,
-      loadedHistoryTurnCount: 3,
+      loadedHistoryTurnCount: 0,
+    });
+    expect(loadHistory).not.toHaveBeenCalled();
+    expect(forkSession).toHaveBeenCalledWith("source-1", {
+      sessionTag: "btw",
+      title: "旁路对话",
     });
   });
 
@@ -117,19 +70,6 @@ describe("bypass conversation history snapshot", () => {
     expect(snapshot.loadedTurnCount).toBe(2);
   });
 });
-
-function message(
-  role: AgentChatMessagePayload["role"],
-  content: string,
-  overrides: Partial<AgentChatMessagePayload> = {},
-): AgentChatMessagePayload {
-  return {
-    role,
-    content,
-    timestamp: 0,
-    ...overrides,
-  };
-}
 
 function agentSession(patch: Partial<AgentSession> = {}): AgentSession {
   return {

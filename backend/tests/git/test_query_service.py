@@ -279,7 +279,7 @@ async def test_abandoned_coalesced_query_cancels_its_underlying_work(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_git_queries_coalesce_duplicates_and_use_the_global_concurrency_budget(
+async def test_git_queries_serialize_per_repository_and_use_the_global_concurrency_budget(
     tmp_path: Path,
 ) -> None:
     service = GitQueryService(
@@ -332,12 +332,12 @@ async def test_git_queries_coalesce_duplicates_and_use_the_global_concurrency_bu
             break
         await asyncio.sleep(0)
 
-    assert set(started) == {"a-status", "a-diff"}
+    assert set(started) == {"a-status", "b-status"}
     assert maximum_total == 2
-    assert maximum_by_repository["repo-a"] == 2
+    assert maximum_by_repository["repo-a"] == 1
     release.set()
     assert set(await asyncio.gather(*tasks)) == {"a-status", "a-diff", "b-status"}
-    assert maximum_by_repository["repo-a"] == 2
+    assert maximum_by_repository["repo-a"] == 1
 
 
 @pytest.mark.asyncio

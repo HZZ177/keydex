@@ -887,6 +887,8 @@ def _branch_error(exc: SessionForkServiceError) -> HTTPException:
         "message_event_not_found": status.HTTP_404_NOT_FOUND,
         "turn_not_found": status.HTTP_404_NOT_FOUND,
         "checkpoint_not_found": status.HTTP_404_NOT_FOUND,
+        "latest_checkpoint_missing": status.HTTP_400_BAD_REQUEST,
+        "latest_fork_source_missing": status.HTTP_400_BAD_REQUEST,
         "checkpoint_source_ambiguous": status.HTTP_400_BAD_REQUEST,
         "checkpoint_id_empty": status.HTTP_400_BAD_REQUEST,
         "reverse_checkpoint_source_unsupported": status.HTTP_400_BAD_REQUEST,

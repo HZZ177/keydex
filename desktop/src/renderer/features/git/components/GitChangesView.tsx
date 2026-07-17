@@ -258,7 +258,7 @@ function GitChangeRow({
   );
 }
 
-const VIRTUAL_CHANGE_ROW_HEIGHT = 31;
+const VIRTUAL_CHANGE_ROW_HEIGHT = 30;
 const VIRTUAL_CHANGE_OVERSCAN = 8;
 
 function VirtualizedChangesTree({

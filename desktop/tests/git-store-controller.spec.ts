@@ -93,6 +93,29 @@ describe("Git store controller", () => {
     controller.dispose();
   });
 
+  it("runs different refresh domains sequentially for one repository", async () => {
+    const pendingStatus = deferred<GitStatusSnapshot>();
+    const runtime = {
+      subscribe: vi.fn(() => () => undefined),
+      status: vi.fn().mockReturnValue(pendingStatus.promise),
+      refs: vi.fn().mockResolvedValue({ repositoryId, repositoryVersion: version("fresh"), refs: [] }),
+    } as unknown as GitRuntime;
+    const controller = new GitStoreController(preparedStore(), runtime);
+    const refresh = controller.refreshRepository({
+      workspaceId: "workspace-a",
+      projectRoot: "C:/project",
+      repositoryId,
+    }, ["status", "refs"]);
+
+    expect(runtime.status).toHaveBeenCalledTimes(1);
+    expect(runtime.refs).not.toHaveBeenCalled();
+    pendingStatus.resolve(status("fresh"));
+    await refresh;
+
+    expect(runtime.refs).toHaveBeenCalledTimes(1);
+    controller.dispose();
+  });
+
   it("coalesces watcher domains and ignores duplicate sequences", async () => {
     vi.useFakeTimers();
     const runtime = {
@@ -139,6 +162,7 @@ describe("Git store controller", () => {
       retryable: false,
       error: null,
     };
+    controller.setForegroundActive(true);
     await expect(controller.runCommand(async () => failed)).resolves.toBe(failed);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(runtime.status).toHaveBeenCalledTimes(1);
@@ -231,6 +255,65 @@ describe("Git store controller", () => {
 
     expect(runtime.status).toHaveBeenCalledTimes(1);
     expect(runtime.diff).not.toHaveBeenCalled();
+    controller.dispose();
+    vi.useRealTimers();
+  });
+
+  it("keeps worktree path filtering single-flight and schedules one trailing batch", async () => {
+    vi.useFakeTimers();
+    const first = deferred<string[]>();
+    const second = deferred<string[]>();
+    const runtime = {
+      subscribe: vi.fn(() => () => undefined),
+      worktreePaths: vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise),
+      status: vi.fn(),
+    } as unknown as GitRuntime;
+    const controller = new GitStoreController(preparedStore(), runtime, { debounceMs: 20 });
+
+    controller.handleExternalWorktreePaths([{ repositoryId, path: "src/a.ts" }]);
+    await vi.advanceTimersByTimeAsync(25);
+    expect(runtime.worktreePaths).toHaveBeenCalledTimes(1);
+
+    controller.handleExternalWorktreePaths([{ repositoryId, path: "src/b.ts" }]);
+    await vi.advanceTimersByTimeAsync(25);
+    expect(runtime.worktreePaths).toHaveBeenCalledTimes(1);
+
+    first.resolve([]);
+    await vi.advanceTimersByTimeAsync(25);
+    expect(runtime.worktreePaths).toHaveBeenCalledTimes(2);
+    expect(runtime.worktreePaths).toHaveBeenLastCalledWith(
+      expect.objectContaining({ repositoryId }),
+      ["src/b.ts"],
+    );
+    second.resolve([]);
+    await vi.advanceTimersByTimeAsync(0);
+    controller.dispose();
+    vi.useRealTimers();
+  });
+
+  it("keeps expensive invalidated domains stale until the Git surface is visible", async () => {
+    vi.useFakeTimers();
+    const runtime = {
+      subscribe: vi.fn(() => () => undefined),
+      status: vi.fn().mockResolvedValue(status("background")),
+      history: vi.fn().mockResolvedValue({ repositoryId, repositoryVersion: version("foreground"), commits: [], nextCursor: null }),
+      diff: vi.fn().mockResolvedValue({ repositoryId, repositoryVersion: version("foreground"), files: [] }),
+    } as unknown as GitRuntime;
+    const store = preparedStore();
+    const controller = new GitStoreController(store, runtime, { debounceMs: 20 });
+
+    controller.handleMetadataEvent(event(1, ["status", "history", "diff"]));
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(runtime.status).toHaveBeenCalledTimes(1);
+    expect(runtime.history).not.toHaveBeenCalled();
+    expect(runtime.diff).not.toHaveBeenCalled();
+    expect(store.getState().invalidatedDomainsByRepository[repositoryId]).toEqual(["history", "diff"]);
+
+    controller.setForegroundActive(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runtime.history).toHaveBeenCalledTimes(1);
+    expect(runtime.diff).toHaveBeenCalledTimes(1);
     controller.dispose();
     vi.useRealTimers();
   });

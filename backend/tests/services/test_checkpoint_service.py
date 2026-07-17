@@ -60,6 +60,22 @@ def _prepare_branchable_session(tmp_path):
         action="user_message",
         data={"content": "问题"},
     )
+    repositories.message_events.append(
+        event_id="evt_stream_1",
+        session_id="ses_source",
+        trace_record_id="trace_1",
+        turn_index=1,
+        action="stream_batch",
+        data={"content": "回答"},
+    )
+    repositories.message_events.append(
+        event_id="evt_subagent_stream_1",
+        session_id="ses_source",
+        trace_record_id="trace_1",
+        turn_index=1,
+        action="stream_batch",
+        data={"content": "子代理回答", "is_subagent": True},
+    )
     return repositories, saver, event
 
 
@@ -73,6 +89,8 @@ def test_checkpoint_service_lists_and_resolves_checkpoint_sources(tmp_path) -> N
     by_event = service.resolve_source(session_id="ses_source", message_event_id=event.id)
     by_turn = service.resolve_source(session_id="ses_source", turn_index=1)
     by_checkpoint = service.resolve_source(session_id="ses_source", checkpoint_id="ckpt_1")
+    by_latest_completed = service.resolve_source(session_id="ses_source")
+    by_latest_checkpoint = service.resolve_latest_checkpoint(session_id="ses_source")
 
     assert latest["exists"] is True
     assert latest["checkpoint"]["checkpoint_id"] == "ckpt_1"
@@ -84,6 +102,12 @@ def test_checkpoint_service_lists_and_resolves_checkpoint_sources(tmp_path) -> N
     assert by_event.source_type == "message_event"
     assert by_turn.turn_index == 1
     assert by_checkpoint.source_type == "checkpoint"
+    assert by_latest_completed.checkpoint_id == "ckpt_1"
+    assert by_latest_completed.message_event_id == "evt_stream_1"
+    assert by_latest_completed.source_type == "latest_completed"
+    assert by_latest_checkpoint.checkpoint_id == "ckpt_1"
+    assert by_latest_checkpoint.message_event_id is None
+    assert by_latest_checkpoint.source_type == "latest_checkpoint"
 
 
 def test_checkpoint_service_returns_missing_latest_without_error(tmp_path) -> None:
@@ -103,6 +127,11 @@ def test_checkpoint_service_returns_missing_latest_without_error(tmp_path) -> No
         "active_session_id": "ses_empty",
         "checkpoint": None,
     }
+
+    with pytest.raises(CheckpointServiceError) as exc_info:
+        service.resolve_source(session_id="ses_empty")
+
+    assert exc_info.value.code == "latest_fork_source_missing"
 
 
 def test_checkpoint_service_rejects_failed_trace_source(tmp_path) -> None:

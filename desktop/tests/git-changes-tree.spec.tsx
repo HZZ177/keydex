@@ -22,6 +22,28 @@ describe("Git changes tree", () => {
     expect(entries.some((entry) => entry.displayPath.includes("old.ts → src/new.ts"))).toBe(true);
     expect(entries.some((entry) => entry.binary)).toBe(true);
     expect(entries.some((entry) => entry.submodule)).toBe(true);
+    expect(groups[0]?.entries.map((entry) => entry.name)).toEqual([
+      "asset.bin",
+      "both.ts",
+      "core",
+      "edit.ts",
+      "new.ts",
+    ]);
+  });
+
+  it("uses the full path as a stable tie-breaker for matching file names", () => {
+    const base = status().files[0]!;
+    const groups = groupGitChanges([
+      { ...base, path: "zeta/shared.ts", originalPath: null },
+      { ...base, path: "middle/a.ts", originalPath: null },
+      { ...base, path: "alpha/shared.ts", originalPath: null },
+    ]);
+
+    expect(groups[0]?.entries.map((entry) => entry.path)).toEqual([
+      "middle/a.ts",
+      "alpha/shared.ts",
+      "zeta/shared.ts",
+    ]);
   });
 
   it("builds a direct commit scope from selected files and excludes conflicts", () => {
@@ -193,10 +215,10 @@ describe("Git changes tree", () => {
     expect(screen.getAllByRole("treeitem").length).toBeLessThanOrEqual(27);
     expect(performance.now() - started).toBeLessThan(1_000);
 
-    const maximumScrollTop = 5_001 * 31 - 290;
+    const maximumScrollTop = 5_001 * 30 - 290;
     fireEvent.scroll(scroller!, { target: { scrollTop: maximumScrollTop } });
     expect(screen.getByRole("treeitem", { name: /src\/file-999.ts modified/ })).not.toBeNull();
-    expect(changesVirtualWindow(5_001, maximumScrollTop, 290)).toMatchObject({ renderedCount: 18, rowHeight: 31 });
+    expect(changesVirtualWindow(5_001, maximumScrollTop, 290)).toMatchObject({ renderedCount: 18, rowHeight: 30 });
   });
 });
 

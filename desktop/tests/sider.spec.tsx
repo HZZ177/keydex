@@ -818,7 +818,7 @@ describe("Sider", () => {
         sessionType: "workspace",
         workspaceId: "ws-1",
         page: 1,
-        pageSize: 100,
+        pageSize: 50,
       });
     });
     expect(await within(group).findByRole("button", { name: "项目会话 15" })).not.toBeNull();
@@ -842,6 +842,73 @@ describe("Sider", () => {
     expect(within(group).queryByRole("button", { name: "项目会话 17" })).toBeNull();
     expect(within(group).getByRole("button", { name: "展开 keydex 会话历史" })).not.toBeNull();
     expect(within(group).queryByRole("button", { name: "折叠 keydex 会话历史" })).toBeNull();
+  });
+
+  it("loads only enough workspace history for the requested expansion", async () => {
+    const allWorkspaceThreads = Array.from({ length: 258 }, (_, index) =>
+      thread({
+        id: `workspace-${index + 1}`,
+        title: `历史会话 ${index + 1}`,
+        session_type: "workspace",
+        workspace_id: "ws-1",
+        workspace: workspace("ws-1", "keydex"),
+        updated_at: `2026-06-${String(30 - Math.floor(index / 24)).padStart(2, "0")}T${String(23 - (index % 24)).padStart(2, "0")}:00:00Z`,
+      }),
+    );
+    const initialThreads = allWorkspaceThreads.slice(0, 6);
+    const listSessions = vi.fn((options?: ListSessionsOptions) => {
+      if (options?.workspaceId === "ws-1") {
+        const start = ((options.page ?? 1) - 1) * (options.pageSize ?? 50);
+        return Promise.resolve({
+          list: allWorkspaceThreads.slice(start, start + (options.pageSize ?? 50)),
+          total: allWorkspaceThreads.length,
+          page: options.page ?? 1,
+          page_size: options.pageSize ?? 50,
+        });
+      }
+      return Promise.resolve({ list: initialThreads, total: initialThreads.length, page: 1, page_size: 50 });
+    });
+    const runtime = fakeRuntime(initialThreads);
+    runtime.conversation.listSessions = listSessions;
+
+    renderSider(<Sider runtime={runtime} />);
+
+    const group = await screen.findByRole("region", { name: "keydex" });
+    fireEvent.click(within(group).getByRole("button", { name: "展开 keydex 会话历史" }));
+
+    expect(await within(group).findByRole("button", { name: "历史会话 15" })).not.toBeNull();
+    await waitFor(() => expect(listSessions).toHaveBeenCalledTimes(2));
+    expect(listSessions).toHaveBeenLastCalledWith({
+      sessionType: "workspace",
+      workspaceId: "ws-1",
+      page: 1,
+      pageSize: 50,
+    });
+    expect(listSessions).not.toHaveBeenCalledWith(expect.objectContaining({ page: 2 }));
+    expect(within(group).getByRole("button", { name: "展开 keydex 会话历史" }).textContent).toContain("展开会话");
+  });
+
+  it("expands immediately when the initial session cache already has enough workspace rows", async () => {
+    const cachedWorkspaceThreads = Array.from({ length: 20 }, (_, index) =>
+      thread({
+        id: `cached-workspace-${index + 1}`,
+        title: `缓存会话 ${index + 1}`,
+        session_type: "workspace",
+        workspace_id: "ws-1",
+        workspace: workspace("ws-1", "keydex"),
+        updated_at: `2026-06-17T${String(23 - index).padStart(2, "0")}:00:00Z`,
+      }),
+    );
+    const runtime = fakeRuntime(cachedWorkspaceThreads);
+
+    renderSider(<Sider runtime={runtime} />);
+
+    const group = await screen.findByRole("region", { name: "keydex" });
+    fireEvent.click(within(group).getByRole("button", { name: "展开 keydex 会话历史" }));
+
+    expect(within(group).getByRole("button", { name: "缓存会话 15" })).not.toBeNull();
+    expect(runtime.conversation.listSessions).toHaveBeenCalledTimes(1);
+    expect(within(group).getByRole("button", { name: "展开 keydex 会话历史" }).textContent).toContain("展开会话");
   });
 
   it("expands hidden session history when navigation targets an overflow item", async () => {
@@ -1451,7 +1518,7 @@ describe("Sider", () => {
     });
   });
 
-  it("forks a session from the latest complete turn in the action menu", async () => {
+  it("asks the backend to fork the latest stable checkpoint from the action menu", async () => {
     const sourceSession = thread({ id: "thread-a", title: "可派生会话" });
     const forkedSession = thread({
       id: "thread-fork",
@@ -1459,39 +1526,7 @@ describe("Sider", () => {
       parent_session_id: "thread-a",
       updated_at: "2026-06-17T11:30:00Z",
     });
-    const loadHistory = vi.fn().mockResolvedValue(
-      historyResponse(
-        sourceSession,
-        [
-          chatMessage({
-            role: "user",
-            content: "上一轮问题",
-            messageEventId: "event-user-complete",
-            turnIndex: 1,
-          }),
-          chatMessage({
-            role: "assistant",
-            content: "上一轮回答",
-            messageEventId: "event-assistant-complete",
-            turnIndex: 1,
-          }),
-          chatMessage({
-            role: "user",
-            content: "正在进行的问题",
-            messageEventId: "event-user-running",
-            turnIndex: 2,
-          }),
-          chatMessage({
-            role: "assistant",
-            content: "正在流式输出",
-            messageEventId: "event-assistant-running",
-            status: "streaming",
-            streaming: true,
-            turnIndex: 2,
-          }),
-        ],
-      ),
-    );
+    const loadHistory = vi.fn();
     const forkSession = vi.fn().mockResolvedValue(branchResponse(forkedSession));
     const runtime = fakeRuntime([sourceSession], { forkSession, loadHistory });
     const onNavigate = vi.fn();
@@ -1501,10 +1536,8 @@ describe("Sider", () => {
     await screen.findByText("可派生会话");
     fireEvent.click(within(openSessionMenu("可派生会话")).getByRole("menuitem", { name: "从对话派生" }));
 
-    await waitFor(() => {
-      expect(loadHistory).toHaveBeenCalledWith("thread-a", { pageSize: 100 });
-    });
-    expect(forkSession).toHaveBeenCalledWith("thread-a", { messageEventId: "event-assistant-complete" });
+    expect(loadHistory).not.toHaveBeenCalled();
+    expect(forkSession).toHaveBeenCalledWith("thread-a", {});
     await waitFor(() => {
       expect(onNavigate).toHaveBeenCalledWith("/conversation/thread-fork");
     });

@@ -15,6 +15,7 @@ const RETRYABLE_COMMANDS = new Set(["fetch", "update", "push"]);
 export interface GitStoreControllerOptions {
   debounceMs?: number;
   operationPollMs?: number;
+  worktreeFailureBackoffMs?: number;
 }
 
 export interface GitWorktreePathChange {
@@ -29,11 +30,16 @@ export class GitStoreController {
   private readonly timers = new Map<GitRepositoryId, ReturnType<typeof setTimeout>>();
   private readonly pendingWorktreePaths = new Map<GitRepositoryId, Set<string>>();
   private readonly worktreePathTimers = new Map<GitRepositoryId, ReturnType<typeof setTimeout>>();
+  private readonly worktreePathRefreshes = new Map<GitRepositoryId, Promise<void>>();
+  private readonly worktreeFailureRetryAt = new Map<GitRepositoryId, number>();
   private readonly lastEventSequence = new Map<GitRepositoryId, number>();
   private readonly retrySubmissions = new Map<string, () => Promise<GitCommandResult>>();
   private readonly unsubscribe: () => void;
   private readonly debounceMs: number;
   private readonly operationPollMs: number;
+  private readonly worktreeFailureBackoffMs: number;
+  private foregroundActive = false;
+  private disposed = false;
 
   constructor(
     private readonly store: GitStore,
@@ -42,7 +48,21 @@ export class GitStoreController {
   ) {
     this.debounceMs = options.debounceMs ?? 250;
     this.operationPollMs = options.operationPollMs ?? 250;
+    this.worktreeFailureBackoffMs = options.worktreeFailureBackoffMs ?? 2_000;
     this.unsubscribe = runtime.subscribe((event) => this.handleMetadataEvent(event));
+  }
+
+  setForegroundActive(active: boolean): void {
+    if (this.foregroundActive === active) return;
+    this.foregroundActive = active;
+    if (!active) return;
+    const state = this.store.getState();
+    const project = state.activeWorkspaceId ? state.projects[state.activeWorkspaceId] : null;
+    const repositoryId = project?.selectedRepositoryId;
+    if (!repositoryId) return;
+    const pending = state.invalidatedDomainsByRepository[repositoryId] ?? [];
+    if (pending.length === 0) return;
+    this.scheduleRepositoryRefresh(repositoryId, pending, true);
   }
 
   async activateProject(scope: GitProjectScope): Promise<void> {
@@ -211,12 +231,7 @@ export class GitStoreController {
     }
     for (const repositoryId of new Set(changes.map((change) => change.repositoryId))) {
       if (!this.pendingWorktreePaths.has(repositoryId)) continue;
-      const previous = this.worktreePathTimers.get(repositoryId);
-      if (previous) clearTimeout(previous);
-      this.worktreePathTimers.set(repositoryId, setTimeout(() => {
-        this.worktreePathTimers.delete(repositoryId);
-        void this.flushExternalWorktreePaths(repositoryId);
-      }, this.debounceMs));
+      this.scheduleWorktreePathFlush(repositoryId);
     }
   }
 
@@ -230,12 +245,14 @@ export class GitStoreController {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.unsubscribe();
     this.timers.forEach(clearTimeout);
     this.timers.clear();
     this.worktreePathTimers.forEach(clearTimeout);
     this.worktreePathTimers.clear();
     this.pendingWorktreePaths.clear();
+    this.worktreeFailureRetryAt.clear();
     this.requestedDomains.clear();
     this.retrySubmissions.clear();
   }
@@ -251,11 +268,38 @@ export class GitStoreController {
     }
     try {
       const relevantPaths = await this.runtime.worktreePaths(scope, Array.from(paths));
+      this.worktreeFailureRetryAt.delete(repositoryId);
       if (relevantPaths.length > 0) this.handleExternalWorktreeChanges([repositoryId]);
     } catch {
-      // A filtering failure must not hide a real worktree change.
-      this.handleExternalWorktreeChanges([repositoryId]);
+      // Preserve correctness without turning a persistent filter failure into
+      // an unbounded full-status refresh loop.
+      const now = Date.now();
+      const retryAt = this.worktreeFailureRetryAt.get(repositoryId) ?? 0;
+      if (now >= retryAt) {
+        this.worktreeFailureRetryAt.set(repositoryId, now + this.worktreeFailureBackoffMs);
+        this.handleExternalWorktreeChanges([repositoryId]);
+      }
     }
+  }
+
+  private scheduleWorktreePathFlush(repositoryId: GitRepositoryId): void {
+    const previous = this.worktreePathTimers.get(repositoryId);
+    if (previous) clearTimeout(previous);
+    this.worktreePathTimers.set(repositoryId, setTimeout(() => {
+      this.worktreePathTimers.delete(repositoryId);
+      this.startWorktreePathFlush(repositoryId);
+    }, this.debounceMs));
+  }
+
+  private startWorktreePathFlush(repositoryId: GitRepositoryId): void {
+    if (this.disposed || this.worktreePathRefreshes.has(repositoryId)) return;
+    const refresh = this.flushExternalWorktreePaths(repositoryId).finally(() => {
+      this.worktreePathRefreshes.delete(repositoryId);
+      if (!this.disposed && this.pendingWorktreePaths.get(repositoryId)?.size) {
+        this.scheduleWorktreePathFlush(repositoryId);
+      }
+    });
+    this.worktreePathRefreshes.set(repositoryId, refresh);
   }
 
   private async drainRepositoryRefreshes(scope: GitRepositoryScope): Promise<void> {
@@ -268,7 +312,14 @@ export class GitStoreController {
       const domains = Array.from(pending);
       this.requestedDomains.delete(scope.repositoryId);
       const epoch = this.store.getState().repositoryEpochs[scope.repositoryId] ?? 0;
-      await Promise.allSettled(domains.map((domain) => this.refreshDomain(scope, domain, epoch)));
+      for (const domain of domains) {
+        try {
+          await this.refreshDomain(scope, domain, epoch);
+        } catch {
+          // One failed domain must not prevent the remaining requested domains
+          // from draining, but domains for one repository never overlap.
+        }
+      }
     }
   }
 
@@ -337,18 +388,33 @@ export class GitStoreController {
     const mapped = mapInvalidationDomains(domains);
     if (mapped.length === 0) return;
     this.store.getState().invalidateRepository(repositoryId, mapped);
+    this.scheduleRepositoryRefresh(repositoryId, mapped, immediate);
+  }
+
+  private scheduleRepositoryRefresh(
+    repositoryId: GitRepositoryId,
+    fallbackDomains: readonly RefreshDomain[],
+    immediate: boolean,
+  ): void {
     const repository = this.store.getState().repositories[repositoryId];
     const project = repository
       ? this.store.getState().projects[repository.workspaceId]
       : null;
     if (!project || project.selectedRepositoryId !== repositoryId) return;
+    const demanded = this.foregroundActive
+      ? fallbackDomains
+      : fallbackDomains.filter(isBackgroundRefreshDomain);
+    if (demanded.length === 0) return;
     const previous = this.timers.get(repositoryId);
     if (previous) clearTimeout(previous);
     const run = () => {
       this.timers.delete(repositoryId);
       const scope = this.scopeForRepository(repositoryId);
       if (!scope) return;
-      const pending = this.store.getState().invalidatedDomainsByRepository[repositoryId] ?? mapped;
+      const invalidated = this.store.getState().invalidatedDomainsByRepository[repositoryId] ?? demanded;
+      const pending = this.foregroundActive
+        ? invalidated
+        : invalidated.filter(isBackgroundRefreshDomain);
       void this.refreshRepository(scope, pending);
     };
     if (immediate) {
@@ -387,6 +453,10 @@ function isRefreshDomain(value: string): value is RefreshDomain {
 
 function isBareRepositoryDomain(domain: RefreshDomain): boolean {
   return domain === "refs" || domain === "history";
+}
+
+function isBackgroundRefreshDomain(domain: RefreshDomain): boolean {
+  return domain === "status" || domain === "refs";
 }
 
 function arraysEqual(left: readonly string[], right: readonly string[]): boolean {

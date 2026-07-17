@@ -70,10 +70,30 @@ describe("Layout", () => {
     const overlay = screen.getByTestId("product-showcase-overlay");
     expect(overlay.getAttribute("data-phase")).toBe("open");
     expect(screen.getByRole("dialog", { name: "Keydex" })).not.toBeNull();
-    expect(screen.getByAltText("Keydex 3D 小人偶")).not.toBeNull();
+    expect(screen.getByRole("img", { name: "可交互的 Keydex 粒子球" })).not.toBeNull();
+    expect(screen.queryByAltText("Keydex 3D 小人偶")).toBeNull();
+    expect(screen.queryByText("移动聚散 · 拖动旋转 · 点击释放")).toBeNull();
     expect(screen.getByRole("button", { name: "回到应用" })).not.toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "回到应用" }));
+
+    expect(overlay.getAttribute("data-phase")).toBe("exiting");
+    fireEvent.animationEnd(overlay);
+    expect(screen.queryByTestId("product-showcase-overlay")).toBeNull();
+    expect(screen.getByText("内容区")).not.toBeNull();
+  });
+
+  it.each(["Enter", " "])("returns from the product particle page with %j", (key) => {
+    renderLayout(
+      <Layout title="测试会话">
+        <div>内容区</div>
+      </Layout>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Keydex" }));
+    const overlay = screen.getByTestId("product-showcase-overlay");
+
+    fireEvent.keyDown(window, { key });
 
     expect(overlay.getAttribute("data-phase")).toBe("exiting");
     fireEvent.animationEnd(overlay);

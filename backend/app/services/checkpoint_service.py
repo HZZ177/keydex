@@ -105,10 +105,11 @@ class CheckpointService:
             bool((message_event_id or "").strip()),
             turn_index is not None,
         ]
-        if sum(1 for value in provided if value) != 1:
+        source_count = sum(1 for value in provided if value)
+        if source_count > 1:
             raise CheckpointServiceError(
                 "checkpoint_source_ambiguous",
-                "必须且只能提供一种 fork 来源",
+                "最多只能提供一种 fork 来源",
                 {
                     "checkpoint_id": checkpoint_id,
                     "trace_id": trace_id,
@@ -116,6 +117,8 @@ class CheckpointService:
                     "turn_index": turn_index,
                 },
             )
+        if source_count == 0:
+            return self.resolve_latest_completed(session_id=session_id)
         if checkpoint_id:
             return self.resolve_checkpoint(
                 session_id=session_id,
@@ -132,6 +135,80 @@ class CheckpointService:
         if turn_index is None:
             raise AssertionError("unreachable source state")
         return self.resolve_turn(session_id=session_id, turn_index=turn_index)
+
+    def resolve_latest_completed(self, *, session_id: str) -> CheckpointSource:
+        session = self._require_session(session_id)
+        active_session_id = self._active_thread_id(session)
+        with self.repositories.db.connect() as conn:
+            row = conn.execute(
+                """
+                select trace.trace_id, trace.turn_index, trace.output_checkpoint_id,
+                       coalesce(trace.output_checkpoint_ns, '') as output_checkpoint_ns,
+                       event.id as message_event_id
+                from trace_record as trace
+                join checkpoints_v2 as checkpoint
+                  on checkpoint.thread_id = ?
+                 and checkpoint.checkpoint_ns = coalesce(trace.output_checkpoint_ns, '')
+                 and checkpoint.checkpoint_id = trace.output_checkpoint_id
+                join message_events as event
+                  on event.session_id = trace.session_id
+                 and event.trace_record_id = trace.trace_id
+                 and event.action in ('ai_message', 'stream_batch')
+                 and (
+                       event.action = 'ai_message'
+                       or coalesce(json_extract(event.data_json, '$.is_subagent'), 0) = 0
+                 )
+                 and event.is_deleted = 0
+                where trace.session_id = ?
+                  and trace.status = 'completed'
+                  and trace.output_checkpoint_id is not null
+                  and trace.is_deleted = 0
+                order by trace.turn_index desc, trace.end_time desc,
+                         trace.created_at desc, event.seq desc
+                limit 1
+                """,
+                (active_session_id, session.id),
+            ).fetchone()
+        if row is None:
+            raise CheckpointServiceError(
+                "latest_fork_source_missing",
+                "没有可派生的完整回合",
+                {
+                    "session_id": session.id,
+                    "active_session_id": active_session_id,
+                },
+            )
+        return CheckpointSource(
+            session_id=session.id,
+            active_session_id=active_session_id,
+            checkpoint_id=str(row["output_checkpoint_id"]),
+            checkpoint_ns=str(row["output_checkpoint_ns"] or ""),
+            trace_id=str(row["trace_id"]),
+            turn_index=int(row["turn_index"]),
+            message_event_id=str(row["message_event_id"]),
+            source_type="latest_completed",
+        )
+
+    def resolve_latest_checkpoint(self, *, session_id: str) -> CheckpointSource:
+        session = self._require_session(session_id)
+        active_session_id = self._active_thread_id(session)
+        row = self._latest_checkpoint_row(active_session_id, "")
+        if row is None:
+            raise CheckpointServiceError(
+                "latest_checkpoint_missing",
+                "当前会话没有可用 checkpoint",
+                {
+                    "session_id": session.id,
+                    "active_session_id": active_session_id,
+                },
+            )
+        return CheckpointSource(
+            session_id=session.id,
+            active_session_id=active_session_id,
+            checkpoint_id=str(row["checkpoint_id"]),
+            checkpoint_ns=str(row["checkpoint_ns"] or ""),
+            source_type="latest_checkpoint",
+        )
 
     def resolve_checkpoint(
         self,

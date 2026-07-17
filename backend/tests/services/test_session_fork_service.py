@@ -181,20 +181,90 @@ def test_session_fork_service_allows_multiple_forks_from_same_message(tmp_path) 
     )
 
 
-def test_session_fork_service_allows_target_session_tag_override(tmp_path) -> None:
+def test_session_fork_service_uses_latest_completed_checkpoint_by_default(tmp_path) -> None:
+    repositories, saver = _prepare_source(tmp_path)
+    with repositories.db.transaction() as conn:
+        conn.execute("delete from message_events where id = ?", ("evt_ai_2",))
+    repositories.message_events.append(
+        event_id="evt_stream_2",
+        session_id="ses_source",
+        trace_record_id="trace_2",
+        turn_index=2,
+        action="stream_batch",
+        data={"session_id": "ses_source", "content": "回答 2"},
+    )
+    latest = saver.get_tuple(
+        {"configurable": {"thread_id": "ses_source", "checkpoint_ns": ""}}
+    )
+    assert latest is not None
+    saver.put(latest.config, _checkpoint("ckpt_running"), {"step": 3}, {})
+    repositories.trace_records.create(
+        trace_id="trace_running",
+        session_id="ses_source",
+        active_session_id="ses_source",
+        scene_id="desktop-agent",
+        user_id="local-user",
+        turn_index=3,
+        root_node_id="root_running",
+    )
+    repositories.message_events.append(
+        event_id="evt_user_running",
+        session_id="ses_source",
+        trace_record_id="trace_running",
+        turn_index=3,
+        action="user_message",
+        data={"session_id": "ses_source", "content": "运行中的问题"},
+    )
+
+    result = SessionForkService(repositories, checkpointer=saver).fork_session(
+        session_id="ses_source",
+        user_id="local-user",
+    )
+
+    assert result.source.source_type == "latest_completed"
+    assert result.source.trace_id == "trace_2"
+    assert result.source.message_event_id == "evt_stream_2"
+    assert result.source.checkpoint_id == "ckpt_2"
+    copied_events = repositories.message_events.list_by_session(result.session.id)
+    assert {event.turn_index for event in copied_events} == {1, 2}
+    cloned = saver.get_tuple(
+        {"configurable": {"thread_id": result.session.id, "checkpoint_ns": ""}}
+    )
+    assert cloned is not None
+    assert cloned.config["configurable"]["checkpoint_id"] == "ckpt_2"
+
+
+def test_session_fork_service_creates_btw_from_latest_checkpoint_without_history(tmp_path) -> None:
     repositories, saver = _prepare_source(tmp_path)
     service = SessionForkService(repositories, checkpointer=saver)
+    latest = saver.get_tuple(
+        {"configurable": {"thread_id": "ses_source", "checkpoint_ns": ""}}
+    )
+    assert latest is not None
+    saver.put(latest.config, _checkpoint("ckpt_running"), {"step": 3}, {})
 
-    forked = service.fork_session(
+    result = service.fork_session(
         session_id="ses_source",
         user_id="local-user",
         message_event_id="evt_ai_1",
         title="临时分支",
         session_tag="btw",
-    ).session
+    )
+    forked = result.session
 
     assert forked.session_tag == "btw"
-    assert repositories.session_forks.get_by_target(forked.id) is not None
+    assert result.source.source_type == "latest_checkpoint"
+    assert result.source.checkpoint_id == "ckpt_running"
+    assert result.source.message_event_id is None
+    assert result.source.turn_index is None
+    assert repositories.message_events.list_by_session(forked.id) == []
+    assert repositories.session_forks.get_by_target(forked.id) is None
+    cloned = saver.get_tuple(
+        {"configurable": {"thread_id": forked.id, "checkpoint_ns": ""}}
+    )
+    assert cloned is not None
+    assert cloned.config["configurable"]["checkpoint_id"] == "ckpt_running"
+    assert cloned.checkpoint["channel_values"]["messages"] == ["ckpt_running"]
 
 
 def test_session_reverse_rolls_back_same_session_to_user_turn_input_checkpoint(tmp_path) -> None:

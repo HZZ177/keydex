@@ -125,7 +125,9 @@ export function GitToolWindow({
   projectSelector,
 }: GitToolWindowProps) {
   const toolWindowSnapshotSelector = useMemo(createToolWindowSnapshotSelector, []);
-  const storeSnapshot = useOptionalGitStoreSelector(toolWindowSnapshotSelector);
+  const storeSnapshot = useOptionalGitStoreSelector(
+    active ? toolWindowSnapshotSelector : selectHiddenToolWindowSnapshot,
+  );
   const resolvedProject = resolveGitToolWindowProject(project, storeSnapshot);
   const controller = useOptionalGitController();
   const runtime = useOptionalGitRuntime();
@@ -205,6 +207,13 @@ export function GitToolWindow({
   const [selectedConflictPath, setSelectedConflictPath] = useState<string | null>(null);
   const [mergeEditorDirty, setMergeEditorDirty] = useState(false);
   const [pendingMergeDraftDiscard, setPendingMergeDraftDiscard] = useState<PendingMergeDraftDiscard | null>(null);
+
+  useEffect(() => {
+    controller?.setForegroundActive(active);
+    return () => {
+      if (active) controller?.setForegroundActive(false);
+    };
+  }, [active, controller]);
   const [recentlyResolvedConflict, setRecentlyResolvedConflict] = useState<{
     file: GitConflictFile;
     resolvedIndexEntry: string;
@@ -3432,6 +3441,21 @@ interface GitToolWindowStoreSnapshot {
   refs: GitStoreState["refsByRepository"][string];
   ui: GitStoreState["uiByProject"][string] | null;
   operations: readonly GitCommandResult[];
+}
+
+const HIDDEN_TOOL_WINDOW_SNAPSHOT: GitToolWindowStoreSnapshot = {
+  project: null,
+  repositories: [],
+  repositoryItems: [],
+  status: null,
+  diff: null,
+  refs: [],
+  ui: null,
+  operations: [],
+};
+
+function selectHiddenToolWindowSnapshot(): GitToolWindowStoreSnapshot {
+  return HIDDEN_TOOL_WINDOW_SNAPSHOT;
 }
 
 function createToolWindowSnapshotSelector(): (state: GitStoreState) => GitToolWindowStoreSnapshot {

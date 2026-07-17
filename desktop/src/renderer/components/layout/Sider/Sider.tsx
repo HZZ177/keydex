@@ -62,7 +62,6 @@ import { useOptionalAgentSessionRuntime } from "@/renderer/providers/AgentSessio
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
 import { useTheme } from "@/renderer/providers/ThemeProvider";
-import { latestCompleteForkSource } from "@/renderer/pages/conversation/conversationForkSource";
 import { prefersReducedMotion } from "@/renderer/utils/motionPreference";
 import {
   buildSessionMarkdown,
@@ -109,8 +108,7 @@ const EMPTY_SESSION_INDICATOR: SessionIndicator = {
 
 const WORKSPACE_SESSION_PREVIEW_LIMIT = 5;
 const WORKSPACE_SESSION_EXPAND_STEP = 10;
-const WORKSPACE_SESSION_HISTORY_PAGE_SIZE = 100;
-const SESSION_FORK_HISTORY_PAGE_SIZE = 100;
+const WORKSPACE_SESSION_HISTORY_PAGE_SIZE = 50;
 const SESSION_ACTION_MENU_WIDTH = 112;
 const SESSION_ACTION_MENU_HEIGHT = 132;
 const SESSION_CONTEXT_ACTION_MENU_HEIGHT = 166;
@@ -122,6 +120,12 @@ const PROJECT_CONTEXT_ACTION_MENU_HEIGHT = 108;
 interface SessionHistoryCacheEntry {
   sessions: AgentSession[];
   lifecycleRevision: number;
+}
+
+interface WorkspaceSessionHistoryState {
+  nextPage: number;
+  total: number | null;
+  exhausted: boolean;
 }
 
 const sessionHistoryCacheByRuntime = new WeakMap<RuntimeBridge, SessionHistoryCacheEntry>();
@@ -177,12 +181,14 @@ export function Sider({
   const controlled = conversations !== undefined;
   const cachedSessions = controlled ? null : readSessionHistoryCache(runtime);
   const [loadedSessions, setLoadedSessions] = useState<AgentSession[]>(() => cachedSessions ?? []);
+  const loadedSessionsRef = useRef(loadedSessions);
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(
     () => !controlled && cachedSessions === null && backendReady && !backendError,
   );
   const [loadingWorkspaceHistoryIds, setLoadingWorkspaceHistoryIds] = useState<Set<string>>(() => new Set());
+  const [exhaustedWorkspaceHistoryIds, setExhaustedWorkspaceHistoryIds] = useState<Set<string>>(() => new Set());
   const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
   const [editingWorkspace, setEditingWorkspace] = useState<{ id: string; title: string } | null>(null);
   const [archivingSessionId, setArchivingSessionId] = useState<string | null>(null);
@@ -198,7 +204,7 @@ export function Sider({
   const historyRef = useRef<HTMLDivElement | null>(null);
   const lifecycleEventGateRef = useRef(createLifecycleEventGate());
   const lifecycleEntityStateRef = useRef(new Map<string, string>());
-  const loadedWorkspaceHistoryIdsRef = useRef<Set<string>>(new Set());
+  const workspaceSessionHistoryByIdRef = useRef<Map<string, WorkspaceSessionHistoryState>>(new Map());
   const [showFooterFeather, setShowFooterFeather] = useState(false);
   const canMutateConversations =
     typeof runtime.conversation.updateSession === "function" && typeof runtime.conversation.archiveSession === "function";
@@ -309,12 +315,17 @@ export function Sider({
       setLoadedSessions((current) => {
         const next =
           typeof nextValue === "function" ? (nextValue as (items: AgentSession[]) => AgentSession[])(current) : nextValue;
+        loadedSessionsRef.current = next;
         writeSessionHistoryCache(runtime, next);
         return next;
       });
     },
     [runtime],
   );
+
+  useEffect(() => {
+    loadedSessionsRef.current = loadedSessions;
+  }, [loadedSessions]);
 
   useEffect(() => {
     if (controlled) {
@@ -380,6 +391,10 @@ export function Sider({
       try {
         const response = await runtime.conversation.listSessions({ pageSize: 50 });
         if (isActive()) {
+          if (options.force || !cacheWasCurrentAtStart) {
+            workspaceSessionHistoryByIdRef.current.clear();
+            setExhaustedWorkspaceHistoryIds(new Set());
+          }
           const sessionsCreatedDuringLoad = options.force || (cachedAtStart !== null && !cacheWasCurrentAtStart)
             ? null
             : readSessionHistoryCache(runtime);
@@ -687,7 +702,7 @@ export function Sider({
     }
   }
 
-  async function forkConversationFromLatestTurn(item: SiderEntry) {
+  async function forkConversationFromLatestCheckpoint(item: SiderEntry) {
     if (!canForkConversations) {
       notifications.warning("当前后端不支持派生会话");
       return;
@@ -700,13 +715,7 @@ export function Sider({
     setArchiveConfirmation(null);
     setForkingSessionId(item.id);
     try {
-      const history = await runtime.conversation.loadHistory(item.id, { pageSize: SESSION_FORK_HISTORY_PAGE_SIZE });
-      const source = latestCompleteForkSource(history.list);
-      if (!source) {
-        notifications.warning("没有可派生的完整回合");
-        return;
-      }
-      const response = await runtime.conversation.forkSession(item.id, source);
+      const response = await runtime.conversation.forkSession(item.id, {});
       setLoadedSessionsAndCache((items) => upsertSession(items, response.session));
       emitSessionCreated(response.session);
       notifications.success("已创建派生会话");
@@ -752,8 +761,9 @@ export function Sider({
   }
 
   const loadWorkspaceSessions = useCallback(
-    async (workspaceId: string) => {
-      if (controlled || loadedWorkspaceHistoryIdsRef.current.has(workspaceId) || loadingWorkspaceHistoryIds.has(workspaceId)) {
+    async (workspaceId: string, minimumItemCount: number) => {
+      const existingState = workspaceSessionHistoryByIdRef.current.get(workspaceId);
+      if (controlled || existingState?.exhausted || loadingWorkspaceHistoryIds.has(workspaceId)) {
         return;
       }
       setLoadingWorkspaceHistoryIds((current) => {
@@ -761,27 +771,44 @@ export function Sider({
         next.add(workspaceId);
         return next;
       });
+      const fetchedSessions: AgentSession[] = [];
+      let mergedSessions = loadedSessionsRef.current;
+      let historyState = existingState ?? { nextPage: 1, total: null, exhausted: false };
       try {
-        const sessions: AgentSession[] = [];
-        let page = 1;
-        while (true) {
+        while (countWorkspaceSessions(mergedSessions, workspaceId) < minimumItemCount && !historyState.exhausted) {
+          const page = historyState.nextPage;
           const response = await runtime.conversation.listSessions({
             sessionType: "workspace",
             workspaceId,
             page,
             pageSize: WORKSPACE_SESSION_HISTORY_PAGE_SIZE,
           });
-          sessions.push(...response.list);
-          if (response.list.length === 0 || sessions.length >= response.total) {
-            break;
-          }
-          page += 1;
+          fetchedSessions.push(...response.list);
+          mergedSessions = mergeSessions(mergedSessions, response.list);
+          historyState = {
+            nextPage: page + 1,
+            total: response.total,
+            exhausted:
+              response.list.length === 0
+              || page * response.page_size >= response.total,
+          };
+          workspaceSessionHistoryByIdRef.current.set(workspaceId, historyState);
         }
-        setLoadedSessionsAndCache((items) => mergeSessions(items, sessions));
-        loadedWorkspaceHistoryIdsRef.current.add(workspaceId);
       } catch (reason) {
         notifications.error(errorMessage(reason));
       } finally {
+        if (fetchedSessions.length > 0) {
+          setLoadedSessionsAndCache((items) => mergeSessions(items, fetchedSessions));
+        }
+        setExhaustedWorkspaceHistoryIds((current) => {
+          const next = new Set(current);
+          if (historyState.exhausted) {
+            next.add(workspaceId);
+          } else {
+            next.delete(workspaceId);
+          }
+          return next;
+        });
         setLoadingWorkspaceHistoryIds((current) => {
           const next = new Set(current);
           next.delete(workspaceId);
@@ -789,7 +816,7 @@ export function Sider({
         });
       }
     },
-    [controlled, loadingWorkspaceHistoryIds, notifications, runtime],
+    [controlled, loadingWorkspaceHistoryIds, notifications, runtime, setLoadedSessionsAndCache],
   );
 
   return (
@@ -894,7 +921,7 @@ export function Sider({
                   getSessionPath={getSessionPath}
                   onArchive={(item) => void archiveConversation(item)}
                   onExportSession={(item) => void exportConversation(item)}
-                  onForkSession={(item) => void forkConversationFromLatestTurn(item)}
+                  onForkSession={(item) => void forkConversationFromLatestCheckpoint(item)}
                   onStartRename={startRenameConversation}
                   onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
                   onRefresh={refreshSessionList}
@@ -924,7 +951,7 @@ export function Sider({
                   getSessionPath={getSessionPath}
                   onArchive={(item) => void archiveConversation(item)}
                   onExportSession={(item) => void exportConversation(item)}
-                  onForkSession={(item) => void forkConversationFromLatestTurn(item)}
+                  onForkSession={(item) => void forkConversationFromLatestCheckpoint(item)}
                   onStartRename={startRenameConversation}
                   onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
                   onRefresh={refreshSessionList}
@@ -969,7 +996,7 @@ export function Sider({
                 getSessionPath={getSessionPath}
                 onArchive={(item) => void archiveConversation(item)}
                 onExportSession={(item) => void exportConversation(item)}
-                onForkSession={(item) => void forkConversationFromLatestTurn(item)}
+                onForkSession={(item) => void forkConversationFromLatestCheckpoint(item)}
                 onStartRename={startRenameConversation}
                 onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
                 onRefresh={refreshSessionList}
@@ -1007,14 +1034,19 @@ export function Sider({
                   getSessionPath={getSessionPath}
                   getWorkspaceNewConversationPath={getWorkspaceNewConversationPath}
                   historyExpansionLoading={Boolean(group.workspaceId && loadingWorkspaceHistoryIds.has(group.workspaceId))}
+                  historyHasMore={Boolean(
+                    group.workspaceId && !exhaustedWorkspaceHistoryIds.has(group.workspaceId),
+                  )}
                   historyPreviewLimit={WORKSPACE_SESSION_PREVIEW_LIMIT}
                   key={group.id}
                   onLoadHistoryExpansion={
-                    group.workspaceId && !controlled ? () => loadWorkspaceSessions(group.workspaceId as string) : undefined
+                    group.workspaceId && !controlled
+                      ? (minimumItemCount) => loadWorkspaceSessions(group.workspaceId as string, minimumItemCount)
+                      : undefined
                   }
                   onArchive={(item) => void archiveConversation(item)}
                   onExportSession={(item) => void exportConversation(item)}
-                  onForkSession={(item) => void forkConversationFromLatestTurn(item)}
+                  onForkSession={(item) => void forkConversationFromLatestCheckpoint(item)}
                   onStartRename={startRenameConversation}
                   onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
                   onRefresh={refreshSessionList}
@@ -1045,7 +1077,7 @@ export function Sider({
                 getSessionPath={getSessionPath}
                 onArchive={(item) => void archiveConversation(item)}
                 onExportSession={(item) => void exportConversation(item)}
-                onForkSession={(item) => void forkConversationFromLatestTurn(item)}
+                onForkSession={(item) => void forkConversationFromLatestCheckpoint(item)}
                 onStartRename={startRenameConversation}
                 onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
                 onRefresh={refreshSessionList}
@@ -1087,16 +1119,19 @@ export function Sider({
                     historyExpansionLoading={Boolean(
                       group.workspaceId && loadingWorkspaceHistoryIds.has(group.workspaceId),
                     )}
+                    historyHasMore={Boolean(
+                      group.workspaceId && !exhaustedWorkspaceHistoryIds.has(group.workspaceId),
+                    )}
                     historyPreviewLimit={WORKSPACE_SESSION_PREVIEW_LIMIT}
                     key={group.id}
                     onLoadHistoryExpansion={
                       group.workspaceId && !controlled
-                        ? () => loadWorkspaceSessions(group.workspaceId as string)
+                        ? (minimumItemCount) => loadWorkspaceSessions(group.workspaceId as string, minimumItemCount)
                         : undefined
                     }
                     onArchive={(item) => void archiveConversation(item)}
                     onExportSession={(item) => void exportConversation(item)}
-                    onForkSession={(item) => void forkConversationFromLatestTurn(item)}
+                    onForkSession={(item) => void forkConversationFromLatestCheckpoint(item)}
                     onStartRename={startRenameConversation}
                     onStartWorkspaceRename={(workspaceId, title) => startRenameWorkspace(workspaceId, title)}
                     onRevealWorkspace={(rootPath) => void revealWorkspace(rootPath)}
@@ -1140,7 +1175,7 @@ export function Sider({
                     getSessionPath={getSessionPath}
                     onArchive={(item) => void archiveConversation(item)}
                     onExportSession={(item) => void exportConversation(item)}
-                    onForkSession={(item) => void forkConversationFromLatestTurn(item)}
+                    onForkSession={(item) => void forkConversationFromLatestCheckpoint(item)}
                     onStartRename={startRenameConversation}
                     onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
                     onRefresh={refreshSessionList}
@@ -1452,13 +1487,14 @@ interface SiderSectionProps {
   workspaceRootPath?: string;
   canManageWorkspace?: boolean;
   historyExpansionLoading?: boolean;
+  historyHasMore?: boolean;
   historyPreviewLimit?: number;
   getSessionPath?: (sessionId: string) => string;
   getWorkspaceNewConversationPath?: (workspaceId?: string) => string;
   onArchive?: (item: SiderEntry) => void;
   onExportSession?: (item: SiderEntry) => void;
   onForkSession?: (item: SiderEntry) => void;
-  onLoadHistoryExpansion?: () => Promise<void> | void;
+  onLoadHistoryExpansion?: (minimumItemCount: number) => Promise<void> | void;
   onNavigate?: (path: string) => void;
   onRefresh?: () => Promise<void> | void;
   onStartRename?: (item: SiderEntry) => void;
@@ -1559,6 +1595,7 @@ function SiderSection({
   workspaceRootPath,
   canManageWorkspace = false,
   historyExpansionLoading = false,
+  historyHasMore = false,
   historyPreviewLimit,
   getSessionPath = conversationPath,
   getWorkspaceNewConversationPath = newWorkspaceConversationPath,
@@ -1595,7 +1632,8 @@ function SiderSection({
   const normalizedHistoryLimit = Math.max(0, historyPreviewLimit ?? 0);
   const canPreviewWorkspaceHistory =
     !collapsed && (kind === "workspace" || kind === "pinned") && !hideTitle && normalizedHistoryLimit > 0;
-  const shouldLimitHistory = canPreviewWorkspaceHistory && items.length > normalizedHistoryLimit;
+  const shouldLimitHistory =
+    canPreviewWorkspaceHistory && (items.length > normalizedHistoryLimit || historyHasMore);
   const previewItems = shouldLimitHistory ? items.slice(0, normalizedHistoryLimit) : items;
   const extraItems = shouldLimitHistory ? items.slice(normalizedHistoryLimit) : [];
   const visibleExtraItemCount = shouldLimitHistory
@@ -1603,7 +1641,8 @@ function SiderSection({
     : 0;
   const visibleExtraItems = shouldLimitHistory ? extraItems.slice(0, visibleExtraItemCount) : [];
   const hasExpandedHistory = visibleExtraItemCount > 0;
-  const canExpandHistory = shouldLimitHistory && visibleExtraItemCount < extraItems.length;
+  const canExpandHistory =
+    shouldLimitHistory && (visibleExtraItemCount < extraItems.length || historyHasMore);
   const historyToggleLoading = historyExpansionLoading || localHistoryExpansionLoading;
   const canOpenSessionActionMenu = canMutate || canFork || canExport;
   const canOpenProjectActionMenu = Boolean(
@@ -1746,13 +1785,15 @@ function SiderSection({
     if (historyToggleLoading || !canExpandHistory) {
       return;
     }
-    setRequestedHistoryExpansionCount((count) => count + WORKSPACE_SESSION_EXPAND_STEP);
-    if (!onLoadHistoryExpansion) {
+    const nextRequestedCount = requestedHistoryExpansionCount + WORKSPACE_SESSION_EXPAND_STEP;
+    setRequestedHistoryExpansionCount(nextRequestedCount);
+    const minimumItemCount = normalizedHistoryLimit + nextRequestedCount;
+    if (!historyHasMore || items.length >= minimumItemCount || !onLoadHistoryExpansion) {
       return;
     }
     setLocalHistoryExpansionLoading(true);
     try {
-      await onLoadHistoryExpansion();
+      await onLoadHistoryExpansion(minimumItemCount);
     } finally {
       setLocalHistoryExpansionLoading(false);
     }
@@ -2476,6 +2517,18 @@ function writeSessionHistoryCache(runtime: RuntimeBridge, sessions: AgentSession
 
 function upsertSession(sessions: AgentSession[], session: AgentSession): AgentSession[] {
   return mergeSessions(sessions, [session]);
+}
+
+function countWorkspaceSessions(sessions: AgentSession[], workspaceId: string): number {
+  return sessions.reduce(
+    (count, session) => count + Number(
+      session.session_type === "workspace"
+      && session.workspace_id === workspaceId
+      && !session.pinned
+      && !session.pinned_at,
+    ),
+    0,
+  );
 }
 
 function mergeSessionUpdate(sessions: AgentSession[], update: AgentSessionUpdate): AgentSession[] {

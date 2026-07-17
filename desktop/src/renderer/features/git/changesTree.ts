@@ -62,7 +62,8 @@ export function groupGitChanges(files: readonly GitChangedFile[]): readonly GitC
     .map((id) => ({
       id,
       label: GROUP_LABELS[id],
-      entries: (grouped.get(id) ?? []).sort((left, right) => left.path.localeCompare(right.path)),
+      entries: (grouped.get(id) ?? []).sort((left, right) =>
+        left.name.localeCompare(right.name) || left.path.localeCompare(right.path)),
     }))
     .filter((group) => group.entries.length > 0);
 }

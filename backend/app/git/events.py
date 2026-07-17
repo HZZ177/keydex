@@ -119,9 +119,10 @@ class GitMetadataEventService:
         if not domains:
             return
         self._invalidate(repository_id)
+        version = await asyncio.to_thread(repository_version, repository)
         payload = {
             "repository_id": repository_id,
-            "repository_version": repository_version(repository),
+            "repository_version": version,
             "sequence": sequence,
             "domains": sorted(domains),
             "paths": sorted(metadata_paths)[:64],

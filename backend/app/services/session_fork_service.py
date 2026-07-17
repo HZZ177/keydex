@@ -97,19 +97,25 @@ class SessionForkService:
         turn_index: int | None = None,
     ) -> SessionForkResult:
         source_session = self._require_session(session_id)
+        checkpoint_only = self._is_checkpoint_only_fork(session_tag)
         try:
-            source = self.checkpoint_service.resolve_source(
-                session_id=session_id,
-                checkpoint_id=checkpoint_id,
-                checkpoint_ns=checkpoint_ns,
-                trace_id=trace_id,
-                message_event_id=message_event_id,
-                turn_index=turn_index,
+            source = (
+                self.checkpoint_service.resolve_latest_checkpoint(session_id=session_id)
+                if checkpoint_only
+                else self.checkpoint_service.resolve_source(
+                    session_id=session_id,
+                    checkpoint_id=checkpoint_id,
+                    checkpoint_ns=checkpoint_ns,
+                    trace_id=trace_id,
+                    message_event_id=message_event_id,
+                    turn_index=turn_index,
+                )
             )
         except CheckpointServiceError as exc:
             raise SessionForkServiceError(exc.code, exc.message, exc.details) from exc
 
-        self._validate_fork_source(source_session=source_session, source=source)
+        if not checkpoint_only:
+            self._validate_fork_source(source_session=source_session, source=source)
         target_session_id = new_id()
         try:
             self.checkpointer.clone_checkpoint_to_thread(
@@ -136,6 +142,13 @@ class SessionForkService:
                 context_compression_epoch=source_session.context_compression_epoch,
                 title_source="manual",
             )
+            if checkpoint_only:
+                logger.info(
+                    "[SessionForkService] 创建 checkpoint-only session 分支 | "
+                    f"source_session_id={source_session.id} | target_session_id={target.id} | "
+                    f"checkpoint_id={source.checkpoint_id}"
+                )
+                return SessionForkResult(session=target, source=source)
             copied_events = self._copy_visible_history(
                 source_session=source_session,
                 target_session=target,
@@ -444,6 +457,10 @@ class SessionForkService:
     def _fork_session_tag(source_session: SessionRecord, session_tag: str | None) -> str:
         cleaned = (session_tag or "").strip()
         return cleaned or source_session.session_tag
+
+    @staticmethod
+    def _is_checkpoint_only_fork(session_tag: str | None) -> bool:
+        return (session_tag or "").strip() == "btw"
 
     @staticmethod
     def _validate_fork_source(*, source_session: SessionRecord, source: CheckpointSource) -> None:

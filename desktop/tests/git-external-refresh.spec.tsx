@@ -96,8 +96,8 @@ describe("Git external change refresh", () => {
     }));
     await waitFor(() => {
       expect(fixture.gitRuntime.refs).toHaveBeenCalledTimes(2);
-      expect(fixture.gitRuntime.history).toHaveBeenCalledTimes(1);
     });
+    expect(fixture.gitRuntime.history).not.toHaveBeenCalled();
     expect(fixture.gitRuntime.status).toHaveBeenCalledTimes(1);
 
     act(() => fixture.emit({
