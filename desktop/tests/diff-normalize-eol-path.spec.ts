@@ -67,4 +67,27 @@ describe("Diff EOL, no-newline and path normalization", () => {
     expect(file?.oldOperationPath).toBe("src\\folder\\file.ts");
     expect(file?.newOperationPath).toBe("src\\folder\\file.ts");
   });
+
+  it("trusts backend diff paths instead of enforcing workspace scope in the renderer", () => {
+    const absolutePath = "D:/Pycharm Projects/kt-pm-platform/ktagent/test.md";
+    const absolute = normalizeUnifiedPatch(
+      `--- a/${absolutePath}\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-one\n-two\n`,
+    );
+    const parentRelative = normalizeUnifiedPatch(
+      "--- a/../shared/note.md\n+++ b/../shared/note.md\n@@ -1 +1 @@\n-old\n+new\n",
+    );
+
+    expect(absolute.diagnostics).toEqual([]);
+    expect(absolute.files[0]).toEqual(expect.objectContaining({
+      oldPath: absolutePath,
+      newPath: null,
+      status: "deleted",
+      deletions: 2,
+    }));
+    expect(parentRelative.diagnostics).toEqual([]);
+    expect(parentRelative.files[0]).toEqual(expect.objectContaining({
+      oldPath: "../shared/note.md",
+      newPath: "../shared/note.md",
+    }));
+  });
 });

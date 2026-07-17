@@ -453,6 +453,41 @@ describe("ToolCallBlock", () => {
     });
   });
 
+  it("renders an external absolute-path diff returned by the backend", async () => {
+    const path = String.raw`D:\Pycharm Projects\kt-pm-platform\ktagent\test.md`;
+    const patchPath = path.replaceAll("\\", "/");
+    const diff = `--- a/${patchPath}\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-one\n-two\n`;
+    render(
+      <ToolCallBlock
+        message={toolMessage(
+          "completed",
+          {
+            status: "success",
+            path,
+            files: [{
+              path,
+              operation: "delete",
+              old_path: path,
+              new_path: null,
+              added_lines: 0,
+              deleted_lines: 2,
+              diff,
+            }],
+          },
+          "delete_file",
+          { path },
+        )}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
+
+    const review = await screen.findByLabelText("文件差异");
+    expect(review.textContent).toContain(patchPath);
+    expect(review.textContent).toContain("-one");
+    expect(review.textContent).toContain("-two");
+  });
+
   it("renders move file mutation tools with move wording", () => {
     render(
       <ToolCallBlock

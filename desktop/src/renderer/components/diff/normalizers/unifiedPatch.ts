@@ -99,18 +99,6 @@ export function normalizeUnifiedPatch(
       );
       return;
     }
-    if (unsafeDiffPath(parsed.oldOperationPath) || unsafeDiffPath(parsed.newOperationPath)) {
-      diagnostics.push(
-        diagnostic(
-          "unsafe_path",
-          "差异包含工作区外或父目录穿越路径，已阻止展示该文件。",
-          "error",
-          sectionIndex,
-        ),
-      );
-      return;
-    }
-
     const baseFileId = createDiffFileId({
       scopeFingerprint,
       status: parsed.status,
@@ -459,18 +447,6 @@ function detectEol(value: string): KeydexDiffEol {
 
 function stripAB(path: string): string {
   return path.startsWith("a/") || path.startsWith("b/") ? path.slice(2) : path;
-}
-
-function unsafeDiffPath(path: string | null): boolean {
-  if (!path) return false;
-  const normalized = path.replaceAll("\\", "/");
-  return (
-    normalized.includes("\u0000") ||
-    normalized.startsWith("/") ||
-    normalized.startsWith("//") ||
-    /^[A-Za-z]:\//u.test(normalized) ||
-    normalized.split("/").includes("..")
-  );
 }
 
 function diagnostic(
