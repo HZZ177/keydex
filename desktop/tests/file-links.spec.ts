@@ -18,6 +18,16 @@ describe("file link target parsing", () => {
     });
   });
 
+  it("decodes markdown-it encoded Windows absolute paths before classifying the drive", () => {
+    expect(
+      parseFileLinkTarget("D:%5CPycharm%20Projects%5Ckeydex%5Ctest2.md"),
+    ).toEqual({
+      absolute: true,
+      line: null,
+      path: "D:\\Pycharm Projects\\keydex\\test2.md",
+    });
+  });
+
   it("parses workspace-relative source paths with line numbers", () => {
     expect(parseFileLinkTarget("desktop/src/renderer/App.tsx:8")).toEqual({
       absolute: false,
@@ -46,6 +56,8 @@ describe("file link target parsing", () => {
   it("rejects external urls and fragments", () => {
     expect(parseFileLinkTarget("https://example.test/README.md")).toBeNull();
     expect(parseFileLinkTarget("#heading")).toBeNull();
+    expect(parseFileLinkTarget("javascript%3Aalert(1).md")).toBeNull();
+    expect(parseFileLinkTarget("D:%5CDocs%5Cunsafe%00.md")).toBeNull();
   });
 
   it("recognizes platform absolute paths", () => {

@@ -93,6 +93,10 @@ describe("Markdown link protocol routing", () => {
     ["mailto:user@example.test", { kind: "external", scheme: "mailto" }],
     ["README.md:12", { kind: "file", path: "README.md", line: 12, absolute: false }],
     ["D:/Docs/README.md:8", { kind: "file", path: "D:/Docs/README.md", line: 8, absolute: true }],
+    [
+      "D:%5CPycharm%20Projects%5Ckeydex%5Ctest2.md",
+      { kind: "file", path: "D:\\Pycharm Projects\\keydex\\test2.md", line: null, absolute: true },
+    ],
     ["file:///D:/Docs/My%20Note.md:9", { kind: "file", path: "D:/Docs/My Note.md", line: 9, absolute: true }],
     ["#installation", { kind: "anchor", fragment: "installation" }],
     ["javascript:alert(1)", { kind: "unsafe", reason: "unsafe-scheme:javascript" }],
@@ -128,6 +132,32 @@ describe("Markdown link protocol routing", () => {
     });
     expect(revealAnchor).toHaveBeenCalledWith("guide");
     expect(onUnsafeLink).toHaveBeenCalledWith(expect.objectContaining({ kind: "unsafe" }));
+    controller.destroy();
+    element.remove();
+  });
+
+  it("opens markdown-it encoded Windows paths as local-file previews", async () => {
+    const element = root();
+    const openFilePreview = vi.fn();
+    const controller = new MarkdownInteractionController({
+      root: element,
+      clipboard: null,
+      openFilePreview,
+    });
+
+    await expect(
+      controller.activateLink(
+        "D:%5CPycharm%20Projects%5Ckeydex%5Ctest2.md",
+        { preventDefault: vi.fn(), stopPropagation: vi.fn() },
+      ),
+    ).resolves.toBe("handled");
+    expect(openFilePreview).toHaveBeenCalledWith({
+      request: {
+        type: "local-file",
+        path: "D:\\Pycharm Projects\\keydex\\test2.md",
+      },
+      revealTarget: null,
+    });
     controller.destroy();
     element.remove();
   });

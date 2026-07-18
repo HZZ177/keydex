@@ -157,12 +157,25 @@ export function workspaceRelativeFilePath(path: string, workspaceRootPath: strin
   return relativePath;
 }
 
-function normalizeMarkdownLinkTarget(value: string | undefined): string {
+function normalizeMarkdownLinkTarget(value: string | undefined): string | null {
   const trimmed = value?.trim() ?? "";
-  if (trimmed.startsWith("<") && trimmed.endsWith(">")) {
-    return trimmed.slice(1, -1).trim();
+  const unwrapped = trimmed.startsWith("<") && trimmed.endsWith(">")
+    ? trimmed.slice(1, -1).trim()
+    : trimmed;
+  if (!unwrapped) {
+    return unwrapped;
   }
-  return trimmed;
+  let decoded = unwrapped;
+  try {
+    decoded = decodeURIComponent(unwrapped);
+  } catch {
+    // A literal percent sign is valid in a local file name. Preserve the
+    // pre-existing path behavior when the target is not valid URI encoding.
+  }
+  if (/[\u0000-\u001f\u007f]/u.test(decoded)) {
+    return null;
+  }
+  return decoded;
 }
 
 function hasNonFileScheme(value: string): boolean {

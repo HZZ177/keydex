@@ -81,6 +81,26 @@ describe("Conversation Markdown renderer profile", () => {
     }));
   });
 
+  it("enhances markdown-it encoded Windows backslash links as local files", () => {
+    const parser = new StreamingTailParser(parserOptions);
+    const root = document.createElement("div");
+    const view = new StreamingTailView(root, {
+      registry: createConversationMarkdownRendererRegistry(),
+    });
+    const snapshot = parser.update({
+      source: "[test2.md](<D:\\Pycharm Projects\\keydex\\test2.md>)",
+      revision: "encoded-windows-file",
+      epoch: 1,
+      final: true,
+    }).snapshot;
+    view.publish(snapshot, { showCursor: false });
+    const link = root.querySelector<HTMLAnchorElement>("a")!;
+
+    expect(link.getAttribute("href")).toBe("D:%5CPycharm%20Projects%5Ckeydex%5Ctest2.md");
+    expect(link.dataset.keydexFileLink).toBe("true");
+    expect(link.dataset.keydexFilePath).toBe("D:\\Pycharm Projects\\keydex\\test2.md");
+  });
+
   it("adds real color swatches after inline hexadecimal color values without duplicating them", () => {
     const parser = new StreamingTailParser(parserOptions);
     const root = document.createElement("div");
