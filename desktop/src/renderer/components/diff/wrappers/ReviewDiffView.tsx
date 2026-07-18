@@ -19,6 +19,8 @@ export interface ReviewDiffViewProps {
   readonly wrap?: boolean;
   readonly onWrapChange?: (wrap: boolean) => void;
   readonly embedded?: boolean;
+  readonly density?: "comfortable" | "compact";
+  readonly showToolbar?: boolean;
 }
 
 export function ReviewDiffView({
@@ -30,6 +32,8 @@ export function ReviewDiffView({
   wrap,
   onWrapChange,
   embedded = true,
+  density = "comfortable",
+  showToolbar = true,
 }: ReviewDiffViewProps) {
   const focusedFile = resolveReviewFocusedFile(document, focusedPath);
   const controller = useKeydexDiffViewController(document, "review", {
@@ -100,9 +104,11 @@ export function ReviewDiffView({
         onSelectionChange={controller.setSelection}
         onActiveFileChange={focusFile}
         onExpandedFilesChange={controller.setExpandedFiles}
+        showToolbar={showToolbar}
         showFileHeader={false}
         hiddenToolbarActions={["open_file"]}
         singleFileExpanded={activeFileExpanded}
+        singleFileDensity={density}
         toolbarLeading={activeFile ? (
           <ReviewDiffToolbarFile
             file={activeFile}

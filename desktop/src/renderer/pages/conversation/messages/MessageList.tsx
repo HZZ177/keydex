@@ -257,6 +257,19 @@ export function MessageList({
     autoFollow: shouldAutoFollowMessages,
     identity: conversationIdentity,
   });
+  const historyHydrationSignature = useMemo(
+    () => visibleMessages
+      .filter((message) => message.payload.historyHydrated === true)
+      .map((message) => message.id)
+      .join("|"),
+    [visibleMessages],
+  );
+  const terminalHistoryFollowRef = useRef({
+    conversationIdentity,
+    historyHydrationSignature,
+    wasProcessing: isProcessing,
+    awaitingHistoryReplacement: false,
+  });
   const bottomBufferHeight = MESSAGE_LIST_BOTTOM_BUFFER_PX[variant];
   const canLoadOlder = Boolean(hasMoreOlder && onLoadOlder);
   const olderLoader = useMemo(
@@ -620,13 +633,40 @@ export function MessageList({
     conversationNavigation.attach(conversationTimelineRef.current);
     conversationPinRegistry.attach(virtualScrollerRef.current, conversationTimelineRef.current);
     conversationPinRegistry.sync(virtualRuntimeUnits);
+    const terminalFollow = terminalHistoryFollowRef.current;
+    if (terminalFollow.conversationIdentity !== conversationIdentity) {
+      terminalFollow.conversationIdentity = conversationIdentity;
+      terminalFollow.historyHydrationSignature = historyHydrationSignature;
+      terminalFollow.wasProcessing = isProcessing;
+      terminalFollow.awaitingHistoryReplacement = false;
+    } else {
+      if (terminalFollow.wasProcessing && !isProcessing) {
+        terminalFollow.awaitingHistoryReplacement = true;
+      }
+      if (
+        terminalFollow.awaitingHistoryReplacement
+        && terminalFollow.historyHydrationSignature !== historyHydrationSignature
+      ) {
+        // Completion canonicalizes the live child transcript with persisted
+        // history. Reassert tail ownership only for that replacement publish;
+        // notifyContentMutation remains a no-op for an explicitly detached user.
+        autoScroll.notifyContentMutation("stream-complete");
+        terminalFollow.awaitingHistoryReplacement = false;
+      }
+      terminalFollow.historyHydrationSignature = historyHydrationSignature;
+      terminalFollow.wasProcessing = isProcessing;
+    }
     updateConversationHydrationWindow();
     scheduleTailReadinessCheck();
     if (autoScroll.snapshot.bootstrapCommitted) updateVisibleVirtualTurns(virtualScrollerRef.current);
   }, [
     autoScroll.snapshot.bootstrapCommitted,
+    autoScroll.notifyContentMutation,
+    conversationIdentity,
     conversationNavigation,
     conversationPinRegistry,
+    historyHydrationSignature,
+    isProcessing,
     scheduleTailReadinessCheck,
     updateConversationHydrationWindow,
     updateVisibleVirtualTurns,

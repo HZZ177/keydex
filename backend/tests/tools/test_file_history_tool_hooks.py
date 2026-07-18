@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from backend.app.services.file_history_service import (
@@ -9,7 +12,12 @@ from backend.app.services.file_history_service import (
 )
 from backend.app.services.file_history_store import FileHistoryStoreError
 from backend.app.storage import StorageRepositories, init_database
-from backend.app.tools.base import ToolExecutionContext, ToolExecutionError
+from backend.app.subagents.models import SubagentRunSnapshot
+from backend.app.tools.base import (
+    FileHistoryExecutionScope,
+    ToolExecutionContext,
+    ToolExecutionError,
+)
 from backend.app.tools.edit_ops import delete_file_tool, edit_file_tool, move_file_tool
 from backend.app.tools.filesystem import write_file_tool
 from backend.app.tools.patch import apply_patch_tool
@@ -92,6 +100,184 @@ async def test_create_then_edit_uses_one_turn_preimage_and_restores_missing(tmp_
         canonical_paths=paths,
     )
     assert not (tmp_path / "created.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_parallel_subagent_writes_are_owned_by_parent_turn_and_previewed_together(
+    tmp_path,
+) -> None:
+    parent_context, service, repositories, snapshot = _context(tmp_path)
+    history_scope = FileHistoryExecutionScope(
+        session_id=parent_context.session_id,
+        active_session_id=parent_context.active_session_id,
+        trace_id=parent_context.trace_id,
+        turn_index=parent_context.turn_index,
+        input_snapshot_id=snapshot.id,
+    )
+    child_contexts = [
+        ToolExecutionContext(
+            session_id=f"child-{index}",
+            user_id="user-1",
+            workspace_root=tmp_path,
+            turn_index=1,
+            trace_id=f"child-trace-{index}",
+            active_session_id=f"child-{index}",
+            input_file_snapshot_id=snapshot.id,
+            file_history_service=service,
+            file_history_tracking=True,
+            file_history_scope=history_scope,
+            metadata={"tool_call_id": f"child-call-{index}"},
+        )
+        for index in range(2)
+    ]
+
+    await asyncio.gather(
+        write_file_tool({"path": "worker-a.md", "content": "A"}, child_contexts[0]),
+        write_file_tool({"path": "worker-b.md", "content": "B"}, child_contexts[1]),
+    )
+
+    mutations = repositories.file_history.list_mutations(snapshot_id=snapshot.id)
+    assert {item.canonical_path for item in mutations} == {"worker-a.md", "worker-b.md"}
+    assert {item.session_id for item in mutations} == {parent_context.session_id}
+    assert {item.trace_id for item in mutations} == {parent_context.trace_id}
+    assert {item.turn_index for item in mutations} == {parent_context.turn_index}
+    preview = service.create_preview(
+        session_id=parent_context.session_id,
+        active_session_id=parent_context.active_session_id,
+        message_event_id="message-1",
+        workspace_root=tmp_path,
+        source={"message_event_id": "message-1"},
+    )
+    assert {item.path for item in preview.files} == {"worker-a.md", "worker-b.md"}
+    assert preview.code_available is True
+
+
+@pytest.mark.asyncio
+async def test_active_parent_preview_adopts_provable_legacy_child_session_history(
+    tmp_path,
+) -> None:
+    existing = tmp_path / "legacy-edit.md"
+    existing.write_text("before", encoding="utf-8")
+    parent_context, service, repositories, _snapshot = _context(tmp_path)
+    now = datetime.now(UTC)
+    child_contexts: list[ToolExecutionContext] = []
+    for index in range(2):
+        child_id = f"legacy-child-{index}"
+        repositories.sessions.create(
+            session_id=child_id,
+            user_id="user-1",
+            scene_id="scene-1",
+            session_type="workspace",
+            session_tag="subagent",
+            visibility="internal",
+            agent_kind="subagent",
+            subagent_id=f"legacy-subagent-{index}",
+            subagent_role="worker",
+            parent_session_id=parent_context.session_id,
+            cwd=str(tmp_path),
+            workspace_roots=[str(tmp_path)],
+        )
+        child_snapshot = service.make_input_snapshot(
+            session_id=child_id,
+            active_session_id=child_id,
+            trace_id=f"legacy-child-trace-{index}",
+            message_event_id=f"legacy-child-message-{index}",
+            workspace_root=tmp_path,
+        )
+        repositories.subagent_runs.create(
+            SubagentRunSnapshot(
+                run_id=f"legacy-run-{index}",
+                subagent_id=f"legacy-subagent-{index}",
+                child_session_id=child_id,
+                parent_session_id=parent_context.session_id,
+                parent_trace_id=parent_context.trace_id,
+                parent_tool_call_id=f"legacy-call-{index}",
+                parent_timeline_sequence=index,
+                initiated_by="main_agent",
+                role="worker",
+                task="legacy write",
+                state="completed",
+                version=3,
+                final_report="done",
+                created_at=now - timedelta(seconds=1),
+                queued_at=now - timedelta(seconds=1),
+                started_at=now - timedelta(seconds=1),
+                finished_at=now + timedelta(seconds=5),
+                updated_at=now + timedelta(seconds=5),
+            )
+        )
+        child_contexts.append(
+            ToolExecutionContext(
+                session_id=child_id,
+                user_id="user-1",
+                workspace_root=tmp_path,
+                turn_index=1,
+                trace_id=f"legacy-child-trace-{index}",
+                active_session_id=child_id,
+                input_file_snapshot_id=child_snapshot.id,
+                file_history_service=service,
+                file_history_tracking=True,
+                metadata={"tool_call_id": f"legacy-tool-call-{index}"},
+            )
+        )
+
+    await write_file_tool(
+        {"path": "legacy-created.md", "content": "created"},
+        child_contexts[0],
+    )
+    await edit_file_tool(
+        {"path": "legacy-edit.md", "old_string": "before", "new_string": "after"},
+        child_contexts[1],
+    )
+
+    preview = service.create_preview(
+        session_id=parent_context.session_id,
+        active_session_id=parent_context.active_session_id,
+        message_event_id="message-1",
+        workspace_root=tmp_path,
+        source={
+            "message_event_id": "message-1",
+            "trace_id": parent_context.trace_id,
+            "turn_index": parent_context.turn_index,
+        },
+    )
+
+    assert {item.path for item in preview.files} == {
+        "legacy-created.md",
+        "legacy-edit.md",
+    }
+    assert preview.code_available is True
+    adopted = repositories.file_history.list_mutations(
+        session_id=parent_context.session_id
+    )
+    assert {item.canonical_path for item in adopted} == {
+        "legacy-created.md",
+        "legacy-edit.md",
+    }
+    assert {item.trace_id for item in adopted} == {parent_context.trace_id}
+
+    _, target, _ = service.preflight_preview(
+        session_id=parent_context.session_id,
+        operation_id=preview.operation_id,
+        preview_token=preview.preview_token,
+        mode="code",
+        decision="full",
+        workspace_root=tmp_path,
+    )
+    paths = [item.path for item in preview.files]
+    service.create_safety_snapshots(
+        operation_id=preview.operation_id,
+        workspace_root=tmp_path,
+        canonical_paths=paths,
+    )
+    service.execute_file_restore(
+        operation_id=preview.operation_id,
+        target=target,
+        workspace_root=tmp_path,
+        canonical_paths=paths,
+    )
+    assert not (tmp_path / "legacy-created.md").exists()
+    assert existing.read_text(encoding="utf-8") == "before"
 
 
 @pytest.mark.asyncio

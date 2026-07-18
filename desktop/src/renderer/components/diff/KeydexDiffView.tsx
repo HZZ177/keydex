@@ -3,6 +3,7 @@ import { useMemo, useRef, type ReactNode } from "react";
 import type { KeydexDiffDocument } from "./model";
 import {
   resolveKeydexDiffProfile,
+  type KeydexDiffDensity,
   type KeydexDiffActions,
   type KeydexDiffLayout,
   type KeydexDiffProfileName,
@@ -65,6 +66,7 @@ export interface KeydexDiffViewProps {
   readonly hiddenToolbarActions?: readonly KeydexDiffToolbarActionId[];
   readonly toolbarLeading?: ReactNode;
   readonly singleFileExpanded?: boolean;
+  readonly singleFileDensity?: KeydexDiffDensity;
   readonly embedded?: boolean;
 }
 
@@ -88,6 +90,7 @@ export function KeydexDiffView({
   hiddenToolbarActions,
   toolbarLeading,
   singleFileExpanded = true,
+  singleFileDensity,
   embedded = false,
 }: KeydexDiffViewProps) {
   const theme = useKeydexDiffTheme();
@@ -224,6 +227,7 @@ export function KeydexDiffView({
                 selection={state.selection}
                 onSelectionChange={onSelectionChange}
                 showFileHeader={showFileHeader}
+                density={singleFileDensity}
               />
             ) : document.files.length === 1 && activeFile ? (
               <div className={styles.singleFile} data-file-header={showFileHeader ? "true" : "false"}>
@@ -280,6 +284,7 @@ function SingleFileDiff({
   selection,
   onSelectionChange,
   showFileHeader,
+  density,
 }: {
   readonly document: KeydexDiffDocument;
   readonly profile: KeydexDiffProfileName;
@@ -289,6 +294,7 @@ function SingleFileDiff({
   readonly selection?: KeydexDiffSelectionRange | null;
   readonly onSelectionChange?: (selection: KeydexDiffSelectionRange | null) => void;
   readonly showFileHeader: boolean;
+  readonly density?: KeydexDiffDensity;
 }) {
   const file = document.files[0]!;
   const patchViewportRef = useRef<HTMLDivElement | null>(null);
@@ -326,6 +332,7 @@ function SingleFileDiff({
             selectedRange={selection}
             onSelectedRangeChange={onSelectionChange}
             disableWorkerPool={false}
+            density={density}
           />
         </div>
         <PierreViewportHorizontalScrollbars

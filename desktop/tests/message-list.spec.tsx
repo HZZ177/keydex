@@ -2123,6 +2123,44 @@ describe("MessageList", () => {
     expect(scroller.scrollTop).toBe(800);
   });
 
+  it("keeps a tail follower at the final report when live messages are replaced by persisted history", async () => {
+    const liveAssistant = {
+      ...message("live-assistant", "assistant", "正在流式输出最终报告"),
+      status: "running" as const,
+    };
+    const { rerender } = render(<MessageList messages={[liveAssistant]} isProcessing />);
+    const scroller = screen.getByTestId("message-list-scroll") as HTMLDivElement;
+    await waitFor(() => expect(screen.getByTestId("message-list").getAttribute("data-tail-bootstrap")).toBe("committed"));
+
+    const metrics = { scrollHeight: 1_000, clientHeight: 200 };
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, get: () => metrics.scrollHeight },
+      clientHeight: { configurable: true, get: () => metrics.clientHeight },
+      scrollTop: { configurable: true, writable: true, value: 800 },
+    });
+    fireEvent.scroll(scroller);
+    expect(screen.getByTestId("message-list").getAttribute("data-follow-mode")).toBe("following-bottom");
+
+    metrics.scrollHeight = 1_600;
+    rerender(
+      <MessageList
+        messages={[
+          {
+            ...message("persisted-user", "user", "主 Agent 交给 Sub-Agent 的任务"),
+            payload: { historyHydrated: true },
+          },
+          {
+            ...message("persisted-assistant", "assistant", "持久化后的完整最终报告"),
+            payload: { historyHydrated: true },
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() => expect(scroller.scrollTop).toBe(1_400));
+    expect(screen.getByTestId("message-list").getAttribute("data-follow-mode")).toBe("following-bottom");
+  });
+
   it("updates hot-tail residency in place when the user returns to the bottom", async () => {
     render(<MessageList messages={historyMessages(5, "resident-tail")} />);
     const scroller = screen.getByTestId("message-list-scroll") as HTMLDivElement;

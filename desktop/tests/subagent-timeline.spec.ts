@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import snapshotFixture from "./fixtures/subagent-run-snapshot.json";
-import { mergeSubagentRunsIntoConversation } from "@/renderer/pages/conversation/subagents/subagentTimeline";
+import {
+  mergeSubagentRunsIntoConversation,
+  messageFromRun,
+} from "@/renderer/pages/conversation/subagents/subagentTimeline";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import { normalizeSubagentRunSnapshot } from "@/types/subagents";
 
@@ -37,6 +40,33 @@ describe("Sub-Agent parent timeline", () => {
     expect(mergeSubagentRunsIntoConversation([invocation], [])).toEqual([invocation]);
   });
 
+  it("replaces a continued invocation with the new Run anchored to its current tool call", () => {
+    const invocation = message("continue", "subagent_invocation", {
+      toolCallId: "call-continue",
+      call: {
+        id: "call-continue",
+        name: "continue_subagent",
+        arguments: { subagent_id: "subagent-fixture-1", task: "follow up" },
+      },
+    });
+    const continued = snapshot({
+      run_id: "run-continued",
+      subagent_id: "subagent-fixture-1",
+      parent_timeline_sequence: 3,
+      parent_tool_call_id: "call-continue",
+      initiated_by: "main_agent",
+    });
+
+    const merged = mergeSubagentRunsIntoConversation([invocation], [continued]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({
+      id: "subagent-run:run-continued",
+      kind: "subagent_run",
+      itemId: "call-continue",
+    });
+  });
+
   it("keeps ordinary ToolBlocks when a message is not a Sub-Agent invocation", () => {
     const ordinaryTool = message("tool", "tool", {
       toolCallId: "call-read",
@@ -63,6 +93,27 @@ describe("Sub-Agent parent timeline", () => {
       "subagent-run:run-first",
       "subagent-run:run-resumed",
     ]);
+  });
+
+  it("maps queued and running Runs to distinct live message states", () => {
+    const queued = snapshot({
+      state: "queued",
+      version: 1,
+      started_at: null,
+      finished_at: null,
+      final_report: null,
+      updated_at: snapshotFixture.queued_at,
+    });
+    const running = snapshot({
+      state: "running",
+      version: 2,
+      finished_at: null,
+      final_report: null,
+      updated_at: snapshotFixture.started_at,
+    });
+
+    expect(messageFromRun(queued, "turn-1").status).toBe("pending");
+    expect(messageFromRun(running, "turn-1").status).toBe("running");
   });
 });
 

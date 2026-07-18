@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import type { KeydexDiffProfileName } from "../profiles";
+import type { KeydexDiffDensity, KeydexDiffProfileName } from "../profiles";
 import { keydexDiffTypography } from "../diffTypography";
 
 export type PierreStyleBridge = CSSProperties & Record<`--diffs-${string}`, string>;
@@ -78,8 +78,13 @@ export const KEYDEX_PIERRE_STYLE_BRIDGE: Readonly<PierreStyleBridge> = Object.fr
 export function keydexPierreStyle(
   profile: KeydexDiffProfileName,
   style?: CSSProperties,
+  density?: KeydexDiffDensity,
 ): PierreStyleBridge {
-  const typography = keydexDiffTypography(profile);
+  const typography = density === "compact"
+    ? keydexDiffTypography("compact")
+    : density === "comfortable"
+      ? keydexDiffTypography("review")
+      : keydexDiffTypography(profile);
   return {
     ...style,
     ...KEYDEX_PIERRE_STYLE_BRIDGE,

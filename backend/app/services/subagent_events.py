@@ -34,7 +34,8 @@ class SubagentRunEventPublisher:
         self._publish_lock = asyncio.Lock()
 
     async def publish(self, snapshot: SubagentRunSnapshot) -> None:
-        event = self.build_event(snapshot)
+        turn_index = self._resolve_parent_turn_index(snapshot)
+        event = self.build_event(snapshot, turn_index=turn_index)
         event_id = str(event.tags["event_id"])
         async with self._publish_lock:
             if self._repositories.message_events.get(event_id) is not None:
@@ -44,7 +45,7 @@ class SubagentRunEventPublisher:
                 PersistenceProjection(
                     repository=self._repositories.message_events,
                     session_id=snapshot.parent_session_id,
-                    turn_index=0,
+                    turn_index=turn_index,
                 )
             )
             if self._chat_stream_manager is not None:
@@ -55,7 +56,11 @@ class SubagentRunEventPublisher:
             await dispatcher.flush()
 
     @staticmethod
-    def build_event(snapshot: SubagentRunSnapshot) -> DomainEvent:
+    def build_event(
+        snapshot: SubagentRunSnapshot,
+        *,
+        turn_index: int = 0,
+    ) -> DomainEvent:
         event_key = f"subagent_run:{snapshot.run_id}:{snapshot.version}"
         payload = snapshot.model_dump(mode="json")
         payload["event_key"] = event_key
@@ -68,6 +73,15 @@ class SubagentRunEventPublisher:
             original_session_id=snapshot.parent_session_id,
             active_session_id=snapshot.parent_session_id,
             run_id=snapshot.run_id,
-            turn_index=0,
+            turn_index=turn_index,
             tags={"event_id": event_key},
         )
+
+    def _resolve_parent_turn_index(self, snapshot: SubagentRunSnapshot) -> int:
+        parent_trace_id = str(snapshot.parent_trace_id or "").strip()
+        if not parent_trace_id:
+            return 0
+        trace = self._repositories.trace_records.get(parent_trace_id)
+        if trace is None or trace.session_id != snapshot.parent_session_id:
+            return 0
+        return max(0, int(trace.turn_index))

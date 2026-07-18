@@ -168,6 +168,8 @@ export function ConversationPanelComposerAccessory({
 }: ConversationPanelComposerAccessoryProps) {
   return (
     <ConversationComposerAccessory
+      key={model.sessionId || "empty-session"}
+      sessionId={model.sessionId}
       messages={model.messages}
       pendingInputs={model.pendingInputs}
       activeTask={model.activeTask}

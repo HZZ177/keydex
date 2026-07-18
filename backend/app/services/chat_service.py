@@ -84,11 +84,13 @@ from backend.app.subagents.errors import SubagentError, SubagentErrorCode
 from backend.app.subagents.models import SubagentInitiator, SubagentSpawnRequest
 from backend.app.subagents.reporting import format_delegate_subagent_result
 from backend.app.subagents.roles import assert_delegation_caller_allowed
-from backend.app.tools import LocalTool, ToolExecutionContext
+from backend.app.tools import FileHistoryExecutionScope, LocalTool, ToolExecutionContext
 from backend.app.tools.base import ToolExecutionError
 from backend.app.tools.command_runtime import command_process_manager
 from backend.app.tools.subagent import (
+    create_continue_subagent_tool,
     create_delegate_subagent_tool,
+    parse_continue_subagent_request,
     parse_delegate_subagent_request,
 )
 from backend.app.tools.web import create_web_fetch_tool, create_web_search_tool
@@ -1207,6 +1209,10 @@ class ChatService:
 
         token = cancellation or ChatCancellationToken()
         session = self._ensure_session(request)
+        inherited_file_history_scope = self._resolve_subagent_file_history_scope(
+            request,
+            session=session,
+        )
         if initial_thread_task_context:
             message_injection_items = [
                 self._build_initial_thread_task_injection(
@@ -1254,6 +1260,13 @@ class ChatService:
             runtime_metadata["initial_thread_task"] = initial_thread_task_context
         if request.runtime_params:
             runtime_metadata["runtime_params"] = request.runtime_params
+        if inherited_file_history_scope is not None:
+            runtime_metadata["file_history_owner"] = {
+                "session_id": inherited_file_history_scope.session_id,
+                "trace_id": inherited_file_history_scope.trace_id,
+                "turn_index": inherited_file_history_scope.turn_index,
+                "input_snapshot_id": inherited_file_history_scope.input_snapshot_id,
+            }
 
         logger.info(
             f"[ChatTurn] 开始处理对话 | session_id={session.id} | turn_index={turn_index} | "
@@ -1373,26 +1386,31 @@ class ChatService:
                 )
             if session.session_type == "workspace" and self.file_history_service.enabled:
                 workspace_context = self.workspace_service.runtime_context_for_session(session)
-                try:
-                    snapshot = self.file_history_service.make_input_snapshot(
-                        session_id=session.id,
-                        active_session_id=active_session_id,
-                        trace_id=trace_id,
-                        message_event_id=user_message_event_id,
-                        workspace_root=workspace_context.cwd,
-                    )
-                except Exception:
-                    self.repositories.trace_records.set_input_file_snapshot(
-                        trace_id,
-                        snapshot_id=None,
-                        status="failed",
-                    )
-                    raise
-                input_file_snapshot_id = snapshot.id
+                if inherited_file_history_scope is not None:
+                    input_file_snapshot_id = inherited_file_history_scope.input_snapshot_id
+                    snapshot_status = "ready"
+                else:
+                    try:
+                        snapshot = self.file_history_service.make_input_snapshot(
+                            session_id=session.id,
+                            active_session_id=active_session_id,
+                            trace_id=trace_id,
+                            message_event_id=user_message_event_id,
+                            workspace_root=workspace_context.cwd,
+                        )
+                    except Exception:
+                        self.repositories.trace_records.set_input_file_snapshot(
+                            trace_id,
+                            snapshot_id=None,
+                            status="failed",
+                        )
+                        raise
+                    input_file_snapshot_id = snapshot.id
+                    snapshot_status = snapshot.status
                 self.repositories.trace_records.set_input_file_snapshot(
                     trace_id,
-                    snapshot_id=snapshot.id,
-                    status=snapshot.status,
+                    snapshot_id=input_file_snapshot_id,
+                    status=snapshot_status,
                 )
             elif session.session_type == "workspace":
                 self.repositories.trace_records.set_input_file_snapshot(
@@ -1415,6 +1433,7 @@ class ChatService:
                 structured_user_message_group=structured_user_message_group,
                 keydex_snapshot=turn_keydex_snapshot,
                 input_file_snapshot_id=input_file_snapshot_id,
+                file_history_scope=inherited_file_history_scope,
             )
 
             duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
@@ -1687,6 +1706,7 @@ class ChatService:
         structured_user_message_group: StructuredUserMessageGroup,
         keydex_snapshot: KeydexTurnSnapshot,
         input_file_snapshot_id: str | None = None,
+        file_history_scope: FileHistoryExecutionScope | None = None,
     ) -> AgentLoopOutcome:
         active_session_id = session.active_session_id or session.id
         tool_context, enable_tools = self._build_tool_context(
@@ -1696,6 +1716,7 @@ class ChatService:
             turn_index=turn_index,
             keydex_snapshot=keydex_snapshot,
             input_file_snapshot_id=input_file_snapshot_id,
+            file_history_scope=file_history_scope,
         )
         tool_context.metadata["repositories"] = self.repositories
         tool_context.metadata["thread_task_service"] = self.thread_task_service
@@ -1916,6 +1937,7 @@ class ChatService:
         turn_index: int,
         keydex_snapshot: KeydexTurnSnapshot,
         input_file_snapshot_id: str | None = None,
+        file_history_scope: FileHistoryExecutionScope | None = None,
     ) -> tuple[ToolExecutionContext, bool]:
         if session.session_type == "workspace":
             workspace_context = self.workspace_service.runtime_context_for_session(session)
@@ -1936,6 +1958,7 @@ class ChatService:
                     input_file_snapshot_id=input_file_snapshot_id,
                     file_history_service=self.file_history_service,
                     file_history_tracking=True,
+                    file_history_scope=file_history_scope,
                     metadata={
                         "agent_kind": session.agent_kind,
                         "subagent_id": session.subagent_id,
@@ -1988,6 +2011,70 @@ class ChatService:
             )
         raise ValueError(f"不支持的 session 类型: {session.session_type}")
 
+    def _resolve_subagent_file_history_scope(
+        self,
+        request: ChatRequest,
+        *,
+        session: SessionRecord,
+    ) -> FileHistoryExecutionScope | None:
+        if session.agent_kind != "subagent" or not self.file_history_service.enabled:
+            return None
+        parent_session_id = str(request.subagent_parent_session_id or "").strip()
+        run_id = str(request.subagent_run_id or "").strip()
+        run = self.repositories.subagent_runs.get(
+            run_id,
+            parent_session_id=parent_session_id,
+        )
+        if run is None or run.child_session_id != session.id:
+            raise ToolExecutionError(
+                "Sub-Agent 文件历史缺少有效的父 Run 归属",
+                code="file_history_context_missing",
+                details={"run_id": run_id, "child_session_id": session.id},
+            )
+        parent_trace_id = str(run.parent_trace_id or "").strip()
+        parent_trace = (
+            self.repositories.trace_records.get(parent_trace_id)
+            if parent_trace_id
+            else None
+        )
+        snapshot_id = str(
+            getattr(parent_trace, "input_file_snapshot_id", None) or ""
+        ).strip()
+        if (
+            parent_trace is None
+            or parent_trace.session_id != parent_session_id
+            or parent_trace.input_file_snapshot_status != "ready"
+            or not snapshot_id
+        ):
+            raise ToolExecutionError(
+                "Sub-Agent 文件历史缺少可用的父回合输入快照",
+                code="file_history_context_missing",
+                details={
+                    "run_id": run_id,
+                    "parent_session_id": parent_session_id,
+                    "parent_trace_id": parent_trace_id,
+                },
+            )
+        snapshot = self.repositories.file_history.get_snapshot(snapshot_id)
+        if (
+            snapshot is None
+            or snapshot.session_id != parent_session_id
+            or snapshot.trace_id != parent_trace_id
+            or snapshot.status != "ready"
+        ):
+            raise ToolExecutionError(
+                "Sub-Agent 父回合文件快照归属不一致",
+                code="file_history_context_missing",
+                details={"run_id": run_id, "snapshot_id": snapshot_id},
+            )
+        return FileHistoryExecutionScope(
+            session_id=parent_session_id,
+            active_session_id=parent_trace.active_session_id or parent_session_id,
+            trace_id=parent_trace_id,
+            turn_index=parent_trace.turn_index,
+            input_snapshot_id=snapshot_id,
+        )
+
     def _build_subagent_runtime_tools(
         self,
         *,
@@ -2001,7 +2088,10 @@ class ChatService:
             or self.subagent_runtime_provider() is None
         ):
             return []
-        return [create_delegate_subagent_tool(self._execute_delegate_subagent)]
+        return [
+            create_delegate_subagent_tool(self._execute_delegate_subagent),
+            create_continue_subagent_tool(self._execute_continue_subagent),
+        ]
 
     async def _execute_delegate_subagent(
         self,
@@ -2055,6 +2145,67 @@ class ChatService:
                     await runtime.cancel(
                         handle.run_id,
                         reason="parent_delegate_tool_cancelled",
+                    )
+                raise
+            return format_delegate_subagent_result(terminal)
+        except ToolExecutionError:
+            raise
+        except SubagentError as exc:
+            raise ToolExecutionError(
+                exc.message,
+                code=exc.code.value,
+                details=exc.details,
+            ) from exc
+
+    async def _execute_continue_subagent(
+        self,
+        args: dict[str, Any],
+        tool_context: ToolExecutionContext,
+    ) -> Any:
+        try:
+            request = parse_continue_subagent_request(args)
+            assert_delegation_caller_allowed(
+                agent_kind=str(tool_context.metadata.get("agent_kind") or "")
+            )
+            tool_call_id = tool_context.tool_call_id
+            if not tool_call_id:
+                raise ToolExecutionError(
+                    "continue_subagent requires the current parent tool_call_id",
+                    code="SUBAGENT_PARENT_INVALID",
+                    details={"session_id": tool_context.session_id},
+                )
+            runtime = (
+                self.subagent_runtime_provider()
+                if self.subagent_runtime_provider is not None
+                else None
+            )
+            if runtime is None:
+                raise ToolExecutionError(
+                    "Sub-Agent Runtime is unavailable",
+                    code="SUBAGENT_RUNTIME_UNAVAILABLE",
+                )
+            handle = await runtime.resume(
+                request.subagent_id,
+                request.task,
+                initiated_by=SubagentInitiator.MAIN_AGENT,
+                parent_session_id=tool_context.session_id,
+                parent_trace_id=tool_context.trace_id,
+                parent_tool_call_id=tool_call_id,
+            )
+            try:
+                terminal = await runtime.wait_terminal(handle.run_id)
+            except asyncio.CancelledError:
+                cancel_trace = getattr(runtime, "cancel_by_parent_trace", None)
+                if callable(cancel_trace) and tool_context.trace_id:
+                    await cancel_trace(
+                        tool_context.session_id,
+                        tool_context.trace_id,
+                        reason="parent_continue_tool_cancelled",
+                    )
+                else:
+                    await runtime.cancel(
+                        handle.run_id,
+                        reason="parent_continue_tool_cancelled",
                     )
                 raise
             return format_delegate_subagent_result(terminal)

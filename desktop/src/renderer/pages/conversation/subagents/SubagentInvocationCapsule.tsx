@@ -1,11 +1,12 @@
 import { useOptionalRightSidebarConversation } from "@/renderer/components/layout/RightSidebarConversationContext";
+import { useOptionalAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 
 import styles from "./SubagentRunCapsule.module.css";
 import { SubagentRoleIcon, subagentRoleLabel } from "./SubagentRoleIcon";
 
 type InvocationRole = "explorer" | "worker";
-type InvocationState = "queued" | "completed" | "failed";
+type InvocationState = "queued" | "running" | "completed" | "failed";
 
 interface InvocationViewModel {
   invocationId: string;
@@ -18,13 +19,20 @@ interface InvocationViewModel {
 
 export function SubagentInvocationCapsule({ message }: { message: ConversationMessage }) {
   const sidebar = useOptionalRightSidebarConversation();
-  const model = invocationViewModel(message);
+  const agentRuntime = useOptionalAgentSessionRuntime();
+  const model = invocationViewModel(message, (subagentId) => {
+    if (!subagentId || !agentRuntime) return null;
+    return Object.values(agentRuntime.subagentState.runsById)
+      .find((run) => run.subagent_id === subagentId)?.role ?? null;
+  });
   const stateLabel =
     model.state === "failed"
       ? "启动失败"
       : model.state === "completed"
         ? "已结束"
-        : "正在启动";
+        : model.state === "running"
+          ? "正在工作"
+          : "正在启动";
 
   return (
     <span
@@ -61,7 +69,10 @@ export function SubagentInvocationCapsule({ message }: { message: ConversationMe
   );
 }
 
-function invocationViewModel(message: ConversationMessage): InvocationViewModel {
+function invocationViewModel(
+  message: ConversationMessage,
+  resolveExistingRole: (subagentId: string) => InvocationRole | null,
+): InvocationViewModel {
   const call = record(message.payload.call);
   const args =
     record(call?.arguments) ??
@@ -78,12 +89,13 @@ function invocationViewModel(message: ConversationMessage): InvocationViewModel 
     resultStatus === "error" ||
     resultStatus === "failed" ||
     Boolean(nestedError);
-  const active =
-    message.status === "pending" ||
+  const queued = message.status === "pending";
+  const running =
     message.status === "running" ||
     message.status === "in_progress" ||
     resultStatus === "running";
-  const role = text(args.type) === "explorer" ? "explorer" : "worker";
+  const continuedRole = resolveExistingRole(text(args.subagent_id));
+  const role = continuedRole ?? (text(args.type) === "explorer" ? "explorer" : "worker");
   const task = text(args.task) || "正在准备 Sub-Agent 任务";
   const errorMessage =
     text(nestedError?.message) ||
@@ -92,7 +104,7 @@ function invocationViewModel(message: ConversationMessage): InvocationViewModel 
   return {
     invocationId: text(call?.id) || message.itemId || message.id,
     role,
-    state: failed ? "failed" : active ? "queued" : "completed",
+    state: failed ? "failed" : running ? "running" : queued ? "queued" : "completed",
     task,
     errorCode: text(nestedError?.code) || null,
     errorMessage: errorMessage || null,

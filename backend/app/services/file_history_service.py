@@ -1098,6 +1098,13 @@ class FileHistoryService:
         source: dict[str, Any],
         file_access_mode: str = "workspace_trusted",
     ) -> FileRestorePreview:
+        self._adopt_legacy_subagent_turn_mutations(
+            session_id=session_id,
+            message_event_id=message_event_id,
+            parent_trace_id=str(source.get("trace_id") or "").strip(),
+            parent_turn_index=_optional_non_negative_int(source.get("turn_index")),
+            workspace_root=workspace_root,
+        )
         try:
             target = self.resolve_target(
                 session_id=session_id,
@@ -1224,6 +1231,240 @@ class FileHistoryService:
             requires_external_confirmation=bool(external_paths),
             external_paths=external_paths,
         )
+
+    def _adopt_legacy_subagent_turn_mutations(
+        self,
+        *,
+        session_id: str,
+        message_event_id: str,
+        parent_trace_id: str,
+        parent_turn_index: int | None,
+        workspace_root: str | Path,
+    ) -> int:
+        """Materialize provable pre-fix child history into the active parent snapshot."""
+
+        if not parent_trace_id:
+            return 0
+        target = self.repository.get_snapshot_by_message(session_id, message_event_id)
+        state = self.repository.get_session_state(session_id)
+        if (
+            target is None
+            or target.status != FileSnapshotStatus.READY
+            or target.trace_id != parent_trace_id
+            or state is None
+            or state.active_snapshot_id != target.id
+        ):
+            return 0
+        runs = [
+            run
+            for run in self.repositories.subagent_runs.list_by_parent(session_id)
+            if run.parent_trace_id == parent_trace_id
+        ]
+        if not runs:
+            return 0
+
+        candidates: dict[
+            str,
+            tuple[FileHistoryMutationRecord, FileHistorySnapshotEntryRecord],
+        ] = {}
+        for run in runs:
+            started_at = _parse_timestamp(run.created_at)
+            finished_at = _parse_timestamp(run.finished_at or run.updated_at)
+            for mutation in self.repository.list_mutations(session_id=run.child_session_id):
+                mutation_at = _parse_timestamp(mutation.created_at)
+                if (
+                    mutation.status != "committed"
+                    or mutation.snapshot_id is None
+                    or mutation_at < started_at
+                    or mutation_at > finished_at
+                ):
+                    continue
+                entry = self.repository.get_snapshot_entry(
+                    mutation.snapshot_id,
+                    mutation.canonical_path,
+                    scope_kind=mutation.scope_kind,
+                    scope_identity=mutation.scope_identity,
+                )
+                if (
+                    entry is None
+                    or entry.state != mutation.before_state
+                    or entry.content_hash != mutation.before_hash
+                ):
+                    continue
+                resource_key = FileResourceIdentity(
+                    mutation.scope_kind,
+                    mutation.scope_identity,
+                    mutation.canonical_path,
+                ).resource_key
+                existing = candidates.get(resource_key)
+                if existing is None or mutation.created_at < existing[0].created_at:
+                    candidates[resource_key] = (mutation, entry)
+        if not candidates:
+            return 0
+
+        resolver = self._path_resolver(workspace_root)
+        imported = 0
+        lock = self._snapshot_lock(session_id)
+        with lock:
+            for resource_key in sorted(candidates):
+                mutation, source_entry = candidates[resource_key]
+                if self.repository.get_snapshot_entry(
+                    target.id,
+                    mutation.canonical_path,
+                    scope_kind=mutation.scope_kind,
+                    scope_identity=mutation.scope_identity,
+                ) is not None:
+                    continue
+                try:
+                    path = resolver.resolve_stored(
+                        mutation.display_path,
+                        mutation.canonical_path,
+                        scope_kind=mutation.scope_kind,
+                        scope_identity=mutation.scope_identity,
+                        scope_root=mutation.scope_root,
+                        scope_label=mutation.scope_label,
+                    )
+                    tracked = self.repository.get_tracked_file(
+                        session_id,
+                        mutation.canonical_path,
+                        scope_kind=mutation.scope_kind,
+                        scope_identity=mutation.scope_identity,
+                    )
+                    version = (tracked.latest_version if tracked else 0) + 1
+                    if source_entry.state == "file":
+                        if (
+                            source_entry.backup_file_name is None
+                            or source_entry.content_hash is None
+                            or source_entry.size is None
+                        ):
+                            continue
+                        source_backup = self.store.verify_backup(
+                            session_id=mutation.session_id,
+                            backup_file_name=source_entry.backup_file_name,
+                            expected_hash=source_entry.content_hash,
+                            expected_size=source_entry.size,
+                        )
+                        while True:
+                            self._assert_backup_capacity(
+                                session_id=session_id,
+                                canonical_path=path.resource_key,
+                                source_path=source_backup,
+                                version=version,
+                            )
+                            try:
+                                backup = self.store.create_backup(
+                                    session_id=session_id,
+                                    resource_key=path.resource_key,
+                                    source_path=source_backup,
+                                    version=version,
+                                )
+                                break
+                            except FileHistoryStoreError as exc:
+                                if exc.code != "backup_version_collision":
+                                    raise
+                                version += 1
+                    else:
+                        backup = FileHistoryBackup(
+                            state="missing",
+                            backup_file_name=None,
+                            version=version,
+                            backup_time=source_entry.backup_time,
+                            size=None,
+                            mode=None,
+                            content_hash=None,
+                        )
+                except (FileHistoryError, FileHistoryPathError, FileHistoryStoreError):
+                    # Legacy adoption is best-effort. A missing/corrupt child artifact
+                    # must not make an otherwise valid conversation preview fail.
+                    continue
+                observed = self._observe(path.absolute_path)
+                now = to_iso_z(utc_now())
+                entry = _entry_from_backup(target.id, path, backup)
+                adopted_mutation = FileHistoryMutationRecord(
+                    id=new_id(),
+                    session_id=session_id,
+                    active_session_id=target.active_session_id,
+                    trace_id=parent_trace_id,
+                    turn_index=parent_turn_index,
+                    snapshot_id=target.id,
+                    workspace_identity=path.scope_identity,
+                    canonical_path=path.canonical_path,
+                    display_path=path.display_path,
+                    tool_name=mutation.tool_name,
+                    tool_call_id=mutation.tool_call_id,
+                    batch_id=f"legacy-subagent:{parent_trace_id}",
+                    mutation_kind=mutation.mutation_kind,
+                    before_state=entry.state,
+                    before_hash=entry.content_hash,
+                    after_state=observed.state,
+                    after_hash=observed.content_hash,
+                    status="committed",
+                    error_code=None,
+                    created_at=mutation.created_at,
+                    updated_at=now,
+                    scope_kind=path.scope_kind,
+                    scope_identity=path.scope_identity,
+                    scope_root=str(path.scope_root),
+                    scope_label=path.scope_label,
+                )
+                adopted_tracked = FileHistoryTrackedFileRecord(
+                    session_id=session_id,
+                    canonical_path=path.canonical_path,
+                    display_path=path.display_path,
+                    latest_version=entry.version,
+                    first_snapshot_id=tracked.first_snapshot_id if tracked else target.id,
+                    last_snapshot_id=target.id,
+                    last_observed_state=observed.state,
+                    last_observed_hash=observed.content_hash,
+                    last_observed_size=observed.size,
+                    last_observed_mtime_ns=observed.mtime_ns,
+                    last_observed_mode=observed.mode,
+                    created_at=tracked.created_at if tracked else mutation.created_at,
+                    updated_at=now,
+                    scope_kind=path.scope_kind,
+                    scope_identity=path.scope_identity,
+                    scope_root=str(path.scope_root),
+                    scope_label=path.scope_label,
+                )
+                with self.repositories.db.transaction(immediate=True) as conn:
+                    current_state = self.repository.get_session_state(session_id, conn=conn)
+                    current_entry = self.repository.get_snapshot_entry(
+                        target.id,
+                        path.canonical_path,
+                        scope_kind=path.scope_kind,
+                        scope_identity=path.scope_identity,
+                        conn=conn,
+                    )
+                    if (
+                        current_state is None
+                        or current_state.active_snapshot_id != target.id
+                        or current_entry is not None
+                    ):
+                        continue
+                    self.repository.upsert_snapshot_entry(entry, conn=conn)
+                    self.repository.upsert_tracked_file(adopted_tracked, conn=conn)
+                    self.repository.create_mutation(adopted_mutation, conn=conn)
+                    self.repository.upsert_path_head(
+                        FileHistoryPathHeadRecord(
+                            workspace_identity=path.scope_identity,
+                            canonical_path=path.canonical_path,
+                            display_path=path.display_path,
+                            session_id=session_id,
+                            trace_id=parent_trace_id,
+                            mutation_id=adopted_mutation.id,
+                            state=observed.state,
+                            content_hash=observed.content_hash,
+                            revision=1,
+                            updated_at=now,
+                            scope_kind=path.scope_kind,
+                            scope_identity=path.scope_identity,
+                            scope_root=str(path.scope_root),
+                            scope_label=path.scope_label,
+                        ),
+                        conn=conn,
+                    )
+                imported += 1
+        return imported
 
     def assert_preview_available(self, session_id: str) -> None:
         self._assert_session_available(session_id, reject_running=True)
@@ -3094,6 +3335,12 @@ def _parse_timestamp(value: str) -> datetime:
     normalized = str(value).strip().replace("Z", "+00:00")
     parsed = datetime.fromisoformat(normalized)
     return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _optional_non_negative_int(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
 
 
 def _read_preview_bytes(path: Path, *, limit: int = 2 * 1024 * 1024) -> _PreviewBytes:

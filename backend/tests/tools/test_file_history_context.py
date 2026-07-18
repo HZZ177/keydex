@@ -5,7 +5,12 @@ import pytest
 from backend.app.agent.langchain_tools import _context_for_tool
 from backend.app.services.file_history_service import FileHistoryService
 from backend.app.storage import StorageRepositories, init_database
-from backend.app.tools.base import FunctionTool, ToolExecutionContext, ToolExecutionError
+from backend.app.tools.base import (
+    FileHistoryExecutionScope,
+    FunctionTool,
+    ToolExecutionContext,
+    ToolExecutionError,
+)
 
 
 def _tool() -> FunctionTool:
@@ -31,6 +36,13 @@ def test_langchain_tool_context_preserves_turn_scoped_file_history(tmp_path) -> 
         input_file_snapshot_id="snapshot-1",
         file_history_service=service,
         file_history_tracking=True,
+        file_history_scope=FileHistoryExecutionScope(
+            session_id="parent-session",
+            active_session_id="parent-active",
+            trace_id="parent-trace",
+            turn_index=2,
+            input_snapshot_id="snapshot-1",
+        ),
     )
 
     cloned = _context_for_tool(
@@ -40,6 +52,7 @@ def test_langchain_tool_context_preserves_turn_scoped_file_history(tmp_path) -> 
     )
 
     assert cloned.require_file_history() == (service, "snapshot-1")
+    assert cloned.require_file_history_scope()[1].session_id == "parent-session"
     assert cloned.active_session_id == "active-1"
     assert cloned.assistant_message_id == "assistant-1"
     assert cloned.tool_call_id == "call-1"

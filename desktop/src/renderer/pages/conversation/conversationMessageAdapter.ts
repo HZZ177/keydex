@@ -50,7 +50,7 @@ export function conversationKindFromAgent(message: AgentChatMessage): Conversati
     if (message.toolName === "load_skill") {
       return "skill";
     }
-    if (message.toolName === "delegate_subagent") {
+    if (isSubagentToolName(message.toolName)) {
       return "subagent_invocation";
     }
     return isCommandToolName(message.toolName) ? "command" : "tool";
@@ -80,6 +80,10 @@ export function conversationKindFromAgent(message: AgentChatMessage): Conversati
     return "error";
   }
   return "status";
+}
+
+function isSubagentToolName(value: string | undefined): boolean {
+  return value === "delegate_subagent" || value === "continue_subagent";
 }
 
 function isCommandToolName(value: string | undefined): boolean {

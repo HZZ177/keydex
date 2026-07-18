@@ -25,7 +25,7 @@ import {
 import { normalizeSubagentRunSnapshot, type SubagentRunSnapshot } from "@/types/subagents";
 
 describe("Subagent sidebar", () => {
-  it("groups active instances first and sorts every group by instance creation time descending", () => {
+  it("separates active, failed, cancelled, and completed instances", () => {
     const completed = run({
       run_id: "run-completed",
       subagent_id: "subagent-completed",
@@ -54,15 +54,94 @@ describe("Subagent sidebar", () => {
       created_at: "2026-07-18T12:00:00.000Z",
       parent_timeline_sequence: 4,
     });
+    const cancelled = run({
+      run_id: "run-cancelled",
+      subagent_id: "subagent-cancelled",
+      state: "cancelled",
+      created_at: "2026-07-18T13:00:00.000Z",
+      parent_timeline_sequence: 5,
+    });
+    const interrupted = run({
+      run_id: "run-interrupted",
+      subagent_id: "subagent-interrupted",
+      state: "interrupted",
+      created_at: "2026-07-18T14:00:00.000Z",
+      parent_timeline_sequence: 6,
+    });
 
-    const groups = groupSubagentRunsForList([completed, activeOlder, failed, activeNewer]);
+    const groups = groupSubagentRunsForList([
+      completed,
+      activeOlder,
+      failed,
+      activeNewer,
+      cancelled,
+      interrupted,
+    ]);
 
     expect(groups.active.map((item) => item.latestRun.run_id)).toEqual([
       "run-active-newer",
       "run-active-older",
     ]);
     expect(groups.completed.map((item) => item.latestRun.run_id)).toEqual(["run-completed"]);
-    expect(groups.unsuccessful.map((item) => item.latestRun.run_id)).toEqual(["run-failed"]);
+    expect(groups.failed.map((item) => item.latestRun.run_id)).toEqual([
+      "run-interrupted",
+      "run-failed",
+    ]);
+    expect(groups.cancelled.map((item) => item.latestRun.run_id)).toEqual(["run-cancelled"]);
+  });
+
+  it("shows separate terminal sections and previews the task instead of the result", () => {
+    const active = run({
+      run_id: "run-active-preview",
+      subagent_id: "subagent-active-preview",
+      state: "running",
+      task: "monitor the active implementation",
+    });
+    const completed = run({
+      run_id: "run-completed-preview",
+      subagent_id: "subagent-completed-preview",
+      state: "completed",
+      task: "inspect the checkout flow",
+    });
+    const failed = run({
+      run_id: "run-failed-preview",
+      subagent_id: "subagent-failed-preview",
+      state: "failed",
+      task: "repair the search index",
+    });
+    const cancelled = run({
+      run_id: "run-cancelled-preview",
+      subagent_id: "subagent-cancelled-preview",
+      state: "cancelled",
+      task: "draft the migration plan",
+    });
+    const parentSessionId = completed.parent_session_id;
+    const subagentState = replaceParentSubagentRuns(
+      createInitialSubagentRunsState(),
+      parentSessionId,
+      [completed, failed, cancelled, active],
+    );
+
+    render(
+      <AgentSessionRuntimeContext.Provider
+        value={{ subagentState, requestSubagentRuns: vi.fn() } as unknown as AgentSessionRuntimeContextValue}
+      >
+        <RightSidebarConversationContext.Provider value={sidebarContext()}>
+          <SubagentRunList parentSessionId={parentSessionId} />
+        </RightSidebarConversationContext.Provider>
+      </AgentSessionRuntimeContext.Provider>,
+    );
+
+    expect(
+      [...screen.getByTestId("subagent-sidebar-list").querySelectorAll("h3")]
+        .map((heading) => heading.textContent),
+    ).toEqual(["进行中 · 1", "已完成 · 1", "已取消 · 1", "失败 · 1"]);
+    expect(screen.getByText("monitor the active implementation")).not.toBeNull();
+    expect(screen.getByText("inspect the checkout flow")).not.toBeNull();
+    expect(screen.getByText("repair the search index")).not.toBeNull();
+    expect(screen.getByText("draft the migration plan")).not.toBeNull();
+    expect(screen.queryByText("completed report")).toBeNull();
+    expect(screen.queryByText("run failed")).toBeNull();
   });
 
   it("lists one row per Sub-Agent instance and opens its latest Run", async () => {

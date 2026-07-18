@@ -114,8 +114,8 @@ def test_explorer_prompt_is_fixed_and_task_is_a_separate_user_message() -> None:
     )
     assert task not in bundle.system_prompt
     assert "caller-controlled prompt" not in bundle.system_prompt
-    assert "source paths with line-level evidence" in bundle.system_prompt
-    assert "anything that remains uncertain" in bundle.system_prompt
+    assert "源码路径和具体行级证据" in bundle.system_prompt
+    assert "仍不确定或尚未验证的事项" in bundle.system_prompt
 
 
 def test_explorer_task_is_trimmed_but_not_interpreted_as_configuration() -> None:

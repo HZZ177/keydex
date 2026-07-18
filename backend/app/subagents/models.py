@@ -86,6 +86,21 @@ class DelegateSubagentRequest(SubagentDomainModel):
         return normalized
 
 
+class ContinueSubagentRequest(SubagentDomainModel):
+    """The complete model-visible continue_subagent input contract."""
+
+    subagent_id: StableId
+    task: str = Field(min_length=1)
+
+    @field_validator("task")
+    @classmethod
+    def _task_must_not_be_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("task must not be blank")
+        return normalized
+
+
 class SubagentSpawnRequest(SubagentDomainModel):
     """Trusted internal spawn request built from caller context plus type/task."""
 

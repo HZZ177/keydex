@@ -51,6 +51,17 @@ class ToolExecutionError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class FileHistoryExecutionScope:
+    """File-history owner for a tool loop that may run in another Session."""
+
+    session_id: str
+    active_session_id: str | None
+    trace_id: str | None
+    turn_index: int
+    input_snapshot_id: str
+
+
+@dataclass(frozen=True)
 class ToolExecutionContext:
     session_id: str
     user_id: str
@@ -62,6 +73,7 @@ class ToolExecutionContext:
     input_file_snapshot_id: str | None = None
     file_history_service: FileHistoryService | None = None
     file_history_tracking: bool = False
+    file_history_scope: FileHistoryExecutionScope | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -75,6 +87,14 @@ class ToolExecutionContext:
     def require_file_history(self) -> tuple[FileHistoryService, str]:
         """Return turn-scoped history dependencies or a stable explicit error."""
 
+        service, scope = self.require_file_history_scope()
+        return service, scope.input_snapshot_id
+
+    def require_file_history_scope(
+        self,
+    ) -> tuple[FileHistoryService, FileHistoryExecutionScope]:
+        """Return the explicit history owner independently of the executing Session."""
+
         if not self.file_history_tracking:
             raise ToolExecutionError(
                 "当前工具执行上下文明确未启用文件历史",
@@ -86,7 +106,20 @@ class ToolExecutionContext:
                 code="file_history_context_missing",
                 details={"session_id": self.session_id, "turn_index": self.turn_index},
             )
-        return self.file_history_service, self.input_file_snapshot_id
+        scope = self.file_history_scope or FileHistoryExecutionScope(
+            session_id=self.session_id,
+            active_session_id=self.active_session_id,
+            trace_id=self.trace_id,
+            turn_index=self.turn_index,
+            input_snapshot_id=self.input_file_snapshot_id,
+        )
+        if not scope.session_id.strip() or not scope.input_snapshot_id.strip():
+            raise ToolExecutionError(
+                "文件历史归属上下文不完整",
+                code="file_history_context_missing",
+                details={"session_id": self.session_id, "turn_index": self.turn_index},
+            )
+        return self.file_history_service, scope
 
 
 @dataclass(frozen=True)

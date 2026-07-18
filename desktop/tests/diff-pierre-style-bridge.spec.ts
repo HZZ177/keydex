@@ -21,6 +21,13 @@ describe("Pierre official Shadow DOM style bridge", () => {
     expect(keydexPierreStyle("git")["--diffs-overflow-override"]).toBeUndefined();
   });
 
+  it("can use compact typography without changing the review scroll profile", () => {
+    const style = keydexPierreStyle("review", undefined, "compact");
+    expect(style["--diffs-font-size"]).toBe("12px");
+    expect(style["--diffs-line-height"]).toBe("18px");
+    expect(style["--diffs-overflow-override"]).toBeUndefined();
+  });
+
   it("maps only documented --diffs variables to Keydex semantic tokens", () => {
     expect(Object.keys(KEYDEX_PIERRE_STYLE_BRIDGE).length).toBeGreaterThanOrEqual(30);
     expect(KEYDEX_PIERRE_STYLE_BRIDGE["--diffs-background"]).toBe("var(--diff-surface-bg)");

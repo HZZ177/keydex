@@ -1,4 +1,4 @@
-import { Bot, Radar } from "lucide-react";
+import { Cog, Radar } from "lucide-react";
 
 import type { SubagentRole } from "@/types/subagents";
 
@@ -9,7 +9,7 @@ export function SubagentRoleIcon({
   role: SubagentRole;
   size?: number;
 }) {
-  const Icon = role === "explorer" ? Radar : Bot;
+  const Icon = role === "explorer" ? Radar : Cog;
   return <Icon aria-hidden="true" size={size} strokeWidth={2} />;
 }
 

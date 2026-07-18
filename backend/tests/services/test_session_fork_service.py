@@ -475,6 +475,36 @@ def test_session_reverse_first_turn_clears_history_and_checkpoints(tmp_path) -> 
     )
 
 
+def test_session_reverse_first_turn_ignores_and_removes_legacy_subagent_turn_zero_events(
+    tmp_path,
+) -> None:
+    repositories, saver = _prepare_source(tmp_path)
+    for index in range(2):
+        repositories.message_events.append(
+            event_id=f"subagent_run:legacy-{index}:1",
+            session_id="ses_source",
+            trace_record_id="trace_1",
+            turn_index=0,
+            action="subagent_run_updated",
+            data={
+                "session_id": "ses_source",
+                "run_id": f"legacy-{index}",
+                "state": "completed",
+            },
+        )
+    service = SessionForkService(repositories, checkpointer=saver)
+
+    result = service.reverse_session(
+        session_id="ses_source",
+        user_id="local-user",
+        message_event_id="evt_user_1",
+    )
+
+    assert result.source.checkpoint_id is None
+    assert repositories.message_events.list_by_session("ses_source") == []
+    assert repositories.trace_records.list_by_session("ses_source") == []
+
+
 def test_session_reverse_rejects_assistant_message_source(tmp_path) -> None:
     repositories, saver = _prepare_source(tmp_path)
     service = SessionForkService(repositories, checkpointer=saver)

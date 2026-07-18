@@ -49,6 +49,7 @@ from backend.app.storage import (
     StorageRepositories,
     init_database,
 )
+from backend.app.subagents.models import SubagentRunSnapshot
 from backend.app.tools import FunctionTool, ToolExecutionContext, ToolRegistry
 from backend.app.tools.factory import create_default_tool_registry
 
@@ -204,6 +205,8 @@ def test_chat_turn_error_redacts_provider_secrets() -> None:
         ),
     ],
 )
+
+
 def test_chat_turn_error_classifies_provider_status_matrix(
     error_type: type[openai.APIStatusError],
     status: int,
@@ -2304,6 +2307,115 @@ async def test_workspace_turn_persists_message_anchored_input_file_snapshot(tmp_
     assert trace is not None
     assert trace.input_file_snapshot_id == snapshots[0].id
     assert trace.input_file_snapshot_status == "ready"
+
+
+@pytest.mark.asyncio
+async def test_subagent_turn_inherits_parent_file_snapshot_without_child_lineage(
+    tmp_path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    model = ToolFriendlyFakeModel(responses=[AIMessage(content="done")])
+    service, repositories, _checkpointer, _factory = _service(tmp_path, model)
+    workspace = repositories.workspaces.create(
+        workspace_id="ws_subagent_history",
+        root_path=project,
+    )
+    parent = repositories.sessions.create(
+        session_id="parent-history",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        session_type="workspace",
+        workspace_id=workspace.id,
+        cwd=str(project),
+        workspace_roots=[str(project)],
+        current_model_provider_id="provider-1",
+        current_model="qwen-coder",
+    )
+    repositories.trace_records.create(
+        trace_id="parent-trace",
+        session_id=parent.id,
+        active_session_id=parent.id,
+        scene_id=parent.scene_id,
+        user_id=parent.user_id,
+        turn_index=1,
+        root_node_id="parent-root",
+    )
+    snapshot = service.file_history_service.make_input_snapshot(
+        session_id=parent.id,
+        active_session_id=parent.id,
+        trace_id="parent-trace",
+        message_event_id="parent-message",
+        workspace_root=project,
+    )
+    repositories.trace_records.set_input_file_snapshot(
+        "parent-trace",
+        snapshot_id=snapshot.id,
+        status="ready",
+    )
+    child = repositories.sessions.create(
+        session_id="child-history",
+        user_id=parent.user_id,
+        scene_id=parent.scene_id,
+        session_type="workspace",
+        session_tag="subagent",
+        workspace_id=workspace.id,
+        visibility="internal",
+        agent_kind="subagent",
+        subagent_id="subagent-history",
+        subagent_role="worker",
+        parent_session_id=parent.id,
+        cwd=str(project),
+        workspace_roots=[str(project)],
+        current_model_provider_id="provider-1",
+        current_model="qwen-coder",
+    )
+    now = utc_now()
+    repositories.subagent_runs.create(
+        SubagentRunSnapshot(
+            run_id="run-history",
+            subagent_id="subagent-history",
+            child_session_id=child.id,
+            parent_session_id=parent.id,
+            parent_trace_id="parent-trace",
+            parent_tool_call_id="delegate-call",
+            parent_timeline_sequence=0,
+            initiated_by="main_agent",
+            role="worker",
+            task="edit files",
+            state="running",
+            version=2,
+            created_at=now,
+            queued_at=now,
+            started_at=now,
+            updated_at=now,
+        )
+    )
+
+    result = await service.handle_chat(
+        ChatRequest(
+            session_id=child.id,
+            message="edit files",
+            user_id=child.user_id,
+            scene_id=child.scene_id,
+            provider_id="provider-1",
+            model="qwen-coder",
+            subagent_run_id="run-history",
+            subagent_parent_session_id=parent.id,
+        )
+    )
+
+    assert result.status == "completed"
+    child_trace = repositories.trace_records.get(result.trace_id)
+    assert child_trace is not None
+    assert child_trace.input_file_snapshot_id == snapshot.id
+    assert child_trace.metadata["file_history_owner"] == {
+        "session_id": parent.id,
+        "trace_id": "parent-trace",
+        "turn_index": 1,
+        "input_snapshot_id": snapshot.id,
+    }
+    assert repositories.file_history.list_snapshots(child.id) == []
 
 
 @pytest.mark.asyncio

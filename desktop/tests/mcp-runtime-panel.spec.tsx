@@ -1,8 +1,9 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import type { ComponentProps } from "react";
 
 import type { RuntimeBridge } from "@/runtime";
-import { ConversationComposerAccessory } from "@/renderer/pages/conversation/ComposerAccessory";
+import { ConversationComposerAccessory as RuntimeConversationComposerAccessory } from "@/renderer/pages/conversation/ComposerAccessory";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type {
   McpRuntimeCallSummary,
@@ -10,6 +11,13 @@ import type {
   McpServerSummary,
   McpToolSummary,
 } from "@/types/protocol";
+
+function ConversationComposerAccessory(
+  props: Omit<ComponentProps<typeof RuntimeConversationComposerAccessory>, "sessionId"> & { sessionId?: string },
+) {
+  const { sessionId = "sess_1", ...rest } = props;
+  return <RuntimeConversationComposerAccessory {...rest} sessionId={sessionId} />;
+}
 
 describe("MCP Runtime Panel", () => {
   it("stays manual by default and renders compact capability status without technical controls", async () => {
@@ -124,6 +132,42 @@ describe("MCP Runtime Panel", () => {
     expect(panel.textContent).toContain("已运行 2s");
     expect(within(panel).queryByRole("button", { name: /取消 MCP 调用/ })).toBeNull();
   });
+
+  it("does not publish a stale MCP response after the session changes", async () => {
+    let resolveSessionA: ((status: McpRuntimeStatusResponse) => void) | null = null;
+    const sessionAStatus = new Promise<McpRuntimeStatusResponse>((resolve) => {
+      resolveSessionA = resolve;
+    });
+    const sessionBStatus = runtimeStatus({
+      session_id: "session-b",
+      servers: [server("srv_b", "Session B MCP")],
+    });
+    const getRuntimeStatus = vi.fn((sessionId: string) => (
+      sessionId === "session-a" ? sessionAStatus : Promise.resolve(sessionBStatus)
+    ));
+    const runtime = { mcp: { getRuntimeStatus } } as unknown as RuntimeBridge;
+    const view = render(runtimePanelElement(runtime, { sessionId: "session-a" }));
+
+    await selectMcpRuntimePill();
+    await waitFor(() => expect(getRuntimeStatus).toHaveBeenCalledWith("session-a"));
+
+    view.rerender(runtimePanelElement(runtime, { sessionId: "session-b" }));
+    const pill = await selectMcpRuntimePill();
+    await waitFor(() => expect(pill.textContent).toContain("1 个 MCP 服务器"));
+
+    act(() => {
+      resolveSessionA?.(runtimeStatus({
+        session_id: "session-a",
+        servers: [server("srv_a", "Session A MCP")],
+      }));
+    });
+
+    fireEvent.click(pill);
+    await waitFor(() => expect(screen.getByTestId("mcp-runtime-panel").textContent).toContain("Session B MCP"));
+    expect(screen.getByTestId("mcp-runtime-panel").textContent).not.toContain("Session A MCP");
+    expect(getRuntimeStatus).toHaveBeenCalledWith("session-a");
+    expect(getRuntimeStatus).toHaveBeenCalledWith("session-b");
+  });
 });
 
 async function selectMcpRuntimePill() {
@@ -138,6 +182,7 @@ function renderRuntimePanel(
     messages?: ConversationMessage[];
     onOpenSettings?: () => void;
     runtimeState?: string;
+    sessionId?: string;
   } = {},
 ) {
   const runtime = "mcp" in statusOrRuntime ? statusOrRuntime : runtimeWithStatuses(statusOrRuntime).runtime;
@@ -150,16 +195,19 @@ function runtimePanelElement(
     messages = [],
     onOpenSettings,
     runtimeState = "idle",
+    sessionId = "sess_1",
   }: {
     messages?: ConversationMessage[];
     onOpenSettings?: () => void;
     runtimeState?: string;
+    sessionId?: string;
   } = {},
 ) {
   return (
     <ConversationComposerAccessory
+      sessionId={sessionId}
       messages={messages}
-      mcpRuntime={{ runtime, sessionId: "sess_1", runtimeState }}
+      mcpRuntime={{ runtime, sessionId, runtimeState }}
       onOpenMcpSettings={onOpenSettings}
       showScrollToBottom={false}
       onFilePreview={vi.fn()}

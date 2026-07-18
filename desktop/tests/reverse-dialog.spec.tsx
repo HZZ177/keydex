@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -6,10 +9,17 @@ import type { ReverseDialogState } from "../src/renderer/pages/conversation/useC
 import type { SessionReverseFilePreview } from "../src/runtime/conversation";
 
 vi.mock("@/renderer/components/diff/wrappers/ReviewDiffView", () => ({
-  ReviewDiffView: ({ document }: {
+  ReviewDiffView: ({ document, density, showToolbar }: {
     document: { files: Array<{ displayPath: string; patch: string; binary: boolean; truncated: boolean }> };
+    density?: string;
+    showToolbar?: boolean;
   }) => (
-    <section aria-label="文件审阅" data-keydex-diff-wrapper="review">
+    <section
+      aria-label="文件审阅"
+      data-keydex-diff-wrapper="review"
+      data-density={density}
+      data-show-toolbar={String(showToolbar)}
+    >
       {document.files.map((file) => (
         <div key={file.displayPath}>
           <span>{file.displayPath}</span>
@@ -222,6 +232,8 @@ describe("ReverseDialog", () => {
     expect(readyDetails?.open).toBe(true);
     const diff = readyDetails?.querySelector('[aria-label="文件审阅"]') as HTMLElement;
     expect(diff).toBeTruthy();
+    expect(diff.dataset.density).toBe("compact");
+    expect(diff.dataset.showToolbar).toBe("false");
     expect(diff.textContent).toContain("-new");
     expect(diff.textContent).toContain("+old");
     expect(container.querySelector("pre")).toBeNull();
@@ -243,6 +255,20 @@ describe("ReverseDialog", () => {
       />,
     );
     expect(screen.getByText("文件已经是目标状态，无需修改。")).toBeTruthy();
+  });
+
+  it("reserves a visible viewport for the expanded rewind diff", () => {
+    const css = readFileSync(
+      resolve(process.cwd(), "src/renderer/pages/conversation/ReverseDialog.module.css"),
+      "utf8",
+    );
+
+    expect(css).toMatch(
+      /\.fileExpanded\s+:global\(\[data-keydex-diff-wrapper="review"\]\)\s*\{[^}]*height:\s*clamp\(180px,\s*28vh,\s*280px\)[^}]*min-height:\s*180px/s,
+    );
+    expect(css).toMatch(
+      /\.fileExpanded\s+:global\(\[data-keydex-diff-patch-viewport="true"\]\)\s*\{[^}]*overscroll-behavior-y:\s*auto/s,
+    );
   });
 
   it("keeps unrecoverable files visible and offers only legal decisions", () => {

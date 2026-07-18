@@ -138,6 +138,9 @@ class SubagentRuntimeProtocol(Protocol):
         task: str,
         *,
         initiated_by: SubagentInitiator = SubagentInitiator.USER,
+        parent_session_id: str | None = None,
+        parent_trace_id: str | None = None,
+        parent_tool_call_id: str | None = None,
     ) -> SubagentHandle: ...
 
     async def subscribe(
@@ -716,6 +719,8 @@ class SessionBackedSubagentRuntime:
         *,
         initiated_by: SubagentInitiator = SubagentInitiator.USER,
         parent_session_id: str | None = None,
+        parent_trace_id: str | None = None,
+        parent_tool_call_id: str | None = None,
         child_session_id: str | None = None,
         previous_run_id: str | None = None,
         expected_version: int | None = None,
@@ -737,11 +742,20 @@ class SessionBackedSubagentRuntime:
                 "resume initiator is invalid",
                 details={"initiated_by": str(initiated_by)},
             ) from exc
-        if initiated_by is not SubagentInitiator.USER:
+        cleaned_parent_session_id = str(parent_session_id or "").strip() or None
+        cleaned_parent_trace_id = str(parent_trace_id or "").strip() or None
+        cleaned_parent_tool_call_id = str(parent_tool_call_id or "").strip() or None
+        if (
+            initiated_by is SubagentInitiator.MAIN_AGENT
+            and (cleaned_parent_session_id is None or cleaned_parent_tool_call_id is None)
+        ):
             raise SubagentError(
-                SubagentErrorCode.RUN_TRANSITION_INVALID,
-                "resume is a user control; main Agent delegation must spawn a new instance",
-                details={"initiated_by": initiated_by.value},
+                SubagentErrorCode.SUBAGENT_PARENT_INVALID,
+                "main Agent continuation requires the current parent Session and tool_call_id",
+                details={
+                    "parent_session_id": cleaned_parent_session_id,
+                    "parent_tool_call_id": cleaned_parent_tool_call_id,
+                },
             )
         child = self.repositories.sessions.get_subagent(cleaned_subagent_id)
         if child is None:
@@ -757,8 +771,8 @@ class SessionBackedSubagentRuntime:
                 details={"subagent_id": cleaned_subagent_id},
             )
         if (
-            parent_session_id is not None
-            and child.parent_session_id != str(parent_session_id or "").strip()
+            cleaned_parent_session_id is not None
+            and child.parent_session_id != cleaned_parent_session_id
         ):
             raise SubagentError(
                 SubagentErrorCode.SUBAGENT_NOT_FOUND,
@@ -877,10 +891,18 @@ class SessionBackedSubagentRuntime:
                     subagent_id=cleaned_subagent_id,
                     child_session_id=child.id,
                     parent_session_id=child.parent_session_id or "",
-                    parent_trace_id=None,
-                    parent_tool_call_id=None,
+                    parent_trace_id=(
+                        cleaned_parent_trace_id
+                        if initiated_by is SubagentInitiator.MAIN_AGENT
+                        else None
+                    ),
+                    parent_tool_call_id=(
+                        cleaned_parent_tool_call_id
+                        if initiated_by is SubagentInitiator.MAIN_AGENT
+                        else None
+                    ),
                     parent_timeline_sequence=sequence,
-                    initiated_by=SubagentInitiator.USER,
+                    initiated_by=initiated_by,
                     role=role,
                     task=cleaned_task,
                     state=SubagentRunState.QUEUED,

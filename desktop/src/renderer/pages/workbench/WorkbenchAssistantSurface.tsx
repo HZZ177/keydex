@@ -80,9 +80,11 @@ import {
   type PreviewRenderContext,
   type ReviewPanelRequest,
 } from "@/renderer/providers/PreviewProvider";
+import { useOptionalAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
 import type { ConversationRuntimeState } from "@/renderer/stores/conversationStore";
+import { selectParentSubagentRuns } from "@/renderer/stores/subagentRunStore";
 import { prepareComposerMessage } from "@/renderer/utils/messageInjection";
 import { prefersReducedMotion } from "@/renderer/utils/motionPreference";
 import type {
@@ -206,6 +208,7 @@ export function WorkbenchAssistantSurface({
   const layout = useLayoutState();
   const notifications = useNotifications();
   const runtimeConnection = useOptionalRuntimeConnection();
+  const agentRuntime = useOptionalAgentSessionRuntime();
   const backendReady = runtimeConnection?.ready ?? true;
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const assistantChromeRef = useRef<HTMLDivElement | null>(null);
@@ -271,6 +274,13 @@ export function WorkbenchAssistantSurface({
   const [workbenchReviewWrap, setWorkbenchReviewWrap] = useState(true);
   const pendingApproval = controller.pendingApproval;
   const panelSessionId = controller.session?.id ?? "";
+  const subagentRuns = useMemo(
+    () =>
+      panelSessionId && agentRuntime?.runtime === runtime
+        ? selectParentSubagentRuns(agentRuntime.subagentState, panelSessionId)
+        : [],
+    [agentRuntime?.runtime, agentRuntime?.subagentState, panelSessionId, runtime],
+  );
   const workbenchReviewDocument = useMemo(
     () => workbenchReviewPanel
       ? workbenchReviewPanel.document ??
@@ -1645,6 +1655,7 @@ export function WorkbenchAssistantSurface({
     <ConversationPanel
       model={displayPanelModel}
       workspaceRuntime={runtime}
+      subagentRuns={subagentRuns}
       variant="compact"
       emptyText={btwActive ? "旁路对话暂无消息" : "当前工作空间还没有助手消息。"}
       emptyTestId={`workbench-${stablePanelMode === "drawer" ? "drawer" : "morph"}-message-empty`}
@@ -1698,6 +1709,7 @@ export function WorkbenchAssistantSurface({
       <ConversationPanel
         model={displayPanelModel}
         workspaceRuntime={runtime}
+        subagentRuns={subagentRuns}
         variant="overlay"
         emptyLayout="center"
         emptyText={btwActive ? "旁路对话暂无消息" : "当前工作空间还没有助手消息。"}

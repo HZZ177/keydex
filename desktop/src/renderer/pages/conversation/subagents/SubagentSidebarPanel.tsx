@@ -10,7 +10,7 @@ import type { SubagentRole, SubagentRunSnapshot } from "@/types/subagents";
 import styles from "./SubagentSidebarPanel.module.css";
 import { SubagentRoleIcon, subagentRoleLabel } from "./SubagentRoleIcon";
 
-export type SubagentRunGroup = "active" | "completed" | "unsuccessful";
+export type SubagentRunGroup = "active" | "failed" | "cancelled" | "completed";
 
 export interface SubagentListItem {
   createdAt: string;
@@ -65,7 +65,7 @@ export function SubagentRunList({ parentSessionId }: { parentSessionId: string }
                         <span className={styles.itemName}>{subagentRoleLabel(latestRun.role)}</span>
                         <span className={styles.itemAge}>{relativeAge(createdAt)}</span>
                       </span>
-                      <span className={styles.itemSummary}>{runSummary(latestRun)}</span>
+                      <span className={styles.itemSummary}>{latestRun.task}</span>
                     </span>
                   </button>
                 );
@@ -134,7 +134,7 @@ export function SubagentInvocationDetail({
   );
 }
 
-const GROUP_ORDER: SubagentRunGroup[] = ["active", "completed", "unsuccessful"];
+const GROUP_ORDER: SubagentRunGroup[] = ["active", "completed", "cancelled", "failed"];
 
 export function groupSubagentRunsForList(
   runs: SubagentRunSnapshot[],
@@ -147,8 +147,9 @@ export function groupSubagentRunsForList(
   }
   const result: Record<SubagentRunGroup, SubagentListItem[]> = {
     active: [],
+    failed: [],
+    cancelled: [],
     completed: [],
-    unsuccessful: [],
   };
   for (const history of bySubagent.values()) {
     const firstRun = history[0];
@@ -176,24 +177,22 @@ function compareRunRecency(left: SubagentRunSnapshot, right: SubagentRunSnapshot
 
 function runGroup(run: SubagentRunSnapshot): SubagentRunGroup {
   if (run.state === "queued" || run.state === "running") return "active";
-  return run.state === "completed" ? "completed" : "unsuccessful";
+  if (run.state === "completed") return "completed";
+  if (run.state === "cancelled") return "cancelled";
+  return "failed";
 }
 
 function groupLabel(group: SubagentRunGroup): string {
   if (group === "active") return "进行中";
   if (group === "completed") return "已完成";
-  return "未完成";
-}
-
-function runSummary(run: SubagentRunSnapshot): string {
-  if (run.state === "failed" && run.error_message) return run.error_message;
-  if (run.state === "completed" && run.final_report) return run.final_report;
-  return run.task;
+  if (group === "cancelled") return "已取消";
+  return "失败";
 }
 
 function invocationStateLabel(state: SubagentInvocationPanelDetails["state"]): string {
   if (state === "failed") return "启动失败";
   if (state === "completed") return "已结束";
+  if (state === "running") return "正在工作";
   return "正在创建 Sub-Agent";
 }
 

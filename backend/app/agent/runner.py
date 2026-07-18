@@ -23,6 +23,7 @@ from backend.app.agent.system_prompt import (
     DEFAULT_SYSTEM_PROMPT,
     KEYDEX_MARKDOWN_SYSTEM_PROMPT,
     PLAN_PROGRESS_PROMPT,
+    SUBAGENT_ORCHESTRATION_PROMPT,
     build_file_edit_prompt_section,
     build_web_source_prompt_section,
     build_workspace_context_prompt,
@@ -279,6 +280,15 @@ class AgentRunner:
             for tool in tools
             if str(getattr(tool, "name", "") or "")
         }
+        if {
+            "delegate_subagent",
+            "continue_subagent",
+        }.issubset(available_tool_names):
+            prompt = (
+                f"{prompt}\n\n{SUBAGENT_ORCHESTRATION_PROMPT}"
+                if prompt
+                else SUBAGENT_ORCHESTRATION_PROMPT
+            )
         if "update_plan" in available_tool_names:
             prompt = (
                 f"{prompt}\n\n{PLAN_PROGRESS_PROMPT}"

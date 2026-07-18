@@ -59,8 +59,10 @@ export function messageFromRun(
     itemId: run.parent_tool_call_id,
     kind: "subagent_run",
     status:
-      run.state === "running" || run.state === "queued"
-        ? "in_progress"
+      run.state === "queued"
+        ? "pending"
+        : run.state === "running"
+          ? "running"
         : run.state === "interrupted"
           ? "failed"
           : run.state,
@@ -86,7 +88,8 @@ function messageToolCallAnchors(message: ConversationMessage): string[] {
 function isSubagentInvocation(message: ConversationMessage): boolean {
   if (message.kind === "subagent_invocation") return true;
   const call = asRecord(message.payload.call);
-  return text(call?.name) === "delegate_subagent";
+  const name = text(call?.name);
+  return name === "delegate_subagent" || name === "continue_subagent";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

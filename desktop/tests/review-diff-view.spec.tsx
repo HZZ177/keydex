@@ -57,6 +57,30 @@ describe("ReviewDiffView", () => {
     expect(props.scrollScopeKey).toContain("agent-side:");
   });
 
+  it("supports a headerless compact rendering contract for embedded previews", () => {
+    render(
+      <ReviewDiffView
+        document={document}
+        focusedPath="src/new.ts"
+        density="compact"
+        showToolbar={false}
+      />,
+    );
+    const props = lastProps as {
+      profile: string;
+      showToolbar: boolean;
+      showFileHeader: boolean;
+      singleFileDensity: string;
+      state: { layout: string; wrap: boolean };
+    };
+    expect(props.profile).toBe("review");
+    expect(props.showToolbar).toBe(false);
+    expect(props.showFileHeader).toBe(false);
+    expect(props.singleFileDensity).toBe("compact");
+    expect(props.state.layout).toBe("stacked");
+    expect(props.state.wrap).toBe(true);
+  });
+
   it("merges the compact file identity into the toolbar and removes duplicate review chrome", () => {
     render(<ReviewDiffView document={document} focusedPath="src/new.ts" />);
     const props = lastProps as {

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 export const RUNTIME_TYPING_SPEED_EVENT = "keydex:runtime-typing-speed-change";
 
 export interface RuntimeTypingSpeedEventDetail {
+  sessionId: string;
   sourceId: string;
   speed: number;
   backlog: number;
@@ -20,13 +21,14 @@ export function createRuntimeTypingSpeedSourceId(): string {
   return `typing:${sourceIdSeq}`;
 }
 
-export function reportRuntimeTypingSpeed(sourceId: string, speed: number, backlog = 0) {
-  if (typeof window === "undefined") {
+export function reportRuntimeTypingSpeed(sessionId: string, sourceId: string, speed: number, backlog = 0) {
+  if (typeof window === "undefined" || !sessionId) {
     return;
   }
   window.dispatchEvent(
     new CustomEvent<RuntimeTypingSpeedEventDetail>(RUNTIME_TYPING_SPEED_EVENT, {
       detail: {
+        sessionId,
         sourceId,
         speed: normalizeNumber(speed),
         backlog: normalizeNumber(backlog),
@@ -35,12 +37,15 @@ export function reportRuntimeTypingSpeed(sourceId: string, speed: number, backlo
   );
 }
 
-export function useRuntimeTypingMetrics(): RuntimeTypingMetrics {
+export function useRuntimeTypingMetrics(sessionId: string): RuntimeTypingMetrics {
   const [metrics, setMetrics] = useState<RuntimeTypingMetrics>({ speed: 0, backlog: 0 });
   const activeMetricsRef = useRef<Map<string, RuntimeTypingMetrics>>(new Map());
   const staleTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
+    activeMetricsRef.current.clear();
+    setMetrics({ speed: 0, backlog: 0 });
+
     const clearStaleTimer = () => {
       if (staleTimerRef.current !== null) {
         window.clearTimeout(staleTimerRef.current);
@@ -61,7 +66,7 @@ export function useRuntimeTypingMetrics(): RuntimeTypingMetrics {
 
     const handleSpeedChange = (event: Event) => {
       const detail = (event as CustomEvent<RuntimeTypingSpeedEventDetail>).detail;
-      if (!detail?.sourceId) {
+      if (!detail?.sourceId || detail.sessionId !== sessionId) {
         return;
       }
 
@@ -89,13 +94,13 @@ export function useRuntimeTypingMetrics(): RuntimeTypingMetrics {
       window.removeEventListener(RUNTIME_TYPING_SPEED_EVENT, handleSpeedChange);
       clearStaleTimer();
     };
-  }, []);
+  }, [sessionId]);
 
   return metrics;
 }
 
-export function useRuntimeTypingSpeed(): number {
-  return useRuntimeTypingMetrics().speed;
+export function useRuntimeTypingSpeed(sessionId: string): number {
+  return useRuntimeTypingMetrics(sessionId).speed;
 }
 
 function collectCurrentMetrics(metricsBySource: Map<string, RuntimeTypingMetrics>): RuntimeTypingMetrics {

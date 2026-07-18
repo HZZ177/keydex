@@ -3,12 +3,20 @@ import { resolve } from "node:path";
 
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import type { ComponentProps } from "react";
 
-import { ConversationComposerAccessory } from "@/renderer/pages/conversation/ComposerAccessory";
+import { ConversationComposerAccessory as RuntimeConversationComposerAccessory } from "@/renderer/pages/conversation/ComposerAccessory";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type { AgentPendingInput, ThreadTask, ThreadTaskRun } from "@/types/protocol";
 
 const NativePointerEvent = globalThis.PointerEvent;
+
+function ConversationComposerAccessory(
+  props: Omit<ComponentProps<typeof RuntimeConversationComposerAccessory>, "sessionId"> & { sessionId?: string },
+) {
+  const { sessionId = "sess_1", ...rest } = props;
+  return <RuntimeConversationComposerAccessory {...rest} sessionId={sessionId} />;
+}
 
 beforeAll(() => {
   class TestPointerEvent extends MouseEvent {
@@ -207,6 +215,33 @@ describe("ConversationComposerAccessory thread task", () => {
     expect(screen.getByTestId("plan-summary-pill").textContent).toBe("1/2 步");
     expect(screen.getByTestId("typing-speed-pill").textContent).toBe("打字机 0 字符/s - 待输出 0 字");
     expect(screen.queryByTestId("thread-task-pill")).toBeNull();
+  });
+
+  it("resets capsule selection when the conversation session changes", async () => {
+    const props = {
+      messages: [],
+      pendingInputs: [pendingInput("pending-session", { message: "当前会话待处理", mode: "queue", status: "queued" })],
+      showScrollToBottom: false,
+      onFilePreview: vi.fn(),
+      onScrollToBottom: vi.fn(),
+    };
+    const view = render(<ConversationComposerAccessory {...props} sessionId="session-a" />);
+
+    fireEvent.click(screen.getByTestId("composer-accessory-switcher"));
+    fireEvent.click(
+      within(screen.getByTestId("composer-accessory-menu")).getByRole("menuitemradio", { name: /打字机/ }),
+    );
+    expect(view.container.querySelector("[data-selected-item]")?.getAttribute("data-selected-item")).toBe(
+      "runtime-typing-speed",
+    );
+
+    view.rerender(<ConversationComposerAccessory {...props} sessionId="session-b" />);
+
+    await waitFor(() => {
+      expect(view.container.querySelector("[data-selected-item]")?.getAttribute("data-selected-item")).toBe(
+        "pending-inputs",
+      );
+    });
   });
 
   it("shows running state from the current task run", () => {

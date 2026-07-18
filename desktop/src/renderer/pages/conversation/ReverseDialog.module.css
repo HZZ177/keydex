@@ -352,6 +352,22 @@
   border-top: 1px solid var(--color-border-subtle);
 }
 
+/*
+ * ReviewDiffView normally fills a height-constrained sidebar. The rewind
+ * preview lives in an auto-sized <details>, so its percentage height would
+ * otherwise resolve without a usable block size and the opened diff would
+ * collapse to zero height.
+ */
+.fileExpanded :global([data-keydex-diff-wrapper="review"]) {
+  height: clamp(180px, 28vh, 280px);
+  min-height: 180px;
+}
+
+/* At the vertical edge of an embedded diff, continue scrolling the file list. */
+.fileExpanded :global([data-keydex-diff-patch-viewport="true"]) {
+  overscroll-behavior-y: auto;
+}
+
 .externalPath {
   overflow: hidden;
   border-top: 1px solid var(--color-border-subtle);

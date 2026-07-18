@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import { processMessages } from "@/renderer/pages/conversation/messages/processMessages";
+import { messageFromRun } from "@/renderer/pages/conversation/subagents/subagentTimeline";
 import {
   projectConversationRenderUnits,
   type ConversationRenderUnitKind,
 } from "@/renderer/pages/conversation/timeline/ConversationRenderUnit";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
+import { normalizeSubagentRunSnapshot } from "@/types/subagents";
+import subagentRunFixture from "./fixtures/subagent-run-snapshot.json";
 
 describe("Conversation RenderUnit projection", () => {
   it("keeps unit identity stable across normal status/content updates while changing renderVersion", () => {
@@ -162,6 +165,74 @@ describe("Conversation RenderUnit projection", () => {
     expect(counted.renderVersion).not.toBe(named.renderVersion);
   });
 
+  it("invalidates only the changed parallel Sub-Agent capsule across queued, running and blocked updates", () => {
+    const queuedA = subagentRun({
+      run_id: "run-a",
+      subagent_id: "subagent-a",
+      parent_timeline_sequence: 1,
+      state: "queued",
+      version: 1,
+      started_at: null,
+      updated_at: subagentRunFixture.queued_at,
+    });
+    const queuedB = subagentRun({
+      run_id: "run-b",
+      subagent_id: "subagent-b",
+      parent_timeline_sequence: 2,
+      state: "queued",
+      version: 1,
+      started_at: null,
+      updated_at: subagentRunFixture.queued_at,
+    });
+    const runningA = subagentRun({
+      ...queuedA,
+      state: "running",
+      version: 2,
+      started_at: subagentRunFixture.started_at,
+      updated_at: subagentRunFixture.started_at,
+    });
+    const blockedA = subagentRun({
+      ...runningA,
+      version: 3,
+      blocked_on: "approval",
+      updated_at: "2026-07-18T13:00:01.500Z",
+    });
+
+    const queuedProjection = projectConversationRenderUnits(processMessages([
+      messageFromRun(queuedA, "turn-1"),
+      messageFromRun(queuedB, "turn-1"),
+    ]));
+    const runningProjection = projectConversationRenderUnits(processMessages([
+      messageFromRun(runningA, "turn-1"),
+      messageFromRun(queuedB, "turn-1"),
+    ]));
+    const blockedProjection = projectConversationRenderUnits(processMessages([
+      messageFromRun(blockedA, "turn-1"),
+      messageFromRun(queuedB, "turn-1"),
+    ]));
+    const queuedUnits = unitsBySourceMessage(queuedProjection);
+    const runningUnits = unitsBySourceMessage(runningProjection);
+    const blockedUnits = unitsBySourceMessage(blockedProjection);
+    const runAMessageId = "subagent-run:run-a";
+    const runBMessageId = "subagent-run:run-b";
+
+    expect(runningUnits.get(runAMessageId)?.id).toBe(queuedUnits.get(runAMessageId)?.id);
+    expect(runningUnits.get(runAMessageId)?.renderVersion).not.toBe(
+      queuedUnits.get(runAMessageId)?.renderVersion,
+    );
+    expect(blockedUnits.get(runAMessageId)?.renderVersion).not.toBe(
+      runningUnits.get(runAMessageId)?.renderVersion,
+    );
+    expect(runningUnits.get(runBMessageId)?.renderVersion).toBe(
+      queuedUnits.get(runBMessageId)?.renderVersion,
+    );
+    expect(runningUnits.get(runAMessageId)).toMatchObject({
+      dynamic: true,
+      pinPolicy: "while-active",
+      measurementPolicy: "observe-until-settled",
+    });
+  });
+
   it("covers error, skill, task, status, command, and file-change families", () => {
     const cases: Array<[ConversationMessage["kind"], ConversationRenderUnitKind]> = [
       ["error", "error"],
@@ -255,6 +326,30 @@ function unit(
   const value = projection.units.find((entry) => entry.kind === kind);
   expect(value, `missing ${kind}`).toBeDefined();
   return value!;
+}
+
+function unitsBySourceMessage(
+  projection: ReturnType<typeof projectConversationRenderUnits>,
+) {
+  return new Map(
+    projection.units
+      .filter((entry) => entry.kind === "status" && entry.sourceMessageIds.length === 1)
+      .map((entry) => [entry.sourceMessageIds[0], entry]),
+  );
+}
+
+function subagentRun(overrides: Record<string, unknown>) {
+  const state = String(overrides.state ?? subagentRunFixture.state);
+  const terminal = ["completed", "failed", "cancelled", "interrupted"].includes(state);
+  return normalizeSubagentRunSnapshot({
+    ...subagentRunFixture,
+    final_report: state === "completed" ? subagentRunFixture.final_report : null,
+    error_code: state === "failed" ? "FAILED" : null,
+    error_message: state === "failed" ? "failed" : null,
+    finished_at: terminal ? subagentRunFixture.finished_at : null,
+    blocked_on: null,
+    ...overrides,
+  });
 }
 
 function message(

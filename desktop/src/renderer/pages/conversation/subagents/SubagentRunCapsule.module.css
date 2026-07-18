@@ -81,6 +81,12 @@
   width: 20px;
 }
 
+.capsule[data-state="queued"] .roleIcon,
+.capsule[data-state="running"] .roleIcon {
+  animation: subagent-role-icon-spin 1.4s linear infinite;
+  transform-origin: center;
+}
+
 .roleIcon[data-role="explorer"] {
   color: color-mix(in srgb, #12a9b8 84%, var(--color-text-secondary));
 }
@@ -100,8 +106,19 @@
   white-space: nowrap;
 }
 
+@keyframes subagent-role-icon-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .capsule {
     transition: none;
+  }
+
+  .capsule[data-state="queued"] .roleIcon,
+  .capsule[data-state="running"] .roleIcon {
+    animation: none;
   }
 }

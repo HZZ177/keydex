@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -59,11 +60,20 @@ def _snapshot(
 
 def _repositories(tmp_path) -> StorageRepositories:
     repositories = StorageRepositories(init_database(tmp_path / "app.db"))
-    repositories.sessions.create(
+    parent = repositories.sessions.create(
         session_id="parent-1",
         user_id="local-user",
         scene_id="desktop-agent",
         session_type="workspace",
+    )
+    repositories.trace_records.create(
+        trace_id="trace-1",
+        session_id=parent.id,
+        active_session_id=parent.id,
+        scene_id=parent.scene_id,
+        user_id=parent.user_id,
+        turn_index=3,
+        root_node_id="root-3",
     )
     return repositories
 
@@ -90,6 +100,7 @@ async def test_publisher_persists_full_snapshot_then_broadcasts_parent_action(tm
     stored = repositories.message_events.get(event_key)
     assert stored is not None
     assert stored.session_id == "parent-1"
+    assert stored.turn_index == 3
     assert stored.action == "subagent_run_updated"
     for key, value in snapshot.model_dump(mode="json").items():
         assert stored.data[key] == value
@@ -104,11 +115,33 @@ async def test_publisher_persists_full_snapshot_then_broadcasts_parent_action(tm
                 "event_key": event_key,
                 "session_id": "parent-1",
                 "trace_id": "trace-1",
-                "turn_index": 0,
+                "turn_index": 3,
                 "timestamp_ms": manager.events[0]["data"]["timestamp_ms"],
             },
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_runs_inherit_the_same_parent_trace_turn(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    manager = RecordingBroadcastManager()
+    publisher = SubagentRunEventPublisher(
+        repositories=repositories,
+        chat_stream_manager=manager,
+    )
+
+    await asyncio.gather(
+        publisher.publish(_snapshot(run_id="run-a")),
+        publisher.publish(_snapshot(run_id="run-b")),
+    )
+
+    stored = repositories.message_events.list_by_session("parent-1")
+    assert sorted((event.data["run_id"], event.turn_index) for event in stored) == [
+        ("run-a", 3),
+        ("run-b", 3),
+    ]
+    assert [event["data"]["turn_index"] for event in manager.events] == [3, 3]
 
 
 @pytest.mark.asyncio

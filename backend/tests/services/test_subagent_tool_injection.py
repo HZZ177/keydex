@@ -30,6 +30,7 @@ class FakeWaitRuntime:
         self.cancel_wait = cancel_wait
         self.terminal_state = terminal_state
         self.spawn_requests = []
+        self.resume_requests = []
         self.waited_run_ids = []
         self.trace_cancellations = []
 
@@ -90,6 +91,34 @@ class FakeWaitRuntime:
             started_at=NOW,
             finished_at=NOW,
             updated_at=NOW,
+        )
+
+    async def resume(self, subagent_id, task, **kwargs):
+        self.resume_requests.append((subagent_id, task, kwargs))
+        queued = SubagentRunSnapshot(
+            run_id="run-continued",
+            subagent_id=subagent_id,
+            child_session_id="child-1",
+            parent_session_id=kwargs["parent_session_id"],
+            parent_trace_id=kwargs.get("parent_trace_id"),
+            parent_tool_call_id=kwargs.get("parent_tool_call_id"),
+            parent_timeline_sequence=1,
+            initiated_by=kwargs["initiated_by"],
+            role="explorer",
+            task=task,
+            state="queued",
+            version=1,
+            created_at=NOW,
+            queued_at=NOW,
+            updated_at=NOW,
+        )
+        return SubagentHandle(
+            subagent_id=queued.subagent_id,
+            run_id=queued.run_id,
+            child_session_id=queued.child_session_id,
+            parent_session_id=queued.parent_session_id,
+            role=queued.role,
+            initial_snapshot=queued,
         )
 
     async def cancel_by_parent_trace(self, parent_session_id, parent_trace_id, *, reason=None):
@@ -206,7 +235,10 @@ def test_delegate_tool_is_injected_only_for_visible_workspace_main_session(tmp_p
     chat_tools = service._build_subagent_runtime_tools(session=chat)
     child_tools = service._build_subagent_runtime_tools(session=child)
 
-    assert [tool.name for tool in parent_tools] == ["delegate_subagent"]
+    assert [tool.name for tool in parent_tools] == [
+        "delegate_subagent",
+        "continue_subagent",
+    ]
     assert chat_tools == []
     assert child_tools == []
 
@@ -277,6 +309,81 @@ def test_wait_policy_spawns_then_waits_by_run_state_without_blocking_event_loop(
     assert len(runtime.spawn_requests) == 1
     assert runtime.spawn_requests[0].parent_tool_call_id == "parent-tool-call"
     assert runtime.waited_run_ids == ["run-1"]
+
+
+def test_main_agent_can_continue_existing_subagent_with_current_parent_anchor(tmp_path) -> None:
+    runtime = FakeWaitRuntime()
+    service, repositories = _service(tmp_path, runtime=runtime)
+    parent = repositories.sessions.create(
+        session_id="workspace-main",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        session_type="workspace",
+    )
+    tool = service._build_subagent_runtime_tools(session=parent)[1]
+
+    result = asyncio.run(
+        tool.run(
+            {"subagent_id": "subagent-1", "task": "continue the investigation"},
+            _tool_context(tmp_path, tool_call_id="continue-call-1"),
+        )
+    )
+
+    assert result.ok is True
+    assert result.result["state"] == "completed"
+    assert runtime.spawn_requests == []
+    assert runtime.waited_run_ids == ["run-continued"]
+    subagent_id, task, kwargs = runtime.resume_requests[0]
+    assert subagent_id == "subagent-1"
+    assert task == "continue the investigation"
+    assert kwargs == {
+        "initiated_by": "main_agent",
+        "parent_session_id": "workspace-main",
+        "parent_trace_id": "parent-trace",
+        "parent_tool_call_id": "continue-call-1",
+    }
+
+
+@pytest.mark.parametrize(
+    ("context", "expected_code"),
+    [
+        ({"agent_kind": "subagent", "tool_call_id": "forged"}, "ROLE_TOOL_POLICY_VIOLATION"),
+        ({"agent_kind": "main"}, "SUBAGENT_PARENT_INVALID"),
+    ],
+)
+def test_continue_tool_rejects_forged_caller_and_missing_parent_tool_call(
+    tmp_path,
+    context,
+    expected_code,
+) -> None:
+    runtime = FakeWaitRuntime()
+    service, repositories = _service(tmp_path, runtime=runtime)
+    parent = repositories.sessions.create(
+        session_id="workspace-main",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        session_type="workspace",
+    )
+    tool = service._build_subagent_runtime_tools(session=parent)[1]
+    tool_context = ToolExecutionContext(
+        session_id=parent.id,
+        user_id=parent.user_id,
+        workspace_root=tmp_path,
+        turn_index=1,
+        trace_id="parent-trace",
+        metadata=context,
+    )
+
+    result = asyncio.run(
+        tool.run(
+            {"subagent_id": "subagent-1", "task": "continue"},
+            tool_context,
+        )
+    )
+
+    assert result.ok is False
+    assert result.error is not None and result.error["code"] == expected_code
+    assert runtime.resume_requests == []
 
 
 @pytest.mark.parametrize(
@@ -464,3 +571,35 @@ def test_delegate_tool_injects_parent_id_from_real_langchain_tool_call(tmp_path)
     assert tool_message.tool_call_id == "call-from-model"
     assert payload["state"] == "completed"
     assert runtime.spawn_requests[0].parent_tool_call_id == "call-from-model"
+
+
+def test_continue_tool_injects_parent_id_from_real_langchain_tool_call(tmp_path) -> None:
+    runtime = FakeWaitRuntime()
+    service, repositories = _service(tmp_path, runtime=runtime)
+    parent = repositories.sessions.create(
+        session_id="workspace-main",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        session_type="workspace",
+    )
+    local_tool = service._build_subagent_runtime_tools(session=parent)[1]
+    langchain_tool = local_tool_to_langchain_tool(
+        local_tool,
+        context_factory=lambda: _tool_context(tmp_path, tool_call_id=None),
+    )
+
+    tool_message = asyncio.run(
+        langchain_tool.ainvoke(
+            {
+                "type": "tool_call",
+                "id": "continue-call-from-model",
+                "name": "continue_subagent",
+                "args": {"subagent_id": "subagent-1", "task": "continue"},
+            }
+        )
+    )
+
+    payload = json.loads(tool_message.content)
+    assert tool_message.tool_call_id == "continue-call-from-model"
+    assert payload["state"] == "completed"
+    assert runtime.resume_requests[0][2]["parent_tool_call_id"] == "continue-call-from-model"

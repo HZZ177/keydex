@@ -19,21 +19,42 @@ export function McpRuntimePill({ runtime, sessionId, runtimeState, onOpenSetting
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const rootRef = useRef<HTMLSpanElement | null>(null);
+  const requestIdRef = useRef(0);
 
   const loadStatus = useCallback(async () => {
     if (!sessionId) {
       setStatus(null);
       return;
     }
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
     setLoading(true);
     setError("");
     try {
-      setStatus(await runtime.mcp.getRuntimeStatus(sessionId));
+      const nextStatus = await runtime.mcp.getRuntimeStatus(sessionId);
+      if (requestIdRef.current === requestId) {
+        setStatus(nextStatus);
+      }
     } catch (reason) {
-      setError(errorMessage(reason));
+      if (requestIdRef.current === requestId) {
+        setError(errorMessage(reason));
+      }
     } finally {
-      setLoading(false);
+      if (requestIdRef.current === requestId) {
+        setLoading(false);
+      }
     }
+  }, [runtime, sessionId]);
+
+  useEffect(() => {
+    requestIdRef.current += 1;
+    setStatus(null);
+    setOpen(false);
+    setLoading(false);
+    setError("");
+    return () => {
+      requestIdRef.current += 1;
+    };
   }, [runtime, sessionId]);
 
   useEffect(() => {

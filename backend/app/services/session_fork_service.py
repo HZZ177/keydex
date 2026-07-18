@@ -318,10 +318,24 @@ class SessionForkService:
             parent_session_id=session_id,
             parent_trace_ids=trace_ids,
         )
-        deleted_events = conn.execute(
-            "delete from message_events where session_id = ? and turn_index >= ?",
-            (session_id, turn_index),
-        ).rowcount
+        if trace_ids:
+            placeholders = ",".join("?" for _ in trace_ids)
+            deleted_events = conn.execute(
+                f"""
+                delete from message_events
+                 where session_id = ?
+                   and (
+                     turn_index >= ?
+                     or trace_record_id in ({placeholders})
+                   )
+                """,
+                (session_id, turn_index, *trace_ids),
+            ).rowcount
+        else:
+            deleted_events = conn.execute(
+                "delete from message_events where session_id = ? and turn_index >= ?",
+                (session_id, turn_index),
+            ).rowcount
         if trace_ids:
             placeholders = ",".join("?" for _ in trace_ids)
             conn.execute(
@@ -762,13 +776,20 @@ class SessionForkService:
         return trace
 
     def _has_visible_history_before_turn(self, session_id: str, turn_index: int) -> bool:
-        previous_turns = self.repositories.message_events.list_turn_indexes(
-            session_id,
-            cursor_turn_index=int(turn_index),
-            direction="older",
-            limit=1,
-        )
-        return bool(previous_turns)
+        with self.repositories.db.connect() as conn:
+            row = conn.execute(
+                """
+                select 1
+                  from message_events
+                 where session_id = ?
+                   and turn_index < ?
+                   and action = 'user_message'
+                   and is_deleted = 0
+                 limit 1
+                """,
+                (session_id, int(turn_index)),
+            ).fetchone()
+        return row is not None
 
     def _checkpoint_exists(self, thread_id: str, checkpoint_ns: str, checkpoint_id: str) -> bool:
         with self.repositories.db.connect() as conn:

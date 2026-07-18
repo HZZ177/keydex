@@ -10,6 +10,7 @@ from importlib import import_module
 from typing import Any
 
 _EXPORTS = {
+    "FileHistoryExecutionScope": ("backend.app.tools.base", "FileHistoryExecutionScope"),
     "FunctionTool": ("backend.app.tools.base", "FunctionTool"),
     "LocalTool": ("backend.app.tools.base", "LocalTool"),
     "ToolDefinitionError": ("backend.app.tools.base", "ToolDefinitionError"),

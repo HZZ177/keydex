@@ -167,6 +167,7 @@ function MessageTextComponent({
   );
   const { displayedContent, isAnimating } = useTypingAnimation({
     content: animationContent,
+    sessionId: message.threadId,
     enabled: !isUser && isStreaming,
     completeImmediately: isUser || cancelled,
     fastDrain: fastDrainTyping,

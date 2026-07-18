@@ -94,6 +94,29 @@ describe("message reducer", () => {
     ]);
   });
 
+  it("promotes continue_subagent above the ordinary tool message kind", () => {
+    const state = replayRuntimeEvents(createInitialConversationState(), [
+      itemStarted(
+        1,
+        item("item-subagent-continue", "tool_call", "running", {
+          call: {
+            id: "call-subagent-continue",
+            name: "continue_subagent",
+            arguments: { subagent_id: "subagent-1", task: "continue with prior context" },
+          },
+        }),
+      ),
+    ]);
+
+    expect(selectMessagesForThread(state, "thr-1")).toMatchObject([
+      {
+        kind: "subagent_invocation",
+        itemId: "item-subagent-continue",
+        payload: { call: { name: "continue_subagent" } },
+      },
+    ]);
+  });
+
   it("orders thinking by first content delta instead of assistant placeholder creation", () => {
     const state = replayRuntimeEvents(createInitialConversationState(), [
       itemStarted(1, item("item-user", "user_message", "completed", { input: [{ type: "text", text: "分析问题" }] })),

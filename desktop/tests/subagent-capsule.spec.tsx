@@ -14,10 +14,10 @@ import { normalizeSubagentRunSnapshot } from "@/types/subagents";
 
 describe("SubagentRunCapsule", () => {
   it.each([
-    ["queued", "排队中"],
-    ["running", "运行中"],
+    ["queued", "正在启动"],
+    ["running", "正在工作"],
     ["completed", "已完成"],
-    ["failed", "已失败"],
+    ["failed", "运行失败"],
     ["cancelled", "已取消"],
     ["interrupted", "已中断"],
   ] as const)("keeps the %s state accessible while rendering only the short name", (state, label) => {
@@ -35,7 +35,7 @@ describe("SubagentRunCapsule", () => {
 
     const capsule = screen.getByRole("button", { name: /sub-worker，等待审批/ });
     expect(capsule.textContent).toBe("sub-worker");
-    expect(capsule.getAttribute("data-blocked")).toBe("approval");
+    expect(capsule.parentElement?.getAttribute("data-blocked")).toBe("approval");
     await userEvent.click(capsule);
     expect(openSubagentPanel).toHaveBeenCalledWith(run);
   });
@@ -104,6 +104,19 @@ describe("SubagentRunCapsule", () => {
       errorMessage: "parent tool call missing",
     });
   });
+
+  it("shows a running delegate invocation as working instead of starting", () => {
+    render(
+      <RightSidebarConversationContext.Provider value={sidebarContext()}>
+        <SubagentInvocationCapsule message={runningInvocationMessage()} />
+      </RightSidebarConversationContext.Provider>,
+    );
+
+    const capsule = screen.getByRole("button", { name: /sub-worker，正在工作/ });
+    expect(capsule.getAttribute("data-state")).toBe("running");
+    expect(screen.getByRole("status").textContent).toBe("正在工作");
+    expect(screen.queryByText("正在启动")).toBeNull();
+  });
 });
 
 function renderCapsule(run: ReturnType<typeof normalizeSubagentRunSnapshot>, openSubagentPanel = vi.fn()) {
@@ -154,6 +167,22 @@ function failedInvocationMessage(): ConversationMessage {
     },
     createdAt: "2026-07-18T00:00:00.000Z",
     updatedAt: "2026-07-18T00:00:01.000Z",
+  };
+}
+
+function runningInvocationMessage(): ConversationMessage {
+  return {
+    ...failedInvocationMessage(),
+    id: "invocation-message-running",
+    itemId: "delegate-call-running",
+    status: "running",
+    payload: {
+      call: {
+        id: "delegate-call-running",
+        name: "delegate_subagent",
+        arguments: { type: "worker", task: "implement the requested change" },
+      },
+    },
   };
 }
 

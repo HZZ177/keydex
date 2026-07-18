@@ -9,6 +9,7 @@ import { conversationBaselineDiagnostics } from "./conversationBaselineDiagnosti
 
 export interface UseTypingAnimationOptions {
   content: string;
+  sessionId: string;
   enabled?: boolean;
   completeImmediately?: boolean;
   fastDrain?: boolean;
@@ -18,13 +19,15 @@ export interface UseTypingAnimationOptions {
 
 export function useTypingAnimation({
   content,
+  sessionId,
   enabled = true,
   completeImmediately = false,
   fastDrain = false,
   passthrough = false,
   resetKey = "",
 }: UseTypingAnimationOptions) {
-  const initialContent = initialDisplayedContent(content, enabled, completeImmediately, resetKey);
+  const initialCacheKey = typingDisplayCacheKey(sessionId, resetKey);
+  const initialContent = initialDisplayedContent(content, enabled, completeImmediately, initialCacheKey);
   const [displayedContent, setDisplayedContent] = useState(initialContent);
   const [isAnimating, setIsAnimating] = useState(false);
   const frameRef = useRef<number | null>(null);
@@ -32,13 +35,15 @@ export function useTypingAnimation({
   const displayedRef = useRef(initialContent);
   const lastTimestampRef = useRef<number | null>(null);
   const speedSourceIdRef = useRef(createRuntimeTypingSpeedSourceId());
+  const sessionIdRef = useRef(sessionId);
   const carryRef = useRef(0);
   const fastDrainRef = useRef(fastDrain);
   const resetKeyRef = useRef(resetKey);
+  const cacheKeyRef = useRef(initialCacheKey);
 
   const commitDisplayedContent = (nextContent: string) => {
     displayedRef.current = nextContent;
-    rememberDisplayedContent(resetKeyRef.current, nextContent);
+    rememberDisplayedContent(cacheKeyRef.current, nextContent);
     setDisplayedContent(nextContent);
     conversationBaselineDiagnostics.record({
       stage: "typing-commit",
@@ -55,11 +60,16 @@ export function useTypingAnimation({
     }
     lastTimestampRef.current = null;
     carryRef.current = 0;
-    reportRuntimeTypingSpeed(speedSourceIdRef.current, 0);
+    reportRuntimeTypingSpeed(sessionIdRef.current, speedSourceIdRef.current, 0);
   };
 
   useEffect(() => {
     contentRef.current = content;
+    const nextCacheKey = typingDisplayCacheKey(sessionId, resetKey);
+    if (sessionIdRef.current !== sessionId) {
+      cancelFrame();
+      sessionIdRef.current = sessionId;
+    }
     if (passthrough) {
       cancelFrame();
       displayedRef.current = content;
@@ -71,10 +81,11 @@ export function useTypingAnimation({
       carryRef.current = 0;
     }
 
-    if (resetKeyRef.current !== resetKey) {
+    if (cacheKeyRef.current !== nextCacheKey) {
       resetKeyRef.current = resetKey;
+      cacheKeyRef.current = nextCacheKey;
       cancelFrame();
-      commitDisplayedContent(initialDisplayedContent(content, enabled, completeImmediately, resetKey));
+      commitDisplayedContent(initialDisplayedContent(content, enabled, completeImmediately, nextCacheKey));
     }
 
     if (completeImmediately || prefersReducedMotion()) {
@@ -134,7 +145,7 @@ export function useTypingAnimation({
       if (backlog <= 0) {
         frameRef.current = null;
         lastTimestampRef.current = null;
-        reportRuntimeTypingSpeed(speedSourceIdRef.current, 0);
+        reportRuntimeTypingSpeed(sessionIdRef.current, speedSourceIdRef.current, 0);
         setIsAnimating(false);
         return;
       }
@@ -149,6 +160,7 @@ export function useTypingAnimation({
           fastDrainRef.current ? FAST_DRAIN_STREAM_STEP_OPTIONS : undefined,
         );
         reportRuntimeTypingSpeed(
+          sessionIdRef.current,
           speedSourceIdRef.current,
           step.effectiveCharsPerSecond,
           Math.max(0, backlog - step.chars),
@@ -167,7 +179,7 @@ export function useTypingAnimation({
 
       frameRef.current = null;
       lastTimestampRef.current = null;
-      reportRuntimeTypingSpeed(speedSourceIdRef.current, 0);
+      reportRuntimeTypingSpeed(sessionIdRef.current, speedSourceIdRef.current, 0);
       setIsAnimating(false);
     };
 
@@ -175,7 +187,7 @@ export function useTypingAnimation({
       lastTimestampRef.current = performance.now();
       frameRef.current = window.requestAnimationFrame(animate);
     }
-  }, [completeImmediately, content, enabled, fastDrain, passthrough, resetKey]);
+  }, [completeImmediately, content, enabled, fastDrain, passthrough, resetKey, sessionId]);
 
   useEffect(() => cancelFrame, []);
 
@@ -206,6 +218,10 @@ const FAST_DRAIN_STREAM_STEP_OPTIONS = {
   drainTargetSeconds: 0.7,
 };
 const displayedContentByKey = new Map<string, string>();
+
+function typingDisplayCacheKey(sessionId: string, resetKey: string): string {
+  return sessionId && resetKey ? `${sessionId}:${resetKey}` : "";
+}
 
 function initialDisplayedContent(
   content: string,

@@ -641,7 +641,7 @@ def test_resume_terminal_instance_reuses_identity_and_context_session_with_new_r
     assert [record.run_id for record in history] == [old_run.run_id, handle.run_id]
 
 
-def test_resume_rejects_closed_unknown_blank_and_main_agent_initiator(tmp_path) -> None:
+def test_resume_rejects_closed_unknown_blank_and_unanchored_main_agent(tmp_path) -> None:
     repositories, parent = _setup(tmp_path)
     child, _ = _persist_terminal_instance(repositories, parent, "completed")
     with repositories.db.transaction(immediate=True) as conn:
@@ -671,7 +671,69 @@ def test_resume_rejects_closed_unknown_blank_and_main_agent_initiator(tmp_path) 
                 initiated_by="main_agent",
             )
         )
-    assert initiator.value.code is SubagentErrorCode.RUN_TRANSITION_INVALID
+    assert initiator.value.code is SubagentErrorCode.SUBAGENT_PARENT_INVALID
+
+
+def test_main_agent_resume_reuses_child_context_and_persists_current_parent_anchor(
+    tmp_path,
+) -> None:
+    repositories, parent = _setup(tmp_path)
+    child, old_run = _persist_terminal_instance(repositories, parent, "completed")
+    manager = SchedulingChatManager()
+    runtime = _runtime(repositories, manager)
+
+    async def scenario():
+        handle = await runtime.resume(
+            child.subagent_id,
+            "continue with prior context",
+            initiated_by="main_agent",
+            parent_session_id=parent.id,
+            parent_trace_id="parent-trace-continued",
+            parent_tool_call_id="continue-call-1",
+        )
+        current = await runtime.get_run(handle.run_id)
+        await manager.finish()
+        await runtime.shutdown()
+        return handle, current
+
+    handle, current = asyncio.run(scenario())
+
+    assert handle.subagent_id == old_run.subagent_id
+    assert handle.child_session_id == old_run.child_session_id
+    assert handle.run_id != old_run.run_id
+    assert current.initiated_by.value == "main_agent"
+    assert current.parent_trace_id == "parent-trace-continued"
+    assert current.parent_tool_call_id == "continue-call-1"
+    assert current.parent_timeline_sequence == 1
+    assert manager.requests[0].session_id == child.id
+    assert manager.requests[0].message == "continue with prior context"
+    assert repositories.subagent_runs.get(old_run.run_id).to_snapshot() == old_run
+
+
+def test_main_agent_resume_cannot_address_an_instance_from_another_parent(tmp_path) -> None:
+    repositories, parent = _setup(tmp_path)
+    child, _ = _persist_terminal_instance(repositories, parent, "completed")
+    other_parent = repositories.sessions.create(
+        session_id="other-parent",
+        user_id=parent.user_id,
+        scene_id=parent.scene_id,
+        session_type="workspace",
+    )
+    runtime = _runtime(repositories, SchedulingChatManager())
+
+    with pytest.raises(SubagentError) as denied:
+        asyncio.run(
+            runtime.resume(
+                child.subagent_id,
+                "cross-parent continuation",
+                initiated_by="main_agent",
+                parent_session_id=other_parent.id,
+                parent_tool_call_id="continue-call-cross-parent",
+            )
+        )
+
+    assert denied.value.code is SubagentErrorCode.SUBAGENT_NOT_FOUND
+    assert repositories.subagent_runs.get_active(child.subagent_id) is None
 
 
 def test_close_idle_instance_is_idempotent_preserves_history_and_blocks_resume(tmp_path) -> None:

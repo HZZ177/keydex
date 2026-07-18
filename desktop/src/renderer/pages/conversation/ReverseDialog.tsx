@@ -396,6 +396,8 @@ function ReverseFilePreviewItem({
             document={document}
             focusedPath={displayPath}
             scrollScopeKey={`reverse:${operationId}:${fileResourceKey(file)}`}
+            density="compact"
+            showToolbar={false}
           />
         ) : null}
       </div>

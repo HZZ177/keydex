@@ -7,7 +7,6 @@ import pytest
 
 from backend.app.subagents.models import SubagentRunSnapshot
 from backend.app.subagents.reporting import (
-    DELEGATE_SUBAGENT_MAX_REPORT_BYTES,
     extract_subagent_final_report,
     format_delegate_subagent_result,
 )
@@ -79,15 +78,15 @@ def test_completed_tool_result_exposes_only_terminal_identity_and_report() -> No
     assert "reasoning" not in result
 
 
-def test_completed_tool_result_bounds_utf8_without_mutating_durable_report() -> None:
-    full_report = "调查结论" * (DELEGATE_SUBAGENT_MAX_REPORT_BYTES // 3)
+def test_completed_tool_result_returns_complete_large_utf8_report() -> None:
+    full_report = "调查结论" * 3_000
     snapshot = _completed_snapshot(report=full_report)
 
     result = format_delegate_subagent_result(snapshot)
 
-    assert result["report_truncated"] is True
-    assert len(result["final_report"].encode("utf-8")) <= DELEGATE_SUBAGENT_MAX_REPORT_BYTES
-    assert result["final_report"] != full_report
+    assert len(full_report.encode("utf-8")) > 10_000
+    assert result["report_truncated"] is False
+    assert result["final_report"] == full_report
     assert snapshot.final_report == full_report
 
 

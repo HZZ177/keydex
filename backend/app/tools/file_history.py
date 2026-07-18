@@ -21,7 +21,7 @@ def tracked_file_mutation(
     if not context.file_history_tracking:
         yield
         return
-    service, snapshot_id = context.require_file_history()
+    service, history_scope = context.require_file_history_scope()
     batch_id = new_id() if len(changes) > 1 else None
     prepared = []
     try:
@@ -30,16 +30,16 @@ def tracked_file_mutation(
             [path for path, _ in changes],
         )
         with service.controlled_write_lease(
-            session_id=context.session_id,
+            session_id=history_scope.session_id,
             workspace_root=context.workspace_root,
             resource_keys=resource_keys,
         ):
             prepared = service.prepare_writes(
-                session_id=context.session_id,
-                active_session_id=context.active_session_id,
-                snapshot_id=snapshot_id,
-                trace_id=context.trace_id,
-                turn_index=context.turn_index,
+                session_id=history_scope.session_id,
+                active_session_id=history_scope.active_session_id,
+                snapshot_id=history_scope.input_snapshot_id,
+                trace_id=history_scope.trace_id,
+                turn_index=history_scope.turn_index,
                 workspace_root=context.workspace_root,
                 tool_name=tool_name,
                 tool_call_id=context.tool_call_id,

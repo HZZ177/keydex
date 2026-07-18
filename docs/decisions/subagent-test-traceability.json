@@ -339,7 +339,7 @@
     {
       "ids": ["FT-TOOL-010..015"],
       "layer": "functional",
-      "behavior": "Completed and non-success tool results expose only bounded terminal reporting fields.",
+      "behavior": "Completed and non-success tool results expose complete terminal reporting fields without child transcript leakage.",
       "test_refs": [
         {
           "path": "backend/tests/tools/test_subagent_reporting.py",
@@ -370,7 +370,7 @@
         },
         {
           "path": "backend/tests/tools/test_subagent_reporting.py",
-          "contains": "DELEGATE_SUBAGENT_MAX_REPORT_BYTES"
+          "contains": "def test_completed_tool_result_returns_complete_large_utf8_report"
         }
       ]
     },

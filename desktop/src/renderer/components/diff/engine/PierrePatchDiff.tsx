@@ -3,7 +3,11 @@ import type { CSSProperties } from "react";
 import type { PatchDiffProps } from "@pierre/diffs/react";
 
 import type { KeydexDiffFile } from "../model";
-import type { KeydexDiffLayout, KeydexDiffProfileName } from "../profiles";
+import type {
+  KeydexDiffDensity,
+  KeydexDiffLayout,
+  KeydexDiffProfileName,
+} from "../profiles";
 import {
   KeydexDiffAnnotationSlot,
   toPierreDiffAnnotations,
@@ -48,6 +52,7 @@ export interface PierrePatchDiffAdapterOptions {
   readonly className?: string;
   readonly style?: CSSProperties;
   readonly disableWorkerPool?: boolean;
+  readonly density?: KeydexDiffDensity;
 }
 
 export interface PierrePatchDiffProps extends PierrePatchDiffAdapterOptions {
@@ -72,7 +77,7 @@ export function pierrePatchDiffProps(
   return {
     patch: file.patch,
     className: adapter.className,
-    style: keydexPierreStyle(adapter.profile, adapter.style),
+    style: keydexPierreStyle(adapter.profile, adapter.style, adapter.density),
     disableWorkerPool: adapter.disableWorkerPool,
     selectedLines: toPierreSelectedLineRange(file, adapter.selectedRange),
     lineAnnotations: toPierreDiffAnnotations(file, adapter.annotations ?? []),
@@ -99,7 +104,7 @@ export function PierrePatchDiff({ file, ...adapter }: PierrePatchDiffProps) {
   }, []);
   const props = useMemo(
     () => pierrePatchDiffProps(file, adapter),
-    [file, adapter.profile, adapter.layout, adapter.wrap, adapter.theme, adapter.selectedRange, adapter.onSelectedRangeChange, adapter.annotations, adapter.onAnnotationAction, adapter.className, adapter.style, adapter.disableWorkerPool],
+    [file, adapter.profile, adapter.layout, adapter.wrap, adapter.theme, adapter.selectedRange, adapter.onSelectedRangeChange, adapter.annotations, adapter.onAnnotationAction, adapter.className, adapter.style, adapter.disableWorkerPool, adapter.density],
   );
 
   if (snapshot.status === "error") {

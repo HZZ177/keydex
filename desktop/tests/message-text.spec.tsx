@@ -2010,8 +2010,8 @@ function largeMarkdownSections(count: number): string {
   ).join("\n\n");
 }
 
-function RuntimeTypingMetricsProbe() {
-  const metrics = useRuntimeTypingMetrics();
+function RuntimeTypingMetricsProbe({ sessionId = "thread-1" }: { sessionId?: string }) {
+  const metrics = useRuntimeTypingMetrics(sessionId);
   return <div data-testid="runtime-typing-metrics">{metrics.speed}/{metrics.backlog}</div>;
 }
 

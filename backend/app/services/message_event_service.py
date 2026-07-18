@@ -1144,11 +1144,15 @@ class MessageEventService:
             summary_keys += ("source",)
         if tool_name == "delegate_subagent":
             summary_keys += ("type",)
+        if tool_name == "continue_subagent":
+            summary_keys += ("subagent_id",)
         for key in summary_keys:
             value = params.get(key)
             if isinstance(value, str) and value.strip():
                 summary[key] = value
-        if tool_name == "delegate_subagent" and isinstance(params.get("task"), str):
+        if tool_name in {"delegate_subagent", "continue_subagent"} and isinstance(
+            params.get("task"), str
+        ):
             summary["task"] = _preview_text(params["task"], limit=512)
         for key in ("timeout_seconds", "timeoutSeconds", "regex"):
             value = params.get(key)
@@ -1182,10 +1186,14 @@ class MessageEventService:
             summary_keys += ("source",)
         if tool_name == "delegate_subagent":
             summary_keys += ("type",)
+        if tool_name == "continue_subagent":
+            summary_keys += ("subagent_id",)
         for key in summary_keys:
             if key in params and _is_summary_value(params[key]):
                 summary[key] = params[key]
-        if tool_name == "delegate_subagent" and isinstance(params.get("task"), str):
+        if tool_name in {"delegate_subagent", "continue_subagent"} and isinstance(
+            params.get("task"), str
+        ):
             summary["task"] = _preview_text(params["task"], limit=512)
         target = _tool_target(params)
         has_explicit_target = any(

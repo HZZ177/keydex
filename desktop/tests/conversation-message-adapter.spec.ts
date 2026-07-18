@@ -56,6 +56,9 @@ describe("conversation message adapter", () => {
     expect(conversationKindFromAgent(agentMessage({ role: "tool", toolName: "delegate_subagent" }))).toBe(
       "subagent_invocation",
     );
+    expect(conversationKindFromAgent(agentMessage({ role: "tool", toolName: "continue_subagent" }))).toBe(
+      "subagent_invocation",
+    );
     expect(conversationKindFromAgent(agentMessage({ role: "turn" }))).toBe("turn_marker");
     expect(conversationKindFromAgent(agentMessage({ role: "thread_task", toolName: "update_thread_task" }))).toBe(
       "thread_task_status",

@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.app.agent.runner import AgentRunner
+from backend.app.agent.system_prompt import SUBAGENT_ORCHESTRATION_PROMPT
 from backend.app.agent.tool_capabilities import ToolCapability
 from backend.app.model import ModelSettings
 from backend.app.subagents.models import SubagentRole
@@ -86,6 +87,7 @@ def test_explorer_agent_assembly_exposes_only_exact_read_tools(tmp_path: Path) -
     assert {tool.name for tool in factory.tools} == EXPLORER_READ_ONLY_TOOL_NAMES
     prompt = str(factory.system_prompt.content)
     assert EXPLORER_SYSTEM_PROMPT in prompt
+    assert SUBAGENT_ORCHESTRATION_PROMPT not in prompt
     assert "caller attempted override" not in prompt
     assert "caller main prompt" not in prompt
 
@@ -131,10 +133,11 @@ def test_worker_agent_assembly_inherits_main_model_context_and_tools(
     factory = RecordingFactory()
     registry = create_default_tool_registry()
     registry.register(_runtime_tool("delegate_subagent"))
+    registry.register(_runtime_tool("continue_subagent"))
     main_visible_names = {
         tool.name
         for tool in registry.list()
-        if tool.name not in {"apply_patch", "delegate_subagent"}
+        if tool.name not in {"apply_patch", "delegate_subagent", "continue_subagent"}
     }
     runner = AgentRunner(
         model_settings_provider=lambda: ModelSettings(
@@ -165,6 +168,7 @@ def test_worker_agent_assembly_inherits_main_model_context_and_tools(
         runtime_tools=(
             _runtime_tool("mcp__fixture__inspect"),
             _runtime_tool("delegate_subagent"),
+            _runtime_tool("continue_subagent"),
         ),
         subagent_role=SubagentRole.WORKER,
     )
@@ -177,9 +181,47 @@ def test_worker_agent_assembly_inherits_main_model_context_and_tools(
     prompt = str(factory.system_prompt.content)
     assert prompt.startswith("inherited main system prompt")
     assert WORKER_SYSTEM_PROMPT_APPENDIX in prompt
+    assert SUBAGENT_ORCHESTRATION_PROMPT not in prompt
     assert "Worker Fixture" in prompt
     assert str(tmp_path) in prompt
     assert "delegate_subagent" not in {tool.name for tool in factory.tools}
+    assert "continue_subagent" not in {tool.name for tool in factory.tools}
+
+
+def test_main_agent_assembly_adds_subagent_orchestration_only_with_both_tools(
+    tmp_path: Path,
+) -> None:
+    factory = RecordingFactory()
+    runner = _runner(factory)
+
+    runner.create_agent(
+        model="test-model",
+        system_prompt="main prompt",
+        tool_context=_context(tmp_path),
+        tool_capabilities={ToolCapability.WORKSPACE},
+        runtime_tools=(
+            _runtime_tool("delegate_subagent"),
+            _runtime_tool("continue_subagent"),
+        ),
+    )
+
+    prompt = str(factory.system_prompt.content)
+    assert SUBAGENT_ORCHESTRATION_PROMPT in prompt
+    assert "默认优先使用 `explorer`" in prompt
+    assert "并行或加速不是使用 Sub-Agent 的前提" in prompt
+    assert "仅当本轮提供 `delegate_subagent`" not in prompt
+    assert "必须使用 `continue_subagent`" in prompt
+
+    runner.create_agent(
+        model="test-model",
+        system_prompt="main prompt",
+        tool_context=_context(tmp_path),
+        tool_capabilities={ToolCapability.WORKSPACE},
+        runtime_tools=(_runtime_tool("delegate_subagent"),),
+    )
+
+    prompt = str(factory.system_prompt.content)
+    assert SUBAGENT_ORCHESTRATION_PROMPT not in prompt
 
 
 async def test_ft_role_024_worker_assembled_write_tool_changes_only_temp_workspace(
@@ -204,3 +246,4 @@ async def test_ft_role_024_worker_assembled_write_tool_changes_only_temp_workspa
     assert '"operation": "add"' in result
     assert (tmp_path / "worker-output.txt").read_text(encoding="utf-8") == "worker result\n"
     assert "delegate_subagent" not in {tool.name for tool in factory.tools}
+    assert "continue_subagent" not in {tool.name for tool in factory.tools}

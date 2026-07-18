@@ -106,6 +106,7 @@ def _context_for_tool(
         input_file_snapshot_id=context.input_file_snapshot_id,
         file_history_service=context.file_history_service,
         file_history_tracking=context.file_history_tracking,
+        file_history_scope=context.file_history_scope,
         metadata=metadata,
     )
 

@@ -10,7 +10,7 @@ export interface SubagentInvocationPanelDetails {
   parentSessionId: string;
   role: SubagentRole;
   task: string;
-  state: "queued" | "completed" | "failed";
+  state: "queued" | "running" | "completed" | "failed";
   errorCode: string | null;
   errorMessage: string | null;
 }

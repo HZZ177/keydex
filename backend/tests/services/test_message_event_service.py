@@ -461,6 +461,51 @@ def test_subagent_history_keeps_bounded_role_and_task_for_semantic_capsule(tmp_p
     assert "private" not in message["toolParams"]
 
 
+def test_continued_subagent_history_keeps_instance_id_and_task_for_semantic_capsule(
+    tmp_path,
+) -> None:
+    repositories = _repositories(tmp_path)
+    service = MessageEventService(repositories.message_events)
+
+    _append(
+        repositories,
+        "evt_subagent_continue_start",
+        "tool_start",
+        {
+            "tool": "continue_subagent",
+            "params": {
+                "subagent_id": "subagent-1",
+                "task": "continue with the previous findings",
+                "private": "must-not-project",
+            },
+            "run_id": "tool_subagent_continue",
+            "tool_call_id": "call_subagent_continue",
+        },
+    )
+    _append(
+        repositories,
+        "evt_subagent_continue_end",
+        "tool_end",
+        {
+            "tool": "continue_subagent",
+            "run_id": "tool_subagent_continue",
+            "tool_call_id": "call_subagent_continue",
+            "status": "completed",
+            "result": {"state": "completed", "run_id": "run-continued"},
+        },
+    )
+
+    message = service.get_display_messages("ses_history", include_tool_details=False)[0]
+
+    assert message["toolName"] == "continue_subagent"
+    assert message["toolParams"] == {
+        "subagent_id": "subagent-1",
+        "task": "continue with the previous findings",
+    }
+    assert message["toolSummary"] == message["toolParams"]
+    assert "private" not in message["toolParams"]
+
+
 def test_message_event_service_preserves_mcp_tool_metadata_for_history(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     service = MessageEventService(repositories.message_events)

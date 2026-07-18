@@ -281,6 +281,7 @@ function renderVersion(kind: ConversationRenderUnitKind, messages: readonly Conv
       contentRenderFingerprint(message, content),
       a2uiRenderStateFingerprint(message),
       fileChangeRenderStateFingerprint(message),
+      subagentRunRenderStateFingerprint(message),
       footerPayloadVersion(message.payload),
     ].join("\u0000");
   }).join("\u0001") + kind);
@@ -338,6 +339,18 @@ function fileChangeRenderStateFingerprint(message: ConversationMessage): string 
   }))));
 }
 
+function subagentRunRenderStateFingerprint(message: ConversationMessage): string {
+  if (message.kind !== "subagent_run") return "";
+  const run = recordValue(message.payload.subagentRun);
+  if (!run) return "";
+  return stableMarkdownIdentityHash(JSON.stringify({
+    runId: run.run_id,
+    version: run.version,
+    state: run.state,
+    blockedOn: run.blocked_on,
+  }));
+}
+
 function firstRecordList(...values: unknown[]): Record<string, unknown>[] {
   for (const value of values) {
     if (!Array.isArray(value)) continue;
@@ -392,6 +405,10 @@ function estimatedHeight(kind: ConversationRenderUnitKind): number {
 
 function isDynamicMessage(message: ConversationMessage): boolean {
   if (message.kind === "a2ui") return isLiveA2UIStreamMessage(message);
+  if (message.kind === "subagent_run") {
+    const state = stringValue(recordValue(message.payload.subagentRun)?.state);
+    return state === "queued" || state === "running";
+  }
   return message.status === "pending" || message.status === "running"
     || message.kind === "thinking" && message.status !== "completed";
 }

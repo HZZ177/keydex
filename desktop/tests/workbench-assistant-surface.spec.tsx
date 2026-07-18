@@ -23,7 +23,9 @@ import type {
   ThreadTask,
   Workspace,
 } from "@/types/protocol";
+import { normalizeSubagentRunSnapshot, type SubagentRunSnapshot } from "@/types/subagents";
 
+import subagentSnapshotFixture from "./fixtures/subagent-run-snapshot.json";
 import { mockReducedMotionPreference } from "./helpers/motionPreference";
 
 let latestWorkbenchReviewProps: Record<string, unknown> | null = null;
@@ -2209,6 +2211,128 @@ describe("WorkbenchAssistantSurface", () => {
     });
   });
 
+  it("projects concurrent Sub-Agent Run state into the current Workbench session", async () => {
+    const { runtime, emit } = fakeRuntimeWithEvents();
+    const parentSessionId = "ses-live";
+    const firstCallId = "call-explore-backend";
+    const secondCallId = "call-explore-desktop";
+    render(
+      <WorkbenchSurfaceTestProviders>
+        <AgentSessionProvider runtime={runtime}>
+          <WorkbenchAssistantSurface
+            runtime={runtime}
+            workspaceId="ws-1"
+            workspace={workspace()}
+            controller={fakeController({
+              session: session(parentSessionId),
+              agentMessages: [
+                subagentInvocationMessage(parentSessionId, firstCallId, "inspect backend"),
+                subagentInvocationMessage(parentSessionId, secondCallId, "inspect desktop"),
+              ],
+            })}
+          />
+        </AgentSessionProvider>
+      </WorkbenchSurfaceTestProviders>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "将工作台助手展开到右侧" }));
+    await waitForSurfaceMode("drawer", 8000);
+    await screen.findByTestId("conversation-panel", {}, { timeout: 8000 });
+    expect(screen.getAllByTestId("subagent-invocation-capsule")).toHaveLength(2);
+
+    await act(async () => {
+      emit(
+        subagentRunUpdatedEvent(runningSubagentRun({
+          runId: "run-backend",
+          subagentId: "subagent-backend",
+          childSessionId: "child-backend",
+          parentSessionId,
+          parentToolCallId: firstCallId,
+          sequence: 0,
+        })),
+      );
+      emit(
+        subagentRunUpdatedEvent(runningSubagentRun({
+          runId: "run-desktop",
+          subagentId: "subagent-desktop",
+          childSessionId: "child-desktop",
+          parentSessionId,
+          parentToolCallId: secondCallId,
+          sequence: 1,
+        })),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.queryAllByTestId("subagent-invocation-capsule")).toHaveLength(0);
+      expect(screen.getByTestId("subagent-run-capsule:run-backend").getAttribute("data-state")).toBe("running");
+      expect(screen.getByTestId("subagent-run-capsule:run-desktop").getAttribute("data-state")).toBe("running");
+    });
+
+    await act(async () => {
+      emit(
+        subagentRunUpdatedEvent(completedSubagentRun(
+          runningSubagentRun({
+            runId: "run-desktop",
+            subagentId: "subagent-desktop",
+            childSessionId: "child-desktop",
+            parentSessionId,
+            parentToolCallId: secondCallId,
+            sequence: 1,
+          }),
+        )),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("subagent-run-capsule:run-backend").getAttribute("data-state")).toBe("running");
+      expect(screen.getByTestId("subagent-run-capsule:run-desktop").getAttribute("data-state")).toBe("completed");
+    });
+  });
+
+  it("does not project a Sub-Agent Run owned by another Session into Workbench", async () => {
+    const { runtime, emit } = fakeRuntimeWithEvents();
+    const parentSessionId = "ses-live";
+    const callId = "call-current-session";
+    render(
+      <WorkbenchSurfaceTestProviders>
+        <AgentSessionProvider runtime={runtime}>
+          <WorkbenchAssistantSurface
+            runtime={runtime}
+            workspaceId="ws-1"
+            workspace={workspace()}
+            controller={fakeController({
+              session: session(parentSessionId),
+              agentMessages: [subagentInvocationMessage(parentSessionId, callId, "inspect current session")],
+            })}
+          />
+        </AgentSessionProvider>
+      </WorkbenchSurfaceTestProviders>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "将工作台助手展开到右侧" }));
+    await waitForSurfaceMode("drawer", 8000);
+    await screen.findByTestId("conversation-panel", {}, { timeout: 8000 });
+
+    await act(async () => {
+      emit(
+        subagentRunUpdatedEvent(runningSubagentRun({
+          runId: "run-foreign",
+          subagentId: "subagent-foreign",
+          childSessionId: "child-foreign",
+          parentSessionId: "ses-foreign",
+          parentToolCallId: callId,
+          sequence: 0,
+        })),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("subagent-invocation-capsule")).not.toBeNull();
+      expect(screen.queryByTestId("subagent-run-capsule:run-foreign")).toBeNull();
+    });
+  });
+
   it("uses the session effective catalog and opens an inherited system Skill without mounting system files", async () => {
     const skill = systemSkill();
     const runtime = fakeRuntime({ skills: [skill] });
@@ -2775,6 +2899,74 @@ function agentMessage(overrides: Partial<AgentChatMessage> = {}): AgentChatMessa
     timestamp: Date.now(),
     ...overrides,
   } as AgentChatMessage;
+}
+
+function subagentInvocationMessage(
+  sessionId: string,
+  toolCallId: string,
+  task: string,
+): AgentChatMessage {
+  return agentMessage({
+    id: `invocation-${toolCallId}`,
+    sessionId,
+    role: "tool",
+    content: task,
+    runId: `tool-run-${toolCallId}`,
+    toolCallId,
+    toolName: "delegate_subagent",
+    toolParams: { type: "explorer", task },
+    status: "pending",
+  });
+}
+
+function runningSubagentRun({
+  runId,
+  subagentId,
+  childSessionId,
+  parentSessionId,
+  parentToolCallId,
+  sequence,
+}: {
+  runId: string;
+  subagentId: string;
+  childSessionId: string;
+  parentSessionId: string;
+  parentToolCallId: string;
+  sequence: number;
+}): SubagentRunSnapshot {
+  return normalizeSubagentRunSnapshot({
+    ...subagentSnapshotFixture,
+    run_id: runId,
+    subagent_id: subagentId,
+    child_session_id: childSessionId,
+    parent_session_id: parentSessionId,
+    parent_tool_call_id: parentToolCallId,
+    parent_timeline_sequence: sequence,
+    state: "running",
+    version: 2,
+    final_report: null,
+    started_at: "2026-07-18T13:00:01Z",
+    finished_at: null,
+    updated_at: "2026-07-18T13:00:01Z",
+  });
+}
+
+function completedSubagentRun(run: SubagentRunSnapshot): SubagentRunSnapshot {
+  return normalizeSubagentRunSnapshot({
+    ...run,
+    state: "completed",
+    version: run.version + 1,
+    final_report: "completed report",
+    finished_at: "2026-07-18T13:00:02Z",
+    updated_at: "2026-07-18T13:00:02Z",
+  });
+}
+
+function subagentRunUpdatedEvent(run: SubagentRunSnapshot): AgentActionEnvelope {
+  return {
+    action: "subagent_run_updated",
+    data: { ...run },
+  };
 }
 
 function approvalRequest(): CommandApprovalRequest {

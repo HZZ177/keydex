@@ -361,10 +361,14 @@ function kindFromItem(item: ThreadItem): ConversationMessageKind {
   if (item.type === "tool_call" && toolCallName(item) === "load_skill") {
     return "skill";
   }
-  if (item.type === "tool_call" && toolCallName(item) === "delegate_subagent") {
+  if (item.type === "tool_call" && isSubagentToolName(toolCallName(item))) {
     return "subagent_invocation";
   }
   return kindFromItemType(item.type);
+}
+
+function isSubagentToolName(value: string | null): boolean {
+  return value === "delegate_subagent" || value === "continue_subagent";
 }
 
 function toolCallName(item: ThreadItem): string | null {

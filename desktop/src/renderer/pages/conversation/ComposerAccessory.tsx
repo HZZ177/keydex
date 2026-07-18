@@ -66,6 +66,7 @@ interface ComposerAccessoryStatusItem {
 }
 
 export function ConversationComposerAccessory({
+  sessionId,
   messages,
   activeTask = null,
   pendingInputs = [],
@@ -84,6 +85,7 @@ export function ConversationComposerAccessory({
   onFilePreview,
   onScrollToBottom,
 }: {
+  sessionId: string;
   messages: ConversationMessage[];
   pendingInputs?: AgentPendingInput[];
   activeTask?: ThreadTask | null;
@@ -106,7 +108,7 @@ export function ConversationComposerAccessory({
   onFilePreview: (file: FileChangePreview) => void;
   onScrollToBottom: () => void;
 }) {
-  const runtimeTypingMetrics = useRuntimeTypingMetrics();
+  const runtimeTypingMetrics = useRuntimeTypingMetrics(sessionId);
   const fileChangeSummary = useMemo(() => buildActiveTurnFileChangeSummary(messages), [messages]);
   const planSummary = useMemo(() => buildSessionPlanSummary(messages), [messages]);
   const activeTurnHasMcpTool = useMemo(() => activeTurnContainsMcpTool(messages), [messages]);
@@ -123,6 +125,7 @@ export function ConversationComposerAccessory({
         priority: 220,
         node: pendingInputs.length ? (
           <PendingInputsPill
+            key={sessionId}
             inputs={pendingInputs}
             onModeChange={onPendingInputModeChange}
             onReorder={onPendingInputReorder}
@@ -140,6 +143,7 @@ export function ConversationComposerAccessory({
         priority: 140,
         node: activeTask ? (
           <ThreadTaskPill
+            key={`${sessionId}:${activeTask.id}`}
             task={activeTask}
             running={activeTaskRunning}
             onUpdateTask={onUpdateTask}
@@ -156,6 +160,7 @@ export function ConversationComposerAccessory({
         priority: 160,
         node: mcpRuntime ? (
           <McpRuntimePill
+            key={sessionId}
             runtime={mcpRuntime.runtime}
             sessionId={mcpRuntime.sessionId}
             runtimeState={mcpRuntime.runtimeState}
@@ -169,7 +174,7 @@ export function ConversationComposerAccessory({
         description: fileChangeSummary.files.length > 0 ? "本轮文件变更统计" : "暂无文件变更",
         label: "文件变更",
         priority: 100,
-        node: <TurnFileChangePill summary={fileChangeSummary} onFilePreview={onFilePreview} />,
+        node: <TurnFileChangePill key={sessionId} summary={fileChangeSummary} onFilePreview={onFilePreview} />,
       },
       {
         id: "runtime-typing-speed",
@@ -198,6 +203,7 @@ export function ConversationComposerAccessory({
       pendingInputs,
       runtimeTypingMetrics.backlog,
       runtimeTypingMetrics.speed,
+      sessionId,
     ],
   );
   const autoActiveItems = useMemo(
@@ -210,6 +216,16 @@ export function ConversationComposerAccessory({
   const autoSelectedId = autoActiveItems[0]?.id ?? "runtime-typing-speed";
   const [manualSelectedId, setManualSelectedId] = useState<string | null>(null);
   const previousAutoSelectedId = useRef(autoSelectedId);
+  const previousSessionId = useRef(sessionId);
+
+  useEffect(() => {
+    if (previousSessionId.current === sessionId) {
+      return;
+    }
+    previousSessionId.current = sessionId;
+    previousAutoSelectedId.current = autoSelectedId;
+    setManualSelectedId(null);
+  }, [autoSelectedId, sessionId]);
 
   useEffect(() => {
     if (previousAutoSelectedId.current === autoSelectedId) {
@@ -251,10 +267,11 @@ export function ConversationComposerAccessory({
         >
           {planSummary ? (
             <span className={styles.persistentPlanSlot} data-testid="persistent-plan-slot">
-              <SessionPlanPill summary={planSummary} />
+              <SessionPlanPill key={sessionId} summary={planSummary} />
             </span>
           ) : null}
           <ComposerAccessorySwitcher
+            key={sessionId}
             items={accessoryItems}
             selectedItemId={selectedItem.id}
             onSelect={setManualSelectedId}
