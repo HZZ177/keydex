@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from backend.app.a2ui.schemas import a2ui_object_from_record
+from backend.app.core.errors import normalize_error_envelope
 from backend.app.events.actions import CompletedEventItemAction, ReplayAction
 from backend.app.storage import A2UIInteractionsRepository, MessageEventRecord
 from backend.app.web.ui_payload import WebActivityPayload
@@ -375,14 +376,27 @@ class MessageEventService:
                     turn_index=event.turn_index,
                     data=data,
                 )
+                turn_error = normalize_error_envelope(
+                    data,
+                    fallback_message="运行时错误",
+                ).to_public_dict()
+                trace_id = data.get("trace_id")
                 messages.append(
                     {
                         "role": "error",
-                        "content": data.get("message", data.get("error", "")),
-                        "traceId": data.get("trace_id"),
+                        "content": turn_error["message"],
+                        "traceId": trace_id,
                         "timestamp": self._event_timestamp_ms(event),
                         "messageEventId": event.id,
                         "turnIndex": event.turn_index,
+                        "metadata": {
+                            "turnError": turn_error,
+                            "errorContext": {
+                                "traceId": trace_id,
+                                "messageEventId": event.id,
+                                "turnIndex": event.turn_index,
+                            },
+                        },
                     }
                 )
 
@@ -892,6 +906,7 @@ class MessageEventService:
         if tool_name in {"web_search", "web_fetch"}:
             ui_payload = MessageEventService._tool_web_activity_summary(ui_payload)
         error = MessageEventService._tool_error_summary(data, ui_payload)
+        structured_error = MessageEventService._tool_error_envelope(data)
         web_status = str(ui_payload.get("status") or "") if ui_payload else ""
         target["status"] = (
             "cancelled"
@@ -908,6 +923,8 @@ class MessageEventService:
             )
         if error:
             target["toolError"] = error
+        if structured_error:
+            target["error"] = structured_error
         if include_tool_details:
             target["toolResult"] = data.get("result", "")
             if ui_payload:
@@ -1125,10 +1142,14 @@ class MessageEventService:
         )
         if tool_name == "load_skill":
             summary_keys += ("source",)
+        if tool_name == "delegate_subagent":
+            summary_keys += ("type",)
         for key in summary_keys:
             value = params.get(key)
             if isinstance(value, str) and value.strip():
                 summary[key] = value
+        if tool_name == "delegate_subagent" and isinstance(params.get("task"), str):
+            summary["task"] = _preview_text(params["task"], limit=512)
         for key in ("timeout_seconds", "timeoutSeconds", "regex"):
             value = params.get(key)
             if isinstance(value, bool | int | float | str):
@@ -1159,9 +1180,13 @@ class MessageEventService:
         )
         if tool_name == "load_skill":
             summary_keys += ("source",)
+        if tool_name == "delegate_subagent":
+            summary_keys += ("type",)
         for key in summary_keys:
             if key in params and _is_summary_value(params[key]):
                 summary[key] = params[key]
+        if tool_name == "delegate_subagent" and isinstance(params.get("task"), str):
+            summary["task"] = _preview_text(params["task"], limit=512)
         target = _tool_target(params)
         has_explicit_target = any(
             key in summary for key in ("path", "file", "command", "query", "pattern")
@@ -1398,6 +1423,7 @@ class MessageEventService:
             ui_payload = MessageEventService._tool_web_activity_summary(ui_payload)
         files = MessageEventService._tool_files(end_data, ui_payload)
         error = MessageEventService._tool_error_summary(end_data, ui_payload)
+        structured_error = MessageEventService._tool_error_envelope(end_data)
         detail_ref = {
             "startEventId": start_event.id if start_event else None,
             "endEventId": end_event.id if end_event else None,
@@ -1416,6 +1442,7 @@ class MessageEventService:
             "toolResult": end_data.get("result", ""),
             "toolDurationMs": end_data.get("duration_ms"),
             "toolError": error or None,
+            "error": structured_error,
             "toolErrorType": end_data.get("error_type"),
             "status": (
                 "cancelled"
@@ -1429,6 +1456,17 @@ class MessageEventService:
             "metadata": MessageEventService._tool_metadata(data),
         }
         return {key: value for key, value in detail.items() if value is not None}
+
+    @staticmethod
+    def _tool_error_envelope(data: dict[str, Any]) -> dict[str, Any] | None:
+        value = data.get("error")
+        if value is None:
+            return None
+        return normalize_error_envelope(
+            value,
+            fallback_code="tool_execution_failed",
+            fallback_message="工具执行失败",
+        ).to_public_dict()
 
     @staticmethod
     def _normalize_file_change(item: dict[str, Any]) -> dict[str, Any]:

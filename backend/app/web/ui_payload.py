@@ -36,10 +36,12 @@ class WebActivitySource(WebActivityModel):
 
 
 class WebActivityError(WebActivityModel):
+    schema_version: Literal[1] = 1
     code: str = Field(min_length=1)
     message: str = Field(min_length=1)
+    details: dict[str, Any] = Field(default_factory=dict)
     retryable: bool = False
-    retry_after_seconds: int | None = Field(default=None, ge=0)
+    status: int | None = Field(default=None, ge=100, le=599)
 
 
 class WebFetchActivityItem(WebActivityModel):
@@ -218,8 +220,13 @@ def _failed_activity(
     error = WebActivityError(
         code=_optional_text(values.get("code")) or "web_failed",
         message=_optional_text(values.get("message")) or "网络操作失败",
-        retryable=bool(details.get("retryable", False)),
-        retry_after_seconds=_optional_non_negative_int(details.get("retry_after_seconds")),
+        details={
+            key: details[key]
+            for key in ("provider_id", "provider_request_id", "retry_after_seconds")
+            if key in details
+        },
+        retryable=bool(values.get("retryable", details.get("retryable", False))),
+        status=(values.get("status") if isinstance(values.get("status"), int) else None),
     )
     return WebActivityPayload(
         activity_type="search" if tool_name == "web_search" else "fetch",

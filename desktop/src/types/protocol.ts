@@ -44,9 +44,12 @@ export interface Thread {
 }
 
 export interface TurnError {
+  schema_version: 1;
   code: string;
   message: string;
   details: Record<string, unknown>;
+  retryable: boolean;
+  status?: number;
 }
 
 export interface Turn {
@@ -760,12 +763,7 @@ export interface WebActivitySource {
   truncated: boolean;
 }
 
-export interface WebActivityError {
-  code: string;
-  message: string;
-  retryable: boolean;
-  retry_after_seconds?: number | null;
-}
+export interface WebActivityError extends TurnError {}
 
 export interface WebFetchActivityItem {
   requested_url: string;
@@ -1091,6 +1089,10 @@ export const AGENT_CHAT_ACTIONS = [
   "subagent_start",
   "subagent_end",
   "subagent_error",
+  "subagent_run_updated",
+  "subagent_runs_snapshot",
+  "subagent_run_snapshot",
+  "subagent_control_result",
   "error",
   "pong",
   "status",
@@ -1149,6 +1151,7 @@ export const AGENT_REPLAY_ACTIONS = [
   "subagent_start",
   "subagent_end",
   "subagent_error",
+  "subagent_run_updated",
   "memory_recalled",
   "completed",
   "cancelled",
@@ -1193,6 +1196,7 @@ export type AgentCompletedEventItemAction = (typeof AGENT_COMPLETED_EVENT_ITEM_A
 export const AGENT_INBOUND_ACTIONS = [
   "create_session",
   "bind_session",
+  "subagent_bind_session",
   "unbind_session",
   "chat",
   "a2ui_submit",
@@ -1207,6 +1211,10 @@ export const AGENT_INBOUND_ACTIONS = [
   "pending_input_resume",
   "ping",
   "get_status",
+  "subagent_list_runs",
+  "subagent_get_run",
+  "subagent_steer",
+  "subagent_cancel",
   "terminate_command",
   "mcp_elicitation_resolved",
   "bind_workspace_watch",
@@ -1287,6 +1295,11 @@ export interface AgentSession {
   is_debug: boolean;
   is_scheduled: boolean;
   is_current: boolean;
+  visibility?: "visible" | "internal";
+  agent_kind?: "main" | "subagent";
+  subagent_id?: string | null;
+  subagent_role?: "explorer" | "worker" | null;
+  subagent_closed_at?: string | null;
   scene_version_seq?: number | null;
 }
 
@@ -1486,6 +1499,7 @@ export interface AgentToolDetails {
   toolDurationMs?: number;
   toolError?: string | null;
   toolErrorType?: string | null;
+  error?: TurnError | null;
   status?: AgentToolStatus | "success" | "failed";
   uiPayload?: Record<string, unknown> | null;
   fileChanges?: AgentFileChange[];
@@ -1764,6 +1778,7 @@ export interface AgentToolCall {
   toolDurationMs?: number;
   toolError?: string;
   toolErrorType?: string;
+  error?: TurnError;
   status: AgentToolStatus;
   uiPayload?: Record<string, unknown>;
   fileChanges?: AgentFileChange[];
@@ -1848,6 +1863,7 @@ export interface AgentChatMessage {
   toolDurationMs?: number;
   toolError?: string;
   toolErrorType?: string;
+  error?: TurnError;
   status?: AgentToolStatus | AgentSessionStatus | ApprovalStatus | "streaming";
   uiPayload?: Record<string, unknown>;
   fileChanges?: AgentFileChange[];
@@ -1984,7 +2000,7 @@ export interface AgentToolEventData {
   result?: string;
   duration_ms?: number;
   status?: AgentToolStatus | "success" | "failed";
-  error?: string | null;
+  error?: unknown;
   error_type?: string | null;
   ui_payload?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
@@ -2129,10 +2145,14 @@ export interface AgentErrorData {
   first_token_at_ms?: number;
   code?: string | number;
   message?: string;
-  error?: string;
+  error?: unknown;
   details?: Record<string, unknown>;
+  retryable?: boolean;
+  status?: number;
   trace_id?: string;
   turn_index?: number | null;
   thread_task?: Record<string, unknown>;
   threadTask?: Record<string, unknown>;
 }
+
+export * from "./subagents";

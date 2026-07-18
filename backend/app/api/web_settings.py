@@ -77,11 +77,12 @@ class WebConnectionCheckDraft(WebDomainModel):
 
 
 class WebConnectionCheckErrorResponse(WebDomainModel):
+    schema_version: Literal[1] = 1
     code: WebErrorCode
     message: str
+    details: dict[str, Any] = Field(default_factory=dict)
     retryable: bool
-    provider_id: str | None = None
-    retry_after_seconds: int | None = None
+    status: int | None = Field(default=None, ge=100, le=599)
 
 
 class WebConnectionCheckResponse(WebDomainModel):

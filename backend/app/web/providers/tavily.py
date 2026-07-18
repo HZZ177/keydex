@@ -453,11 +453,13 @@ def map_tavily_error(error: Exception) -> WebProviderError:
             web_error(
                 code,
                 provider_id="tavily",
+                provider_request_id=error.request_id,
                 retry_after_seconds=(
                     _parse_retry_after(error.retry_after)
                     if code == WebErrorCode.RATE_LIMITED
                     else None
                 ),
+                status=error.status_code,
                 diagnostic={
                     "status_code": error.status_code,
                     "provider_request_id": error.request_id,

@@ -1,5 +1,6 @@
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import { normalizeMessageContent } from "@/renderer/utils/messageContent";
+import { normalizeRuntimeErrorEnvelope } from "@/runtime/errors";
 import type { AgentChatMessage, TurnError } from "@/types/protocol";
 import { normalizeWebActivityPayload } from "./webActivity";
 
@@ -48,6 +49,9 @@ export function conversationKindFromAgent(message: AgentChatMessage): Conversati
     }
     if (message.toolName === "load_skill") {
       return "skill";
+    }
+    if (message.toolName === "delegate_subagent") {
+      return "subagent_invocation";
     }
     return isCommandToolName(message.toolName) ? "command" : "tool";
   }
@@ -186,7 +190,7 @@ export function payloadFromAgentMessage(message: AgentChatMessage): Record<strin
       },
       result: {
         status:
-          message.toolError || message.status === "error"
+          message.error || message.toolError || message.status === "error"
             ? "error"
             : message.status === "running" || message.streaming
               ? "running"
@@ -195,7 +199,7 @@ export function payloadFromAgentMessage(message: AgentChatMessage): Record<strin
               : "success",
         model_content: message.toolResult ?? "",
         duration_ms: message.toolDurationMs,
-        error: message.toolError,
+        error: message.error ?? message.toolError,
         ui_payload: uiPayload,
         files: message.fileChanges ?? fileChangesFromUiPayload(uiPayload),
       },
@@ -343,19 +347,17 @@ function turnErrorFromMessage(message: AgentChatMessage): TurnError | null {
   if (!source) {
     return null;
   }
-  return {
-    code: scalarStringValue(source.code) || "runtime_error",
-    message: normalizeMessageContent(stringValue(source.message)).trim() || "对话执行失败",
-    details: objectValue(source.details) ?? {},
-  };
+  return normalizeRuntimeErrorEnvelope(source, {
+    fallbackCode: "runtime_error",
+    fallbackMessage: "对话执行失败",
+  });
 }
 
 function fallbackErrorFromMessage(message: AgentChatMessage): TurnError {
-  return {
-    code: typeof message.status === "string" ? message.status : "runtime_error",
-    message: normalizeMessageContent(message.content).trim() || "对话执行失败",
-    details: {},
-  };
+  return normalizeRuntimeErrorEnvelope(normalizeMessageContent(message.content), {
+    fallbackCode: typeof message.status === "string" ? message.status : "runtime_error",
+    fallbackMessage: "对话执行失败",
+  });
 }
 
 function fileChangesFromUiPayload(uiPayload: Record<string, unknown> | undefined): unknown[] {

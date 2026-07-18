@@ -111,7 +111,7 @@ def test_capability_guard_fails_before_provider_call() -> None:
     with pytest.raises(WebProviderError) as caught:
         ensure_provider_capability(provider, WebCapability.FETCH)
 
-    assert caught.value.to_public_dict()["provider_id"] == "search-only"
+    assert caught.value.to_public_dict()["details"]["provider_id"] == "search-only"
 
 
 def test_provider_context_requires_non_empty_secret() -> None:

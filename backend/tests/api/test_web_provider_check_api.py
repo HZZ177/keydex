@@ -171,7 +171,9 @@ def test_check_provider_returns_public_stable_error(
 
     assert response.status_code == 200
     assert body["ok"] is False
+    assert body["error"]["schema_version"] == 1
     assert body["error"]["code"] == code
+    assert body["error"]["details"]["provider_id"] == "check-provider"
     assert body["error"]["retryable"] is retryable
     assert "diagnostic" not in body["error"]
     assert raw not in json.dumps(body)

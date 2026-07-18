@@ -71,6 +71,29 @@ describe("message reducer", () => {
     expect(command?.content).toBe("");
   });
 
+  it("promotes delegate_subagent above the ordinary tool message kind", () => {
+    const state = replayRuntimeEvents(createInitialConversationState(), [
+      itemStarted(
+        1,
+        item("item-subagent", "tool_call", "running", {
+          call: {
+            id: "call-subagent",
+            name: "delegate_subagent",
+            arguments: { type: "explorer", task: "inspect the workspace" },
+          },
+        }),
+      ),
+    ]);
+
+    expect(selectMessagesForThread(state, "thr-1")).toMatchObject([
+      {
+        kind: "subagent_invocation",
+        itemId: "item-subagent",
+        payload: { call: { name: "delegate_subagent" } },
+      },
+    ]);
+  });
+
   it("orders thinking by first content delta instead of assistant placeholder creation", () => {
     const state = replayRuntimeEvents(createInitialConversationState(), [
       itemStarted(1, item("item-user", "user_message", "completed", { input: [{ type: "text", text: "分析问题" }] })),
@@ -111,6 +134,19 @@ describe("message reducer", () => {
           details: {},
         },
       }),
+      event(3, "turn.failed", {
+        error: {
+          schema_version: 1,
+          code: "llm_bad_request",
+          message: "模型请求参数无效",
+          details: {
+            provider_code: "invalid_request_error",
+            provider_message: "messages must not be empty",
+          },
+          retryable: false,
+          status: 400,
+        },
+      }),
     ]);
 
     const messages = selectMessagesForThread(state, "thr-1");
@@ -120,12 +156,24 @@ describe("message reducer", () => {
     expect(messages.filter((message) => message.kind === "error").map((message) => message.content)).toEqual([
       "模型请求失败",
       "WebSocket 断开",
+      "模型请求参数无效",
     ]);
     expect(messages[0].payload.error).toMatchObject({
       code: "llm_request_failed",
       details: {
         status_code: 402,
       },
+    });
+    expect(messages[2].payload.error).toEqual({
+      schema_version: 1,
+      code: "llm_bad_request",
+      message: "模型请求参数无效",
+      details: {
+        provider_code: "invalid_request_error",
+        provider_message: "messages must not be empty",
+      },
+      retryable: false,
+      status: 400,
     });
   });
 

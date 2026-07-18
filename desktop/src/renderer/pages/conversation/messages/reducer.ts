@@ -7,6 +7,7 @@ import type {
   Turn,
   TurnError,
 } from "@/types/protocol";
+import { normalizeRuntimeErrorEnvelope } from "@/runtime/errors";
 import {
   conversationReducer,
   hasProcessedEvent,
@@ -107,7 +108,10 @@ function reduceRuntimeError(state: ConversationState, event: RuntimeEvent): Conv
     threadId: event.thread_id,
     runtimeState: "failed",
   });
-  const error = normalizeError(event.payload.error ?? event.payload, "runtime_error", "运行时错误");
+  const error = normalizeRuntimeErrorEnvelope(event.payload, {
+    fallbackCode: "runtime_error",
+    fallbackMessage: "运行时错误",
+  });
   return upsertErrorMessage(next, event, error, `runtime-error:${event.event_id}`);
 }
 
@@ -318,7 +322,10 @@ function contentFromItem(item: ThreadItem, result?: Record<string, unknown>): st
     return typeof item.payload.path === "string" ? item.payload.path : "文件变更";
   }
   if (item.type === "error") {
-    const error = normalizeError(item.payload.error ?? item.payload, "item_error", "消息执行失败");
+    const error = normalizeRuntimeErrorEnvelope(item.payload, {
+      fallbackCode: "item_error",
+      fallbackMessage: "消息执行失败",
+    });
     return error.message;
   }
   return "";
@@ -353,6 +360,9 @@ function kindFromItem(item: ThreadItem): ConversationMessageKind {
   }
   if (item.type === "tool_call" && toolCallName(item) === "load_skill") {
     return "skill";
+  }
+  if (item.type === "tool_call" && toolCallName(item) === "delegate_subagent") {
+    return "subagent_invocation";
   }
   return kindFromItemType(item.type);
 }
@@ -405,42 +415,17 @@ function preserveSortSeq(
   return typeof existingPayload._sortSeq === "number" ? { ...nextPayload, _sortSeq: existingPayload._sortSeq } : nextPayload;
 }
 
-function normalizeError(value: unknown, fallbackCode: string, fallbackMessage: string): TurnError {
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    return {
-      code: typeof record.code === "string" ? record.code : fallbackCode,
-      message: typeof record.message === "string" ? record.message : fallbackMessage,
-      details:
-        record.details && typeof record.details === "object" && !Array.isArray(record.details)
-          ? (record.details as Record<string, unknown>)
-          : {},
-    };
-  }
-  return {
-    code: fallbackCode,
-    message: typeof value === "string" && value ? value : fallbackMessage,
-    details: {},
-  };
-}
-
 function normalizeTurnFailedError(payload: Record<string, unknown>): TurnError {
-  const nested = normalizeError(payload.error, "", "");
-  const topLevel = normalizeError(payload, "", "");
-  const turn = normalizeError((payload.turn as Record<string, unknown> | undefined)?.error, "", "");
-  return {
-    code: firstNonEmpty(topLevel.code, nested.code, turn.code, "turn_error"),
-    message: firstNonEmpty(topLevel.message, nested.message, turn.message, "对话执行失败"),
-    details: firstNonEmptyRecord(topLevel.details, nested.details, turn.details),
-  };
-}
-
-function firstNonEmpty(...values: string[]): string {
-  return values.find((value) => value.trim()) ?? "";
-}
-
-function firstNonEmptyRecord(...values: Record<string, unknown>[]): Record<string, unknown> {
-  return values.find((value) => Object.keys(value).length > 0) ?? {};
+  const turn = payload.turn as Record<string, unknown> | undefined;
+  const hasDirectError =
+    payload.error !== undefined ||
+    payload.code !== undefined ||
+    payload.message !== undefined ||
+    payload.details !== undefined;
+  return normalizeRuntimeErrorEnvelope(
+    hasDirectError ? payload : turn?.error,
+    { fallbackCode: "turn_error", fallbackMessage: "对话执行失败" },
+  );
 }
 
 function formatUserInput(input: unknown): string {

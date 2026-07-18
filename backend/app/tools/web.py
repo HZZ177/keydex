@@ -196,15 +196,11 @@ def register_web_fetch_tool(registry: ToolRegistry, service: WebService) -> Func
 
 def _web_tool_error(error: WebProviderError) -> ToolExecutionError:
     payload = error.payload
-    details: dict[str, Any] = {
-        "retryable": payload.retryable,
-    }
-    if payload.provider_id:
-        details["provider_id"] = payload.provider_id
-    if payload.retry_after_seconds is not None:
-        details["retry_after_seconds"] = payload.retry_after_seconds
+    public_error = payload.to_public_dict()
     return ToolExecutionError(
         payload.message,
         code=str(payload.code),
-        details=details,
+        details=public_error["details"],
+        retryable=payload.retryable,
+        status=payload.status,
     )

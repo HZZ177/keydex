@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 
 class McpTransport(StrEnum):
@@ -342,6 +342,18 @@ class McpToolEventMetadata(McpBaseModel):
 
 
 class McpErrorPayload(McpBaseModel):
+    schema_version: Literal[1] = 1
     code: McpErrorCode
     message: str
-    detail: dict[str, Any] = Field(default_factory=dict)
+    details: dict[str, Any] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("details", "detail"),
+    )
+    retryable: bool = False
+    status: int | None = Field(default=None, ge=100, le=599)
+
+    @property
+    def detail(self) -> dict[str, Any]:
+        """Read-only compatibility alias for internal legacy consumers."""
+
+        return self.details

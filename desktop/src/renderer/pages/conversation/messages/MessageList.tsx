@@ -18,6 +18,14 @@ import type { ConversationMessage, ConversationRuntimeState } from "@/renderer/s
 import { normalizeMessageContent } from "@/renderer/utils/messageContent";
 import type { AgentSessionFork } from "@/types/protocol";
 import { useOptionalPreview, type PreviewContextValue } from "@/renderer/providers/PreviewProvider";
+import {
+  AgentSessionRuntimeContext,
+  useOptionalAgentSessionRuntime,
+} from "@/renderer/providers/AgentSessionProvider";
+import {
+  RightSidebarConversationContext,
+  useOptionalRightSidebarConversation,
+} from "@/renderer/components/layout/RightSidebarConversationContext";
 
 import styles from "./MessageList.module.css";
 import { ApprovalPrompt, type ApprovalDecisionHandler } from "./ApprovalPrompt";
@@ -36,6 +44,9 @@ import { SkillActivationBlock } from "./SkillActivationBlock";
 import { ThreadTaskStatusBlock } from "./ThreadTaskStatusBlock";
 import { ToolCallBlock } from "./ToolCallBlock";
 import { WebActivityBlock, webActivityFromMessage } from "./WebActivityBlock";
+import { SubagentInvocationCapsule } from "../subagents/SubagentInvocationCapsule";
+import { SubagentRunCapsule } from "../subagents/SubagentRunCapsule";
+import { normalizeSubagentRunSnapshot } from "@/types/subagents";
 import { processMessages, type ProcessedMessageItem } from "./processMessages";
 import { conversationBaselineDiagnostics } from "./conversationBaselineDiagnostics";
 import {
@@ -185,6 +196,8 @@ export function MessageList({
   });
   const inheritedPreviewContext = useOptionalPreview();
   const previewContext = previewContextOverride === undefined ? inheritedPreviewContext : previewContextOverride;
+  const agentSessionRuntime = useOptionalAgentSessionRuntime();
+  const rightSidebarConversation = useOptionalRightSidebarConversation();
   const olderLoadAnchorRef = useRef<{ runtime: true } | null>(null);
   const olderLoadRequestedRef = useRef(false);
   const olderLoadArmedRef = useRef(false);
@@ -893,7 +906,7 @@ export function MessageList({
     turnNavigationRequest?.flash,
   ]);
 
-  const renderTimelineUnit = useCallback((unit: ConversationRenderUnit): ReactNode => {
+  const renderTimelineUnitContent = useCallback((unit: ConversationRenderUnit): ReactNode => {
     if (unit.id === "conversation-runtime:top") {
       return <div className={styles.timelineRuntimeTop}>{olderLoader}{renderedTopNotice}</div>;
     }
@@ -962,6 +975,14 @@ export function MessageList({
     workspaceRuntime,
     workspaceScope,
   ]);
+
+  const renderTimelineUnit = useCallback((unit: ConversationRenderUnit): ReactNode => (
+    <AgentSessionRuntimeContext.Provider value={agentSessionRuntime}>
+      <RightSidebarConversationContext.Provider value={rightSidebarConversation}>
+        {renderTimelineUnitContent(unit)}
+      </RightSidebarConversationContext.Provider>
+    </AgentSessionRuntimeContext.Provider>
+  ), [agentSessionRuntime, renderTimelineUnitContent, rightSidebarConversation]);
 
   const messageListContent = (
     <ConversationTimelineSurface
@@ -1778,6 +1799,9 @@ function DefaultMessage({
   if (message.kind === "thinking") {
     return <MessageThinking message={message} />;
   }
+  if (message.kind === "subagent_invocation") {
+    return <SubagentInvocationCapsule message={message} />;
+  }
   if (message.kind === "tool") {
     return <ToolCallBlock message={message} onPreviewFile={onFilePreview} onLoadDetails={onLoadToolDetails} />;
   }
@@ -1801,6 +1825,9 @@ function DefaultMessage({
   }
   if (message.kind === "thread_task_status") {
     return <ThreadTaskStatusBlock message={message} />;
+  }
+  if (message.kind === "subagent_run") {
+    return <SubagentRunCapsule run={normalizeSubagentRunSnapshot(message.payload.subagentRun)} />;
   }
   if (message.kind === "command") {
     return (

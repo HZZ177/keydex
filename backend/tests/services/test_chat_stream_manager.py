@@ -340,6 +340,64 @@ async def test_chat_stream_manager_finish_notifies_after_finish_callback() -> No
 
 
 @pytest.mark.asyncio
+async def test_chat_stream_manager_fans_out_lifecycle_observers_without_replacing_existing_hooks(
+) -> None:
+    service = BlockingChatService()
+    service.prepare("ses-a")
+    manager = ChatStreamManager(service)  # type: ignore[arg-type]
+    task_runtime = RecordingTaskRuntime()
+    manager.set_thread_task_runtime(task_runtime)
+    calls: list[tuple[str, str]] = []
+    observer_called = asyncio.Event()
+
+    async def legacy_callback(session_id: str) -> None:
+        calls.append(("legacy", session_id))
+
+    async def failing_observer(session_id: str, **_: Any) -> None:
+        calls.append(("failing", session_id))
+        raise RuntimeError("isolated observer failure")
+
+    async def observer(
+        session_id: str,
+        *,
+        request: ChatRequest | None,
+        result: Any | None,
+        error: BaseException | None,
+        cancelled: bool,
+    ) -> None:
+        assert request is not None and request.message == "hello"
+        assert result is None
+        assert error is None
+        assert cancelled is False
+        calls.append(("observer", session_id))
+        observer_called.set()
+
+    removed_calls: list[str] = []
+    removed = manager.add_run_lifecycle_observer(
+        lambda session_id, **_: removed_calls.append(session_id)
+    )
+    removed.unsubscribe()
+    removed.unsubscribe()
+    manager.add_run_lifecycle_observer(failing_observer)
+    manager.add_run_lifecycle_observer(observer)
+    manager.set_after_run_finished_callback(legacy_callback)
+
+    await manager.start_chat(ChatRequest(session_id="ses-a", message="hello", model="fake"))
+    await asyncio.wait_for(service.after_first_send["ses-a"].wait(), timeout=1)
+    service.release["ses-a"].set()
+    await asyncio.wait_for(observer_called.wait(), timeout=1)
+    await asyncio.wait_for(task_runtime.called.wait(), timeout=1)
+
+    assert removed_calls == []
+    assert task_runtime.finish_calls[0]["session_id"] == "ses-a"
+    assert calls == [
+        ("legacy", "ses-a"),
+        ("failing", "ses-a"),
+        ("observer", "ses-a"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_manager_runs_different_sessions_in_parallel() -> None:
     service = BlockingChatService()
     service.prepare("ses-a")
@@ -561,6 +619,38 @@ async def test_chat_stream_manager_running_submit_persists_steer_input(tmp_path)
 
     service.release["ses-running"].set()
     await asyncio.wait_for(service.finished["ses-running"].wait(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_manager_force_pending_queues_without_starting_a_turn(tmp_path) -> None:
+    repositories = StorageRepositories(init_database(tmp_path / "app.db"))
+    repositories.sessions.create(
+        session_id="ses-queued-subagent",
+        user_id="local-user",
+        scene_id="desktop-agent",
+    )
+    service = BlockingChatService()
+    service.repositories = repositories
+    manager = ChatStreamManager(service)  # type: ignore[arg-type]
+
+    result = await manager.submit_input(
+        ChatRequest(
+            session_id="ses-queued-subagent",
+            message="guide before execution starts",
+            model="fake",
+            delivery_mode="queue",
+        ),
+        force_pending=True,
+    )
+
+    assert result["status"] == "pending"
+    assert (await manager.status("ses-queued-subagent"))["status"] == "idle"
+    pending = repositories.pending_inputs.list_active_by_session(
+        "ses-queued-subagent"
+    )
+    assert len(pending) == 1
+    assert pending[0].mode == "queue"
+    assert pending[0].status == PENDING_INPUT_STATUS_QUEUED
 
 
 @pytest.mark.asyncio

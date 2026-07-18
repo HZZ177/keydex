@@ -38,6 +38,7 @@ import type {
   Workspace,
   McpElicitationRequest,
 } from "@/types/protocol";
+import { normalizeRuntimeErrorEnvelope } from "@/runtime/errors";
 import { normalizeMessageContent } from "@/renderer/utils/messageContent";
 import { shouldDisplayAgentTranscriptMessage } from "@/renderer/utils/agentTranscriptVisibility";
 import {
@@ -247,6 +248,14 @@ export function reduceAgentWsEvent(
     case "subagent_error":
       next = handleSubagentError(state, event.data);
       break;
+    case "subagent_run_updated":
+    case "subagent_runs_snapshot":
+    case "subagent_run_snapshot":
+    case "subagent_control_result":
+      // Addressable Runtime events are consumed by SubagentRunStore, never the
+      // legacy inline transcript projection above.
+      next = state;
+      break;
     case "completed":
       next = handleCompleted(state, event.data as unknown as AgentCompletedPayload);
       break;
@@ -303,7 +312,14 @@ export function reduceAgentWsEvent(
 }
 
 export function selectAgentSessions(state: AgentConversationState): AgentSession[] {
-  return state.sessionIds.map((id) => state.sessionsById[id]).filter(isDefined);
+  return state.sessionIds
+    .map((id) => state.sessionsById[id])
+    .filter(isDefined)
+    .filter((session) => !isInternalAgentSession(session));
+}
+
+export function isInternalAgentSession(session: AgentSession | null | undefined): boolean {
+  return session?.visibility === "internal" || session?.agent_kind === "subagent";
 }
 
 export function selectCurrentAgentSession(state: AgentConversationState): AgentSession | null {
@@ -389,6 +405,9 @@ function markUnreadFromEvent(
   }
   const sessionId = sessionIdFromData(event.data);
   if (!sessionId || sessionId === state.selectedSessionId) {
+    return state;
+  }
+  if (isInternalAgentSession(state.sessionsById[sessionId])) {
     return state;
   }
   const currentView = state.sessionStateById[sessionId];
@@ -1761,8 +1780,15 @@ function handleToolEnd(state: AgentConversationState, data: AgentToolEventData):
   const next = cloneState(state);
   const view = ensureSessionState(next, sessionId);
   const result = toolResultFromData(data);
-  const error = stringValue(data.error);
-  const errorType = stringValue(data.error_type);
+  const errorEnvelope =
+    data.error == null
+      ? undefined
+      : normalizeRuntimeErrorEnvelope(data.error, {
+          fallbackCode: "tool_execution_failed",
+          fallbackMessage: "工具执行失败",
+        });
+  const error = errorEnvelope?.message ?? "";
+  const errorType = errorEnvelope?.code ?? stringValue(data.error_type);
   const status = toolStatusFromEnd(data.status, error);
   const toolName = toolNameFromData(data);
   if (isThreadTaskToolName(toolName)) {
@@ -1776,11 +1802,11 @@ function handleToolEnd(state: AgentConversationState, data: AgentToolEventData):
     if (subagent) {
       const tool = findSubagentTool(subagent, data.run_id);
       if (tool) {
-        applyToolEnd(tool, result, data.duration_ms, status, error, errorType, data);
+        applyToolEnd(tool, result, data.duration_ms, status, error, errorType, errorEnvelope, data);
       }
       for (const call of subagent.subagentToolCalls ?? []) {
         if (call !== tool && call.runId === data.run_id) {
-          applyToolEnd(call, result, data.duration_ms, status, error, errorType, data);
+          applyToolEnd(call, result, data.duration_ms, status, error, errorType, errorEnvelope, data);
         }
       }
     }
@@ -1788,7 +1814,7 @@ function handleToolEnd(state: AgentConversationState, data: AgentToolEventData):
     const message = view.messages.find((item) => item.role === "tool" && item.runId === data.run_id);
     const target = message ?? findMatchingProgressTool(view, data, toolName);
     if (target) {
-      applyToolEnd(target, result, data.duration_ms, status, error, errorType, data);
+      applyToolEnd(target, result, data.duration_ms, status, error, errorType, errorEnvelope, data);
       applyTurnFields(target, numberValue(data.turn_index), stringValue(data.trace_id));
     } else {
       view.messages.push({
@@ -1805,6 +1831,7 @@ function handleToolEnd(state: AgentConversationState, data: AgentToolEventData):
         toolDurationMs: data.duration_ms,
         toolError: error || undefined,
         toolErrorType: errorType || undefined,
+        error: errorEnvelope,
       });
     }
   }
@@ -2147,15 +2174,10 @@ function handleError(state: AgentConversationState, data: AgentErrorData): Agent
 }
 
 function turnErrorFromData(data: AgentErrorData): TurnError {
-  const code = scalarStringValue(data.code) || "runtime_error";
-  const message =
-    normalizeMessageContent(stringValue(data.message) || stringValue(data.error)).trim() ||
-    "对话执行失败";
-  return {
-    code,
-    message,
-    details: asRecord(data.details) ?? {},
-  };
+  return normalizeRuntimeErrorEnvelope(data, {
+    fallbackCode: "runtime_error",
+    fallbackMessage: "对话执行失败",
+  });
 }
 
 function attachTurnErrorToLatestAssistant(
@@ -2733,7 +2755,7 @@ function normalizeHistoryStatus(payload: AgentChatMessagePayload): AgentChatMess
     return payload.status;
   }
   if (payload.role === "tool") {
-    return payload.toolError ? "error" : "completed";
+    return payload.error || payload.toolError ? "error" : "completed";
   }
   return undefined;
 }
@@ -2757,7 +2779,7 @@ function normalizeSubagentHistoryItem(item: AgentSubagentItem): AgentSubagentIte
 function normalizeToolHistoryCall(tool: AgentToolCall): AgentToolCall {
   return {
     ...tool,
-    status: tool.status ?? (tool.toolError ? "error" : "completed"),
+    status: tool.status ?? (tool.error || tool.toolError ? "error" : "completed"),
   };
 }
 
@@ -3568,6 +3590,7 @@ function applyToolEnd(
   status: AgentToolStatus,
   error: string,
   errorType: string,
+  errorEnvelope: TurnError | undefined,
   data: AgentToolEventData,
 ) {
   target.status = status;
@@ -3575,6 +3598,7 @@ function applyToolEnd(
   target.toolDurationMs = durationMs;
   target.toolError = error || undefined;
   target.toolErrorType = errorType || undefined;
+  target.error = errorEnvelope;
   const structured = structuredToolOutput(data);
   target.uiPayload = data.ui_payload ?? structured ?? target.uiPayload;
   const fileChanges = normalizedFileChanges(
@@ -4429,6 +4453,7 @@ function nextMessageId(state: AgentConversationState, prefix: string, sessionId:
 
 function sortSessionIds(sessions: AgentSession[]): string[] {
   return uniqueById(sessions)
+    .filter((session) => !isInternalAgentSession(session))
     .sort((left, right) => right.updated_at.localeCompare(left.updated_at))
     .map((session) => session.id);
 }

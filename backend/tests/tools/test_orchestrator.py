@@ -108,8 +108,15 @@ async def test_tool_orchestrator_emits_failed_event_for_tool_result_error(tmp_pa
     ]
     failed = consumer.events[-1]
     assert failed.payload["status"] == "failed"
-    assert failed.payload["error"] == "bad"
-    assert failed.payload["error_type"] == "tool_execution_failed"
+    assert failed.payload["error"] == {
+        "schema_version": 1,
+        "code": "tool_execution_failed",
+        "message": "bad",
+        "details": {"tool": "fail", "type": "ValueError"},
+        "retryable": False,
+    }
+    assert "error_type" not in failed.payload
+    assert "error_data" not in failed.payload
     assert failed.payload["duration_ms"] >= 0
 
 
@@ -123,7 +130,11 @@ async def test_tool_orchestrator_wraps_unexpected_tool_exception(tmp_path) -> No
     assert result.ok is False
     assert result.error["code"] == "tool_execution_failed"
     assert consumer.events[-1].event_type == DomainEventType.LLM_TOOL_FAILED.value
-    assert consumer.events[-1].payload["error"] == "boom"
+    assert consumer.events[-1].payload["error"]["message"] == "boom"
+    assert consumer.events[-1].payload["error"]["details"] == {
+        "tool": "explode",
+        "type": "RuntimeError",
+    }
 
 
 async def test_tool_orchestrator_emits_failed_event_for_missing_tool(tmp_path) -> None:

@@ -41,6 +41,15 @@ from backend.app.keydex.capabilities.keydex_markdown import (
 from backend.app.keydex.models import KeydexEffectiveSnapshot
 from backend.app.keydex.skills import build_skill_index
 from backend.app.model import ModelSettings
+from backend.app.subagents.models import SubagentRole
+from backend.app.subagents.roles import (
+    DEFAULT_SUBAGENT_ROLE_REGISTRY,
+    SubagentSystemPromptPolicy,
+    SubagentToolPolicy,
+    SubagentToolSource,
+    audit_subagent_tools,
+)
+from backend.app.subagents.tool_policy import guard_subagent_tools
 from backend.app.tools import LocalTool, ToolExecutionContext, ToolRegistry
 from backend.app.tools.command_runtime.descriptions import command_system_prompt_section
 from backend.app.tools.command_runtime.models import CommandRuntime
@@ -101,6 +110,7 @@ class AgentRunner:
         enable_workspace_tools: bool | None = None,
         enable_skill_tools: bool | None = None,
         runtime_tools: Sequence[LocalTool] | None = None,
+        subagent_role: SubagentRole | str | None = None,
     ) -> Any:
         if self.checkpointer is None:
             logger.error("[AgentRunner] checkpointer 未配置，无法创建 agent")
@@ -120,6 +130,15 @@ class AgentRunner:
         runtime_settings = self._runtime_settings_provider()
         a2ui_registry = None
         tools = []
+        role_preset = (
+            DEFAULT_SUBAGENT_ROLE_REGISTRY.resolve(subagent_role)
+            if subagent_role is not None
+            else None
+        )
+        explorer_role = bool(
+            role_preset is not None
+            and role_preset.tool_policy is SubagentToolPolicy.READ_ONLY_ALLOWLIST
+        )
         capabilities = resolve_tool_capabilities(
             explicit=tool_capabilities,
             metadata=tool_context.metadata,
@@ -135,11 +154,17 @@ class AgentRunner:
                 self.tool_registry,
                 runtime_settings.file_edit_tool_style,
             )
+            if role_preset is not None:
+                visible_local_tools = guard_subagent_tools(
+                    role_preset,
+                    visible_local_tools,
+                    source=SubagentToolSource.LOCAL,
+                )
             tools = tools_to_langchain_tools(
                 visible_local_tools,
                 context_factory=lambda: tool_context,
             )
-            if repositories is not None:
+            if repositories is not None and not explorer_role:
                 command_settings = load_command_settings(repositories)
                 command_runtime = CommandRuntime.from_settings(command_settings)
                 command_registry = ToolRegistry()
@@ -154,6 +179,7 @@ class AgentRunner:
             dispatcher = tool_context.metadata.get("dispatcher")
             if (
                 runtime_settings.a2ui.enabled
+                and not explorer_role
                 and repositories is not None
                 and dispatcher is not None
             ):
@@ -186,17 +212,38 @@ class AgentRunner:
                 for tool in runtime_tools
                 if capability_for_runtime_tool(tool.name) in capabilities
             ]
+            if role_preset is not None:
+                visible_runtime_tools = guard_subagent_tools(
+                    role_preset,
+                    visible_runtime_tools,
+                    source=SubagentToolSource.RUNTIME,
+                )
             tools.extend(
                 tools_to_langchain_tools(
                     visible_runtime_tools,
                     context_factory=lambda: tool_context,
                 )
             )
-        if skill_tools_enabled and catalog is not None:
+        if skill_tools_enabled and not explorer_role and catalog is not None:
             tools.append(load_skill)
-        resolved_system_prompt = (
-            system_prompt if system_prompt is not None else self.default_system_prompt
-        )
+        if role_preset is not None:
+            audit_subagent_tools(role_preset, tools)
+        if (
+            role_preset is not None
+            and role_preset.system_prompt_policy is SubagentSystemPromptPolicy.FIXED
+        ):
+            resolved_system_prompt = role_preset.system_prompt
+        else:
+            inherited_system_prompt = (
+                system_prompt if system_prompt is not None else self.default_system_prompt
+            )
+            if role_preset is not None:
+                inherited = (inherited_system_prompt or "").strip()
+                if not inherited:
+                    raise AgentAssemblyError("worker requires an inherited system prompt")
+                resolved_system_prompt = f"{inherited}\n\n{role_preset.system_prompt}"
+            else:
+                resolved_system_prompt = inherited_system_prompt
         prompt = resolved_system_prompt.strip() if resolved_system_prompt else ""
         if _has_keydex_markdown_instructions(tool_context):
             prompt = (
@@ -238,13 +285,15 @@ class AgentRunner:
                 if prompt
                 else PLAN_PROGRESS_PROMPT
             )
-        if workspace_tools_enabled:
+        if workspace_tools_enabled and not explorer_role:
             file_edit_prompt = build_file_edit_prompt_section(
                 runtime_settings.file_edit_tool_style
             )
             prompt = f"{prompt}\n\n{file_edit_prompt}" if prompt else file_edit_prompt
         skill_index = (
-            self._skill_index_from_context(tool_context) if skill_tools_enabled else ""
+            self._skill_index_from_context(tool_context)
+            if skill_tools_enabled and not explorer_role
+            else ""
         )
         if skill_index:
             prompt = f"{prompt}\n\n{skill_index}" if prompt else skill_index
@@ -254,8 +303,8 @@ class AgentRunner:
             )
             prompt = f"{prompt}\n\n{web_prompt}" if prompt else web_prompt
         command_prompt = command_system_prompt_section(
-            command_runtime if workspace_tools_enabled else None,
-            command_settings if workspace_tools_enabled else None,
+            command_runtime if workspace_tools_enabled and not explorer_role else None,
+            command_settings if workspace_tools_enabled and not explorer_role else None,
         )
         prompt = f"{prompt}\n\n{command_prompt}" if prompt else command_prompt
         a2ui_prompt = build_a2ui_prompt_section(

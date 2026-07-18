@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from backend.app.core.errors import ErrorEnvelope
 from backend.app.services.structured_user_message_group import (
     StructuredUserMessageGroup,
     StructuredUserMessageMember,
@@ -79,6 +80,8 @@ class ChatRequest:
     delivery_mode: PendingInputMode = PENDING_INPUT_MODE_STEER
     client_input_id: str | None = None
     pending_input_id: str | None = None
+    subagent_run_id: str | None = None
+    subagent_parent_session_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -88,4 +91,4 @@ class ChatTurnResult:
     turn_index: int
     status: str
     final_content: str = ""
-    error: str | None = None
+    error: ErrorEnvelope | None = None

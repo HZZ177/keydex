@@ -48,6 +48,10 @@ def test_map_tavily_http_statuses(
         "status_code": status_code,
         "provider_request_id": "safe-request-id",
     }
+    public = mapped.to_public_dict()
+    assert public["status"] == status_code
+    assert public["details"]["provider_id"] == "tavily"
+    assert public["details"]["provider_request_id"] == "safe-request-id"
 
 
 @pytest.mark.parametrize("retry_after", [None, "", "invalid", "-1", "Wed, 21 Oct 2026"])

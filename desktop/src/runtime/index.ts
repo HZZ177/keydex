@@ -1,6 +1,13 @@
 export { HttpClient, createHttpClient, normalizeErrorEnvelope, redactForLog } from "./httpClient";
 export { RuntimeWsClient, buildWsUrl, createWsClient, toWebSocketBaseUrl } from "./wsClient";
-export { RuntimeError, RuntimeHttpError, isRuntimeHttpError, notImplemented } from "./errors";
+export {
+  RuntimeError,
+  RuntimeHttpError,
+  extractRuntimeErrorContext,
+  isRuntimeHttpError,
+  normalizeRuntimeErrorEnvelope,
+  notImplemented,
+} from "./errors";
 export { createRuntimeBridge, runtimeBridge } from "./bridge";
 export {
   DEV_AGENT_CONNECTION,
@@ -69,7 +76,13 @@ export {
 } from "./associatedFiles";
 export type { HttpClientOptions, RequestOptions } from "./httpClient";
 export type { WebSocketConstructor, WebSocketLike, WsClientOptions, WsConnectionStatus } from "./wsClient";
-export type { RuntimeErrorEnvelope, RuntimeHttpErrorParams } from "./errors";
+export type {
+  NormalizeRuntimeErrorOptions,
+  RuntimeErrorContext,
+  RuntimeErrorEnvelope,
+  RuntimeErrorEnvelopeInput,
+  RuntimeHttpErrorParams,
+} from "./errors";
 export type { RuntimeBridge, RuntimeBridgeOptions } from "./bridge";
 export type {
   GitBranchCommand,

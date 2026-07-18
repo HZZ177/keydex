@@ -99,7 +99,10 @@ def test_websocket_rejects_unknown_workspace_watch(
         response = ws.receive_json()
 
     assert response["action"] == "error"
-    assert response["data"]["code"] in {"missing_workspace", "workspace_not_found"}
+    assert response["data"]["error"]["code"] in {
+        "missing_workspace",
+        "workspace_not_found",
+    }
     assert hub.workspace_binds == []
 
 
@@ -226,7 +229,7 @@ def test_websocket_rejects_invalid_local_file_watch_path(
         response = ws.receive_json()
 
     assert response["action"] == "error"
-    assert response["data"]["code"] == "invalid_local_file_watch"
+    assert response["data"]["error"]["code"] == "invalid_local_file_watch"
     assert hub.local_binds == []
 
 

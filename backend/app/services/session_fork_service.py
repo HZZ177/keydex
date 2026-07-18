@@ -313,6 +313,11 @@ class SessionForkService:
             (session_id, turn_index),
         ).fetchall()
         trace_ids = tuple(str(row[0]) for row in trace_rows)
+        deleted_subagents = self._rewind_subagent_instances(
+            conn,
+            parent_session_id=session_id,
+            parent_trace_ids=trace_ids,
+        )
         deleted_events = conn.execute(
             "delete from message_events where session_id = ? and turn_index >= ?",
             (session_id, turn_index),
@@ -367,7 +372,63 @@ class SessionForkService:
             """,
             (now, session_id, turn_index),
         ).rowcount
+        if deleted_subagents:
+            logger.info(
+                "[SessionForkService] 回退派生 Sub-Agent 实例 | "
+                f"session_id={session_id} | deleted_subagents={deleted_subagents}"
+            )
         return int(deleted_events), int(deleted_traces)
+
+    def _rewind_subagent_instances(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        parent_session_id: str,
+        parent_trace_ids: tuple[str, ...],
+    ) -> int:
+        if not parent_trace_ids:
+            return 0
+        placeholders = ",".join("?" for _ in parent_trace_ids)
+        rows = conn.execute(
+            f"""
+            select distinct s.id
+              from sessions s
+              join subagent_run r on r.child_session_id = s.id
+             where r.parent_session_id = ?
+               and r.parent_trace_id in ({placeholders})
+               and r.initiated_by = 'main_agent'
+               and s.parent_session_id = ?
+               and s.visibility = 'internal'
+               and s.agent_kind = 'subagent'
+            """,
+            (parent_session_id, *parent_trace_ids, parent_session_id),
+        ).fetchall()
+        child_session_ids = tuple(str(row[0]) for row in rows)
+        if not child_session_ids:
+            return 0
+
+        for child_session_id in child_session_ids:
+            self.checkpointer.delete_thread(child_session_id, conn=conn)
+        child_placeholders = ",".join("?" for _ in child_session_ids)
+        conn.execute(
+            f"""
+            delete from session_forks
+             where source_session_id in ({child_placeholders})
+                or target_session_id in ({child_placeholders})
+            """,
+            (*child_session_ids, *child_session_ids),
+        )
+        deleted = conn.execute(
+            f"""
+            delete from sessions
+             where id in ({child_placeholders})
+               and parent_session_id = ?
+               and visibility = 'internal'
+               and agent_kind = 'subagent'
+            """,
+            (*child_session_ids, parent_session_id),
+        ).rowcount
+        return int(deleted)
 
     @staticmethod
     def _attachment_ids(rows: list[sqlite3.Row]) -> tuple[str, ...]:

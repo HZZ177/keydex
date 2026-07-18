@@ -241,16 +241,21 @@ def test_websocket_git_watch_error_keeps_feature_scope_without_session(tmp_path)
             }
         )
 
-        assert ws.receive_json() == {
-            "action": "error",
-            "data": {
-                "code": "git_unavailable",
-                "message": "Git metadata watch is unavailable",
-                "source_action": "bind_git_repository_watch",
-                "workspace_id": "workspace-1",
-                "repository_id": "repo-1",
-            },
-        }
+        response = ws.receive_json()
+
+    assert response["action"] == "error"
+    assert response["data"]["error"] == {
+        "schema_version": 1,
+        "code": "git_unavailable",
+        "message": "Git metadata watch is unavailable",
+        "details": {},
+        "retryable": False,
+    }
+    assert isinstance(response["data"]["trace_id"], str)
+    assert response["data"]["source_action"] == "bind_git_repository_watch"
+    assert response["data"]["workspace_id"] == "workspace-1"
+    assert response["data"]["repository_id"] == "repo-1"
+    assert "session_id" not in response["data"]
 
 
 def test_websocket_cleans_git_repository_watch_on_disconnect(tmp_path) -> None:
@@ -463,8 +468,8 @@ def test_websocket_rejects_invalid_workspace_session_contract(tmp_path) -> None:
         error = ws.receive_json()
 
     assert error["action"] == "error"
-    assert error["data"]["code"] == "invalid_session"
-    assert "必须选择工作区" in error["data"]["message"]
+    assert error["data"]["error"]["code"] == "invalid_session"
+    assert "必须选择工作区" in error["data"]["error"]["message"]
 
 
 def test_websocket_chat_streams_projection_actions(tmp_path) -> None:
@@ -724,8 +729,8 @@ def test_websocket_chat_requires_explicit_model_selection(tmp_path) -> None:
 
     assert error["action"] == "error"
     assert error["data"]["session_id"] == session_id
-    assert error["data"]["message"] == "对话模型必须显式指定供应商和模型"
-    assert error["data"]["code"] == "chat_model_required"
+    assert error["data"]["error"]["message"] == "对话模型必须显式指定供应商和模型"
+    assert error["data"]["error"]["code"] == "chat_model_required"
 
 
 def test_websocket_returns_structured_error_for_unknown_action(tmp_path) -> None:
@@ -736,8 +741,25 @@ def test_websocket_returns_structured_error_for_unknown_action(tmp_path) -> None
         response = ws.receive_json()
 
     assert response["action"] == "error"
-    assert response["data"]["code"] == "unknown_action"
-    assert "unknown" in response["data"]["message"]
+    assert response["data"]["error"]["code"] == "unknown_action"
+    assert "unknown" in response["data"]["error"]["message"]
+    assert response["data"]["error"]["schema_version"] == 1
+    assert response["data"]["source_action"] == "unknown"
+
+
+def test_websocket_returns_canonical_error_for_invalid_json(tmp_path) -> None:
+    client = _client(tmp_path)
+
+    with client.websocket_connect("/agent-base/ws/chat") as ws:
+        ws.send_text("{invalid-json")
+        response = ws.receive_json()
+
+    assert response["action"] == "error"
+    assert response["data"]["error"]["schema_version"] == 1
+    assert response["data"]["error"]["code"] == "parse_error"
+    assert response["data"]["error"]["details"] == {}
+    assert isinstance(response["data"]["trace_id"], str)
+    assert "source_action" not in response["data"]
 
 
 def test_websocket_elicitation_resolve_action_is_not_unknown(tmp_path) -> None:
@@ -754,7 +776,7 @@ def test_websocket_elicitation_resolve_action_is_not_unknown(tmp_path) -> None:
         response = ws.receive_json()
 
     assert response["action"] == "error"
-    assert response["data"]["code"] == "invalid_elicitation_resolution"
+    assert response["data"]["error"]["code"] == "invalid_elicitation_resolution"
 
 
 def test_websocket_reconnect_can_bind_existing_session(tmp_path) -> None:

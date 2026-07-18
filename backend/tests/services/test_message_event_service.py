@@ -423,6 +423,44 @@ def test_message_event_service_can_defer_tool_payloads_for_history(tmp_path) -> 
     ]
 
 
+def test_subagent_history_keeps_bounded_role_and_task_for_semantic_capsule(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    service = MessageEventService(repositories.message_events)
+    task = "inspect the repository " + "x" * 800
+
+    _append(
+        repositories,
+        "evt_subagent_start",
+        "tool_start",
+        {
+            "tool": "delegate_subagent",
+            "params": {"type": "explorer", "task": task, "private": "must-not-project"},
+            "run_id": "tool_subagent",
+            "tool_call_id": "call_subagent",
+        },
+    )
+    _append(
+        repositories,
+        "evt_subagent_end",
+        "tool_end",
+        {
+            "tool": "delegate_subagent",
+            "run_id": "tool_subagent",
+            "tool_call_id": "call_subagent",
+            "status": "failed",
+            "error": {"code": "SUBAGENT_FAILED", "message": "spawn failed"},
+        },
+    )
+
+    message = service.get_display_messages("ses_history", include_tool_details=False)[0]
+
+    assert message["toolDetailsDeferred"] is True
+    assert message["toolName"] == "delegate_subagent"
+    assert message["toolParams"] == {"type": "explorer", "task": f"{task[:511]}…"}
+    assert message["toolSummary"] == {"type": "explorer", "task": f"{task[:511]}…"}
+    assert "private" not in message["toolParams"]
+
+
 def test_message_event_service_preserves_mcp_tool_metadata_for_history(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     service = MessageEventService(repositories.message_events)
@@ -658,7 +696,68 @@ def test_message_event_service_handles_multi_turn_reasoning_error_and_cancel(tmp
     assert messages[3]["role"] == "error"
     assert messages[3]["content"] == "失败"
     assert messages[3]["traceId"] == "trace_2"
+    assert messages[3]["metadata"]["turnError"] == {
+        "schema_version": 1,
+        "code": "runtime_error",
+        "message": "失败",
+        "details": {},
+        "retryable": False,
+    }
     assert isinstance(messages[3]["timestamp"], int)
+
+
+def test_message_event_service_preserves_canonical_and_legacy_error_details(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    service = MessageEventService(repositories.message_events)
+
+    _append(
+        repositories,
+        "evt_legacy_error",
+        "error",
+        {
+            "message": "模型请求参数无效",
+            "code": "llm_bad_request",
+            "details": {"provider": {"code": "legacy_provider_error"}},
+            "trace_id": "trace_legacy",
+        },
+        turn=1,
+    )
+    _append(
+        repositories,
+        "evt_canonical_error",
+        "error",
+        {
+            "error": {
+                "schema_version": 1,
+                "code": "llm_bad_request",
+                "message": "模型请求参数无效",
+                "details": {"provider": {"code": "content_anti_probe_blocking"}},
+                "retryable": False,
+                "status": 400,
+            },
+            "trace_id": "trace_canonical",
+        },
+        turn=2,
+    )
+
+    messages = service.get_display_messages("ses_history")
+
+    assert messages[0]["metadata"]["turnError"]["details"] == {
+        "provider": {"code": "legacy_provider_error"}
+    }
+    assert messages[1]["metadata"]["turnError"] == {
+        "schema_version": 1,
+        "code": "llm_bad_request",
+        "message": "模型请求参数无效",
+        "details": {"provider": {"code": "content_anti_probe_blocking"}},
+        "retryable": False,
+        "status": 400,
+    }
+    assert messages[1]["metadata"]["errorContext"] == {
+        "traceId": "trace_canonical",
+        "messageEventId": "evt_canonical_error",
+        "turnIndex": 2,
+    }
 
 
 def test_message_event_service_appends_cancelled_marker_after_tool_only_turn(tmp_path) -> None:

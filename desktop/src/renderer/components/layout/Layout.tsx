@@ -1,4 +1,5 @@
 import {
+  Bot,
   FileDiff,
   FileText,
   Folder,
@@ -75,6 +76,12 @@ import {
   createBtwConversationFromSession,
 } from "@/renderer/pages/conversation/conversationForkSource";
 import type { AgentSession, Workspace } from "@/types/protocol";
+import type { SubagentRunSnapshot } from "@/types/subagents";
+import {
+  SubagentInvocationDetail,
+  SubagentPanelHeader,
+  SubagentRunList,
+} from "@/renderer/pages/conversation/subagents/SubagentSidebarPanel";
 
 import { RightSidebarResizeHandle } from "./RightSidebarResizeHandle";
 import { RightSidebarInitialPage } from "./RightSidebarInitialPage";
@@ -83,6 +90,7 @@ import {
   useOptionalRightSidebarConversation,
   type OpenBtwConversationRequest,
   type OpenRightSidebarConversationRequest,
+  type SubagentInvocationPanelDetails,
 } from "./RightSidebarConversationContext";
 import { SidebarResizeHandle } from "./SidebarResizeHandle";
 import { Sider } from "./Sider";
@@ -136,12 +144,16 @@ interface RightSidebarFilePanelState {
 
 interface RightSidebarConversationPanelState {
   id: string;
+  kind: "conversation" | "subagent";
   status: "opening" | "ready";
   sessionId: string;
   title: string;
   sourceSessionId: string | null;
+  parentSessionId: string | null;
   quoteRequest: RightSidebarConversationQuoteRequest | null;
   loadedHistoryTurnCount: number | null;
+  subagentRun: SubagentRunSnapshot | null;
+  subagentInvocation: SubagentInvocationPanelDetails | null;
 }
 
 interface RightSidebarReviewPanelState {
@@ -785,6 +797,51 @@ export function Layout({
     [openRightSidebar, previewContext?.activeScopeKey],
   );
 
+  const openSubagentPanel = useCallback(
+    (run: SubagentRunSnapshot) => {
+      const scopeKey = previewContext?.activeScopeKey ?? GLOBAL_RIGHT_SIDEBAR_SCOPE;
+      setRightSidebarPanelStateByScope((current) => {
+        const previous = normalizeRightSidebarScopePanelState(current[scopeKey]);
+        const next = activateOrCreateSubagentPanel(previous, run);
+        if (sameRightSidebarScopePanelState(previous, next)) return current;
+        return { ...current, [scopeKey]: next };
+      });
+      openRightSidebar();
+    },
+    [openRightSidebar, previewContext?.activeScopeKey],
+  );
+
+  const openSubagentList = useCallback(
+    (parentSessionId: string) => {
+      const cleanedParentId = parentSessionId.trim();
+      if (!cleanedParentId) return;
+      const scopeKey = previewContext?.activeScopeKey ?? GLOBAL_RIGHT_SIDEBAR_SCOPE;
+      setRightSidebarPanelStateByScope((current) => {
+        const previous = normalizeRightSidebarScopePanelState(current[scopeKey]);
+        const next = activateOrCreateSubagentList(previous, cleanedParentId);
+        if (sameRightSidebarScopePanelState(previous, next)) return current;
+        return { ...current, [scopeKey]: next };
+      });
+      openRightSidebar();
+    },
+    [openRightSidebar, previewContext?.activeScopeKey],
+  );
+
+  const openSubagentInvocationPanel = useCallback(
+    (details: SubagentInvocationPanelDetails) => {
+      if (!details.parentSessionId.trim() || !details.invocationId.trim()) return;
+      const scopeKey = previewContext?.activeScopeKey ?? GLOBAL_RIGHT_SIDEBAR_SCOPE;
+      setRightSidebarPanelStateByScope((current) => {
+        const previous = normalizeRightSidebarScopePanelState(current[scopeKey]);
+        const next = activateOrCreateSubagentInvocationPanel(previous, details);
+        if (sameRightSidebarScopePanelState(previous, next)) return current;
+        return { ...current, [scopeKey]: next };
+      });
+      openRightSidebar();
+    },
+    [openRightSidebar, previewContext?.activeScopeKey],
+  );
+
   const removeConversationPanel = useCallback((scopeKey: string, panelId: string) => {
     setRightSidebarPanelStateByScope((current) => {
       const previous = normalizeRightSidebarScopePanelState(current[scopeKey]);
@@ -865,9 +922,18 @@ export function Layout({
   const rightSidebarConversationValue = useMemo(
     () => ({
       openConversationPanel,
+      openSubagentList,
+      openSubagentPanel,
+      openSubagentInvocationPanel,
       openBtwConversationFromSession,
     }),
-    [openBtwConversationFromSession, openConversationPanel],
+    [
+      openBtwConversationFromSession,
+      openConversationPanel,
+      openSubagentInvocationPanel,
+      openSubagentList,
+      openSubagentPanel,
+    ],
   );
 
   const maximizeRightSidebar = useCallback(() => {
@@ -1221,6 +1287,7 @@ function RightSidebarPanel({
       (filePanelRenderContext?.sessionId || filePanelRenderContext?.workspaceId),
   );
   const canOpenBtwConversation = Boolean(hostContext?.sessionId && hostContext.runtime);
+  const canOpenSubagents = Boolean(hostContext?.sessionId);
   const canOpenReview = true;
   const resolvedActivePanelId = activePanelId ?? activeEntryId ?? orderedPanelIds[0] ?? null;
   const activeFilePanel = resolvedActivePanelId ? (filePanels[resolvedActivePanelId] ?? null) : null;
@@ -1470,6 +1537,12 @@ function RightSidebarPanel({
       runtime: hostRuntime,
     });
   }, [hostContext?.runtime, hostContext?.sessionId, rightSidebarConversation]);
+
+  const openSubagentsFromHost = useCallback(() => {
+    const sessionId = hostContext?.sessionId?.trim() ?? "";
+    if (!sessionId) return;
+    rightSidebarConversation?.openSubagentList(sessionId);
+  }, [hostContext?.sessionId, rightSidebarConversation]);
 
   const closeFilesPanel = useCallback(
     (panelId: string) => {
@@ -2006,6 +2079,7 @@ function RightSidebarPanel({
                   if (conversationPanel) {
                     const active = resolvedActivePanelId === panelId;
                     const title = conversationPanel.title || "旁路对话";
+                    const ConversationIcon = conversationPanel.kind === "subagent" ? Bot : MessageSquare;
                     return (
                       <div
                         className={styles.rightSidebarTab}
@@ -2022,7 +2096,7 @@ function RightSidebarPanel({
                           aria-selected={active}
                           onClick={() => activateConversationPanel(panelId)}
                         >
-                          <MessageSquare size={12} />
+                          <ConversationIcon size={12} />
                           <span>{title}</span>
                         </button>
                         <button
@@ -2225,12 +2299,48 @@ function RightSidebarPanel({
             return (
               <div
                 className={styles.rightSidebarBody}
-                data-content="conversation"
+                data-content={conversationPanel.kind === "subagent" ? "subagent" : "conversation"}
                 hidden={resolvedActivePanelId !== panelId}
                 key={panelId}
               >
                 {conversationPanel.status === "opening" ? (
                   <RightSidebarLoading label="正在打开旁路对话" />
+                ) : conversationPanel.kind === "subagent" ? (
+                  conversationPanel.subagentRun ? (
+                    <div className={styles.subagentPanel}>
+                      <SubagentPanelHeader
+                        role={conversationPanel.subagentRun.role}
+                        onBack={() => rightSidebarConversation?.openSubagentList(
+                          conversationPanel.parentSessionId ?? conversationPanel.subagentRun?.parent_session_id ?? "",
+                        )}
+                      />
+                      <div className={styles.subagentConversation}>
+                        <Suspense fallback={<RightSidebarLoading label="正在加载 Sub-Agent 对话" />}>
+                          <LazyConversationSessionSurface
+                            threadId={conversationPanel.subagentRun.child_session_id}
+                            runtime={runtime}
+                            mode="sidecar"
+                            previewPanelScopeKey={activeScopeKey}
+                            sidecarQuoteRequest={null}
+                            sidecarLoadedHistoryTurnCount={null}
+                            subagentRun={conversationPanel.subagentRun}
+                            a2uiRenderSuspended={a2uiRenderSuspended}
+                            onNavigateToConversation={onNavigateToConversation}
+                            onOpenModelSettings={onOpenModelSettings}
+                          />
+                        </Suspense>
+                      </div>
+                    </div>
+                  ) : conversationPanel.subagentInvocation ? (
+                    <SubagentInvocationDetail
+                      details={conversationPanel.subagentInvocation}
+                      onBack={() => rightSidebarConversation?.openSubagentList(
+                        conversationPanel.parentSessionId ?? conversationPanel.subagentInvocation?.parentSessionId ?? "",
+                      )}
+                    />
+                  ) : (
+                    <SubagentRunList parentSessionId={conversationPanel.parentSessionId ?? ""} />
+                  )
                 ) : (
                   <Suspense fallback={<RightSidebarLoading label="正在加载旁路对话" />}>
                     <LazyConversationSessionSurface
@@ -2240,6 +2350,7 @@ function RightSidebarPanel({
                       previewPanelScopeKey={activeScopeKey}
                       sidecarQuoteRequest={conversationPanel.quoteRequest}
                       sidecarLoadedHistoryTurnCount={conversationPanel.loadedHistoryTurnCount}
+                      subagentRun={conversationPanel.subagentRun}
                       a2uiRenderSuspended={a2uiRenderSuspended}
                       onSidecarQuoteRequestHandled={(requestId) =>
                         handleConversationQuoteRequestHandled(panelId, requestId)
@@ -2322,9 +2433,11 @@ function RightSidebarPanel({
                 <RightSidebarInitialPage
                   canOpenFiles={canOpenFiles}
                   canOpenBtwConversation={canOpenBtwConversation}
+                  canOpenSubagents={canOpenSubagents}
                   canOpenReview={canOpenReview}
                   onOpenFiles={openFilesPanel}
                   onOpenBtwConversation={openBtwConversationFromHost}
+                  onOpenSubagents={openSubagentsFromHost}
                   onOpenReview={openReviewPanel}
                 />
               </div>
@@ -2416,9 +2529,13 @@ function normalizeRightSidebarScopePanelState(
       panelId,
       {
         ...panel,
+        kind: panel.kind ?? (panel.subagentRun ? "subagent" : "conversation"),
         status: panel.status ?? "ready",
+        parentSessionId: panel.parentSessionId ?? panel.subagentRun?.parent_session_id ?? null,
         quoteRequest: panel.quoteRequest ?? null,
         loadedHistoryTurnCount: panel.loadedHistoryTurnCount ?? null,
+        subagentRun: panel.subagentRun ?? null,
+        subagentInvocation: panel.subagentInvocation ?? null,
       },
     ]),
   );
@@ -2690,11 +2807,15 @@ function activateExistingConversationPanel(
       ...state.conversationPanels,
       [panelId]: {
         ...panel,
+        kind: "conversation",
         status: "ready",
         title: conversationPanelTitle(options),
         sourceSessionId: options.sourceSessionId ?? panel.sourceSessionId,
+        parentSessionId: null,
         quoteRequest: options.quote ? nextConversationQuoteRequest(options.quote, panel.quoteRequest) : panel.quoteRequest,
         loadedHistoryTurnCount: options.loadedHistoryTurnCount ?? panel.loadedHistoryTurnCount,
+        subagentRun: null,
+        subagentInvocation: null,
       },
     },
   };
@@ -2712,13 +2833,167 @@ function conversationPanelState(
 ): RightSidebarConversationPanelState {
   return {
     id: panelId,
+    kind: "conversation",
     status: "ready",
     sessionId: options.session.id,
     title: conversationPanelTitle(options),
     sourceSessionId: options.sourceSessionId ?? null,
+    parentSessionId: null,
     quoteRequest: options.quote ? nextConversationQuoteRequest(options.quote, null) : null,
     loadedHistoryTurnCount: options.loadedHistoryTurnCount ?? null,
+    subagentRun: null,
+    subagentInvocation: null,
   };
+}
+
+function activateOrCreateSubagentPanel(
+  state: RightSidebarScopePanelState,
+  run: SubagentRunSnapshot,
+): RightSidebarScopePanelState {
+  const existingPanelId =
+    state.conversationPanelIds.find(
+      (panelId) => {
+        const panel = state.conversationPanels[panelId];
+        return panel?.kind === "subagent" && panel.parentSessionId === run.parent_session_id;
+      },
+    ) ?? null;
+  if (existingPanelId) {
+    const panel = state.conversationPanels[existingPanelId];
+    return {
+      ...state,
+      activePanelId: existingPanelId,
+      conversationPanels: {
+        ...state.conversationPanels,
+        [existingPanelId]: {
+          ...panel,
+          kind: "subagent",
+          status: "ready",
+          title: subagentPanelTitle(run),
+          sessionId: run.child_session_id,
+          sourceSessionId: run.parent_session_id,
+          parentSessionId: run.parent_session_id,
+          quoteRequest: null,
+          loadedHistoryTurnCount: null,
+          subagentRun: run,
+          subagentInvocation: null,
+        },
+      },
+    };
+  }
+  const activeInitialPanelId = activeInitialPanelIdForState(state);
+  const nextPanelSeq = activeInitialPanelId ? state.nextPanelSeq : state.nextPanelSeq + 1;
+  const panelId = activeInitialPanelId ?? `${CONVERSATION_PANEL_ID_PREFIX}${nextPanelSeq}`;
+  return {
+    ...state,
+    activePanelId: panelId,
+    panelOrder: activeInitialPanelId ? state.panelOrder : [...state.panelOrder, panelId],
+    conversationPanelIds: [...state.conversationPanelIds, panelId],
+    conversationPanels: {
+      ...state.conversationPanels,
+      [panelId]: {
+        id: panelId,
+        kind: "subagent",
+        status: "ready",
+        sessionId: run.child_session_id,
+        title: subagentPanelTitle(run),
+        sourceSessionId: run.parent_session_id,
+        parentSessionId: run.parent_session_id,
+        quoteRequest: null,
+        loadedHistoryTurnCount: null,
+        subagentRun: run,
+        subagentInvocation: null,
+      },
+    },
+    initialPanelIds: activeInitialPanelId
+      ? state.initialPanelIds.filter((id) => id !== activeInitialPanelId)
+      : state.initialPanelIds,
+    nextPanelSeq,
+  };
+}
+
+function activateOrCreateSubagentList(
+  state: RightSidebarScopePanelState,
+  parentSessionId: string,
+): RightSidebarScopePanelState {
+  return activateOrCreateSubagentWorkspace(state, parentSessionId, {
+    sessionId: "",
+    subagentRun: null,
+    subagentInvocation: null,
+  });
+}
+
+function activateOrCreateSubagentInvocationPanel(
+  state: RightSidebarScopePanelState,
+  details: SubagentInvocationPanelDetails,
+): RightSidebarScopePanelState {
+  return activateOrCreateSubagentWorkspace(state, details.parentSessionId, {
+    sessionId: "",
+    subagentRun: null,
+    subagentInvocation: details,
+  });
+}
+
+function activateOrCreateSubagentWorkspace(
+  state: RightSidebarScopePanelState,
+  parentSessionId: string,
+  selection: Pick<RightSidebarConversationPanelState, "sessionId" | "subagentRun" | "subagentInvocation">,
+): RightSidebarScopePanelState {
+  const existingPanelId = state.conversationPanelIds.find((panelId) => {
+    const panel = state.conversationPanels[panelId];
+    return panel?.kind === "subagent" && panel.parentSessionId === parentSessionId;
+  }) ?? null;
+  if (existingPanelId) {
+    const panel = state.conversationPanels[existingPanelId];
+    return {
+      ...state,
+      activePanelId: existingPanelId,
+      conversationPanels: {
+        ...state.conversationPanels,
+        [existingPanelId]: {
+          ...panel,
+          ...selection,
+          kind: "subagent",
+          status: "ready",
+          title: "子智能体",
+          sourceSessionId: parentSessionId,
+          parentSessionId,
+          quoteRequest: null,
+          loadedHistoryTurnCount: null,
+        },
+      },
+    };
+  }
+  const activeInitialPanelId = activeInitialPanelIdForState(state);
+  const nextPanelSeq = activeInitialPanelId ? state.nextPanelSeq : state.nextPanelSeq + 1;
+  const panelId = activeInitialPanelId ?? `${CONVERSATION_PANEL_ID_PREFIX}${nextPanelSeq}`;
+  return {
+    ...state,
+    activePanelId: panelId,
+    panelOrder: activeInitialPanelId ? state.panelOrder : [...state.panelOrder, panelId],
+    conversationPanelIds: [...state.conversationPanelIds, panelId],
+    conversationPanels: {
+      ...state.conversationPanels,
+      [panelId]: {
+        id: panelId,
+        kind: "subagent",
+        status: "ready",
+        title: "子智能体",
+        sourceSessionId: parentSessionId,
+        parentSessionId,
+        quoteRequest: null,
+        loadedHistoryTurnCount: null,
+        ...selection,
+      },
+    },
+    initialPanelIds: activeInitialPanelId
+      ? state.initialPanelIds.filter((id) => id !== activeInitialPanelId)
+      : state.initialPanelIds,
+    nextPanelSeq,
+  };
+}
+
+function subagentPanelTitle(_run: SubagentRunSnapshot): string {
+  return "子智能体";
 }
 
 function activateOrCreateOpeningConversationPanel(
@@ -2759,12 +3034,16 @@ function openingConversationPanelState(
 ): RightSidebarConversationPanelState {
   return {
     id: panelId,
+    kind: "conversation",
     status: "opening",
     sessionId: "",
     title: BTW_CONVERSATION_TITLE,
     sourceSessionId: options.sourceSessionId,
+    parentSessionId: null,
     quoteRequest: options.quote ? nextConversationQuoteRequest(options.quote, null) : null,
     loadedHistoryTurnCount: null,
+    subagentRun: null,
+    subagentInvocation: null,
   };
 }
 
@@ -2789,11 +3068,15 @@ function resolveOpeningConversationPanel(
       ...state.conversationPanels,
       [panelId]: {
         ...panel,
+        kind: "conversation",
         status: "ready",
         sessionId: options.session.id,
         title: conversationPanelTitle(options),
         sourceSessionId: options.sourceSessionId ?? panel.sourceSessionId,
+        parentSessionId: null,
         loadedHistoryTurnCount: options.loadedHistoryTurnCount ?? panel.loadedHistoryTurnCount,
+        subagentRun: null,
+        subagentInvocation: null,
       },
     },
   };
@@ -2959,14 +3242,35 @@ function sameConversationPanels(left: RightSidebarScopePanelState, right: RightS
     return (
       Boolean(leftPanel) &&
       Boolean(rightPanel) &&
+      leftPanel.kind === rightPanel.kind &&
       leftPanel.status === rightPanel.status &&
       leftPanel.sessionId === rightPanel.sessionId &&
       leftPanel.title === rightPanel.title &&
       leftPanel.sourceSessionId === rightPanel.sourceSessionId &&
+      leftPanel.parentSessionId === rightPanel.parentSessionId &&
       leftPanel.loadedHistoryTurnCount === rightPanel.loadedHistoryTurnCount &&
+      leftPanel.subagentRun?.run_id === rightPanel.subagentRun?.run_id &&
+      leftPanel.subagentRun?.version === rightPanel.subagentRun?.version &&
+      sameSubagentInvocation(leftPanel.subagentInvocation, rightPanel.subagentInvocation) &&
       sameConversationQuoteRequest(leftPanel.quoteRequest, rightPanel.quoteRequest)
     );
   });
+}
+
+function sameSubagentInvocation(
+  left: SubagentInvocationPanelDetails | null,
+  right: SubagentInvocationPanelDetails | null,
+): boolean {
+  if (!left || !right) return left === right;
+  return (
+    left.invocationId === right.invocationId &&
+    left.parentSessionId === right.parentSessionId &&
+    left.role === right.role &&
+    left.task === right.task &&
+    left.state === right.state &&
+    left.errorCode === right.errorCode &&
+    left.errorMessage === right.errorMessage
+  );
 }
 
 function sameReviewPanels(left: RightSidebarScopePanelState, right: RightSidebarScopePanelState): boolean {

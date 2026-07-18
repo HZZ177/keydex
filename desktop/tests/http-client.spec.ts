@@ -6,6 +6,7 @@ import {
   redactForLog,
 } from "@/runtime/httpClient";
 import { RuntimeHttpError, isRuntimeHttpError } from "@/runtime/errors";
+import { ApiClient, ApiError } from "@/api/client";
 
 describe("HttpClient", () => {
   it("requires an explicit backend base URL", async () => {
@@ -66,8 +67,11 @@ describe("HttpClient", () => {
 
   it("normalizes direct envelopes and redacts secrets for logs", () => {
     expect(normalizeErrorEnvelope(502, { code: "provider_error", error: "供应商错误" })).toEqual({
+      schema_version: 1,
       code: "provider_error",
       message: "供应商错误",
+      details: {},
+      retryable: false,
       status: 502,
     });
 
@@ -80,6 +84,36 @@ describe("HttpClient", () => {
       api_key: "[REDACTED]",
       nested: { Authorization: "[REDACTED]", keep: "visible" },
     });
+  });
+
+  it("normalizes ApiClient errors through the same envelope contract", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      jsonResponse(429, {
+        detail: {
+          schema_version: 1,
+          code: "rate_limited",
+          message: "请求过于频繁",
+          details: { retry_after_seconds: 7 },
+          retryable: true,
+        },
+      }),
+    );
+    const client = new ApiClient({ baseUrl: "http://127.0.0.1:8765", fetcher });
+
+    try {
+      await client.health();
+      throw new Error("expected request to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiError);
+      expect(error).toMatchObject({
+        schema_version: 1,
+        code: "rate_limited",
+        message: "请求过于频繁",
+        details: { retry_after_seconds: 7 },
+        retryable: true,
+        status: 429,
+      });
+    }
   });
 });
 

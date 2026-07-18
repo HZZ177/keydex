@@ -26,6 +26,13 @@ import type {
   ThreadTaskUserStatus,
   PendingInputMode,
 } from "@/types/protocol";
+import {
+  normalizeSubagentRunSnapshot,
+  type SubagentCancelRequest,
+  type SubagentControlRunResponse,
+  type SubagentRunSnapshot,
+  type SubagentSteerRequest,
+} from "@/types/subagents";
 
 import type { HttpClient } from "./httpClient";
 import type {
@@ -82,6 +89,11 @@ export interface LoadHistoryOptions {
 }
 
 export type LoadToolDetailsOptions = AgentToolDetailRef;
+
+export interface SubagentSessionResponse {
+  session: AgentSession;
+  history: AgentHistoryResponse;
+}
 
 export interface UpdateSessionPayload {
   title?: string | null;
@@ -245,6 +257,8 @@ export interface ChatChannel {
   getSessionId(): string | null;
   createSession(payload?: CreateSessionPayload): void;
   bindSession(sessionId: string): void;
+  bindSubagentSession?(parentSessionId: string, runId: string, childSessionId: string): void;
+  unbindSubagentSession?(childSessionId: string): void;
   unbindSession(sessionId?: string): void;
   chat(payload: ChatPayload): void;
   updatePendingInput?(payload: UpdatePendingInputPayload): void;
@@ -258,6 +272,7 @@ export interface ChatChannel {
   cancel(sessionId?: string): void;
   terminateCommand(sessionId: string, commandId: string): void;
   requestStatus(sessionId?: string): void;
+  requestSubagentRuns?(sessionId?: string): void;
   ping(): void;
   bindWorkspaceWatch?(workspaceId: string): void;
   unbindWorkspaceWatch?(workspaceId: string): void;
@@ -316,6 +331,27 @@ export interface ConversationRuntime {
   compressContext(sessionId: string): Promise<ManualContextCompressionResponse>;
   loadHistory(sessionId: string, options?: LoadHistoryOptions): Promise<AgentHistoryResponse>;
   loadToolDetails(sessionId: string, ref: LoadToolDetailsOptions): Promise<AgentToolDetails>;
+  listSubagentRuns(parentSessionId: string): Promise<SubagentRunSnapshot[]>;
+  loadSubagentSession(
+    parentSessionId: string,
+    runId: string,
+    options?: LoadHistoryOptions,
+  ): Promise<SubagentSessionResponse>;
+  loadSubagentToolDetails(
+    parentSessionId: string,
+    runId: string,
+    ref: LoadToolDetailsOptions,
+  ): Promise<AgentToolDetails>;
+  steerSubagent(
+    parentSessionId: string,
+    runId: string,
+    payload: SubagentSteerRequest,
+  ): Promise<SubagentRunSnapshot>;
+  cancelSubagent(
+    parentSessionId: string,
+    runId: string,
+    payload: SubagentCancelRequest,
+  ): Promise<SubagentRunSnapshot>;
   listThreadTasks(sessionId: string): Promise<ThreadTask[]>;
   createThreadTask(sessionId: string, payload: CreateThreadTaskPayload): Promise<ThreadTask>;
   updateThreadTask(sessionId: string, taskId: string, payload: UpdateThreadTaskPayload): Promise<ThreadTask>;
@@ -435,6 +471,41 @@ export function createConversationRuntime(
         )
         .then((response) => response.detail);
     },
+    listSubagentRuns(parentSessionId) {
+      return http
+        .request<{ list: unknown[] }>(
+          `/api/sessions/${encodeURIComponent(parentSessionId)}/subagents/runs`,
+        )
+        .then((response) => response.list.map(normalizeSubagentRunSnapshot));
+    },
+    loadSubagentSession(parentSessionId, runId, historyOptions = {}) {
+      return http.request<SubagentSessionResponse>(
+        `/api/sessions/${encodeURIComponent(parentSessionId)}/subagents/runs/${encodeURIComponent(runId)}/session${historyQuery(historyOptions)}`,
+      );
+    },
+    loadSubagentToolDetails(parentSessionId, runId, ref) {
+      return http
+        .request<AgentToolDetailResponse>(
+          `/api/sessions/${encodeURIComponent(parentSessionId)}/subagents/runs/${encodeURIComponent(runId)}/session/tool-details${toolDetailsQuery(ref)}`,
+        )
+        .then((response) => response.detail);
+    },
+    steerSubagent(parentSessionId, runId, payload) {
+      return http
+        .request<SubagentControlRunResponse>(
+          `/api/sessions/${encodeURIComponent(parentSessionId)}/subagents/runs/${encodeURIComponent(runId)}/steer`,
+          { method: "POST", body: payload },
+        )
+        .then((response) => normalizeSubagentRunSnapshot(response.run));
+    },
+    cancelSubagent(parentSessionId, runId, payload) {
+      return http
+        .request<SubagentControlRunResponse>(
+          `/api/sessions/${encodeURIComponent(parentSessionId)}/subagents/runs/${encodeURIComponent(runId)}/cancel`,
+          { method: "POST", body: payload },
+        )
+        .then((response) => normalizeSubagentRunSnapshot(response.run));
+    },
     listThreadTasks(sessionId) {
       return http
         .request<ThreadTaskListResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/tasks`)
@@ -493,6 +564,9 @@ export function createConversationRuntime(
         getSessionId: () => client.getSessionId(),
         createSession: (payload = {}) => client.createSession(snakeSessionPayload(payload)),
         bindSession: (sessionId) => client.bindSession(sessionId),
+        bindSubagentSession: (parentSessionId, runId, childSessionId) =>
+          client.bindSubagentSession(parentSessionId, runId, childSessionId),
+        unbindSubagentSession: (childSessionId) => client.unbindSubagentSession(childSessionId),
         unbindSession: (sessionId) => client.unbindSession(sessionId),
         chat: (payload) => client.chat(payload),
         updatePendingInput: (payload) =>
@@ -523,6 +597,7 @@ export function createConversationRuntime(
             command_id: commandId,
           }),
         requestStatus: (sessionId) => client.requestStatus(sessionId),
+        requestSubagentRuns: (sessionId) => client.requestSubagentRuns(sessionId),
         ping: () => client.ping(),
         bindWorkspaceWatch: (workspaceId) => client.bindWorkspaceWatch(workspaceId),
         unbindWorkspaceWatch: (workspaceId) => client.unbindWorkspaceWatch(workspaceId),

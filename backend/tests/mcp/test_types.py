@@ -10,6 +10,7 @@ from backend.app.mcp.types import (
     McpApprovalMode,
     McpAuthType,
     McpErrorCode,
+    McpErrorPayload,
     McpRuntimeSnapshotSummary,
     McpServerCreateRequest,
     McpServerDetailResponse,
@@ -143,11 +144,35 @@ def test_mcp_error_code_is_json_serializable() -> None:
     payload = error.to_payload().model_dump(mode="json")
 
     assert payload == {
+        "schema_version": 1,
         "code": "server_offline",
         "message": "MCP 服务器当前不可用，请检查连接配置或服务状态。",
-        "detail": {"server_id": "srv_1"},
+        "details": {"server_id": "srv_1"},
+        "retryable": True,
+        "status": None,
     }
+    assert "detail" not in payload
     json.dumps(payload)
+
+
+def test_mcp_error_payload_accepts_legacy_detail_without_double_write() -> None:
+    payload = McpErrorPayload.model_validate(
+        {
+            "code": "policy_denied",
+            "message": "请求被策略拒绝",
+            "detail": {"server_id": "srv_legacy"},
+        }
+    )
+
+    assert payload.detail == {"server_id": "srv_legacy"}
+    assert payload.model_dump(mode="json") == {
+        "schema_version": 1,
+        "code": "policy_denied",
+        "message": "请求被策略拒绝",
+        "details": {"server_id": "srv_legacy"},
+        "retryable": False,
+        "status": None,
+    }
 
 
 def test_mcp_error_payload_redacts_sensitive_detail_fields() -> None:
@@ -171,7 +196,7 @@ def test_mcp_error_payload_redacts_sensitive_detail_fields() -> None:
     payload = error.to_payload().model_dump(mode="json")
 
     assert payload["message"] == "MCP 服务器需要认证，请完成登录或补充凭据。"
-    assert payload["detail"] == {
+    assert payload["details"] == {
         "server_id": "srv_1",
         "Authorization": "***REDACTED***",
         "nested": {

@@ -5,7 +5,8 @@ import json
 import time
 from typing import Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import ValidationError
 
 from backend.app.a2ui.interaction_service import (
     A2UIInteractionService,
@@ -18,6 +19,12 @@ from backend.app.a2ui.resume_service import (
     A2UIResumeStartResult,
 )
 from backend.app.a2ui.schemas import interaction_state_from_record
+from backend.app.api.subagents import (
+    SubagentCancelRequest,
+    SubagentSteerRequest,
+    require_control_identity,
+    require_visible_workspace_parent,
+)
 from backend.app.command_approval import (
     ApprovalService,
     CommandApprovalDecision,
@@ -25,6 +32,7 @@ from backend.app.command_approval import (
     approval_to_payload,
     load_command_settings,
 )
+from backend.app.core.errors import error_envelope
 from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
 from backend.app.core.request_context import trace_id_var
@@ -53,6 +61,7 @@ from backend.app.services.workspace_service import (
     WorkspaceServiceError,
 )
 from backend.app.storage import MODEL_DEFAULT_CHAT
+from backend.app.subagents.errors import SubagentError
 from backend.app.tools.command_runtime import command_process_manager
 
 router = APIRouter(prefix="/agent-base/ws", tags=["websocket"])
@@ -98,6 +107,7 @@ async def chat_websocket(websocket: WebSocket) -> None:
     settings = runtime.settings
     repositories = runtime.repositories
     stream_manager = runtime.chat_stream_manager
+    subagent_runtime = getattr(websocket.app.state, "subagent_runtime", None)
     session_service = SessionService(
         repositories.sessions,
         repositories.message_events,
@@ -110,15 +120,16 @@ async def chat_websocket(websocket: WebSocket) -> None:
     request_action = ""
     request_payload: dict[str, Any] = {}
     if bound_session_id:
-        bound_session_ids.add(bound_session_id)
-        await stream_manager.subscribe(bound_session_id, adapter)
         try:
-            await _register_keydex_watcher(
-                keydex_watcher,
-                session_service.get_session_detail(bound_session_id),
-            )
+            initial_session = session_service.get_session_detail(bound_session_id)
+            if initial_session.get("visibility") == "internal":
+                bound_session_id = None
+            else:
+                bound_session_ids.add(bound_session_id)
+                await stream_manager.subscribe(bound_session_id, adapter)
+                await _register_keydex_watcher(keydex_watcher, initial_session)
         except SessionNotFoundError:
-            pass
+            bound_session_id = None
     logger.info(
         f"[WebSocket] 连接建立 | trace_id={connection_trace_id} | "
         f"bound_session_id={bound_session_id or '-'}"
@@ -131,7 +142,21 @@ async def chat_websocket(websocket: WebSocket) -> None:
             )
 
     async def send_error(code: str, message: str, data: dict[str, Any] | None = None) -> None:
-        error_payload = {"code": code, "message": message, **(data or {})}
+        context = dict(data or {})
+        details = context.pop("details", None)
+        retryable = context.pop("retryable", False)
+        status_code = context.pop("status", None)
+        error_payload = {
+            "error": error_envelope(
+                code,
+                message,
+                details=details if isinstance(details, dict) else {},
+                retryable=retryable if isinstance(retryable, bool) else False,
+                status=status_code if isinstance(status_code, int) else None,
+            ).to_public_dict(),
+            **context,
+        }
+        error_payload.setdefault("trace_id", connection_trace_id)
         if request_action:
             error_payload.setdefault("source_action", request_action)
         for key in _ERROR_REQUEST_CONTEXT_KEYS:
@@ -322,6 +347,12 @@ async def chat_websocket(websocket: WebSocket) -> None:
                         await send_error("missing_session", "session_id 必填")
                         continue
                     session = session_service.get_session_detail(session_id)
+                    if session.get("visibility") == "internal":
+                        await send_error(
+                            "CHILD_SESSION_ACCESS_DENIED",
+                            "internal child Sessions require a controlled Sub-Agent binding",
+                        )
+                        continue
                     bound_session_id = session_id
                     bound_session_ids.add(session_id)
                     await stream_manager.subscribe(session_id, adapter)
@@ -331,6 +362,66 @@ async def chat_websocket(websocket: WebSocket) -> None:
                         f"session_id={session_id}"
                     )
                     await send("bind_ok", {"session_id": session_id})
+                    continue
+
+                if action == "subagent_bind_session":
+                    parent_session_id = str(payload.get("parent_session_id") or "").strip()
+                    run_id = str(payload.get("run_id") or "").strip()
+                    child_session_id = str(payload.get("child_session_id") or "").strip()
+                    if (
+                        not parent_session_id
+                        or parent_session_id not in bound_session_ids
+                        or not run_id
+                        or not child_session_id
+                        or subagent_runtime is None
+                    ):
+                        await send_error(
+                            "SUBAGENT_CHILD_BIND_INVALID",
+                            (
+                                "Sub-Agent child binding requires a bound parent "
+                                "and complete Run address"
+                            ),
+                            {"session_id": parent_session_id},
+                        )
+                        continue
+                    try:
+                        require_visible_workspace_parent(repositories, parent_session_id)
+                        run = await subagent_runtime.get_run(
+                            run_id,
+                            parent_session_id=parent_session_id,
+                        )
+                        if run.child_session_id != child_session_id:
+                            await send_error(
+                                "CHILD_SESSION_ACCESS_DENIED",
+                                "Sub-Agent Run does not own the requested child Session",
+                            )
+                            continue
+                        session = session_service.get_controlled_subagent_session_detail(
+                            parent_session_id=parent_session_id,
+                            run_id=run_id,
+                            child_session_id=child_session_id,
+                        )
+                    except HTTPException:
+                        await send_error(
+                            "SUBAGENT_PARENT_INVALID",
+                            "visible Workspace parent Session not found",
+                        )
+                        continue
+                    except SubagentError as exc:
+                        await send_error(exc.code.value, exc.message, {"details": exc.details})
+                        continue
+                    bound_session_ids.add(child_session_id)
+                    await stream_manager.subscribe(child_session_id, adapter)
+                    await _register_keydex_watcher(keydex_watcher, session)
+                    await send(
+                        "bind_ok",
+                        {
+                            "session_id": child_session_id,
+                            "parent_session_id": parent_session_id,
+                            "run_id": run_id,
+                            "internal": True,
+                        },
+                    )
                     continue
 
                 if action == "unbind_session":
@@ -351,6 +442,12 @@ async def chat_websocket(websocket: WebSocket) -> None:
                         await send_error("missing_session", "session_id 必填")
                         continue
                     session = session_service.get_session_detail(session_id)
+                    if session.get("visibility") == "internal":
+                        await send_error(
+                            "CHILD_SESSION_ACCESS_DENIED",
+                            "internal child Sessions do not accept ordinary chat actions",
+                        )
+                        continue
                     waiting_interactions = repositories.a2ui_interactions.get_waiting_by_session(
                         session_id
                     )
@@ -713,6 +810,166 @@ async def chat_websocket(websocket: WebSocket) -> None:
                     await send("status", await stream_manager.status(session_id))
                     continue
 
+                if action in {"subagent_list_runs", "subagent_get_run"}:
+                    parent_session_id = str(
+                        payload.get("parent_session_id")
+                        or payload.get("session_id")
+                        or bound_session_id
+                        or ""
+                    ).strip()
+                    if (
+                        not parent_session_id
+                        or parent_session_id not in bound_session_ids
+                        or subagent_runtime is None
+                    ):
+                        await send_error(
+                            "SUBAGENT_PARENT_INVALID",
+                            "Sub-Agent query requires an explicitly bound parent Session",
+                            {"session_id": parent_session_id},
+                        )
+                        continue
+                    try:
+                        require_visible_workspace_parent(repositories, parent_session_id)
+                    except HTTPException:
+                        await send_error(
+                            "SUBAGENT_PARENT_INVALID",
+                            "visible Workspace parent Session not found",
+                            {"session_id": parent_session_id},
+                        )
+                        continue
+                    try:
+                        if action == "subagent_list_runs":
+                            runs = await subagent_runtime.list_by_parent(parent_session_id)
+                            await send(
+                                "subagent_runs_snapshot",
+                                {
+                                    "session_id": parent_session_id,
+                                    "list": [run.model_dump(mode="json") for run in runs],
+                                },
+                            )
+                        else:
+                            run_id = str(payload.get("run_id") or "").strip()
+                            if not run_id:
+                                await send_error("RUN_NOT_FOUND", "run_id is required")
+                                continue
+                            run = await subagent_runtime.get_run(
+                                run_id,
+                                parent_session_id=parent_session_id,
+                            )
+                            await send(
+                                "subagent_run_snapshot",
+                                {
+                                    "session_id": parent_session_id,
+                                    "run": run.model_dump(mode="json"),
+                                },
+                            )
+                    except SubagentError as exc:
+                        await send_error(exc.code.value, exc.message, {"details": exc.details})
+                    continue
+
+                if action in {"subagent_resume", "subagent_close"}:
+                    code = (
+                        "SUBAGENT_USER_RELAUNCH_FORBIDDEN"
+                        if action == "subagent_resume"
+                        else "SUBAGENT_USER_CLOSE_FORBIDDEN"
+                    )
+                    message = (
+                        "Only the main Agent can delegate a new Sub-Agent Run"
+                        if action == "subagent_resume"
+                        else "Users cannot close a Sub-Agent instance"
+                    )
+                    await send_error(
+                        code,
+                        message,
+                        {"action": action.removeprefix("subagent_")},
+                    )
+                    continue
+
+                if action in {"subagent_steer", "subagent_cancel"}:
+                    parent_session_id = str(
+                        payload.get("parent_session_id")
+                        or payload.get("session_id")
+                        or bound_session_id
+                        or ""
+                    ).strip()
+                    if (
+                        not parent_session_id
+                        or parent_session_id not in bound_session_ids
+                        or subagent_runtime is None
+                    ):
+                        await send_error(
+                            "SUBAGENT_PARENT_INVALID",
+                            "Sub-Agent control requires an explicitly bound parent Session",
+                            {"session_id": parent_session_id},
+                        )
+                        continue
+                    try:
+                        require_visible_workspace_parent(repositories, parent_session_id)
+                    except HTTPException:
+                        await send_error(
+                            "SUBAGENT_PARENT_INVALID",
+                            "visible Workspace parent Session not found",
+                            {"session_id": parent_session_id},
+                        )
+                        continue
+                    run_id = str(payload.get("run_id") or "").strip()
+                    if not run_id:
+                        await send_error("RUN_NOT_FOUND", "run_id is required")
+                        continue
+                    control_data = {
+                        key: payload.get(key)
+                        for key in (
+                            "subagent_id",
+                            "child_session_id",
+                            "expected_version",
+                            "message",
+                            "reason",
+                        )
+                        if key in payload
+                    }
+                    try:
+                        request_model = {
+                            "subagent_steer": SubagentSteerRequest,
+                            "subagent_cancel": SubagentCancelRequest,
+                        }[action].model_validate(control_data)
+                        current = await subagent_runtime.get_run(
+                            run_id,
+                            parent_session_id=parent_session_id,
+                        )
+                        require_control_identity(current, request_model)
+                        response: dict[str, Any] = {
+                            "session_id": parent_session_id,
+                            "operation": action.removeprefix("subagent_"),
+                        }
+                        if isinstance(request_model, SubagentSteerRequest):
+                            controlled = await subagent_runtime.steer(
+                                run_id,
+                                request_model.child_session_id,
+                                request_model.message,
+                                parent_session_id=parent_session_id,
+                                expected_version=request_model.expected_version,
+                            )
+                            response["run"] = controlled.model_dump(mode="json")
+                        elif isinstance(request_model, SubagentCancelRequest):
+                            controlled = await subagent_runtime.cancel(
+                                run_id,
+                                reason=request_model.reason or "user",
+                                parent_session_id=parent_session_id,
+                                child_session_id=request_model.child_session_id,
+                                expected_version=request_model.expected_version,
+                            )
+                            response["run"] = controlled.model_dump(mode="json")
+                        await send("subagent_control_result", response)
+                    except ValidationError as exc:
+                        await send_error(
+                            "SUBAGENT_CONTROL_INVALID",
+                            "Sub-Agent control payload is invalid",
+                            {"details": {"errors": exc.errors(include_input=False)}},
+                        )
+                    except SubagentError as exc:
+                        await send_error(exc.code.value, exc.message, {"details": exc.details})
+                    continue
+
                 await send_error("unknown_action", f"未知的 action: {action}")
             except SessionNotFoundError as exc:
                 logger.warning(
@@ -741,7 +998,11 @@ async def chat_websocket(websocket: WebSocket) -> None:
                     f"[WebSocket] action 处理失败 | trace_id={connection_trace_id} | "
                     f"action={action} | error={exc}"
                 )
-                await send_error("ws_action_error", str(exc))
+                await send_error(
+                    "ws_action_error",
+                    "WebSocket 操作执行失败",
+                    {"details": {"exception_type": type(exc).__name__}},
+                )
     finally:
         await stream_manager.unsubscribe_all(adapter)
         if file_change_hub is not None:

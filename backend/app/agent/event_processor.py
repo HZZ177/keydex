@@ -23,6 +23,7 @@ from backend.app.agent.tool_call_progress import (
     default_collectors,
     finalize_file_change,
 )
+from backend.app.core.errors import error_envelope, normalize_error_envelope
 from backend.app.core.logger import logger
 from backend.app.events import DomainEventType, EventDispatcher
 from backend.app.web.ui_payload import (
@@ -349,6 +350,15 @@ async def process_agent_events(
                     if is_error
                     else None
                 )
+                tool_error = (
+                    _canonical_tool_error(
+                        web_ui_payload if web_ui_payload is not None else structured_output,
+                        tool_name=resolved_tool_name,
+                        fallback_message=public_error or "工具执行失败",
+                    )
+                    if event_failed
+                    else None
+                )
                 files = _tool_files_from_structured_output(structured_output)
                 tool_call_id = tool_chunk_pipeline.tool_call_id_for_run(
                     run_id
@@ -382,8 +392,7 @@ async def process_agent_events(
                         "trace_id": trace_id,
                         "end_time": ended_at_ms,
                         "status": "failed" if event_failed else "completed",
-                        "error": public_error,
-                        "error_type": "ToolMessageError" if event_failed else None,
+                        **({"error": tool_error} if tool_error is not None else {}),
                         "output_data": {
                             "result": web_ui_payload
                             if web_ui_payload is not None
@@ -454,6 +463,25 @@ async def process_agent_events(
                     f"turn_index={turn_index} | trace_id={trace_id} | tool={name} | "
                     f"run_id={run_id} | duration_ms={duration_ms} | error={error_text}"
                 )
+                tool_error = (
+                    _canonical_tool_error(
+                        web_ui_payload,
+                        tool_name=name,
+                        fallback_message="网络操作失败",
+                    )
+                    if web_ui_payload is not None
+                    else error_envelope(
+                        "tool_execution_failed",
+                        "工具执行失败",
+                        details={
+                            "tool": name,
+                            "exception_type": type(
+                                data.get("error") or event.get("error")
+                            ).__name__,
+                            "raw_message": error_text,
+                        },
+                    ).to_public_dict()
+                )
                 await dispatcher.emit_event(
                     event_type=DomainEventType.LLM_TOOL_FAILED.value,
                     source="langchain_event_handler",
@@ -467,12 +495,7 @@ async def process_agent_events(
                         "trace_id": trace_id,
                         "end_time": int(time.time() * 1000),
                         "status": "failed",
-                        "error": (
-                            _web_activity_error_message(web_ui_payload)
-                            if web_ui_payload is not None
-                            else error_text
-                        ),
-                        "error_type": "ToolError",
+                        "error": tool_error,
                         "output_data": {
                             "result": web_ui_payload
                             if web_ui_payload is not None
@@ -1035,6 +1058,29 @@ def _tool_output_is_error(output: Any) -> bool:
     return _serialized_tool_output_is_error(output)
 
 
+def _canonical_tool_error(
+    value: Any,
+    *,
+    tool_name: str,
+    fallback_message: str,
+) -> dict[str, Any]:
+    normalized = normalize_error_envelope(
+        value,
+        fallback_code="tool_execution_failed",
+        fallback_message=fallback_message,
+    )
+    details = dict(normalized.details)
+    if isinstance(value, dict):
+        nested_error = value.get("error")
+        if isinstance(nested_error, dict):
+            retry_after_seconds = nested_error.get("retry_after_seconds")
+            if isinstance(retry_after_seconds, int) and retry_after_seconds >= 0:
+                details["retry_after_seconds"] = retry_after_seconds
+    return normalized.model_copy(
+        update={"details": {**details, "tool": tool_name}}
+    ).to_public_dict()
+
+
 def _serialized_tool_output_is_error(output: Any) -> bool:
     if isinstance(output, dict):
         return _tool_error_payload(output)
@@ -1048,8 +1094,10 @@ def _serialized_tool_output_is_error(output: Any) -> bool:
 
 
 def _tool_error_payload(payload: dict[str, Any]) -> bool:
-    code = payload.get("code")
-    message = payload.get("message")
+    nested_error = payload.get("error")
+    source = nested_error if isinstance(nested_error, dict) else payload
+    code = source.get("code")
+    message = source.get("message")
     return isinstance(code, str) and bool(code.strip()) and isinstance(message, str)
 
 

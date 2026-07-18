@@ -218,10 +218,7 @@ class ToolOrchestrator:
             payload["ui_payload"] = serialized_result["ui_payload"]
         if result.error:
             error = _make_json_serializable(result.error)
-            payload["error"] = str(error.get("message") or "工具执行失败")
-            payload["error_type"] = str(error.get("code") or "tool_execution_failed")
-            payload["error_data"] = error
-            payload["output_data"] = {"error": error}
+            payload["error"] = error
         return payload
 
 

@@ -1,0 +1,79 @@
+.composer {
+  display: grid;
+  gap: 7px;
+}
+
+.label {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.composer textarea {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-default);
+  border-radius: 9px;
+  box-sizing: border-box;
+  color: var(--color-text-primary);
+  font: inherit;
+  line-height: 1.45;
+  max-height: 128px;
+  min-height: 58px;
+  outline: none;
+  padding: 9px 10px;
+  resize: vertical;
+  width: 100%;
+}
+
+.composer textarea:focus {
+  border-color: color-mix(in srgb, var(--color-primary, #1677ff) 50%, var(--color-border-default));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #1677ff) 9%, transparent);
+}
+
+.actions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.actions button {
+  border-radius: 7px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  min-height: 30px;
+  padding: 0 11px;
+}
+
+.actions button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.cancel {
+  background: transparent;
+  border: 1px solid var(--color-border-default);
+  color: var(--color-text-secondary);
+}
+
+.submit {
+  background: var(--color-text-primary);
+  border: 1px solid var(--color-text-primary);
+  color: var(--color-bg-container, #fff);
+}
+
+.error {
+  color: var(--color-error, #ff4d4f);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.readonly {
+  background: color-mix(in srgb, var(--color-text-secondary) 6%, transparent);
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 9px 10px;
+}

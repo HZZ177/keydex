@@ -24,6 +24,7 @@ import {
 import { isFileWatchEventAction } from "@/types/protocol";
 import type { A2UICancelActionPayload, A2UISubmitActionPayload, AgentActionEnvelope } from "@/types/protocol";
 import type { McpElicitationResolvePayload } from "@/types/protocol";
+import type { SubagentRunSnapshot } from "@/types/subagents";
 import { emitSessionEventsFromRuntimeEvent } from "@/renderer/events/sessionEvents";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
 import {
@@ -32,15 +33,27 @@ import {
   type AgentConversationAction,
   type AgentConversationState,
 } from "@/renderer/stores/agentSessionStore";
+import {
+  createInitialSubagentRunsState,
+  reduceSubagentRunEvent,
+  markSubagentRunRead as markSubagentRunReadInState,
+  type SubagentRunsState,
+} from "@/renderer/stores/subagentRunStore";
 
 export interface AgentSessionRuntimeContextValue {
   runtime: RuntimeBridge;
   state: AgentConversationState;
+  subagentState: SubagentRunsState;
   dispatch: Dispatch<AgentConversationAction>;
   wsStatus: WsConnectionStatus;
   runtimeDetail: string | null;
   setRuntimeDetail: (detail: string | null) => void;
   bindSession: (sessionId: string) => void;
+  bindSubagentSession: (parentSessionId: string, runId: string, childSessionId: string) => void;
+  unbindSubagentSession: (childSessionId: string) => void;
+  requestSubagentRuns: (parentSessionId: string) => void;
+  applySubagentSnapshot: (snapshot: SubagentRunSnapshot) => void;
+  markSubagentRunRead: (runId: string) => void;
   subscribeEvent: (listener: (event: AgentActionEnvelope) => void) => () => void;
   chat: (payload: ChatPayload) => void;
   updatePendingInput: (payload: UpdatePendingInputPayload) => void;
@@ -61,17 +74,30 @@ export interface AgentSessionRuntimeContextValue {
   unbindLocalFileWatch: (watchId: string) => void;
 }
 
-const AgentSessionRuntimeContext = createContext<AgentSessionRuntimeContextValue | null>(null);
+export const AgentSessionRuntimeContext = createContext<AgentSessionRuntimeContextValue | null>(null);
 
 export function AgentSessionProvider({
   children,
   runtime = runtimeBridge,
 }: PropsWithChildren<{ runtime?: RuntimeBridge }>) {
   const [state, dispatch] = useReducer(agentConversationReducer, createInitialAgentConversationState());
+  const [subagentState, dispatchSubagentEvent] = useReducer(
+    (
+      current: SubagentRunsState,
+      action: AgentActionEnvelope | { type: "mark-read"; runId: string },
+    ) =>
+      "type" in action
+        ? markSubagentRunReadInState(current, action.runId)
+        : reduceSubagentRunEvent(current, action),
+    createInitialSubagentRunsState(),
+  );
   const [wsStatus, setWsStatus] = useState<WsConnectionStatus>("idle");
   const [runtimeDetail, setRuntimeDetail] = useState<string | null>(null);
   const channelRef = useRef<ChatChannel | null>(null);
   const pendingBindSessionIdsRef = useRef(new Set<string>());
+  const desiredSubagentSessionBindingsRef = useRef(
+    new Map<string, { parentSessionId: string; runId: string }>(),
+  );
   const desiredWorkspaceWatchIdsRef = useRef(new Set<string>());
   const desiredGitRepositoryWatchesRef = useRef(
     new Map<string, { workspaceId: string; projectRoot: string }>(),
@@ -90,6 +116,7 @@ export function AgentSessionProvider({
     }
     for (const sessionId of pendingBindSessionIdsRef.current) {
       channel.bindSession(sessionId);
+      channel.requestSubagentRuns?.(sessionId);
     }
     pendingBindSessionIdsRef.current.clear();
   }, []);
@@ -106,6 +133,41 @@ export function AgentSessionProvider({
     [flushPendingBinds],
   );
 
+  const requestSubagentRuns = useCallback((parentSessionId: string) => {
+    const cleaned = parentSessionId.trim();
+    const channel = channelRef.current;
+    if (!cleaned || !channel || channel.getStatus() !== "open") return;
+    channel.requestSubagentRuns?.(cleaned);
+  }, []);
+
+  const applySubagentSnapshot = useCallback((snapshot: SubagentRunSnapshot) => {
+    dispatchSubagentEvent({
+      action: "subagent_run_snapshot",
+      data: { session_id: snapshot.parent_session_id, run: snapshot },
+    });
+  }, []);
+
+  const markSubagentRunRead = useCallback((runId: string) => {
+    dispatchSubagentEvent({ type: "mark-read", runId });
+  }, []);
+
+  const bindSubagentSession = useCallback(
+    (parentSessionId: string, runId: string, childSessionId: string) => {
+      const binding = { parentSessionId: parentSessionId.trim(), runId: runId.trim() };
+      const childId = childSessionId.trim();
+      if (!binding.parentSessionId || !binding.runId || !childId) return;
+      desiredSubagentSessionBindingsRef.current.set(childId, binding);
+      channelRef.current?.bindSubagentSession?.(binding.parentSessionId, binding.runId, childId);
+    },
+    [],
+  );
+
+  const unbindSubagentSession = useCallback((childSessionId: string) => {
+    const childId = childSessionId.trim();
+    if (!childId || !desiredSubagentSessionBindingsRef.current.delete(childId)) return;
+    channelRef.current?.unbindSubagentSession?.(childId);
+  }, []);
+
   const subscribeEvent = useCallback((listener: (event: AgentActionEnvelope) => void) => {
     eventListenersRef.current.add(listener);
     return () => {
@@ -114,6 +176,7 @@ export function AgentSessionProvider({
   }, []);
 
   const receiveRuntimeEvent = useCallback((event: AgentActionEnvelope) => {
+    dispatchSubagentEvent(event);
     if (!isFileWatchEventAction(event.action)) {
       dispatch({ type: "event/receive", event });
       emitSessionEventsFromRuntimeEvent(event);
@@ -137,6 +200,9 @@ export function AgentSessionProvider({
       },
     });
     channelRef.current = channel;
+    for (const [childSessionId, binding] of desiredSubagentSessionBindingsRef.current) {
+      channel.bindSubagentSession?.(binding.parentSessionId, binding.runId, childSessionId);
+    }
     for (const workspaceId of desiredWorkspaceWatchIdsRef.current) {
       channel.bindWorkspaceWatch?.(workspaceId);
     }
@@ -353,11 +419,17 @@ export function AgentSessionProvider({
     () => ({
       runtime,
       state,
+      subagentState,
       dispatch,
       wsStatus,
       runtimeDetail,
       setRuntimeDetail,
       bindSession,
+      bindSubagentSession,
+      unbindSubagentSession,
+      requestSubagentRuns,
+      applySubagentSnapshot,
+      markSubagentRunRead,
       subscribeEvent,
       chat,
       updatePendingInput,
@@ -377,7 +449,7 @@ export function AgentSessionProvider({
       bindLocalFileWatch,
       unbindLocalFileWatch,
     }),
-    [bindGitRepositoryWatch, bindLocalFileWatch, bindSession, bindWorkspaceWatch, cancel, cancelA2UI, cancelPendingInput, chat, ping, reorderPendingInputs, resolveMcpElicitation, resumePendingInputs, runtime, runtimeDetail, state, submitA2UI, subscribeEvent, terminateCommand, unbindGitRepositoryWatch, unbindLocalFileWatch, unbindWorkspaceWatch, updatePendingInput, wsStatus],
+    [applySubagentSnapshot, bindGitRepositoryWatch, bindLocalFileWatch, bindSession, bindSubagentSession, bindWorkspaceWatch, cancel, cancelA2UI, cancelPendingInput, chat, markSubagentRunRead, ping, reorderPendingInputs, requestSubagentRuns, resolveMcpElicitation, resumePendingInputs, runtime, runtimeDetail, state, subagentState, submitA2UI, subscribeEvent, terminateCommand, unbindGitRepositoryWatch, unbindLocalFileWatch, unbindSubagentSession, unbindWorkspaceWatch, updatePendingInput, wsStatus],
   );
 
   return (

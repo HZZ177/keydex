@@ -31,11 +31,16 @@ import { ImageResourceRuntime } from "@/renderer/markdownRuntime/resources";
 import { isAbsoluteFilePath, parseFileLinkTarget } from "@/renderer/utils/fileLinks";
 import { normalizeMessageContent } from "@/renderer/utils/messageContent";
 import { openSkillResourcePreview, skillResourcePreviewError } from "@/renderer/utils/skillResourcePreview";
-import type { AgentContextItem, AgentFileAttachment, TurnError } from "@/types/protocol";
+import type { AgentContextItem, AgentFileAttachment } from "@/types/protocol";
 
 import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
 import { formatConversationDuration } from "./duration";
 import { MessageGhostFooter, type MessageGhostFooterData } from "./MessageGhostFooter";
+import {
+  createErrorDiagnostic,
+  serializeErrorDiagnostic,
+  type ErrorDiagnostic,
+} from "./errorDiagnostics";
 import { SelectionToolbar } from "./SelectionToolbar";
 import {
   copyText,
@@ -153,8 +158,8 @@ function MessageTextComponent({
   );
   const deliveredAsSteer = isUser && isDeliveredSteerMessage(message.payload);
   const turnError = useMemo(
-    () => (message.kind === "assistant" && message.status === "failed" ? turnErrorFromPayload(message.payload) : null),
-    [message.kind, message.payload, message.status],
+    () => (message.kind === "assistant" && message.status === "failed" ? turnErrorFromMessage(message) : null),
+    [message],
   );
   const animationContent = useMemo(
     () => normalizeMarkdownContent(content),
@@ -428,7 +433,7 @@ function MessageTextComponent({
                 testSynchronous={import.meta.env.MODE === "test" && typeof Worker === "undefined"}
               />
           ) : null}
-          {turnError ? <TurnErrorNotice error={turnError} /> : null}
+          {turnError ? <TurnErrorNotice diagnostic={turnError} /> : null}
           {cancelled ? <div className={styles.cancelledBadge}>已取消</div> : null}
           {onQuoteSelection || onAskSelectionInBtwConversation ? (
             <SelectionToolbar
@@ -500,16 +505,27 @@ export function StreamingCursor() {
   );
 }
 
-function TurnErrorNotice({ error }: { error: TurnError }) {
+function TurnErrorNotice({ diagnostic }: { diagnostic: ErrorDiagnostic }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const { copyState, showCopyFeedback } = useCopyFeedback();
+  const { error } = diagnostic;
   const detailsText = useMemo(() => stringifyTurnErrorDetails(error.details), [error.details]);
   const hasDetails = detailsText !== "{}";
+  const handleCopy = async () => {
+    try {
+      await copyText(serializeErrorDiagnostic(diagnostic));
+      showCopyFeedback("copied");
+    } catch {
+      showCopyFeedback("failed");
+    }
+  };
   return (
     <div className={styles.turnErrorNotice} role="status" aria-live="polite">
       <div className={styles.turnErrorSummary}>
         <CircleAlert size={13} />
         <span className={styles.turnErrorMessage}>{error.message}</span>
         <span className={styles.turnErrorCode}>{error.code}</span>
+        {error.status ? <span className={styles.turnErrorCode}>HTTP {error.status}</span> : null}
         {hasDetails ? (
           <button
             className={styles.turnErrorDetailsToggle}
@@ -522,6 +538,15 @@ function TurnErrorNotice({ error }: { error: TurnError }) {
             <span>错误详情</span>
           </button>
         ) : null}
+        <button
+          className={styles.turnErrorDetailsToggle}
+          type="button"
+          aria-label="复制错误"
+          onClick={handleCopy}
+        >
+          {copyState === "copied" ? <Check size={13} /> : <Copy size={13} />}
+          <span>{copyState === "failed" ? "复制失败" : copyState === "copied" ? "已复制" : "复制错误"}</span>
+        </button>
       </div>
       {hasDetails && detailsOpen ? <pre className={styles.turnErrorDetails}>{detailsText}</pre> : null}
     </div>
@@ -1489,16 +1514,19 @@ function ghostFooterFromPayload(payload: Record<string, unknown>): MessageGhostF
   return footer.duration ? footer : null;
 }
 
-function turnErrorFromPayload(payload: Record<string, unknown>): TurnError | null {
-  const source = objectValue(payload.error);
-  if (!source) {
+function turnErrorFromMessage(message: ConversationMessage): ErrorDiagnostic | null {
+  if (message.payload.error === undefined) {
     return null;
   }
-  return {
-    code: scalarStringValue(source.code) || "runtime_error",
-    message: normalizeMessageContent(stringValue(source.message)).trim() || "对话执行失败",
-    details: objectValue(source.details) ?? {},
-  };
+  return createErrorDiagnostic(message.payload, {
+    fallbackCode: "runtime_error",
+    fallbackMessage: "对话执行失败",
+    context: {
+      thread_id: message.threadId,
+      ...(message.turnId ? { turn_id: message.turnId } : {}),
+      ...(message.itemId ? { item_id: message.itemId } : {}),
+    },
+  });
 }
 
 function stringifyTurnErrorDetails(value: unknown): string {

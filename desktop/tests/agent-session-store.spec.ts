@@ -56,6 +56,10 @@ describe("agentSessionStore reducer", () => {
       "subagent_start",
       "subagent_end",
       "subagent_error",
+      "subagent_run_updated",
+      "subagent_runs_snapshot",
+      "subagent_run_snapshot",
+      "subagent_control_result",
       "error",
       "pong",
       "status",
@@ -151,6 +155,39 @@ describe("agentSessionStore reducer", () => {
 
     expect(selectAgentSessions(state).map((item) => item.id)).toEqual(["ses-live", "ses-new", "ses-old"]);
     expect(selectAgentSessionState(state)?.sessionId).toBe("ses-live");
+  });
+
+  it("keeps controlled internal Sub-Agent Sessions out of lists and ordinary unread state", () => {
+    const parent = session("parent", "2026-06-18T09:00:00Z");
+    const child: AgentSession = {
+      ...session("child", "2026-06-18T10:00:00Z"),
+      session_type: "workspace",
+      visibility: "internal",
+      agent_kind: "subagent",
+      subagent_id: "subagent-1",
+      subagent_role: "explorer",
+      parent_session_id: parent.id,
+    };
+    let state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "sessions/set",
+      sessions: [parent, child],
+    });
+    expect(selectAgentSessions(state).map((item) => item.id)).toEqual([parent.id]);
+
+    state = agentConversationReducer(state, {
+      type: "history/loaded",
+      sessionId: child.id,
+      history: { ...history([]), session: child },
+    });
+    state = agentConversationReducer(state, { type: "session/select", sessionId: parent.id });
+    state = reduceAgentWsEvent(state, {
+      action: "completed",
+      data: { session_id: child.id, status: "completed", events: [] },
+    });
+
+    expect(state.sessionsById[child.id]).toMatchObject(child);
+    expect(state.sessionIds).not.toContain(child.id);
+    expect(selectAgentSessionState(state, child.id)?.hasUnread).toBe(false);
   });
 
   it("updates session title from realtime title update events", () => {
@@ -3829,10 +3866,15 @@ describe("agentSessionStore reducer", () => {
       action: "error",
       data: {
         session_id: "ses-failed",
-        code: "llm_read_timeout",
-        message: "模型响应超时，未收到后续响应数据",
+        error: {
+          schema_version: 1,
+          code: "llm_read_timeout",
+          message: "模型响应超时，未收到后续响应数据",
+          details: { exception_type: "httpx.ReadTimeout" },
+          retryable: true,
+          status: 504,
+        },
         trace_id: "trace-failed",
-        details: { exception_type: "httpx.ReadTimeout" },
       },
     });
     expect(selectAgentMessages(state, "ses-failed")).toMatchObject([
@@ -3844,9 +3886,12 @@ describe("agentSessionStore reducer", () => {
         traceId: "trace-failed",
         metadata: {
           turnError: {
+            schema_version: 1,
             code: "llm_read_timeout",
             message: "模型响应超时，未收到后续响应数据",
             details: { exception_type: "httpx.ReadTimeout" },
+            retryable: true,
+            status: 504,
           },
         },
       },
@@ -3942,6 +3987,49 @@ describe("agentSessionStore reducer", () => {
     expect(next).toBe(state);
     expect(selectAgentMessages(next, "ses-current")).toEqual([]);
     expect(selectAgentRuntimeState(next, "ses-current")).toBe("idle");
+  });
+
+  it("normalizes legacy error strings without losing sibling provider details", () => {
+    const state = reduceAgentWsEvent(createInitialAgentConversationState(), {
+      action: "error",
+      data: {
+        session_id: "ses-legacy-error",
+        error: "短消息命中测活探针关键词",
+        code: "llm_bad_request",
+        details: {
+          provider: {
+            code: "content_anti_probe_blocking",
+            request_id: "req_legacy_123",
+          },
+        },
+        retryable: false,
+        status: 400,
+        trace_id: "trace-legacy-error",
+      },
+    });
+
+    expect(selectAgentMessages(state, "ses-legacy-error")).toMatchObject([
+      {
+        role: "error",
+        content: "短消息命中测活探针关键词",
+        traceId: "trace-legacy-error",
+        metadata: {
+          turnError: {
+            schema_version: 1,
+            code: "llm_bad_request",
+            message: "短消息命中测活探针关键词",
+            details: {
+              provider: {
+                code: "content_anti_probe_blocking",
+                request_id: "req_legacy_123",
+              },
+            },
+            retryable: false,
+            status: 400,
+          },
+        },
+      },
+    ]);
   });
 
   it("does not synthesize ghost stats when completed has no trace or token data", () => {

@@ -16,6 +16,7 @@ import { fileReviewDocumentFromMessage } from "@/renderer/components/diff/adapte
 import { useMaterialEntryIcon } from "@/renderer/components/workspace/materialIconTheme";
 import { useTargetedCopyFeedback, type CopyFeedbackStatus } from "@/renderer/hooks/useCopyFeedback";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
+import { normalizeRuntimeErrorEnvelope, type RuntimeErrorEnvelope } from "@/runtime/errors";
 import {
   fileReviewChangesFromMessage,
   isFileMutationToolName,
@@ -540,6 +541,7 @@ interface ParsedToolPayload {
   resultStatus: string | null;
   duration: string;
   errorPreview: string;
+  error: RuntimeErrorEnvelope | null;
   mcp: ParsedMcpToolMetadata | null;
 }
 
@@ -568,8 +570,16 @@ function parseToolPayload(message: ConversationMessage): ParsedToolPayload {
     ? mcpToolActionLabel(mcp.rawToolName || name, message.status, resultStatus)
     : toolActionLabel(name, message.status, resultStatus, fileChanges);
   const outputText = resultText(result, message.payload);
+  const errorValue = result?.error ?? message.payload.error;
+  const error =
+    errorValue === undefined || errorValue === null
+      ? null
+      : normalizeRuntimeErrorEnvelope(errorValue, {
+          fallbackCode: "tool_execution_failed",
+          fallbackMessage: "工具执行失败",
+        });
   const fileChange = fileChanges.length === 1 ? fileChanges[0] : null;
-  const rawErrorText = errorText(result, message.payload, outputText);
+  const rawErrorText = error?.message ?? errorText(result, message.payload, outputText);
   return {
     name,
     title: target ? `${actionLabel} ${target}` : actionLabel,
@@ -579,10 +589,11 @@ function parseToolPayload(message: ConversationMessage): ParsedToolPayload {
     fileChange,
     fileChanges,
     argsText: stringify(args),
-    resultText: outputText,
+    resultText: error ? stringify(error) : outputText,
     resultStatus,
     duration: formatDuration(result?.duration_ms ?? result?.durationMs ?? message.payload.duration_ms ?? message.payload.durationMs),
     errorPreview: truncateInlineError(mcpErrorPreview(mcp, rawErrorText)),
+    error,
     mcp,
   };
 }

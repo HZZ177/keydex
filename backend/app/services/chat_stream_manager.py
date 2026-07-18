@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import time
 from collections.abc import Awaitable
+from contextvars import Context
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -56,6 +57,20 @@ class BroadcastChatAdapter:
         )
 
 
+class ChatRunLifecycleSubscription:
+    """Explicit registration handle for an independent run lifecycle observer."""
+
+    def __init__(self, unsubscribe: Any) -> None:
+        self._unsubscribe = unsubscribe
+        self._active = True
+
+    def unsubscribe(self) -> None:
+        if not self._active:
+            return
+        self._active = False
+        self._unsubscribe()
+
+
 class ChatStreamManager:
     """Owns chat task lifecycle independently from individual websocket connections."""
 
@@ -66,6 +81,8 @@ class ChatStreamManager:
         self._lock = asyncio.Lock()
         self._thread_task_runtime: Any | None = None
         self._after_run_finished_callback: Any | None = None
+        self._run_lifecycle_observers: dict[int, Any] = {}
+        self._next_run_lifecycle_observer_id = 1
 
     def set_thread_task_runtime(self, runtime: Any | None) -> None:
         self._thread_task_runtime = runtime
@@ -75,6 +92,21 @@ class ChatStreamManager:
 
     def set_after_run_finished_callback(self, callback: Any | None) -> None:
         self._after_run_finished_callback = callback
+
+    def add_run_lifecycle_observer(
+        self,
+        observer: Any,
+    ) -> ChatRunLifecycleSubscription:
+        if not callable(observer):
+            raise TypeError("run lifecycle observer must be callable")
+        observer_id = self._next_run_lifecycle_observer_id
+        self._next_run_lifecycle_observer_id += 1
+        self._run_lifecycle_observers[observer_id] = observer
+
+        def unsubscribe() -> None:
+            self._run_lifecycle_observers.pop(observer_id, None)
+
+        return ChatRunLifecycleSubscription(unsubscribe)
 
     async def subscribe(self, session_id: str, adapter: ChatProjectionAdapter) -> None:
         cleaned = session_id.strip()
@@ -126,7 +158,17 @@ class ChatStreamManager:
                 raise ChatStreamAlreadyRunningError("当前会话已有对话正在执行")
 
             cancellation = ChatCancellationToken()
-            task = asyncio.create_task(self._run_chat(request, cancellation))
+            chat = self._run_chat(request, cancellation)
+            isolated_subagent_context = bool(request.subagent_run_id)
+            if isolated_subagent_context:
+                # A Sub-Agent is an independent Agent loop. ``create_task`` normally
+                # copies the caller's context, including LangChain's active runnable
+                # callbacks. When delegation is executing inside a parent tool, that
+                # would make the child loop a traced descendant of the parent and the
+                # parent's event stream would persist/render every child message too.
+                task = asyncio.create_task(chat, context=Context())
+            else:
+                task = asyncio.create_task(chat)
             self._runs[session_id] = ChatStreamRun(
                 session_id=session_id,
                 request=request,
@@ -134,7 +176,13 @@ class ChatStreamManager:
                 cancellation=cancellation,
                 started_at_ms=int(time.time() * 1000),
             )
-            task.add_done_callback(lambda done_task: self._schedule_finish(session_id, done_task))
+            def finish_callback(done_task: asyncio.Task) -> None:
+                self._schedule_finish(session_id, done_task)
+
+            if isolated_subagent_context:
+                task.add_done_callback(finish_callback, context=Context())
+            else:
+                task.add_done_callback(finish_callback)
 
         logger.info(f"[ChatStreamManager] 后台对话已启动 | session_id={session_id}")
         return session_id
@@ -176,7 +224,12 @@ class ChatStreamManager:
         )
         return task
 
-    async def submit_input(self, request: ChatRequest) -> dict[str, Any]:
+    async def submit_input(
+        self,
+        request: ChatRequest,
+        *,
+        force_pending: bool = False,
+    ) -> dict[str, Any]:
         session_id = (request.session_id or "").strip()
         if not session_id:
             raise ChatStreamMissingSessionError("后台流式对话必须指定 session_id")
@@ -195,7 +248,7 @@ class ChatStreamManager:
         running = await self._is_running(session_id)
         waiting_input = self._is_waiting_input(session_id)
         has_queue = repositories.pending_inputs.has_active_queue(session_id)
-        if running or waiting_input or has_queue:
+        if running or waiting_input or has_queue or force_pending:
             mode = self._pending_mode_for_submit(
                 delivery_mode,
                 running=running,
@@ -226,7 +279,7 @@ class ChatStreamManager:
                     action=ChatAction.PENDING_INPUT_SUBMITTED.value,
                     data=self._pending_input_payload(record, duplicate=True),
                 )
-            if not running and not waiting_input:
+            if not running and not waiting_input and not force_pending:
                 await self._drain_next_pending_input(session_id)
             return {
                 "session_id": session_id,
@@ -532,6 +585,9 @@ class ChatStreamManager:
                 delivered += 1
         return delivered
 
+    async def owns_active_run(self, session_id: str) -> bool:
+        return await self._is_running(str(session_id or "").strip())
+
     async def status(self, session_id: str | None = None) -> dict[str, Any]:
         async with self._lock:
             running = {key: run for key, run in self._runs.items() if not run.task.done()}
@@ -710,12 +766,30 @@ class ChatStreamManager:
         callback = self._after_run_finished_callback
         if callback is not None:
             try:
-                result = callback(session_id)
-                if inspect.isawaitable(result):
-                    await result
+                callback_result = callback(session_id)
+                if inspect.isawaitable(callback_result):
+                    await callback_result
             except Exception as exc:
                 logger.opt(exception=True).warning(
                     "[ChatStreamManager] after_run_finished 回调失败 | "
+                    f"session_id={session_id} | error={exc}"
+                )
+
+        observers = tuple(self._run_lifecycle_observers.values())
+        for observer in observers:
+            try:
+                observer_result = observer(
+                    session_id,
+                    request=request,
+                    result=result,
+                    error=error,
+                    cancelled=cancelled,
+                )
+                if inspect.isawaitable(observer_result):
+                    await observer_result
+            except Exception as exc:
+                logger.opt(exception=True).warning(
+                    "[ChatStreamManager] run lifecycle observer failed | "
                     f"session_id={session_id} | error={exc}"
                 )
 

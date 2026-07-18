@@ -60,6 +60,7 @@ class DomainEventType(StrEnum):
     SUBAGENT_STARTED = "subagent.started"
     SUBAGENT_FINISHED = "subagent.finished"
     SUBAGENT_FAILED = "subagent.failed"
+    SUBAGENT_RUN_UPDATED = "subagent.run.updated"
 
     DEBUG_CONTEXT_READY = "debug.context.ready"
     MIDDLEWARE_STARTED = "middleware.started"
@@ -127,6 +128,7 @@ CORE_EVENT_TYPES = frozenset(
         DomainEventType.SUBAGENT_STARTED,
         DomainEventType.SUBAGENT_FINISHED,
         DomainEventType.SUBAGENT_FAILED,
+        DomainEventType.SUBAGENT_RUN_UPDATED,
         DomainEventType.MEMORY_RECALLED,
         DomainEventType.TURN_STARTED,
         DomainEventType.TURN_WAITING_INPUT,

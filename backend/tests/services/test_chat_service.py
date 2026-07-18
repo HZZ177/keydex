@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import httpx
+import openai
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import (
@@ -40,7 +41,7 @@ from backend.app.mcp.tools import (
 from backend.app.model import ModelSettings
 from backend.app.services import ChatCancellationToken, ChatRequest, ChatService
 from backend.app.services.archive_lifecycle_service import ArchiveLifecycleError
-from backend.app.services.chat_service import _chat_turn_error
+from backend.app.services.chat_service import _chat_error_retryable, _chat_turn_error
 from backend.app.services.session_fork_service import SessionForkService
 from backend.app.storage import (
     MODEL_DEFAULT_CHAT,
@@ -107,6 +108,166 @@ def test_chat_turn_error_keeps_empty_runtime_error_generic() -> None:
     assert code == "runtime_error"
     assert message == "运行失败：RuntimeError"
     assert details["exception_type"] == "builtins.RuntimeError"
+
+
+def test_chat_turn_error_keeps_safe_provider_bad_request_details() -> None:
+    request = httpx.Request("POST", "https://provider.example/v1/chat/completions")
+    response = httpx.Response(
+        400,
+        request=request,
+        headers={"x-request-id": "req_anti_probe_123"},
+    )
+    error = openai.BadRequestError(
+        "provider rejected request",
+        response=response,
+        body={
+            "error": {
+                "code": "content_anti_probe_blocking",
+                "message": "短消息命中测活探针关键词",
+                "type": "invalid_request_error",
+                "param": None,
+            }
+        },
+    )
+
+    code, message, details = _chat_turn_error(error)
+
+    assert code == "llm_bad_request"
+    assert message == "模型请求参数无效"
+    assert details["status_code"] == 400
+    assert details["provider"] == {
+        "code": "content_anti_probe_blocking",
+        "message": "短消息命中测活探针关键词",
+        "type": "invalid_request_error",
+        "param": None,
+        "request_id": "req_anti_probe_123",
+    }
+    assert "raw_message" not in details
+
+
+def test_chat_turn_error_redacts_provider_secrets() -> None:
+    request = httpx.Request("POST", "https://provider.example/v1/chat/completions")
+    response = httpx.Response(429, request=request)
+    error = openai.RateLimitError(
+        "rate limited",
+        response=response,
+        body={
+            "code": "rate_limit",
+            "message": "authorization=Bearer should-not-leak",
+        },
+    )
+
+    code, _, details = _chat_turn_error(error)
+
+    assert code == "llm_rate_limited"
+    assert "should-not-leak" not in str(details)
+    assert "***REDACTED***" in details["provider"]["message"]
+
+
+@pytest.mark.parametrize(
+    ("error_type", "status", "expected_code", "expected_message", "retryable"),
+    [
+        (
+            openai.AuthenticationError,
+            401,
+            "llm_authentication_failed",
+            "模型服务认证失败，请检查供应商配置",
+            False,
+        ),
+        (
+            openai.PermissionDeniedError,
+            403,
+            "llm_permission_denied",
+            "模型服务拒绝访问，请检查账号权限或模型权限",
+            False,
+        ),
+        (
+            openai.RateLimitError,
+            429,
+            "llm_rate_limited",
+            "模型服务请求过于频繁",
+            True,
+        ),
+        (
+            openai.InternalServerError,
+            500,
+            "llm_server_error",
+            "模型服务返回内部错误",
+            True,
+        ),
+        (
+            openai.InternalServerError,
+            503,
+            "llm_upstream_unavailable",
+            "模型服务暂时不可用",
+            True,
+        ),
+    ],
+)
+def test_chat_turn_error_classifies_provider_status_matrix(
+    error_type: type[openai.APIStatusError],
+    status: int,
+    expected_code: str,
+    expected_message: str,
+    retryable: bool,
+) -> None:
+    request = httpx.Request("POST", "https://provider.example/v1/chat/completions")
+    response = httpx.Response(status, request=request, headers={"x-request-id": f"req_{status}"})
+    error = error_type(
+        "provider request failed",
+        response=response,
+        body={"error": {"code": f"provider_{status}", "message": f"safe failure {status}"}},
+    )
+
+    code, message, details = _chat_turn_error(error)
+
+    assert code == expected_code
+    assert message == expected_message
+    assert _chat_error_retryable(code) is retryable
+    assert details["status_code"] == status
+    assert details["provider"] == {
+        "code": f"provider_{status}",
+        "message": f"safe failure {status}",
+        "request_id": f"req_{status}",
+    }
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_code", "expected_message"),
+    [
+        (
+            openai.APITimeoutError(httpx.Request("POST", "https://provider.example")),
+            "llm_request_timeout",
+            "模型请求超时，未收到模型服务响应",
+        ),
+        (
+            openai.APIConnectionError(
+                request=httpx.Request("POST", "https://provider.example")
+            ),
+            "llm_connection_error",
+            "模型服务连接失败",
+        ),
+        (
+            httpx.ConnectError(
+                "connection refused",
+                request=httpx.Request("POST", "https://provider.example"),
+            ),
+            "llm_connection_error",
+            "模型服务连接失败",
+        ),
+    ],
+)
+def test_chat_turn_error_classifies_timeout_and_connection_matrix(
+    error: Exception,
+    expected_code: str,
+    expected_message: str,
+) -> None:
+    code, message, details = _chat_turn_error(error)
+
+    assert code == expected_code
+    assert message == expected_message
+    assert _chat_error_retryable(code) is True
+    assert details["exception_type"]
 
 
 class FakeAgentFactory(AgentFactory):
@@ -1929,11 +2090,19 @@ async def test_chat_service_fails_loudly_when_request_omits_model_selection(tmp_
     )
 
     assert result.status == "failed"
-    assert result.error == "对话模型必须显式指定供应商和模型"
+    assert result.error is not None
+    assert result.error.code == "chat_model_required"
+    assert result.error.message == "对话模型必须显式指定供应商和模型"
     assert factory.requested_models == []
     assert chat_adapter.sent[-1]["action"] == "error"
-    assert chat_adapter.sent[-1]["data"]["message"] == "对话模型必须显式指定供应商和模型"
-    assert chat_adapter.sent[-1]["data"]["code"] == "chat_model_required"
+    assert chat_adapter.sent[-1]["data"]["error"] == {
+        "schema_version": 1,
+        "code": "chat_model_required",
+        "message": "对话模型必须显式指定供应商和模型",
+        "details": {"scope": "chat", "provider_id": None, "model": None},
+        "retryable": False,
+    }
+    assert not ({"message", "code", "details"} & chat_adapter.sent[-1]["data"].keys())
     assert repositories.sessions.get(result.session_id).status == "failed"
 
 
@@ -1951,11 +2120,19 @@ async def test_chat_service_fails_loudly_when_provider_is_missing(tmp_path) -> N
     )
 
     assert result.status == "failed"
-    assert result.error == "对话模型供应商不存在"
+    assert result.error is not None
+    assert result.error.code == "chat_model_provider_not_found"
+    assert result.error.message == "对话模型供应商不存在"
     assert factory.requested_models == []
     assert chat_adapter.sent[-1]["action"] == "error"
-    assert chat_adapter.sent[-1]["data"]["message"] == "对话模型供应商不存在"
-    assert chat_adapter.sent[-1]["data"]["code"] == "chat_model_provider_not_found"
+    assert chat_adapter.sent[-1]["data"]["error"] == {
+        "schema_version": 1,
+        "code": "chat_model_provider_not_found",
+        "message": "对话模型供应商不存在",
+        "details": {"scope": "chat", "provider_id": "provider-1"},
+        "retryable": False,
+    }
+    assert not ({"message", "code", "details"} & chat_adapter.sent[-1]["data"].keys())
     assert repositories.sessions.get(result.session_id).status == "failed"
 
 

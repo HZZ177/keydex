@@ -175,11 +175,13 @@ async def test_t45_thread_task_continuation_revalidates_stale_skill_source(
     )
 
     assert result.status == "failed"
-    assert result.error == "Skill 来源已变化，请刷新列表后重试"
+    assert result.error is not None
+    assert result.error.code == "skill_source_stale"
+    assert result.error.message == "Skill 来源已变化，请刷新列表后重试"
     assert factory.requested_models == []
     error = repositories.message_events.list_by_session(session.id)[-1]
-    assert error.data["code"] == "skill_source_stale"
-    assert error.data["details"] == {
+    assert error.data["error"]["code"] == "skill_source_stale"
+    assert error.data["error"]["details"] == {
         "skill_name": "shared",
         "requested_source": "system",
         "winner_source": "workspace",

@@ -84,6 +84,10 @@ export interface UseConversationPanelModelOptions {
   onBranchSessionCreated?: (sessionId: string) => void;
   onForkSessionCreated?: (session: AgentSession) => void;
   onNavigateToForkSource?: (fork: AgentSessionFork) => void;
+  subagentContext?: {
+    parentSessionId: string;
+    runId: string;
+  } | null;
 }
 
 export interface ContextWindowUsageStatus {
@@ -131,6 +135,7 @@ export function useConversationPanelModel({
   onBranchSessionCreated,
   onForkSessionCreated,
   onNavigateToForkSource,
+  subagentContext = null,
 }: UseConversationPanelModelOptions) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [contextWindowUsage, setContextWindowUsage] = useState<ContextWindowUsageStatus | null>(null);
@@ -162,6 +167,8 @@ export function useConversationPanelModel({
   const backendReady = runtimeConnection?.ready ?? true;
   const optionalAgentRuntime = useOptionalAgentSessionRuntime();
   const sharedSubscribeEvent = optionalAgentRuntime?.runtime === runtime ? optionalAgentRuntime.subscribeEvent : null;
+  const requestSubagentRuns =
+    optionalAgentRuntime?.runtime === runtime ? optionalAgentRuntime.requestSubagentRuns : null;
 
   if (reviewPreviewSessionIdRef.current !== sessionId) {
     reviewPreviewSessionIdRef.current = sessionId;
@@ -511,8 +518,14 @@ export function useConversationPanelModel({
       if (cached) {
         return cached instanceof Promise ? await cached : cached;
       }
-      const promise = runtime.conversation
-        .loadToolDetails(sessionId, ref)
+      const detailRequest = subagentContext
+        ? runtime.conversation.loadSubagentToolDetails(
+            subagentContext.parentSessionId,
+            subagentContext.runId,
+            ref,
+          )
+        : runtime.conversation.loadToolDetails(sessionId, ref);
+      const promise = detailRequest
         .then((detail) => conversationPatchFromToolDetails(message, detail));
       toolDetailCacheRef.current.set(key, promise);
       try {
@@ -524,7 +537,7 @@ export function useConversationPanelModel({
         throw error;
       }
     },
-    [runtime, sessionId],
+    [runtime, sessionId, subagentContext],
   );
 
   const openFileChangePreview = useCallback(
@@ -630,13 +643,14 @@ export function useConversationPanelModel({
         } else {
           controller.dispatch({ type: "session/upsert", session: response.session });
           await controller.reloadHistory();
+          requestSubagentRuns?.(sessionId);
           controller.restoreComposerDraft(composerDraftFromMessage(message));
         }
       } catch (reason) {
         notifications.error(branchActionErrorMessage(mode, reason));
       }
     },
-    [controller, emitForkSessionCreated, notifications, onBranchSessionCreated, onForkSessionCreated, runtime, sessionId],
+    [controller, emitForkSessionCreated, notifications, onBranchSessionCreated, onForkSessionCreated, requestSubagentRuns, runtime, sessionId],
   );
 
   const loadReversePreview = useCallback(
@@ -746,6 +760,7 @@ export function useConversationPanelModel({
           if (result.conversation_rewound) {
             try {
               await controller.reloadHistory();
+              requestSubagentRuns?.(sessionId);
               if (reverseRequestGenerationRef.current !== generation) {
                 return;
               }
@@ -813,7 +828,7 @@ export function useConversationPanelModel({
           notifications.error(reverseActionErrorMessage(code));
         });
     },
-    [controller, notifications, reverseState, runtime, sessionId],
+    [controller, notifications, requestSubagentRuns, reverseState, runtime, sessionId],
   );
 
   const forkFromMessage = useCallback(

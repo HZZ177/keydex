@@ -101,6 +101,11 @@ export interface UseAgentSessionControllerOptions {
   conversationSendDefaultMode?: PendingInputMode;
   composerDraftScopeKey?: string | null;
   ensureSession?: (request: AgentSessionControllerEnsureSessionRequest) => Promise<AgentSessionControllerEnsureSessionResult>;
+  subagentContext?: {
+    parentSessionId: string;
+    runId: string;
+    childSessionId: string;
+  } | null;
 }
 
 export interface AgentSessionController {
@@ -207,6 +212,7 @@ export function useAgentSessionController({
   conversationSendDefaultMode = "steer",
   composerDraftScopeKey,
   ensureSession,
+  subagentContext = null,
 }: UseAgentSessionControllerOptions): AgentSessionController {
   const optionalAgentRuntime = useOptionalAgentSessionRuntime();
   const sharedRuntimeContext = optionalAgentRuntime?.runtime === runtime ? optionalAgentRuntime : null;
@@ -248,6 +254,8 @@ export function useAgentSessionController({
   const setRuntimeDetail = sharedRuntimeContext?.setRuntimeDetail ?? setLocalRuntimeDetail;
   const usingSharedRuntime = Boolean(sharedRuntimeContext);
   const sharedBindSession = sharedRuntimeContext?.bindSession;
+  const sharedBindSubagentSession = sharedRuntimeContext?.bindSubagentSession;
+  const sharedUnbindSubagentSession = sharedRuntimeContext?.unbindSubagentSession;
   const sharedSubscribeEvent = sharedRuntimeContext?.subscribeEvent;
   const session = sessionId ? state.sessionsById[sessionId] ?? null : null;
   const sessionViewState = sessionId ? selectAgentSessionState(state, sessionId) : null;
@@ -263,6 +271,27 @@ export function useAgentSessionController({
   const connectionReady = wsStatus === "open";
   const canSend = draft.trim().length > 0 && runtimeState !== "cancelling" && connectionReady && Boolean(sessionId || ensureSession);
   const canStop = runtimeState === "running" && connectionReady && Boolean(sessionId);
+
+  const loadSessionHistory = useCallback(
+    async (options: Parameters<RuntimeBridge["conversation"]["loadHistory"]>[1] = {}) => {
+      if (!subagentContext) {
+        return runtime.conversation.loadHistory(sessionId, options);
+      }
+      if (subagentContext.childSessionId !== sessionId) {
+        throw new Error("Sub-Agent child Session address does not match the active Sidecar");
+      }
+      const response = await runtime.conversation.loadSubagentSession(
+        subagentContext.parentSessionId,
+        subagentContext.runId,
+        options,
+      );
+      if (response.session.id !== sessionId || response.history.session.id !== sessionId) {
+        throw new Error("Sub-Agent controlled history returned another child Session");
+      }
+      return response.history;
+    },
+    [runtime, sessionId, subagentContext],
+  );
 
   const syncThreadTasksForSession = useCallback(async () => {
     if (!enabled || !sessionId || !syncThreadTasks) {
@@ -338,7 +367,13 @@ export function useAgentSessionController({
     setRuntimeDetail(null);
     dispatch({ type: "session/select", sessionId });
 
-    if (usingSharedRuntime && sharedBindSession) {
+    if (usingSharedRuntime && subagentContext && sharedBindSubagentSession) {
+      sharedBindSubagentSession(
+        subagentContext.parentSessionId,
+        subagentContext.runId,
+        subagentContext.childSessionId,
+      );
+    } else if (usingSharedRuntime && sharedBindSession) {
       sharedBindSession(sessionId);
     }
 
@@ -351,7 +386,7 @@ export function useAgentSessionController({
           }
         },
         {
-          sessionId,
+          sessionId: subagentContext ? undefined : sessionId,
           onStatus: (status) => {
             if (active) {
               setLocalWsStatus(status);
@@ -366,11 +401,18 @@ export function useAgentSessionController({
         },
       );
       channelRef.current = channel;
+      if (subagentContext) {
+        channel.bindSubagentSession?.(
+          subagentContext.parentSessionId,
+          subagentContext.runId,
+          subagentContext.childSessionId,
+        );
+      }
     }
 
     const loadHistory = async () => {
       try {
-        const history = await runtime.conversation.loadHistory(sessionId, {
+        const history = await loadSessionHistory({
           allTurns: loadFullHistory,
           direction: "older",
           pageSize: loadFullHistory ? undefined : historyPageSize,
@@ -402,6 +444,9 @@ export function useAgentSessionController({
           channelRef.current = null;
         }
       }
+      if (usingSharedRuntime && subagentContext) {
+        sharedUnbindSubagentSession?.(subagentContext.childSessionId);
+      }
     };
   }, [
     dispatch,
@@ -410,10 +455,14 @@ export function useAgentSessionController({
     historyPageSize,
     loadFullHistory,
     onNotice,
+    loadSessionHistory,
     runtime,
     sessionId,
     setRuntimeDetail,
     sharedBindSession,
+    sharedBindSubagentSession,
+    sharedUnbindSubagentSession,
+    subagentContext,
     syncThreadTasksForSession,
     usingSharedRuntime,
   ]);
@@ -424,7 +473,7 @@ export function useAgentSessionController({
     }
     setLoading(true);
     try {
-      const history = await runtime.conversation.loadHistory(sessionId, {
+      const history = await loadSessionHistory({
         allTurns: loadFullHistory,
         direction: "older",
         pageSize: loadFullHistory ? undefined : historyPageSize,
@@ -444,6 +493,7 @@ export function useAgentSessionController({
     historyPageSize,
     loadFullHistory,
     onNotice,
+    loadSessionHistory,
     runtime,
     sessionId,
     setRuntimeDetail,
@@ -455,7 +505,7 @@ export function useAgentSessionController({
       return;
     }
     try {
-      const history = await runtime.conversation.loadHistory(sessionId, {
+      const history = await loadSessionHistory({
         allTurns: loadFullHistory,
         direction: "older",
         pageSize: loadFullHistory ? undefined : historyPageSize,
@@ -475,6 +525,7 @@ export function useAgentSessionController({
     historyPageSize,
     loadFullHistory,
     onNotice,
+    loadSessionHistory,
     runtime,
     sessionId,
     setRuntimeDetail,
@@ -493,7 +544,7 @@ export function useAgentSessionController({
     }
     setLoadingOlderHistory(true);
     try {
-      const history = await runtime.conversation.loadHistory(sessionId, {
+      const history = await loadSessionHistory({
         cursor,
         direction: "older",
         pageSize: historyPageSize,
@@ -512,6 +563,7 @@ export function useAgentSessionController({
     historyPageSize,
     loadingOlderHistory,
     onNotice,
+    loadSessionHistory,
     runtime,
     sessionId,
     sessionViewState?.historyCursor,

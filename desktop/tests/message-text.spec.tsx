@@ -105,14 +105,17 @@ describe("MessageText", () => {
     expect(within(root).queryByRole("link")).toBeNull();
   });
 
-  it("renders a failed assistant turn error notice without replacing the answer", () => {
+  it("renders a failed assistant turn error notice without replacing the answer", async () => {
     render(
       <MessageText
         message={message("assistant", "已经生成的回答", "failed", {
           error: {
+            schema_version: 1,
             code: "llm_read_timeout",
             message: "模型响应超时，未收到后续响应数据",
             details: { exception_type: "httpx.ReadTimeout" },
+            retryable: true,
+            status: 504,
           },
         })}
       />,
@@ -122,10 +125,24 @@ describe("MessageText", () => {
     expect(root.textContent).toContain("已经生成的回答");
     expect(root.textContent).toContain("模型响应超时，未收到后续响应数据");
     expect(root.textContent).toContain("llm_read_timeout");
+    expect(root.textContent).toContain("HTTP 504");
     expect(screen.queryByText(/httpx.ReadTimeout/)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "展开错误详情" }));
     expect(screen.getByText(/httpx.ReadTimeout/)).not.toBeNull();
+
+    const clipboard = navigator.clipboard.writeText as unknown as ReturnType<typeof vi.fn>;
+    fireEvent.click(screen.getByRole("button", { name: "复制错误" }));
+    await waitFor(() => expect(clipboard).toHaveBeenCalled());
+    expect(JSON.parse(clipboard.mock.calls[0][0] as string)).toMatchObject({
+      error: {
+        code: "llm_read_timeout",
+        details: { exception_type: "httpx.ReadTimeout" },
+        retryable: true,
+        status: 504,
+      },
+      context: { thread_id: "thread-1" },
+    });
   });
 
   it("renders bracket syntax in user messages as ordinary text", () => {

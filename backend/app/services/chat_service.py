@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any
@@ -25,6 +26,7 @@ from backend.app.agent.tool_call_preset import ToolCallPreset, ToolCallPresetIte
 from backend.app.agent.tool_capabilities import ToolCapability
 from backend.app.command_approval import ApprovalService, load_command_settings
 from backend.app.core.config import AppSettings
+from backend.app.core.errors import error_envelope, sanitize_public_details
 from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
 from backend.app.core.request_context import reset_request_context, set_request_context
@@ -78,8 +80,17 @@ from backend.app.services.thread_task_prompt import build_task_initial_prompt
 from backend.app.services.thread_task_service import ThreadTaskService
 from backend.app.services.workspace_service import WorkspaceService
 from backend.app.storage import AttachmentRecord, SessionRecord, StorageRepositories
+from backend.app.subagents.errors import SubagentError, SubagentErrorCode
+from backend.app.subagents.models import SubagentInitiator, SubagentSpawnRequest
+from backend.app.subagents.reporting import format_delegate_subagent_result
+from backend.app.subagents.roles import assert_delegation_caller_allowed
 from backend.app.tools import LocalTool, ToolExecutionContext
+from backend.app.tools.base import ToolExecutionError
 from backend.app.tools.command_runtime import command_process_manager
+from backend.app.tools.subagent import (
+    create_delegate_subagent_tool,
+    parse_delegate_subagent_request,
+)
 from backend.app.tools.web import create_web_fetch_tool, create_web_search_tool
 from backend.app.web.errors import WebProviderError
 from backend.app.web.models import WebCapability
@@ -716,9 +727,13 @@ def _exception_message(exc: BaseException) -> str:
 
 def _exception_details(exc: BaseException, **extra: Any) -> dict[str, Any]:
     details: dict[str, Any] = {"exception_type": _exception_type(exc)}
-    message = _exception_message(exc)
-    if message:
-        details["raw_message"] = message
+    provider = _provider_error_details(exc)
+    if provider:
+        details["provider"] = provider
+    else:
+        message = _exception_message(exc)
+        if message:
+            details["raw_message"] = message
     cause = exc.__cause__ or exc.__context__
     if cause is not None:
         details["cause_type"] = _exception_type(cause)
@@ -728,7 +743,75 @@ def _exception_details(exc: BaseException, **extra: Any) -> dict[str, Any]:
     for key, value in extra.items():
         if value is not None:
             details[key] = value
-    return details
+    return sanitize_public_details(details)
+
+
+def _provider_error_details(exc: BaseException) -> dict[str, Any]:
+    body = getattr(exc, "body", None)
+    record = _provider_error_record(body)
+    if record is None:
+        response = getattr(exc, "response", None)
+        if isinstance(response, httpx.Response):
+            try:
+                record = _provider_error_record(response.json())
+            except (ValueError, TypeError, RuntimeError):
+                record = None
+
+    provider: dict[str, Any] = {}
+    if record is not None:
+        for field in ("code", "message", "type", "param"):
+            if field in record and _is_public_provider_scalar(record[field]):
+                provider[field] = record[field]
+
+    request_id = _provider_request_id(exc, record)
+    if request_id:
+        provider["request_id"] = request_id
+    return sanitize_public_details(provider)
+
+
+def _provider_error_record(value: Any) -> Mapping[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    nested = value.get("error")
+    return nested if isinstance(nested, Mapping) else value
+
+
+def _provider_request_id(
+    exc: BaseException,
+    record: Mapping[str, Any] | None,
+) -> str | None:
+    candidates: list[Any] = [getattr(exc, "request_id", None)]
+    if record is not None:
+        candidates.extend((record.get("request_id"), record.get("requestId")))
+    response = getattr(exc, "response", None)
+    if isinstance(response, httpx.Response):
+        candidates.extend(
+            (
+                response.headers.get("x-request-id"),
+                response.headers.get("request-id"),
+            )
+        )
+    for value in candidates:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _is_public_provider_scalar(value: Any) -> bool:
+    return value is None or isinstance(value, (str, int, float, bool))
+
+
+def _chat_error_retryable(code: str) -> bool:
+    return code in {
+        "llm_request_timeout",
+        "llm_read_timeout",
+        "llm_stream_chunk_timeout",
+        "llm_connect_timeout",
+        "llm_connection_error",
+        "llm_rate_limited",
+        "llm_upstream_unavailable",
+        "llm_server_error",
+    }
 
 
 def _exception_type(exc: BaseException) -> str:
@@ -1051,6 +1134,7 @@ class ChatService:
         mcp_manager: McpToolExecutor | None = None,
         file_history_service: FileHistoryService | None = None,
         web_service: WebService | None = None,
+        subagent_runtime_provider: Callable[[], Any] | None = None,
     ) -> None:
         self.settings = settings
         self.repositories = repositories
@@ -1069,6 +1153,7 @@ class ChatService:
             repositories,
             build_default_web_provider_registry(),
         )
+        self.subagent_runtime_provider = subagent_runtime_provider
 
     def _build_initial_thread_task_injection(
         self,
@@ -1509,13 +1594,18 @@ class ChatService:
                 f"trace_id={trace_id} | duration_ms={duration_ms} | error={error_message}"
             )
             try:
+                error_status = error_details.get("status_code")
+                turn_error = error_envelope(
+                    error_code,
+                    error_message,
+                    details=error_details,
+                    retryable=_chat_error_retryable(error_code),
+                    status=error_status if isinstance(error_status, int) else None,
+                )
                 failed_payload = {
                     "session_id": session.id,
                     "trace_id": trace_id,
-                    "message": error_message,
-                    "error": error_message,
-                    "code": error_code,
-                    "details": error_details,
+                    "error": turn_error.to_public_dict(),
                 }
                 if aggregator.first_token_at_ms is not None:
                     failed_payload["first_token_at_ms"] = aggregator.first_token_at_ms
@@ -1539,7 +1629,7 @@ class ChatService:
                 trace_id=trace_id,
                 turn_index=turn_index,
                 status="failed",
-                error=error_message,
+                error=turn_error,
             )
         finally:
             reset_request_context(dispatcher_context_token)
@@ -1620,6 +1710,7 @@ class ChatService:
         tool_context.metadata["file_access_mode"] = load_command_settings(
             self.repositories
         ).file_access_mode
+        tool_context.metadata["chat_cancellation"] = cancellation
         mcp_active_before = self.mcp_active_tool_window.active_model_names(session.id)
         mcp_runtime_tools = self._build_mcp_runtime_tools(
             session=session,
@@ -1627,7 +1718,14 @@ class ChatService:
             enable_tools=enable_tools,
         )
         web_runtime_tools = self._build_web_runtime_tools(tool_context=tool_context)
-        runtime_tools = [*mcp_runtime_tools, *web_runtime_tools]
+        subagent_runtime_tools = self._build_subagent_runtime_tools(
+            session=session,
+        )
+        runtime_tools = [
+            *mcp_runtime_tools,
+            *web_runtime_tools,
+            *subagent_runtime_tools,
+        ]
         workspace_root_label = str(tool_context.workspace_root) if enable_tools else "-"
         logger.info(
             f"[AgentLoop] 创建 agent | session_id={session.id} | turn_index={turn_index} | "
@@ -1635,7 +1733,8 @@ class ChatService:
             f"session_type={session.session_type} | tools_enabled={enable_tools} | "
             f"workspace_root={workspace_root_label} | "
             f"mcp_runtime_tools={len(mcp_runtime_tools)} | "
-            f"web_runtime_tools={len(web_runtime_tools)}"
+            f"web_runtime_tools={len(web_runtime_tools)} | "
+            f"subagent_runtime_tools={len(subagent_runtime_tools)}"
         )
         agent_context_token = self._set_agent_runtime_context(
             tool_context=tool_context,
@@ -1652,6 +1751,9 @@ class ChatService:
                 enable_tools=enable_tools,
                 tool_capabilities=tool_context.metadata["tool_capabilities"],
                 runtime_tools=runtime_tools,
+                subagent_role=(
+                    session.subagent_role if session.agent_kind == "subagent" else None
+                ),
             )
             run_config = {
                 "configurable": {
@@ -1748,6 +1850,11 @@ class ChatService:
                         enable_tools=enable_tools,
                         tool_capabilities=tool_context.metadata["tool_capabilities"],
                         runtime_tools=continuation_runtime_tools,
+                        subagent_role=(
+                            session.subagent_role
+                            if session.agent_kind == "subagent"
+                            else None
+                        ),
                     )
                     continuation_stream = continuation_agent.astream_events(
                         {
@@ -1830,6 +1937,9 @@ class ChatService:
                     file_history_service=self.file_history_service,
                     file_history_tracking=True,
                     metadata={
+                        "agent_kind": session.agent_kind,
+                        "subagent_id": session.subagent_id,
+                        "subagent_role": session.subagent_role,
                         "workspace_id": workspace_context.workspace_id,
                         "workspace_name": workspace_context.workspace.name,
                         "workspace_primary_root": workspace_context.workspace.root_path,
@@ -1877,6 +1987,85 @@ class ChatService:
                 False,
             )
         raise ValueError(f"不支持的 session 类型: {session.session_type}")
+
+    def _build_subagent_runtime_tools(
+        self,
+        *,
+        session: SessionRecord,
+    ) -> list[LocalTool]:
+        if (
+            session.session_type != "workspace"
+            or session.visibility != "visible"
+            or session.agent_kind != "main"
+            or self.subagent_runtime_provider is None
+            or self.subagent_runtime_provider() is None
+        ):
+            return []
+        return [create_delegate_subagent_tool(self._execute_delegate_subagent)]
+
+    async def _execute_delegate_subagent(
+        self,
+        args: dict[str, Any],
+        tool_context: ToolExecutionContext,
+    ) -> Any:
+        try:
+            request = parse_delegate_subagent_request(args)
+            assert_delegation_caller_allowed(
+                agent_kind=str(tool_context.metadata.get("agent_kind") or "")
+            )
+            tool_call_id = tool_context.tool_call_id
+            if not tool_call_id:
+                raise ToolExecutionError(
+                    "delegate_subagent requires the current parent tool_call_id",
+                    code="SUBAGENT_PARENT_INVALID",
+                    details={"session_id": tool_context.session_id},
+                )
+            runtime = (
+                self.subagent_runtime_provider()
+                if self.subagent_runtime_provider is not None
+                else None
+            )
+            if runtime is None:
+                raise ToolExecutionError(
+                    "Sub-Agent Runtime is unavailable",
+                    code="SUBAGENT_RUNTIME_UNAVAILABLE",
+                )
+            handle = await runtime.spawn(
+                SubagentSpawnRequest(
+                    parent_session_id=tool_context.session_id,
+                    parent_trace_id=tool_context.trace_id,
+                    parent_tool_call_id=tool_call_id,
+                    user_id=tool_context.user_id,
+                    role=request.type,
+                    task=request.task,
+                    initiated_by=SubagentInitiator.MAIN_AGENT,
+                )
+            )
+            try:
+                terminal = await runtime.wait_terminal(handle.run_id)
+            except asyncio.CancelledError:
+                cancel_trace = getattr(runtime, "cancel_by_parent_trace", None)
+                if callable(cancel_trace) and tool_context.trace_id:
+                    await cancel_trace(
+                        tool_context.session_id,
+                        tool_context.trace_id,
+                        reason="parent_delegate_tool_cancelled",
+                    )
+                else:
+                    await runtime.cancel(
+                        handle.run_id,
+                        reason="parent_delegate_tool_cancelled",
+                    )
+                raise
+            return format_delegate_subagent_result(terminal)
+        except ToolExecutionError:
+            raise
+        except SubagentError as exc:
+            raise ToolExecutionError(
+                exc.message,
+                code=exc.code.value,
+                details=exc.details,
+            ) from exc
 
     def _build_web_runtime_tools(
         self,
@@ -2322,6 +2511,25 @@ class ChatService:
             if existing is not None:
                 logger.debug(f"[Session] 复用已有会话 | session_id={existing.id}")
                 return existing
+            internal = self.repositories.sessions.get(
+                request.session_id,
+                include_internal=True,
+            )
+            if internal is not None:
+                controlled = None
+                if request.subagent_run_id and request.subagent_parent_session_id:
+                    controlled = self.repositories.sessions.get_internal_for_parent(
+                        child_session_id=request.session_id,
+                        parent_session_id=request.subagent_parent_session_id,
+                        run_id=request.subagent_run_id,
+                    )
+                if controlled is None:
+                    raise SubagentError(
+                        SubagentErrorCode.CHILD_SESSION_ACCESS_DENIED,
+                        "internal Sub-Agent Session requires exact parent/Run authority",
+                        details={"child_session_id": request.session_id},
+                    )
+                return controlled
             if self.repositories.sessions.get_archived(request.session_id) is not None:
                 raise ArchiveLifecycleError(
                     "entity_archived",

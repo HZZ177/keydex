@@ -280,6 +280,22 @@
   font-family: var(--font-mono);
 }
 
+.errorDetails {
+  width: 100%;
+  box-sizing: border-box;
+  flex-basis: 100%;
+  margin: 0;
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-bg-base) 78%, transparent);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 7px 8px;
+  white-space: pre-wrap;
+}
+
 .copyButton {
   display: inline-flex;
   width: fit-content;

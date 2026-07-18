@@ -366,7 +366,14 @@ async def test_process_agent_events_marks_serialized_local_tool_error_failed() -
         DomainEventType.LLM_TOOL_FAILED.value,
     ]
     assert tool_events[1].payload["status"] == "failed"
-    assert "file_not_found" in tool_events[1].payload["error"]
+    assert tool_events[1].payload["error"] == {
+        "schema_version": 1,
+        "code": "file_not_found",
+        "message": "文件不存在",
+        "details": {"path": "missing.txt", "tool": "read_file"},
+        "retryable": False,
+    }
+    assert "error_type" not in tool_events[1].payload
     assert result.final_content == ""
 
 

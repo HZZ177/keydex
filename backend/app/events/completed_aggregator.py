@@ -155,7 +155,7 @@ class TurnCompletedAggregator:
         trace_id: str,
         user_id: str = "",
         scene_id: str = "",
-        error: str = "",
+        error: Any = "",
     ) -> dict[str, Any]:
         data = self._build_terminal_data(
             session_id=session_id,

@@ -37,6 +37,7 @@ class ChatProjection:
         DomainEventType.SUBAGENT_STARTED: ChatAction.SUBAGENT_START,
         DomainEventType.SUBAGENT_FINISHED: ChatAction.SUBAGENT_END,
         DomainEventType.SUBAGENT_FAILED: ChatAction.SUBAGENT_ERROR,
+        DomainEventType.SUBAGENT_RUN_UPDATED: ChatAction.SUBAGENT_RUN_UPDATED,
         DomainEventType.TURN_CANCELLED: ChatAction.CANCELLED,
         DomainEventType.TURN_FAILED: ChatAction.ERROR,
         DomainEventType.TURN_STARTED: ChatAction.TURN_STARTED,

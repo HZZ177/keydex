@@ -369,6 +369,13 @@ create table if not exists sessions (
   source_checkpoint_ns text,
   workspace_id text,
   session_type text not null default 'chat',
+  visibility text not null default 'visible'
+    check (visibility in ('visible', 'internal')),
+  agent_kind text not null default 'main'
+    check (agent_kind in ('main', 'subagent')),
+  subagent_id text,
+  subagent_role text check (subagent_role in ('explorer', 'worker')),
+  subagent_closed_at text,
   cwd text,
   workspace_roots_json text not null default '[]',
   current_model_provider_id text,
@@ -1305,6 +1312,28 @@ class Database:
                 "session_type",
                 "text not null default 'chat'",
             )
+            self._ensure_column(
+                conn,
+                "sessions",
+                "visibility",
+                "text not null default 'visible' check (visibility in ('visible', 'internal'))",
+            )
+            self._ensure_column(
+                conn,
+                "sessions",
+                "agent_kind",
+                "text not null default 'main' check (agent_kind in ('main', 'subagent'))",
+            )
+            self._ensure_column(conn, "sessions", "subagent_id", "text")
+            self._ensure_column(
+                conn,
+                "sessions",
+                "subagent_role",
+                "text check (subagent_role in ('explorer', 'worker'))",
+            )
+            self._ensure_column(conn, "sessions", "subagent_closed_at", "text")
+            self._ensure_subagent_session_schema(conn)
+            self._ensure_subagent_run_schema(conn)
             self._ensure_column(conn, "sessions", "cwd", "text")
             self._ensure_column(
                 conn,
@@ -2027,6 +2056,168 @@ class Database:
         }
         if column_name not in columns:
             conn.execute(f"alter table {table_name} add column {column_name} {column_definition}")
+
+    @staticmethod
+    def _ensure_subagent_session_schema(conn: sqlite3.Connection) -> None:
+        conn.executescript(
+            """
+            create index if not exists idx_sessions_visibility
+              on sessions(visibility);
+            create index if not exists idx_sessions_parent_agent_kind
+              on sessions(parent_session_id, agent_kind);
+            create unique index if not exists idx_sessions_subagent_id_unique
+              on sessions(subagent_id)
+              where subagent_id is not null;
+
+            create trigger if not exists trg_sessions_subagent_shape_insert
+            before insert on sessions
+            when
+              (
+                new.agent_kind = 'subagent'
+                and not (
+                  new.visibility = 'internal'
+                  and new.subagent_id is not null
+                  and length(trim(new.subagent_id)) > 0
+                  and new.subagent_role in ('explorer', 'worker')
+                  and new.parent_session_id is not null
+                  and length(trim(new.parent_session_id)) > 0
+                  and new.session_type = 'workspace'
+                  and new.session_tag = 'subagent'
+                )
+              )
+              or
+              (
+                new.agent_kind = 'main'
+                and (
+                  new.subagent_id is not null
+                  or new.subagent_role is not null
+                  or new.subagent_closed_at is not null
+                )
+              )
+            begin
+              select raise(abort, 'invalid subagent session shape');
+            end;
+
+            create trigger if not exists trg_sessions_subagent_shape_update
+            before update of
+              visibility, agent_kind, subagent_id, subagent_role,
+              subagent_closed_at, parent_session_id, session_type, session_tag
+            on sessions
+            when
+              (
+                new.agent_kind = 'subagent'
+                and not (
+                  new.visibility = 'internal'
+                  and new.subagent_id is not null
+                  and length(trim(new.subagent_id)) > 0
+                  and new.subagent_role in ('explorer', 'worker')
+                  and new.parent_session_id is not null
+                  and length(trim(new.parent_session_id)) > 0
+                  and new.session_type = 'workspace'
+                  and new.session_tag = 'subagent'
+                )
+              )
+              or
+              (
+                new.agent_kind = 'main'
+                and (
+                  new.subagent_id is not null
+                  or new.subagent_role is not null
+                  or new.subagent_closed_at is not null
+                )
+              )
+            begin
+              select raise(abort, 'invalid subagent session shape');
+            end;
+            """
+        )
+
+    @staticmethod
+    def _ensure_subagent_run_schema(conn: sqlite3.Connection) -> None:
+        conn.executescript(
+            """
+            create table if not exists subagent_run (
+              run_id text primary key,
+              subagent_id text not null,
+              child_session_id text not null,
+              parent_session_id text not null,
+              parent_trace_id text,
+              parent_tool_call_id text,
+              parent_timeline_sequence integer not null
+                check (parent_timeline_sequence >= 0),
+              initiated_by text not null
+                check (initiated_by in ('main_agent', 'user')),
+              role text not null
+                check (role in ('explorer', 'worker')),
+              task text not null check (length(trim(task)) > 0),
+              state text not null
+                check (state in (
+                  'queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted'
+                )),
+              blocked_on text
+                check (blocked_on is null or blocked_on in (
+                  'approval', 'user_input', 'external_tool'
+                )),
+              version integer not null default 1 check (version >= 1),
+              final_report text,
+              report_truncated integer not null default 0
+                check (report_truncated in (0, 1)),
+              error_code text,
+              error_message text,
+              created_at text not null,
+              queued_at text not null,
+              started_at text,
+              finished_at text,
+              updated_at text not null,
+              cancel_requested_at text,
+              check (blocked_on is null or state = 'running'),
+              check (
+                (state in ('queued', 'running') and finished_at is null)
+                or
+                (state in ('completed', 'failed', 'cancelled', 'interrupted')
+                  and finished_at is not null)
+              ),
+              check (
+                (state = 'completed'
+                  and final_report is not null
+                  and length(trim(final_report)) > 0
+                  and error_code is null
+                  and error_message is null)
+                or
+                (state = 'failed'
+                  and final_report is null
+                  and error_code is not null
+                  and error_message is not null)
+                or
+                (state in ('queued', 'running', 'cancelled', 'interrupted')
+                  and final_report is null)
+              ),
+              check (report_truncated = 0 or final_report is not null),
+              check (
+                (initiated_by = 'main_agent' and parent_tool_call_id is not null)
+                or initiated_by = 'user'
+              ),
+              foreign key(child_session_id) references sessions(id) on delete cascade,
+              foreign key(parent_session_id) references sessions(id) on delete cascade
+            );
+
+            create unique index if not exists idx_subagent_run_parent_sequence
+              on subagent_run(parent_session_id, parent_timeline_sequence);
+            create unique index if not exists idx_subagent_run_active_instance
+              on subagent_run(subagent_id)
+              where state in ('queued', 'running');
+            create index if not exists idx_subagent_run_parent_created
+              on subagent_run(parent_session_id, parent_timeline_sequence, created_at, run_id);
+            create index if not exists idx_subagent_run_child_created
+              on subagent_run(child_session_id, created_at, run_id);
+            create index if not exists idx_subagent_run_instance_created
+              on subagent_run(subagent_id, created_at, run_id);
+            create index if not exists idx_subagent_run_parent_trace_active
+              on subagent_run(parent_session_id, parent_trace_id, state);
+            create index if not exists idx_subagent_run_state
+              on subagent_run(state, updated_at);
+            """
+        )
 
     @classmethod
     def _remove_mcp_prompt_schema(cls, conn: sqlite3.Connection) -> None:

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from backend.app.core.errors import ErrorEnvelope, error_envelope
 from backend.app.core.logger import logger, redact_sensitive
 from backend.app.model import ToolSpec
 
@@ -29,13 +30,24 @@ class ToolExecutionError(RuntimeError):
         *,
         code: str = "tool_execution_failed",
         details: dict[str, Any] | None = None,
+        retryable: bool = False,
+        status: int | None = None,
     ) -> None:
-        super().__init__(message)
-        self.code = code
-        self.details = details or {}
+        self.envelope: ErrorEnvelope = error_envelope(
+            code,
+            message,
+            details=details,
+            retryable=retryable,
+            status=status,
+        )
+        super().__init__(self.envelope.message)
+        self.code = self.envelope.code
+        self.details = self.envelope.details
+        self.retryable = self.envelope.retryable
+        self.status = self.envelope.status
 
     def to_error_dict(self) -> dict[str, Any]:
-        return {"code": self.code, "message": str(self), "details": self.details}
+        return self.envelope.to_public_dict()
 
 
 @dataclass(frozen=True)

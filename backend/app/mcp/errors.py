@@ -61,17 +61,39 @@ class McpRuntimeError(Exception):
         message: str | None = None,
         *,
         detail: dict[str, Any] | None = None,
+        details: dict[str, Any] | None = None,
+        retryable: bool | None = None,
+        status: int | None = None,
     ) -> None:
         self.code = code
         self.message = message or MCP_ERROR_MESSAGES.get(code, "MCP error.")
-        self.detail = detail or {}
+        self.details = dict(details if details is not None else detail or {})
+        self.retryable = (
+            retryable
+            if retryable is not None
+            else code
+            in {
+                McpErrorCode.SERVER_OFFLINE,
+                McpErrorCode.TIMEOUT,
+                McpErrorCode.INTERNAL_ERROR,
+            }
+        )
+        self.status = status
         super().__init__(self.message)
+
+    @property
+    def detail(self) -> dict[str, Any]:
+        """Compatibility alias for legacy MCP internals."""
+
+        return self.details
 
     def to_payload(self) -> McpErrorPayload:
         return McpErrorPayload(
             code=self.code,
             message=self.message,
-            detail=redact_mcp_error_detail(self.detail),
+            details=redact_mcp_error_detail(self.details),
+            retryable=self.retryable,
+            status=self.status,
         )
 
 
@@ -99,7 +121,7 @@ def to_mcp_runtime_error(error: BaseException) -> McpRuntimeError:
     if isinstance(error, McpRuntimeError):
         return error
     code = map_mcp_exception_code(error)
-    return McpRuntimeError(code, detail={"error_type": type(error).__name__})
+    return McpRuntimeError(code, details={"error_type": type(error).__name__})
 
 
 def redact_mcp_error_detail(value: Any) -> Any:

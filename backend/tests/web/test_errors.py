@@ -48,11 +48,14 @@ def test_public_error_includes_retry_after_but_excludes_diagnostic() -> None:
     )
 
     assert payload.to_public_dict() == {
+        "schema_version": 1,
         "code": "rate_limited",
         "message": "搜索请求过于频繁，请稍后重试",
+        "details": {
+            "provider_id": "provider-a",
+            "retry_after_seconds": 12,
+        },
         "retryable": True,
-        "provider_id": "provider-a",
-        "retry_after_seconds": 12,
     }
     assert payload.to_log_dict()["diagnostic"]["status"] == 429
 

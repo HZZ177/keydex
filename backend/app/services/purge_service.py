@@ -46,6 +46,7 @@ class PurgePlanner:
         ("mcp_audit_log", ("session_id",)),
         ("thread_tasks", ("session_id",)),
         ("thread_task_runs", ("session_id",)),
+        ("subagent_run", ("parent_session_id", "child_session_id")),
         ("session_forks", ("source_session_id", "target_session_id")),
         ("attachments", ("session_id",)),
         ("message_events", ("session_id",)),
@@ -124,11 +125,23 @@ class PurgePlanner:
             )
         if archived is None:
             raise ArchiveLifecycleError("not_found", "会话不存在", {"session_id": session_id})
+        with self._repositories.db.connect() as conn:
+            child_rows = conn.execute(
+                """
+                select id
+                from sessions
+                where parent_session_id = ?
+                  and agent_kind = 'subagent'
+                  and visibility = 'internal'
+                order by id
+                """,
+                (session_id,),
+            ).fetchall()
         return self._build_plan(
             entity_type="session",
             entity_id=session_id,
             workspace_id=archived.workspace_id,
-            session_ids=(session_id,),
+            session_ids=(session_id, *(str(row["id"]) for row in child_rows)),
         )
 
     def plan_workspace(self, workspace_id: str) -> PurgePlan:
@@ -718,6 +731,16 @@ class PurgeDatabaseExecutor:
                 f"delete from {table} where {predicate}",
                 params,
             ).rowcount
+        run_parent_predicate, run_parent_params = self._session_predicate(
+            plan, "parent_session_id"
+        )
+        run_child_predicate, run_child_params = self._session_predicate(
+            plan, "child_session_id"
+        )
+        counts["subagent_run"] = conn.execute(
+            f"delete from subagent_run where {run_parent_predicate} or {run_child_predicate}",
+            [*run_parent_params, *run_child_params],
+        ).rowcount
         source_predicate, source_params = self._session_predicate(plan, "source_session_id")
         target_predicate, target_params = self._session_predicate(plan, "target_session_id")
         counts["session_forks"] = conn.execute(
@@ -792,6 +815,7 @@ class PurgeDatabaseExecutor:
         )
         parent_predicate, parent_params = self._session_predicate(plan, "parent_session_id")
         child_predicate, child_params = self._session_predicate(plan, "child_session_id")
+        session_id_predicate, session_id_params = self._session_predicate(plan, "id")
         conn.execute(
             f"""
             update sessions
@@ -801,7 +825,9 @@ class PurgeDatabaseExecutor:
                 source_active_session_id = case when {source_active_predicate} then null else source_active_session_id end,
                 source_checkpoint_id = case when {source_active_predicate} then null else source_checkpoint_id end,
                 source_checkpoint_ns = case when {source_active_predicate} then null else source_checkpoint_ns end
-            where {parent_predicate} or {child_predicate} or {source_active_predicate}
+            where ({parent_predicate} or {child_predicate} or {source_active_predicate})
+              and not ({session_id_predicate})
+              and agent_kind != 'subagent'
             """,
             [
                 *parent_params,
@@ -813,13 +839,23 @@ class PurgeDatabaseExecutor:
                 *parent_params,
                 *child_params,
                 *source_active_params,
+                *session_id_params,
             ],
         )
-        session_id_predicate, session_id_params = self._session_predicate(plan, "id")
-        counts["sessions"] = conn.execute(
+        internal_deleted = conn.execute(
+            f"""
+            delete from sessions
+            where {session_id_predicate}
+              and archived_at is not null
+              and agent_kind = 'subagent'
+            """,
+            session_id_params,
+        ).rowcount
+        visible_deleted = conn.execute(
             f"delete from sessions where {session_id_predicate} and archived_at is not null",
             session_id_params,
         ).rowcount
+        counts["sessions"] = int(internal_deleted or 0) + int(visible_deleted or 0)
         return counts
 
     @staticmethod
@@ -835,7 +871,8 @@ class PurgeDatabaseExecutor:
                 "where workspace_id = ? and archived_at is not null)",
                 [plan.entity_id],
             )
-        return f"{column} = ?", [plan.entity_id]
+        placeholders = ", ".join("?" for _ in plan.session_ids)
+        return f"{column} in ({placeholders})", list(plan.session_ids)
 
 
 class PurgeService:

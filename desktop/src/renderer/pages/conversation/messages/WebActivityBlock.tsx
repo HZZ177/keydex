@@ -19,6 +19,7 @@ import type {
 } from "@/types/protocol";
 import { normalizeWebActivityPayload } from "../webActivity";
 
+import { serializeErrorDiagnostic } from "./errorDiagnostics";
 import { copyText } from "./markdown";
 import { useDeferredUnmount } from "./useDeferredUnmount";
 import { useExpansionScrollAnchor } from "./useExpansionScrollAnchor";
@@ -197,7 +198,7 @@ function WebFetchItemList({ items }: { items: WebFetchActivityItem[] }) {
             <div className={styles.failedItem}>
               <CircleAlert aria-hidden="true" size={14} />
               <span>{safeDomain(item.requested_url)}</span>
-              <small>{friendlyWebError(item.error?.code, item.error?.message)}</small>
+              <small>{item.error?.message || "网页内容读取失败"}</small>
             </div>
           )}
         </li>
@@ -250,16 +251,35 @@ function WebSourceRow({ source }: { source: WebActivitySource }) {
 }
 
 function WebErrorDetail({ error }: { error: WebActivityError }) {
+  const [copied, setCopied] = useState(false);
+  const retryAfter = numberValue(error.details.retry_after_seconds);
+  const detailsText = JSON.stringify(error.details, null, 2);
+  const hasDetails = Object.keys(error.details).length > 0;
+  const copyError = async () => {
+    await copyText(serializeErrorDiagnostic({ error, context: {} }));
+    setCopied(true);
+  };
   return (
     <div className={styles.errorDetail} role="note">
       <CircleAlert aria-hidden="true" size={14} />
-      <span>{friendlyWebError(error.code, error.message)}</span>
-      {error.retry_after_seconds !== null && error.retry_after_seconds !== undefined ? (
-        <small>{error.retry_after_seconds} 秒后可重试</small>
+      <span>{error.message}</span>
+      {retryAfter !== undefined ? (
+        <small>{retryAfter} 秒后可重试</small>
       ) : error.retryable ? (
         <small>可以稍后重试</small>
       ) : null}
       <code>{error.code}</code>
+      {error.status ? <code>HTTP {error.status}</code> : null}
+      <button
+        aria-label={copied ? "网络错误已复制" : "复制网络错误"}
+        className={styles.copyButton}
+        onClick={() => void copyError()}
+        type="button"
+      >
+        {copied ? <Check size={13} /> : <Copy size={13} />}
+        <span>{copied ? "已复制" : "复制错误"}</span>
+      </button>
+      {hasDetails ? <pre className={styles.errorDetails}>{detailsText}</pre> : null}
     </div>
   );
 }
@@ -307,24 +327,6 @@ function activitySources(activity: WebActivityPayload): WebActivitySource[] {
     : activity.items.flatMap((item) => (item.source ? [item.source] : []));
 }
 
-function friendlyWebError(code?: string, fallback?: string | null): string {
-  const messages: Record<string, string> = {
-    web_disabled: "网络搜索尚未启用",
-    provider_not_selected: "尚未选择搜索引擎",
-    provider_not_configured: "搜索引擎配置不完整",
-    authentication_failed: "搜索引擎密钥无效",
-    quota_exhausted: "网络搜索额度已用完",
-    rate_limited: "网络请求过于频繁",
-    network_unavailable: "当前网络不可用",
-    request_timeout: "网络请求超时",
-    provider_unavailable: "搜索引擎暂时不可用",
-    unsafe_url: "该地址不允许读取",
-    fetch_failed: "网页内容读取失败",
-    response_missing: "搜索引擎未返回该网页",
-  };
-  return (code && messages[code]) || fallback || "网络操作失败";
-}
-
 function safeExternalUrl(value: string): string | null {
   try {
     const url = new URL(value);
@@ -344,6 +346,10 @@ function safeDomain(value: string): string {
 
 function clipText(value: string, limit: number): string {
   return value.length <= limit ? value : `${value.slice(0, limit)}…`;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

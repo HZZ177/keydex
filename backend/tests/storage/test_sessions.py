@@ -99,6 +99,90 @@ def test_session_repository_hides_internal_context_compression_sessions_by_defau
     ) == [internal]
 
 
+def test_session_repository_hides_internal_subagent_sessions_by_default(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    parent = repositories.sessions.create(
+        session_id="ses_parent",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="父会话",
+        session_type="workspace",
+    )
+    child = repositories.sessions.create(
+        session_id="ses_subagent",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="内部子会话",
+        session_type="workspace",
+        session_tag="subagent",
+        parent_session_id=parent.id,
+        visibility="internal",
+        agent_kind="subagent",
+        subagent_id="subagent-1",
+        subagent_role="explorer",
+    )
+
+    assert repositories.sessions.list() == [parent]
+    assert repositories.sessions.count() == 1
+    assert repositories.sessions.list(session_tag="subagent") == []
+    assert repositories.sessions.list(title="内部子会话") == []
+    assert repositories.sessions.list(include_internal=True) == [child, parent]
+    assert repositories.sessions.count(include_internal=True) == 2
+
+
+def test_internal_subagent_is_hidden_from_by_id_many_pin_archive_and_restore(
+    tmp_path,
+) -> None:
+    repositories = _repositories(tmp_path)
+    parent = repositories.sessions.create(
+        session_id="ses_parent_controls",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        session_type="workspace",
+    )
+    child = repositories.sessions.create(
+        session_id="ses_child_controls",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        session_type="workspace",
+        session_tag="subagent",
+        parent_session_id=parent.id,
+        visibility="internal",
+        agent_kind="subagent",
+        subagent_id="subagent-controls",
+        subagent_role="worker",
+    )
+
+    assert repositories.sessions.get(child.id) is None
+    assert repositories.sessions.get(child.id, include_internal=True) == child
+    assert repositories.sessions.get_many([parent.id, child.id]) == [parent]
+    assert {
+        record.id
+        for record in repositories.sessions.get_many(
+            [parent.id, child.id], include_internal=True
+        )
+    } == {parent.id, child.id}
+    assert repositories.sessions.set_pinned(child.id, True) is None
+    assert repositories.sessions.archive_manual(
+        child.id, archived_at="2026-07-18T00:00:00Z"
+    ).changed is False
+
+    with repositories.db.transaction() as conn:
+        conn.execute(
+            """
+            update sessions
+            set archived_at = '2026-07-18T00:00:00Z', archive_origin = 'project'
+            where id = ?
+            """,
+            (child.id,),
+        )
+
+    assert repositories.sessions.get_archived(child.id) is None
+    assert repositories.sessions.get_archived(child.id, include_internal=True) is not None
+    assert repositories.sessions.list_archived(exclude_archived_workspaces=False).items == []
+    assert repositories.sessions.restore(child.id).changed is False
+
+
 def test_session_repository_pins_sessions_without_touching_updated_at(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     old = repositories.sessions.create(

@@ -53,6 +53,9 @@ describe("conversation message adapter", () => {
     ).toBe("llm_retry");
     expect(conversationKindFromAgent(agentMessage({ role: "tool", toolName: "update_plan" }))).toBe("plan");
     expect(conversationKindFromAgent(agentMessage({ role: "tool", toolName: "load_skill" }))).toBe("skill");
+    expect(conversationKindFromAgent(agentMessage({ role: "tool", toolName: "delegate_subagent" }))).toBe(
+      "subagent_invocation",
+    );
     expect(conversationKindFromAgent(agentMessage({ role: "turn" }))).toBe("turn_marker");
     expect(conversationKindFromAgent(agentMessage({ role: "thread_task", toolName: "update_thread_task" }))).toBe(
       "thread_task_status",
@@ -244,7 +247,13 @@ describe("conversation message adapter", () => {
       status: "pending",
     });
     expect(payloadFromAgentMessage(agentMessage({ role: "error", status: "failed", content: "boom" }))).toMatchObject({
-      error: { code: "failed", message: "boom", details: {} },
+      error: {
+        schema_version: 1,
+        code: "failed",
+        message: "boom",
+        details: {},
+        retryable: false,
+      },
     });
     expect(
       payloadFromAgentMessage(
@@ -254,18 +263,30 @@ describe("conversation message adapter", () => {
           content: "answer",
           metadata: {
             turnError: {
+              schema_version: 1,
               code: "llm_read_timeout",
               message: "模型响应超时，未收到后续响应数据",
-              details: { exception_type: "httpx.ReadTimeout" },
+              details: {
+                exception_type: "httpx.ReadTimeout",
+                provider_request_id: "request-1",
+              },
+              retryable: true,
+              status: 504,
             },
           },
         }),
       ),
     ).toMatchObject({
       error: {
+        schema_version: 1,
         code: "llm_read_timeout",
         message: "模型响应超时，未收到后续响应数据",
-        details: { exception_type: "httpx.ReadTimeout" },
+        details: {
+          exception_type: "httpx.ReadTimeout",
+          provider_request_id: "request-1",
+        },
+        retryable: true,
+        status: 504,
       },
     });
     expect(

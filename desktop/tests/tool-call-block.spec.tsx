@@ -155,7 +155,7 @@ describe("ToolCallBlock", () => {
     expect(screen.getByText("错误信息：读取失败")).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
     expect(screen.getByRole("region", { name: "工具错误" })).not.toBeNull();
-    expect(screen.getByText("读取失败")).not.toBeNull();
+    expect(screen.getByText(/错误信息：读取失败/)).not.toBeNull();
   });
 
   it("renders MCP tool server, raw tool and runtime metadata", () => {
@@ -579,6 +579,24 @@ describe("ToolCallBlock", () => {
     render(<MessageList messages={[toolMessage("completed")]} />);
 
     expect(screen.getByTestId("tool-call-block")).not.toBeNull();
+  });
+
+  it("keeps delegate_subagent out of ToolCallBlock and renders its semantic capsule", () => {
+    const invocation = {
+      ...toolMessage(
+        "running",
+        { status: "running", model_content: "" },
+        "delegate_subagent",
+        { type: "explorer", task: "inspect the workspace" },
+      ),
+      kind: "subagent_invocation" as const,
+    };
+
+    render(<MessageList messages={[invocation]} />);
+
+    expect(screen.queryByTestId("tool-call-block")).toBeNull();
+    expect(screen.getByTestId("subagent-invocation-capsule").textContent).toContain("sub-explore");
+    expect(screen.getByTestId("subagent-invocation-capsule").textContent).toContain("inspect the workspace");
   });
 });
 

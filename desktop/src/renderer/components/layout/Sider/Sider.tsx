@@ -61,6 +61,7 @@ import {
   subscribeLifecycleEvents,
 } from "@/renderer/events/lifecycleEvents";
 import { useOptionalAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
+import { isInternalAgentSession } from "@/renderer/stores/agentSessionStore";
 import { useGitCheckoutIndicator } from "@/renderer/features/git/useGitCheckoutIndicator";
 import { useOptionalAppUpdate } from "@/renderer/providers/AppUpdateController";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
@@ -183,6 +184,8 @@ export function Sider({
   const backendError = runtimeConnection?.status === "error";
   const sharedSessionState =
     optionalAgentRuntime?.runtime === runtime ? optionalAgentRuntime.state.sessionStateById : {};
+  const sharedSessionsById =
+    optionalAgentRuntime?.runtime === runtime ? optionalAgentRuntime.state.sessionsById : {};
   const ThemeIcon = theme === "dark" ? Sun : Moon;
   const controlled = conversations !== undefined;
   const cachedSessions = controlled ? null : readSessionHistoryCache(runtime);
@@ -276,7 +279,9 @@ export function Sider({
   }, [historyItems, query]);
   const sessionIndicators = useMemo<Record<string, SessionIndicator>>(() => {
     return Object.fromEntries(
-      Object.entries(sharedSessionState).map(([sessionId, state]) => {
+      Object.entries(sharedSessionState)
+        .filter(([sessionId]) => !isInternalAgentSession(sharedSessionsById[sessionId]))
+        .map(([sessionId, state]) => {
         const waitingApproval =
           state.runtimeState === "waiting_approval"
           || Boolean(state.pendingApproval);
@@ -301,7 +306,7 @@ export function Sider({
         ];
       }),
     );
-  }, [activePath, getSessionPath, sharedSessionState]);
+  }, [activePath, getSessionPath, sharedSessionState, sharedSessionsById]);
 
   const mainEntries = useMemo(
     () => [
@@ -321,9 +326,10 @@ export function Sider({
       setLoadedSessions((current) => {
         const next =
           typeof nextValue === "function" ? (nextValue as (items: AgentSession[]) => AgentSession[])(current) : nextValue;
-        loadedSessionsRef.current = next;
-        writeSessionHistoryCache(runtime, next);
-        return next;
+        const visibleSessions = next.filter((session) => !isInternalAgentSession(session));
+        loadedSessionsRef.current = visibleSessions;
+        writeSessionHistoryCache(runtime, visibleSessions);
+        return visibleSessions;
       });
     },
     [runtime],
@@ -2522,7 +2528,7 @@ function sessionGroupMeta(session: AgentSession): Pick<SiderGroup, "id" | "title
 
 function readSessionHistoryCache(runtime: RuntimeBridge): AgentSession[] | null {
   const cached = sessionHistoryCacheByRuntime.get(runtime);
-  return cached ? [...cached.sessions] : null;
+  return cached ? cached.sessions.filter((session) => !isInternalAgentSession(session)) : null;
 }
 
 function isSessionHistoryCacheCurrent(runtime: RuntimeBridge): boolean {
@@ -2532,7 +2538,7 @@ function isSessionHistoryCacheCurrent(runtime: RuntimeBridge): boolean {
 
 function writeSessionHistoryCache(runtime: RuntimeBridge, sessions: AgentSession[]) {
   sessionHistoryCacheByRuntime.set(runtime, {
-    sessions: [...sessions],
+    sessions: sessions.filter((session) => !isInternalAgentSession(session)),
     lifecycleRevision: getLifecycleEventRevision(),
   });
 }
@@ -2573,7 +2579,9 @@ function mergeSessions(sessions: AgentSession[], incoming: AgentSession[]): Agen
   for (const session of incoming) {
     byId.set(session.id, session);
   }
-  return [...byId.values()].sort((left, right) => right.updated_at.localeCompare(left.updated_at));
+  return [...byId.values()]
+    .filter((session) => !isInternalAgentSession(session))
+    .sort((left, right) => right.updated_at.localeCompare(left.updated_at));
 }
 
 function compareGroupUpdatedAt(left: SiderGroup, right: SiderGroup): number {

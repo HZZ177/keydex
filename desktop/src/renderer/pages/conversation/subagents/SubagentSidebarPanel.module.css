@@ -1,0 +1,217 @@
+.list {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 100%;
+  padding: 16px 12px;
+}
+
+.group {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.groupTitle {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 520;
+  line-height: 18px;
+  margin: 0;
+  padding: 0 5px;
+}
+
+.groupItems {
+  display: flex;
+  flex-direction: column;
+}
+
+.item {
+  align-items: flex-start;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  gap: 8px;
+  grid-template-columns: 22px minmax(0, 1fr);
+  min-height: 38px;
+  padding: 4px 6px;
+  text-align: left;
+  width: 100%;
+}
+
+.item:hover,
+.item:focus-visible {
+  background: color-mix(in srgb, var(--surface-hover) 78%, transparent);
+  outline: none;
+}
+
+.itemIcon,
+.detailIcon {
+  align-items: center;
+  display: inline-flex;
+  height: 22px;
+  justify-content: center;
+  width: 22px;
+}
+
+.itemIcon[data-role="explorer"],
+.detailIcon[data-role="explorer"] {
+  color: color-mix(in srgb, #12a9b8 84%, var(--color-text-secondary));
+}
+
+.itemIcon[data-role="worker"],
+.detailIcon[data-role="worker"] {
+  color: color-mix(in srgb, #d94d91 82%, var(--color-text-secondary));
+}
+
+.itemBody {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.itemHeading {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.itemName {
+  flex: 1 1 auto;
+  font-size: 12px;
+  font-weight: 560;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemAge {
+  color: var(--color-text-tertiary);
+  flex: 0 0 auto;
+  font-size: 10px;
+}
+
+.itemSummary {
+  color: var(--color-text-secondary);
+  display: block;
+  font-size: 11px;
+  line-height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty {
+  align-items: center;
+  color: var(--color-text-tertiary);
+  display: flex;
+  font-size: 12px;
+  height: 100%;
+  justify-content: center;
+  min-height: 180px;
+  padding: 20px;
+  text-align: center;
+}
+
+.detail {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+.detailHeader {
+  align-items: center;
+  border-bottom: 1px solid var(--color-border-subtle);
+  display: flex;
+  gap: 7px;
+  min-height: 42px;
+  padding: 0 10px;
+}
+
+.detailHeader strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.back {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  height: 26px;
+  justify-content: center;
+  padding: 0;
+  width: 26px;
+}
+
+.back:hover,
+.back:focus-visible {
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+  outline: none;
+}
+
+.detailBody {
+  align-content: start;
+  display: grid;
+  gap: 18px;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 16px;
+}
+
+.statusLine {
+  align-items: center;
+  color: var(--color-text-secondary);
+  display: flex;
+  font-size: 12px;
+  gap: 7px;
+}
+
+.detail[data-state="failed"] .statusLine,
+.errorSection {
+  color: var(--color-danger);
+}
+
+.detailSection,
+.errorSection {
+  display: grid;
+  gap: 7px;
+}
+
+.detailSection h3,
+.errorSection h3 {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 520;
+  margin: 0;
+}
+
+.detailSection p,
+.errorSection p {
+  color: var(--color-text-primary);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.errorSection code {
+  background: color-mix(in srgb, var(--color-danger) 7%, transparent);
+  border-radius: 5px;
+  color: var(--color-danger);
+  font-size: 11px;
+  justify-self: start;
+  padding: 3px 6px;
+}

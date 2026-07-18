@@ -379,3 +379,55 @@ def test_sessions_api_returns_404_for_missing_session(tmp_path) -> None:
     assert messages.status_code == 404
     assert rename.status_code == 404
     assert legacy_delete.status_code == 405
+
+
+def test_sessions_api_never_exposes_or_mutates_internal_subagent_session(tmp_path) -> None:
+    client = _client(tmp_path)
+    repositories = client.app.state.repositories
+    parent = repositories.sessions.create(
+        session_id="parent-visible",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="Visible parent",
+        session_type="workspace",
+    )
+    child = repositories.sessions.create(
+        session_id="child-internal",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="Hidden child",
+        session_type="workspace",
+        session_tag="subagent",
+        parent_session_id=parent.id,
+        visibility="internal",
+        agent_kind="subagent",
+        subagent_id="subagent-api",
+        subagent_role="explorer",
+    )
+
+    default_list = client.get("/api/sessions")
+    forged_internal = client.get("/api/sessions", params={"include_internal": "true"})
+    forged_tag = client.get("/api/sessions", params={"session_tag": "subagent"})
+    search = client.get("/api/sessions", params={"title": "Hidden child"})
+    detail = client.get(f"/api/sessions/{child.id}")
+    history = client.get(f"/api/sessions/{child.id}/history")
+    pin = client.patch(f"/api/sessions/{child.id}", json={"pinned": True})
+    archive = client.post(
+        f"/api/sessions/{child.id}/archive",
+        json={"request_id": "archive-hidden-child", "stop_if_active": False},
+    )
+
+    assert [item["id"] for item in default_list.json()["list"]] == [parent.id]
+    assert default_list.json()["total"] == 1
+    assert [item["id"] for item in forged_internal.json()["list"]] == [parent.id]
+    assert forged_internal.json()["total"] == 1
+    assert forged_tag.json()["list"] == []
+    assert search.json()["list"] == []
+    assert detail.status_code == 404
+    assert history.status_code == 404
+    assert pin.status_code == 404
+    assert archive.status_code == 404
+    internal = repositories.sessions.get(child.id, include_internal=True)
+    assert internal is not None
+    assert internal.pinned_at is None
+    assert internal.archived_at is None

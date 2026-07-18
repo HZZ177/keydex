@@ -65,6 +65,50 @@ describe("Sider", () => {
     expect(container.querySelector('[data-app-update-indicator="settings"]')).toBeNull();
   });
 
+  it("never exposes an internal Sub-Agent Session loaded from the ordinary history API", async () => {
+    const runtime = fakeRuntime([
+      thread({ id: "visible-parent", title: "Visible parent" }),
+      thread({
+        id: "internal-child",
+        title: "Internal child must stay hidden",
+        session_type: "workspace",
+        session_tag: "subagent",
+        visibility: "internal",
+        agent_kind: "subagent",
+        subagent_id: "subagent-hidden",
+        subagent_role: "explorer",
+        parent_session_id: "visible-parent",
+      }),
+    ]);
+    const channel: ChatChannel = {
+      close: vi.fn(),
+      getStatus: vi.fn<() => WsConnectionStatus>(() => "open"),
+      getSessionId: vi.fn(() => null),
+      createSession: vi.fn(),
+      bindSession: vi.fn(),
+      unbindSession: vi.fn(),
+      chat: vi.fn(),
+      submitA2UI: vi.fn(),
+      cancelA2UI: vi.fn(),
+      approvalDecision: vi.fn(),
+      cancel: vi.fn(),
+      terminateCommand: vi.fn(),
+      requestStatus: vi.fn(),
+      ping: vi.fn(),
+    };
+    runtime.conversation.openChatChannel = vi.fn(() => channel);
+
+    renderSider(
+      <AgentSessionProvider runtime={runtime}>
+        <Sider runtime={runtime} />
+      </AgentSessionProvider>,
+    );
+
+    expect(await screen.findByText("Visible parent")).not.toBeNull();
+    expect(screen.queryByText("Internal child must stay hidden")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Internal child must stay hidden" })).toBeNull();
+  });
+
   it("emits navigation requests and toggles theme", () => {
     const onNavigate = vi.fn();
     const onOpenGit = vi.fn();

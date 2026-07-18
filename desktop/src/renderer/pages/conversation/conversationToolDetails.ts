@@ -37,7 +37,7 @@ export function conversationPatchFromToolDetails(
   const currentResult = asRecord(message.payload.result);
   const status = conversationStatusFromToolDetail(detail, message.status);
   const resultStatus =
-    detail.toolError || detail.status === "error" || detail.status === "failed"
+    detail.error || detail.toolError || detail.status === "error" || detail.status === "failed"
       ? "error"
       : detail.status === "running"
         ? "running"
@@ -53,7 +53,7 @@ export function conversationPatchFromToolDetails(
       status: resultStatus,
       model_content: detail.toolResult ?? "",
       duration_ms: detail.toolDurationMs,
-      error: detail.toolError ?? undefined,
+      error: detail.error ?? detail.toolError ?? undefined,
       ui_payload: detail.uiPayload ?? undefined,
       files: detail.fileChanges ?? [],
     },
@@ -80,7 +80,7 @@ export function conversationStatusFromToolDetail(
   if (detail.status === "cancelled") {
     return "cancelled";
   }
-  if (detail.toolError || detail.status === "error" || detail.status === "failed") {
+  if (detail.error || detail.toolError || detail.status === "error" || detail.status === "failed") {
     return "failed";
   }
   return fallback === "pending" || fallback === "running" ? fallback : "completed";

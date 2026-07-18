@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+from backend.app.core.errors import error_envelope
 from backend.app.events import (
     ChatProjection,
     DomainEvent,
@@ -109,7 +110,19 @@ async def _aggregate_terminal_payload(
             trace_id=TRACE_ID,
             user_id="local-user",
             scene_id="desktop-agent",
-            error="模型失败",
+            error=error_envelope(
+                "llm_bad_request",
+                "模型请求参数无效",
+                details={
+                    "status_code": 400,
+                    "provider": {
+                        "code": "content_anti_probe_blocking",
+                        "message": "短消息命中测活探针关键词",
+                        "request_id": "req_pipeline_123",
+                    },
+                },
+                status=400,
+            ).to_public_dict(),
         )
     raise AssertionError(f"未知终态: {terminal}")
 
@@ -392,6 +405,12 @@ async def test_realtime_persistence_and_history_keep_error_sequence(tmp_path) ->
         "tool_end",
         "error",
     ]
+    expected_error = terminal_payload["error"]
+    assert chat_adapter.sent[-1]["data"]["error"] == expected_error
+    assert persisted_events[-1].data["error"] == expected_error
+    assert "code" not in chat_adapter.sent[-1]["data"]
+    assert "message" not in chat_adapter.sent[-1]["data"]
+    assert "details" not in chat_adapter.sent[-1]["data"]
     assert chat_adapter.sent[2]["data"]["error"] == "权限不足"
     assert [event.action for event in persisted_events] == [
         "stream_batch",
@@ -404,7 +423,8 @@ async def test_realtime_persistence_and_history_keep_error_sequence(tmp_path) ->
     assert messages[1]["status"] == "error"
     assert messages[1]["toolError"] == "权限不足"
     assert messages[2]["role"] == "error"
-    assert messages[2]["content"] == "模型失败"
+    assert messages[2]["content"] == "模型请求参数无效"
+    assert messages[2]["metadata"]["turnError"] == expected_error
     assert messages[2]["traceId"] == TRACE_ID
     assert isinstance(messages[2]["timestamp"], int)
     assert terminal_payload["status"] == "failed"

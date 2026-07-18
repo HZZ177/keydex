@@ -4,6 +4,7 @@ from backend.app.core.config import AppSettings
 from backend.app.services.thread_task_runtime import ThreadTaskRuntime
 from backend.app.services.thread_task_service import ThreadTaskService
 from backend.app.storage import StorageRepositories
+from backend.app.subagents.runtime import SessionBackedSubagentRuntime
 
 
 def get_repositories(request: Request) -> StorageRepositories:
@@ -28,3 +29,10 @@ def get_thread_task_runtime(request: Request) -> ThreadTaskRuntime:
     if isinstance(runtime, ThreadTaskRuntime):
         return runtime
     raise RuntimeError("thread_task_runtime is not initialized")
+
+
+def get_subagent_runtime(request: Request) -> SessionBackedSubagentRuntime:
+    runtime = getattr(request.app.state, "subagent_runtime", None)
+    if isinstance(runtime, SessionBackedSubagentRuntime):
+        return runtime
+    raise RuntimeError("subagent_runtime is not initialized")

@@ -608,6 +608,24 @@
   padding: 0;
 }
 
+.rightSidebarBody[data-content="subagent"] {
+  display: grid;
+  overflow: hidden;
+  padding: 0;
+}
+
+.subagentPanel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+.subagentConversation {
+  min-height: 0;
+  overflow: hidden;
+}
+
 .rightSidebarBody[data-content="review"] {
   display: grid;
   overflow: hidden;

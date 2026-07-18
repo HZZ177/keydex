@@ -5,6 +5,7 @@ import type {
   WebActivityStatus,
   WebFetchActivityItem,
 } from "@/types/protocol";
+import { normalizeRuntimeErrorEnvelope } from "@/runtime/errors";
 
 const WEB_ACTIVITY_STATUSES = new Set<WebActivityStatus>([
   "running",
@@ -136,15 +137,35 @@ function normalizeError(value: unknown): WebActivityError | null {
   const record = asRecord(value);
   const code = requiredString(record?.code);
   const message = requiredString(record?.message);
-  if (!record || !code || !message || typeof record.retryable !== "boolean") {
+  if (!record || !code || !message) {
     return null;
   }
-  return {
-    code,
-    message,
-    retryable: record.retryable,
-    retry_after_seconds: optionalNonNegativeNumber(record.retry_after_seconds),
+  const normalized = normalizeRuntimeErrorEnvelope(record);
+  const canonical = record.schema_version === 1 && asRecord(record.details) !== null;
+  return canonical
+    ? normalized
+    : {
+        ...normalized,
+        message: legacyWebErrorMessage(code, message),
+      };
+}
+
+function legacyWebErrorMessage(code: string, fallback: string): string {
+  const messages: Record<string, string> = {
+    web_disabled: "网络搜索尚未启用",
+    provider_not_selected: "尚未选择搜索引擎",
+    provider_not_configured: "搜索引擎配置不完整",
+    authentication_failed: "搜索引擎密钥无效",
+    quota_exhausted: "网络搜索额度已用完",
+    rate_limited: "网络请求过于频繁",
+    network_unavailable: "当前网络不可用",
+    request_timeout: "网络请求超时",
+    provider_unavailable: "搜索引擎暂时不可用",
+    unsafe_url: "该地址不允许读取",
+    fetch_failed: "网页内容读取失败",
+    response_missing: "搜索引擎未返回该网页",
   };
+  return messages[code] || fallback;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

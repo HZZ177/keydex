@@ -37,6 +37,8 @@ export type ConversationMessageKind =
   | "context_compression"
   | "turn_marker"
   | "thread_task_status"
+  | "subagent_invocation"
+  | "subagent_run"
   | "llm_retry"
   | "status";
 

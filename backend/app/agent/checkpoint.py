@@ -320,10 +320,18 @@ class SQLiteCheckpointSaver(BaseCheckpointSaver):
                     ),
                 )
 
-    def delete_thread(self, thread_id: str) -> None:
-        with self.db.transaction() as conn:
-            conn.execute("delete from checkpoint_writes_v2 where thread_id = ?", (thread_id,))
-            conn.execute("delete from checkpoints_v2 where thread_id = ?", (thread_id,))
+    def delete_thread(
+        self,
+        thread_id: str,
+        *,
+        conn: sqlite3.Connection | None = None,
+    ) -> None:
+        with self._transaction(conn) as active:
+            active.execute(
+                "delete from checkpoint_writes_v2 where thread_id = ?",
+                (thread_id,),
+            )
+            active.execute("delete from checkpoints_v2 where thread_id = ?", (thread_id,))
 
     def rollback_thread_to_checkpoint(
         self,

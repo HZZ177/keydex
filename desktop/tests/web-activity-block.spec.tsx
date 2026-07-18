@@ -1,11 +1,11 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MessageList } from "@/renderer/pages/conversation/messages";
 import { WebActivityBlock } from "@/renderer/pages/conversation/messages/WebActivityBlock";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
-import type { WebActivityPayload, WebActivitySource } from "@/types/protocol";
+import type { WebActivityError, WebActivityPayload, WebActivitySource } from "@/types/protocol";
 
 const SOURCE: WebActivitySource = {
   source_id: "src_docs",
@@ -19,6 +19,11 @@ const SOURCE: WebActivitySource = {
 };
 
 describe("WebActivityBlock", () => {
+  beforeEach(() => {
+    vi.stubGlobal("navigator", {
+      clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
+    });
+  });
   it("renders a compact search lifecycle without provider parameters or raw JSON", () => {
     render(
       <WebActivityBlock
@@ -89,7 +94,11 @@ describe("WebActivityBlock", () => {
               requested_url: "https://offline.example.org/private?token=secret",
               status: "failed",
               source: null,
-              error: { code: "request_timeout", message: "upstream token=secret", retryable: true },
+              error: {
+                code: "request_timeout",
+                message: "upstream token=secret",
+                retryable: true,
+              } as WebActivityError,
             },
           ],
         })}
@@ -111,10 +120,16 @@ describe("WebActivityBlock", () => {
           status: "failed",
           query: "latest release",
           error: {
+            schema_version: 1,
             code: "rate_limited",
-            message: "raw provider response with api_key=secret",
+            message: "搜索请求过于频繁，请稍后重试",
+            details: {
+              provider_id: "tavily",
+              provider_request_id: "request-1",
+              retry_after_seconds: 12,
+            },
             retryable: true,
-            retry_after_seconds: 12,
+            status: 429,
           },
         })}
       />,
@@ -122,10 +137,13 @@ describe("WebActivityBlock", () => {
 
     expect(screen.getByText("搜索“latest release”失败")).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "展开网络活动详情" }));
-    expect(screen.getByText("网络请求过于频繁")).not.toBeNull();
+    expect(screen.getByText("搜索请求过于频繁，请稍后重试")).not.toBeNull();
     expect(screen.getByText("12 秒后可重试")).not.toBeNull();
     expect(screen.getByText("rate_limited")).not.toBeNull();
-    expect(screen.getByTestId("web-activity").textContent).not.toContain("api_key");
+    expect(screen.getByText("HTTP 429")).not.toBeNull();
+    expect(screen.getByText(/provider_request_id/)).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "复制网络错误" }));
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining("request-1"));
   });
 
   it("covers empty, cancelled, and clipped search summaries", () => {

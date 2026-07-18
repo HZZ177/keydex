@@ -207,7 +207,7 @@ async def test_web_failure_projects_stable_sanitized_error() -> None:
                                 "details": {
                                     "retryable": True,
                                     "retry_after_seconds": 12,
-                                    "provider_id": "hidden",
+                                    "provider_id": "provider-a",
                                 },
                             },
                             ensure_ascii=False,
@@ -221,12 +221,29 @@ async def test_web_failure_projects_stable_sanitized_error() -> None:
     failed = emitted[1]
     assert failed.event_type == DomainEventType.LLM_TOOL_FAILED.value
     assert failed.payload["ui_payload"]["error"] == {
+        "schema_version": 1,
         "code": "rate_limited",
         "message": "请求过于频繁，请稍后重试",
+        "details": {
+            "provider_id": "provider-a",
+            "retry_after_seconds": 12,
+        },
         "retryable": True,
-        "retry_after_seconds": 12,
+        "status": None,
     }
-    assert "hidden" not in failed.payload["result"]
+    assert failed.payload["error"] == {
+        "schema_version": 1,
+        "code": "rate_limited",
+        "message": "请求过于频繁，请稍后重试",
+        "details": {
+            "provider_id": "provider-a",
+            "retry_after_seconds": 12,
+            "tool": "web_search",
+        },
+        "retryable": True,
+    }
+    assert "error_type" not in failed.payload
+    assert "provider-a" in failed.payload["result"]
 
 
 @pytest.mark.asyncio

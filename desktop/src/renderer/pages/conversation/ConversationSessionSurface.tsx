@@ -29,6 +29,8 @@ import { emitSessionCreated, emitSessionUpdated } from "@/renderer/events/sessio
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { useWorkspaceFileWatchScope } from "@/renderer/providers/FileChangeProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
+import { useOptionalAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
+import { selectParentSubagentRuns, selectSubagentHistory } from "@/renderer/stores/subagentRunStore";
 import {
   activeProjectDiscoveryFromSession,
   usePublishActiveProjectDiscovery,
@@ -47,7 +49,9 @@ import type {
   PendingInputMode,
 } from "@/types/protocol";
 import type { FileAccessMode } from "@/types/protocol";
+import type { SubagentRunSnapshot } from "@/types/subagents";
 import { GoalModeAccessory } from "@/renderer/components/chat/GoalModeAccessory";
+import { SubagentSidecarComposer } from "./subagents/SubagentSidecarComposer";
 
 import { ChatLayout } from "./ChatLayout";
 import { ConversationComposer } from "./ConversationComposer";
@@ -80,6 +84,7 @@ export interface ConversationSessionSurfaceProps {
   previewPanelScopeKey?: string | null;
   sidecarQuoteRequest?: SendBoxExternalQuoteRequest | null;
   sidecarLoadedHistoryTurnCount?: number | null;
+  subagentRun?: SubagentRunSnapshot | null;
   a2uiRenderSuspended?: boolean;
   onOpenMcpSettings?: () => void;
   onOpenModelSettings?: () => void;
@@ -100,6 +105,7 @@ export function ConversationSessionSurface({
   previewPanelScopeKey = null,
   sidecarQuoteRequest = null,
   sidecarLoadedHistoryTurnCount = null,
+  subagentRun = null,
   a2uiRenderSuspended = false,
   onOpenMcpSettings,
   onOpenModelSettings,
@@ -131,8 +137,48 @@ export function ConversationSessionSurface({
   const [sidecarHistorySnapshot, setSidecarHistorySnapshot] = useState<BtwConversationHistorySnapshot | null>(null);
   const notifications = useNotifications();
   const runtimeConnection = useOptionalRuntimeConnection();
+  const agentRuntime = useOptionalAgentSessionRuntime();
   const backendReady = runtimeConnection?.ready ?? true;
   const rightSidebarConversation = useOptionalRightSidebarConversation();
+  const subagentRuns = useMemo(
+    () =>
+      !isSidecar && agentRuntime?.runtime === runtime
+        ? selectParentSubagentRuns(agentRuntime.subagentState, threadId)
+        : [],
+    [agentRuntime?.runtime, agentRuntime?.subagentState, isSidecar, runtime, threadId],
+  );
+  const selectedSubagentRun =
+    subagentRun && agentRuntime?.runtime === runtime
+      ? agentRuntime.subagentState.runsById[subagentRun.run_id] ?? subagentRun
+      : subagentRun;
+  const selectedSubagentContext = useMemo(
+    () =>
+      selectedSubagentRun
+        ? {
+            parentSessionId: selectedSubagentRun.parent_session_id,
+            runId: selectedSubagentRun.run_id,
+            childSessionId: selectedSubagentRun.child_session_id,
+          }
+        : null,
+    [
+      selectedSubagentRun?.child_session_id,
+      selectedSubagentRun?.parent_session_id,
+      selectedSubagentRun?.run_id,
+    ],
+  );
+  const selectedSubagentHistory = useMemo(
+    () =>
+      selectedSubagentRun && agentRuntime?.runtime === runtime
+        ? selectSubagentHistory(agentRuntime.subagentState, selectedSubagentRun.subagent_id)
+        : selectedSubagentRun
+          ? [selectedSubagentRun]
+          : [],
+    [agentRuntime?.runtime, agentRuntime?.subagentState, runtime, selectedSubagentRun],
+  );
+  const isCurrentSubagentRun = Boolean(
+    selectedSubagentRun &&
+      selectedSubagentHistory[selectedSubagentHistory.length - 1]?.run_id === selectedSubagentRun.run_id,
+  );
   const modelSelection = useRuntimeModelSelection(runtime, initialModel, { enabled: backendReady });
   const notifyRuntime = useCallback(
     (message: string, level: "error" | "warning") => {
@@ -152,8 +198,8 @@ export function ConversationSessionSurface({
     runtime,
     sessionId: threadId,
     enabled: backendReady,
-    historyPageSize: isSidecar ? 2 : 5,
-    loadFullHistory: !isSidecar,
+    historyPageSize: isSidecar ? (selectedSubagentRun ? 100 : 2) : 5,
+    loadFullHistory: selectedSubagentRun ? true : !isSidecar,
     onRuntimeEvent: handleControllerRuntimeEvent,
     onRuntimeError: handleControllerRuntimeError,
     onNotice: notifyRuntime,
@@ -161,6 +207,7 @@ export function ConversationSessionSurface({
     onAfterSend: () => scrollToBottomAfterSendRef.current?.(),
     syncThreadTasks: !isSidecar,
     conversationSendDefaultMode,
+    subagentContext: selectedSubagentContext,
   });
   const draft = controller.draft;
   const setDraft = controller.setDraft;
@@ -200,6 +247,7 @@ export function ConversationSessionSurface({
     registerPreviewHost: !isSidecar,
     previewPanelScopeKey: isSidecar ? previewPanelScopeKey : null,
     emitForkSessionCreated: !isSidecar,
+    validateSelectedSkill: !selectedSubagentRun,
     onBranchSessionCreated: isSidecar ? undefined : onNavigateToConversation,
     onForkSessionCreated: isSidecar
       ? (forkedSession) =>
@@ -209,19 +257,20 @@ export function ConversationSessionSurface({
           })
       : undefined,
     onNavigateToForkSource: onNavigateToConversation ? navigateToForkSource : undefined,
+    subagentContext: selectedSubagentContext,
   });
   const runtimeState = panelModel.runtimeState;
   const activeSidecarHistorySnapshot =
     isSidecar && sidecarHistorySnapshot?.sessionId === threadId ? sidecarHistorySnapshot : null;
   const sidecarMessages = useMemo(() => {
-    if (!isSidecar) {
+    if (!isSidecar || selectedSubagentRun) {
       return panelModel.messages;
     }
     if (!activeSidecarHistorySnapshot) {
       return [];
     }
     return filterBtwConversationVisibleMessages(panelModel.messages, activeSidecarHistorySnapshot);
-  }, [activeSidecarHistorySnapshot, isSidecar, panelModel.messages]);
+  }, [activeSidecarHistorySnapshot, isSidecar, panelModel.messages, selectedSubagentRun]);
   const resolvedSidecarLoadedHistoryTurnCount = activeSidecarHistorySnapshot?.loadedTurnCount ?? 0;
   const sidecarPanelModel = useMemo(() => {
     if (!isSidecar) {
@@ -399,7 +448,7 @@ export function ConversationSessionSurface({
   ]);
 
   useEffect(() => {
-    if (!isSidecar || loading) {
+    if (!isSidecar || selectedSubagentRun || loading) {
       return;
     }
     setSidecarHistorySnapshot((current) => {
@@ -419,7 +468,7 @@ export function ConversationSessionSurface({
         loadedTurnCount: sidecarLoadedHistoryTurnCount,
       });
     });
-  }, [isSidecar, loading, panelModel.messages, sidecarLoadedHistoryTurnCount, threadId]);
+  }, [isSidecar, loading, panelModel.messages, selectedSubagentRun, sidecarLoadedHistoryTurnCount, threadId]);
 
   const changeModel = useCallback(
     (selection: RuntimeSelectedModel | null) => {
@@ -888,6 +937,15 @@ export function ConversationSessionSurface({
       />
     </div>
   );
+  const sidecarComposer = selectedSubagentRun ? (
+    pendingApproval && isCurrentSubagentRun ? composer : (
+      <SubagentSidecarComposer
+        runtime={runtime}
+        run={selectedSubagentRun}
+        isCurrentRun={isCurrentSubagentRun}
+      />
+    )
+  ) : composer;
 
   if (isSidecar) {
     return (
@@ -910,7 +968,7 @@ export function ConversationSessionSurface({
         </div>
         <div className={styles.sidecarComposer}>
           <ConversationPanelComposerAccessory model={sidecarPanelModel} runtime={runtime} onOpenMcpSettings={onOpenMcpSettings} />
-          {composer}
+          {sidecarComposer}
         </div>
       </section>
     );
@@ -965,6 +1023,7 @@ export function ConversationSessionSurface({
       >
         <ConversationPanel
           model={panelModel}
+          subagentRuns={subagentRuns}
           workspaceRuntime={runtime}
           scrollButtonMode="external"
           turnNavigationRequest={focusTurnNavigationRequest}

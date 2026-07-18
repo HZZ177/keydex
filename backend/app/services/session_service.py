@@ -221,6 +221,20 @@ class SessionService:
         logger.debug(f"[SessionService] 获取会话详情 | session_id={session_id}")
         return self._serialize_session(record, current_session_id=current_session_id)
 
+    def get_controlled_subagent_session_detail(
+        self,
+        *,
+        parent_session_id: str,
+        run_id: str,
+        child_session_id: str,
+    ) -> dict[str, Any]:
+        record = self._require_controlled_subagent_session(
+            parent_session_id=parent_session_id,
+            run_id=run_id,
+            child_session_id=child_session_id,
+        )
+        return self._serialize_session(record)
+
     def rename_session(self, session_id: str, title: str) -> dict[str, Any]:
         self._require_session(session_id)
         cleaned = title.strip()
@@ -274,8 +288,15 @@ class SessionService:
         )
         return self._serialize_session(record, current_session_id=current_session_id)
 
-    def get_history(self, request: GetHistoryRequest) -> dict[str, Any]:
-        session = self._require_session(request.session_id)
+    def get_history(
+        self,
+        request: GetHistoryRequest,
+        *,
+        _authorized_session: SessionRecord | None = None,
+    ) -> dict[str, Any]:
+        session = _authorized_session or self._require_session(request.session_id)
+        if session.id != request.session_id:
+            raise SessionNotFoundError("authorized Session does not match history request")
         page = max(1, int(request.page or 1))
         page_size = min(max(1, int(request.page_size or 5)), 100)
         direction = request.direction if request.direction in {"older", "newer"} else "older"
@@ -363,6 +384,21 @@ class SessionService:
             "has_more_older": has_more_older,
         }
 
+    def get_controlled_subagent_history(
+        self,
+        request: GetHistoryRequest,
+        *,
+        parent_session_id: str,
+        run_id: str,
+        child_session_id: str,
+    ) -> dict[str, Any]:
+        record = self._require_controlled_subagent_session(
+            parent_session_id=parent_session_id,
+            run_id=run_id,
+            child_session_id=child_session_id,
+        )
+        return self.get_history(request, _authorized_session=record)
+
     def get_tool_detail(
         self,
         session_id: str,
@@ -380,6 +416,31 @@ class SessionService:
         )
         if detail is None:
             raise SessionValidationError("工具详情不存在或事件不匹配")
+        return detail
+
+    def get_controlled_subagent_tool_detail(
+        self,
+        *,
+        parent_session_id: str,
+        run_id: str,
+        child_session_id: str,
+        start_event_id: str | None = None,
+        end_event_id: str | None = None,
+    ) -> dict[str, Any]:
+        self._require_controlled_subagent_session(
+            parent_session_id=parent_session_id,
+            run_id=run_id,
+            child_session_id=child_session_id,
+        )
+        if not start_event_id and not end_event_id:
+            raise SessionValidationError("tool detail event id is required")
+        detail = self._message_event_service.get_tool_detail(
+            session_id=child_session_id,
+            start_event_id=start_event_id,
+            end_event_id=end_event_id,
+        )
+        if detail is None:
+            raise SessionValidationError("tool detail not found in controlled child Session")
         return detail
 
     def close_session(self, session_id: str) -> dict[str, Any]:
@@ -411,6 +472,22 @@ class SessionService:
             if self._sessions.get_archived(session_id) is not None:
                 raise SessionArchivedError(session_id)
             raise SessionNotFoundError(f"会话不存在: {session_id}")
+        return record
+
+    def _require_controlled_subagent_session(
+        self,
+        *,
+        parent_session_id: str,
+        run_id: str,
+        child_session_id: str,
+    ) -> SessionRecord:
+        record = self._sessions.get_internal_for_parent(
+            child_session_id=str(child_session_id or "").strip(),
+            parent_session_id=str(parent_session_id or "").strip(),
+            run_id=str(run_id or "").strip(),
+        )
+        if record is None:
+            raise SessionNotFoundError("controlled Sub-Agent child Session not found")
         return record
 
     def _resolve_workspace_create_context(
@@ -580,6 +657,11 @@ class SessionService:
             "source_checkpoint_ns": record.source_checkpoint_ns,
             "workspace_id": record.workspace_id,
             "session_type": record.session_type,
+            "visibility": record.visibility,
+            "agent_kind": record.agent_kind,
+            "subagent_id": record.subagent_id,
+            "subagent_role": record.subagent_role,
+            "subagent_closed_at": record.subagent_closed_at,
             "cwd": record.cwd,
             "workspace_roots": record.workspace_roots,
             "current_model_provider_id": record.current_model_provider_id,

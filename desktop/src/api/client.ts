@@ -10,6 +10,11 @@ import type {
   ThreadDetail,
   Turn,
 } from "@/types/protocol";
+import {
+  RuntimeError,
+  normalizeRuntimeErrorEnvelope,
+  type RuntimeErrorEnvelope,
+} from "@/runtime/errors";
 
 export interface ApiClientOptions {
   baseUrl?: string;
@@ -24,13 +29,16 @@ export interface CreateThreadPayload {
   title?: string | null;
 }
 
-export class ApiError extends Error {
+export class ApiError extends RuntimeError {
+  readonly payload: unknown;
+
   constructor(
-    message: string,
-    readonly status: number,
-    readonly payload: unknown,
+    envelope: RuntimeErrorEnvelope,
+    payload: unknown,
   ) {
-    super(message);
+    super(envelope);
+    this.name = "ApiError";
+    this.payload = payload;
   }
 }
 
@@ -148,8 +156,16 @@ export class ApiClient {
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
     });
     if (!response.ok) {
-      const payload = await safeJson(response);
-      throw new ApiError(formatApiError(response.status, payload), response.status, payload);
+      const { payload, rawText } = await readErrorBody(response);
+      const envelope = {
+        ...normalizeRuntimeErrorEnvelope(payload, {
+          fallbackCode: `http_${response.status}`,
+          fallbackMessage: rawText.trim() || `接口请求失败，状态码 ${response.status}`,
+          status: response.status,
+        }),
+        status: response.status,
+      };
+      throw new ApiError(envelope, payload);
     }
     return (await response.json()) as T;
   }
@@ -163,26 +179,15 @@ function normalizeBaseUrl(baseUrl: string): string {
   return url;
 }
 
-function formatApiError(status: number, payload: unknown): string {
-  if (payload && typeof payload === "object") {
-    const record = payload as Record<string, unknown>;
-    const detail = record.detail;
-    if (typeof detail === "string" && detail.trim()) return detail;
-    if (detail && typeof detail === "object") {
-      const message = (detail as Record<string, unknown>).message;
-      if (typeof message === "string" && message.trim()) return message;
-    }
-    const message = record.message;
-    if (typeof message === "string" && message.trim()) return message;
+async function readErrorBody(response: Response): Promise<{ payload: unknown; rawText: string }> {
+  const rawText = await response.text().catch(() => "");
+  if (!rawText) {
+    return { payload: "", rawText };
   }
-  return `接口请求失败，状态码 ${status}`;
-}
-
-async function safeJson(response: Response): Promise<unknown> {
   try {
-    return await response.json();
+    return { payload: JSON.parse(rawText) as unknown, rawText };
   } catch {
-    return null;
+    return { payload: rawText, rawText };
   }
 }
 

@@ -39,6 +39,10 @@ export class RuntimeWsClient {
   private socket: WebSocketLike | null = null;
   private sessionId: string | null = null;
   private readonly boundSessionIds = new Set<string>();
+  private readonly desiredSubagentSessionBindings = new Map<
+    string,
+    { parentSessionId: string; runId: string }
+  >();
   private readonly desiredWorkspaceWatchIds = new Set<string>();
   private readonly desiredGitRepositoryWatches = new Map<
     string,
@@ -64,6 +68,7 @@ export class RuntimeWsClient {
     this.closeSocket();
     this.sessionId = sessionId?.trim() || null;
     this.boundSessionIds.clear();
+    this.desiredSubagentSessionBindings.clear();
     if (this.sessionId) {
       this.boundSessionIds.add(this.sessionId);
     }
@@ -121,6 +126,37 @@ export class RuntimeWsClient {
     }
     if (!sessionId || sessionId === this.sessionId) {
       this.sessionId = null;
+    }
+  }
+
+  bindSubagentSession(parentSessionId: string, runId: string, childSessionId: string) {
+    const binding = { parentSessionId: parentSessionId.trim(), runId: runId.trim() };
+    const childId = childSessionId.trim();
+    if (!binding.parentSessionId || !binding.runId || !childId) {
+      throw new Error("Sub-Agent parent, Run and child Session address is required");
+    }
+    const existing = this.desiredSubagentSessionBindings.get(childId);
+    if (
+      existing &&
+      (existing.parentSessionId !== binding.parentSessionId || existing.runId !== binding.runId)
+    ) {
+      throw new Error("Sub-Agent child Session is already bound through another address");
+    }
+    this.desiredSubagentSessionBindings.set(childId, binding);
+    if (!existing && this.socket?.readyState === SOCKET_OPEN) {
+      this.sendAction("subagent_bind_session", {
+        parent_session_id: binding.parentSessionId,
+        run_id: binding.runId,
+        child_session_id: childId,
+      });
+    }
+  }
+
+  unbindSubagentSession(childSessionId: string) {
+    const childId = childSessionId.trim();
+    if (!childId || !this.desiredSubagentSessionBindings.delete(childId)) return;
+    if (this.socket?.readyState === SOCKET_OPEN) {
+      this.sendAction("unbind_session", { session_id: childId });
     }
   }
 
@@ -234,6 +270,13 @@ export class RuntimeWsClient {
     this.sendAction("get_status", sessionId ? { session_id: sessionId } : {});
   }
 
+  requestSubagentRuns(sessionId = this.sessionId) {
+    if (!sessionId) {
+      throw new Error("Sub-Agent parent session_id is required");
+    }
+    this.sendAction("subagent_list_runs", { session_id: sessionId });
+  }
+
   ping() {
     this.sendAction("ping");
   }
@@ -248,6 +291,16 @@ export class RuntimeWsClient {
       this.setStatus("open");
       for (const sessionId of this.boundSessionIds) {
         this.sendAction("bind_session", { session_id: sessionId });
+        if (status === "reconnecting") {
+          this.requestSubagentRuns(sessionId);
+        }
+      }
+      for (const [childSessionId, binding] of this.desiredSubagentSessionBindings) {
+        this.sendAction("subagent_bind_session", {
+          parent_session_id: binding.parentSessionId,
+          run_id: binding.runId,
+          child_session_id: childSessionId,
+        });
       }
       for (const workspaceId of this.desiredWorkspaceWatchIds) {
         this.sendAction("bind_workspace_watch", { workspace_id: workspaceId });

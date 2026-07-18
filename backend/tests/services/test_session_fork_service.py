@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from backend.app.agent.checkpoint import SQLiteCheckpointSaver
 from backend.app.services.session_fork_service import SessionForkService, SessionForkServiceError
 from backend.app.storage import StorageRepositories, init_database
+from backend.app.subagents.models import SubagentRunSnapshot
 
 
 def _repositories(tmp_path) -> StorageRepositories:
@@ -79,6 +82,84 @@ def _prepare_source(tmp_path):
             data={"session_id": source.id, "content": f"回答 {turn_index}"},
         )
     return repositories, saver
+
+
+def _create_subagent_instance(
+    repositories: StorageRepositories,
+    saver: SQLiteCheckpointSaver,
+    *,
+    subagent_id: str,
+    child_session_id: str,
+    parent_trace_id: str,
+    sequence: int,
+    include_resumed_run: bool = False,
+) -> None:
+    repositories.sessions.create(
+        session_id=child_session_id,
+        user_id="local-user",
+        scene_id="desktop-agent",
+        session_type="workspace",
+        session_tag="subagent",
+        parent_session_id="ses_source",
+        visibility="internal",
+        agent_kind="subagent",
+        subagent_id=subagent_id,
+        subagent_role="explorer",
+    )
+    child_config = saver.put(
+        {"configurable": {"thread_id": child_session_id, "checkpoint_ns": ""}},
+        _checkpoint(f"ckpt_{subagent_id}"),
+        {"step": 1},
+        {},
+    )
+    assert child_config["configurable"]["thread_id"] == child_session_id
+    created_at = datetime(2026, 7, 18, 8, 0, tzinfo=UTC) + timedelta(seconds=sequence)
+    repositories.subagent_runs.create(
+        SubagentRunSnapshot(
+            run_id=f"run_{subagent_id}_spawn",
+            subagent_id=subagent_id,
+            child_session_id=child_session_id,
+            parent_session_id="ses_source",
+            parent_trace_id=parent_trace_id,
+            parent_tool_call_id=f"tool_{subagent_id}",
+            parent_timeline_sequence=sequence,
+            initiated_by="main_agent",
+            role="explorer",
+            task=f"inspect {subagent_id}",
+            state="completed",
+            version=2,
+            final_report="done",
+            created_at=created_at,
+            queued_at=created_at,
+            started_at=created_at,
+            finished_at=created_at + timedelta(seconds=1),
+            updated_at=created_at + timedelta(seconds=1),
+        )
+    )
+    if include_resumed_run:
+        resumed_at = created_at + timedelta(seconds=2)
+        repositories.subagent_runs.create(
+            SubagentRunSnapshot(
+                run_id=f"run_{subagent_id}_resumed",
+                subagent_id=subagent_id,
+                child_session_id=child_session_id,
+                parent_session_id="ses_source",
+                parent_trace_id=None,
+                parent_tool_call_id=None,
+                parent_timeline_sequence=sequence + 1,
+                initiated_by="user",
+                role="explorer",
+                task=f"continue {subagent_id}",
+                state="completed",
+                version=2,
+                final_report="continued",
+                created_at=resumed_at,
+                queued_at=resumed_at,
+                started_at=resumed_at,
+                finished_at=resumed_at + timedelta(seconds=1),
+                updated_at=resumed_at + timedelta(seconds=1),
+            )
+        )
 
 
 def test_session_fork_service_clones_checkpoint_and_copies_history_until_source(tmp_path) -> None:
@@ -302,6 +383,48 @@ def test_session_reverse_rolls_back_same_session_to_user_turn_input_checkpoint(t
         data={"session_id": "ses_source", "content": "新的第二轮"},
     )
     assert rewritten.seq == 3
+
+
+def test_session_reverse_destroys_subagent_instances_created_by_rewound_traces(
+    tmp_path,
+) -> None:
+    repositories, saver = _prepare_source(tmp_path)
+    _create_subagent_instance(
+        repositories,
+        saver,
+        subagent_id="kept",
+        child_session_id="child_kept",
+        parent_trace_id="trace_1",
+        sequence=0,
+    )
+    _create_subagent_instance(
+        repositories,
+        saver,
+        subagent_id="rewound",
+        child_session_id="child_rewound",
+        parent_trace_id="trace_2",
+        sequence=1,
+        include_resumed_run=True,
+    )
+    service = SessionForkService(repositories, checkpointer=saver)
+
+    service.reverse_session(
+        session_id="ses_source",
+        user_id="local-user",
+        message_event_id="evt_user_2",
+    )
+
+    assert repositories.sessions.get("child_kept", include_internal=True) is not None
+    assert repositories.sessions.get("child_rewound", include_internal=True) is None
+    assert [
+        run.run_id for run in repositories.subagent_runs.list_by_parent("ses_source")
+    ] == ["run_kept_spawn"]
+    assert saver.get_tuple(
+        {"configurable": {"thread_id": "child_kept", "checkpoint_ns": ""}}
+    ) is not None
+    assert saver.get_tuple(
+        {"configurable": {"thread_id": "child_rewound", "checkpoint_ns": ""}}
+    ) is None
 
 
 def test_session_reverse_rolls_back_checkpoint_and_rows_as_one_transaction(

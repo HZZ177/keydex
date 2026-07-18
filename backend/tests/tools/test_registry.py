@@ -107,14 +107,18 @@ async def test_function_tool_executes_and_wraps_errors(tmp_path) -> None:
 
     assert failed.ok is False
     assert failed.error == {
+        "schema_version": 1,
         "code": "file_read_failed",
         "message": "无法读取",
         "details": {"path": "missing.txt"},
+        "retryable": False,
     }
 
 
 @pytest.mark.asyncio
-async def test_function_tool_uses_exception_type_when_exception_message_is_empty(tmp_path) -> None:
+async def test_function_tool_wraps_plain_error_with_exception_type_when_message_is_empty(
+    tmp_path,
+) -> None:
     def failing_handler(args, context):
         raise NotImplementedError()
 
@@ -127,9 +131,11 @@ async def test_function_tool_uses_exception_type_when_exception_message_is_empty
 
     assert failed.ok is False
     assert failed.error == {
+        "schema_version": 1,
         "code": "tool_execution_failed",
         "message": "NotImplementedError",
         "details": {"tool": "failing_tool", "type": "NotImplementedError"},
+        "retryable": False,
     }
 
 
@@ -164,8 +170,16 @@ async def test_langchain_tool_failure_payload_includes_tool_context(tmp_path) ->
 
     assert payload["tool"] == "read_file"
     assert payload["status"] == "failed"
-    assert payload["code"] == "file_read_failed"
-    assert payload["details"] == {"path": "missing.txt"}
+    assert payload["error"] == {
+        "schema_version": 1,
+        "code": "file_read_failed",
+        "message": "无法读取",
+        "details": {"path": "missing.txt"},
+        "retryable": False,
+    }
+    assert "code" not in payload
+    assert "message" not in payload
+    assert "details" not in payload
     assert "工具 read_file 执行失败" in payload["tool_summary"]
 
 

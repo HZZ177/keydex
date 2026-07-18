@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import sqlite3
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -28,6 +29,9 @@ from backend.app.services.chat_types import (
     PENDING_INPUT_STATUSES,
 )
 from backend.app.storage.db import Database
+from backend.app.subagents.errors import SubagentError, SubagentErrorCode
+from backend.app.subagents.models import SubagentRunSnapshot
+from backend.app.subagents.state_machine import set_blocked_on, transition_run
 
 
 def _json_dumps(value: Any) -> str:
@@ -308,6 +312,11 @@ class SessionRecord:
     source_checkpoint_ns: str | None = None
     workspace_id: str | None = None
     session_type: str = "chat"
+    visibility: str = "visible"
+    agent_kind: str = "main"
+    subagent_id: str | None = None
+    subagent_role: str | None = None
+    subagent_closed_at: str | None = None
     cwd: str | None = None
     workspace_roots: list[str] = field(default_factory=list)
     current_model_provider_id: str | None = None
@@ -322,6 +331,74 @@ class SessionRecord:
     @property
     def is_archived(self) -> bool:
         return self.archived_at is not None
+
+    @property
+    def is_internal(self) -> bool:
+        return self.visibility == "internal"
+
+    @property
+    def is_subagent(self) -> bool:
+        return self.agent_kind == "subagent"
+
+
+@dataclass(frozen=True)
+class SubagentRunRecord:
+    run_id: str
+    subagent_id: str
+    child_session_id: str
+    parent_session_id: str
+    parent_trace_id: str | None
+    parent_tool_call_id: str | None
+    parent_timeline_sequence: int
+    initiated_by: str
+    role: str
+    task: str
+    state: str
+    blocked_on: str | None
+    version: int
+    final_report: str | None
+    report_truncated: bool
+    error_code: str | None
+    error_message: str | None
+    created_at: str
+    queued_at: str
+    started_at: str | None
+    finished_at: str | None
+    updated_at: str
+    cancel_requested_at: str | None
+
+    def to_snapshot(self) -> SubagentRunSnapshot:
+        return SubagentRunSnapshot.model_validate(self.__dict__)
+
+    @classmethod
+    def from_snapshot(cls, snapshot: SubagentRunSnapshot) -> SubagentRunRecord:
+        payload = snapshot.model_dump(mode="json")
+        created_at = str(payload["created_at"])
+        return cls(
+            run_id=str(payload["run_id"]),
+            subagent_id=str(payload["subagent_id"]),
+            child_session_id=str(payload["child_session_id"]),
+            parent_session_id=str(payload["parent_session_id"]),
+            parent_trace_id=payload["parent_trace_id"],
+            parent_tool_call_id=payload["parent_tool_call_id"],
+            parent_timeline_sequence=int(payload["parent_timeline_sequence"]),
+            initiated_by=str(payload["initiated_by"]),
+            role=str(payload["role"]),
+            task=str(payload["task"]),
+            state=str(payload["state"]),
+            blocked_on=payload["blocked_on"],
+            version=int(payload["version"]),
+            final_report=payload["final_report"],
+            report_truncated=bool(payload["report_truncated"]),
+            error_code=payload["error_code"],
+            error_message=payload["error_message"],
+            created_at=created_at,
+            queued_at=str(payload["queued_at"] or created_at),
+            started_at=payload["started_at"],
+            finished_at=payload["finished_at"],
+            updated_at=str(payload["updated_at"] or created_at),
+            cancel_requested_at=payload["cancel_requested_at"],
+        )
 
 
 @dataclass(frozen=True)
@@ -3530,7 +3607,9 @@ class WorkspacesRepository:
                   coalesce(sum(case when archive_origin = 'project' then 1 else 0 end), 0)
                     as project_count
                 from sessions
-                where workspace_id = ? and archived_at is not null
+                where workspace_id = ?
+                  and archived_at is not null
+                  and visibility = 'visible'
                 """,
                 (workspace_id,),
             ).fetchone()
@@ -3544,7 +3623,17 @@ class WorkspacesRepository:
             )
             newly_archived = 0
             if workspace_cursor.rowcount > 0:
-                session_cursor = conn.execute(
+                visible_row = conn.execute(
+                    """
+                    select count(*) as total
+                    from sessions
+                    where workspace_id = ?
+                      and archived_at is null
+                      and visibility = 'visible'
+                    """,
+                    (workspace_id,),
+                ).fetchone()
+                conn.execute(
                     """
                     update sessions
                     set archived_at = ?, archive_origin = 'project'
@@ -3552,7 +3641,7 @@ class WorkspacesRepository:
                     """,
                     (archived_at, workspace_id),
                 )
-                newly_archived = session_cursor.rowcount
+                newly_archived = int(visible_row["total"] if visible_row is not None else 0)
             row = conn.execute(
                 "select * from workspaces where id = ?",
                 (workspace_id,),
@@ -3594,7 +3683,18 @@ class WorkspacesRepository:
             )
             restored_sessions = 0
             if restore_project_sessions:
-                session_cursor = conn.execute(
+                visible_row = conn.execute(
+                    """
+                    select count(*) as total
+                    from sessions
+                    where workspace_id = ?
+                      and archived_at is not null
+                      and archive_origin = 'project'
+                      and visibility = 'visible'
+                    """,
+                    (workspace_id,),
+                ).fetchone()
+                conn.execute(
                     """
                     update sessions
                     set archived_at = null, archive_origin = null
@@ -3604,7 +3704,7 @@ class WorkspacesRepository:
                     """,
                     (workspace_id,),
                 )
-                restored_sessions = session_cursor.rowcount
+                restored_sessions = int(visible_row["total"] if visible_row is not None else 0)
             row = conn.execute(
                 "select * from workspaces where id = ?",
                 (workspace_id,),
@@ -3695,7 +3795,9 @@ class WorkspacesRepository:
                     as project_session_count
                 from workspaces w
                 left join sessions s
-                  on s.workspace_id = w.id and s.archived_at is not null
+                  on s.workspace_id = w.id
+                 and s.archived_at is not null
+                 and s.visibility = 'visible'
                 where {' and '.join(filters)}
                 group by w.id
                 order by w.archived_at desc, w.id desc
@@ -3815,6 +3917,7 @@ class WorkspacesRepository:
 
 class SessionsRepository:
     INTERNAL_CONTEXT_COMPRESSION_SESSION_TAG = "__context_compression_active__"
+    SUBAGENT_SESSION_TAG = "subagent"
     VALID_STATUSES = {
         "active",
         "closed",
@@ -3824,6 +3927,9 @@ class SessionsRepository:
         "waiting_input",
     }
     VALID_SESSION_TYPES = {"workspace", "chat"}
+    VALID_VISIBILITIES = {"visible", "internal"}
+    VALID_AGENT_KINDS = {"main", "subagent"}
+    VALID_SUBAGENT_ROLES = {"explorer", "worker"}
     VALID_TITLE_SOURCES = {"auto_candidate", "auto", "manual"}
 
     def __init__(self, db: Database) -> None:
@@ -3843,6 +3949,11 @@ class SessionsRepository:
         is_debug: bool = False,
         workspace_id: str | None = None,
         session_type: str = "chat",
+        visibility: str = "visible",
+        agent_kind: str = "main",
+        subagent_id: str | None = None,
+        subagent_role: str | None = None,
+        subagent_closed_at: str | None = None,
         cwd: str | None = None,
         workspace_roots: list[str] | None = None,
         current_model_provider_id: str | None = None,
@@ -3855,24 +3966,43 @@ class SessionsRepository:
         source_active_session_id: str | None = None,
         source_checkpoint_id: str | None = None,
         source_checkpoint_ns: str | None = None,
+        connection: sqlite3.Connection | None = None,
     ) -> SessionRecord:
         self._validate_status(status)
         self._validate_session_type(session_type)
+        self._validate_agent_metadata(
+            visibility=visibility,
+            agent_kind=agent_kind,
+            subagent_id=subagent_id,
+            subagent_role=subagent_role,
+            subagent_closed_at=subagent_closed_at,
+            parent_session_id=parent_session_id,
+            session_type=session_type,
+            session_tag=session_tag,
+        )
         self._validate_title_source(title_source)
         now = to_iso_z(utc_now())
         resolved_active_session_id = active_session_id or session_id
-        with self.db.transaction() as conn:
+        transaction = (
+            nullcontext(connection) if connection is not None else self.db.transaction()
+        )
+        with transaction as conn:
             conn.execute(
                 """
                 insert into sessions (
                   id, user_id, scene_id, scene_version_seq, status, is_debug,
-                  session_tag, active_session_id, workspace_id, session_type, cwd,
+                  session_tag, active_session_id, workspace_id, session_type,
+                  visibility, agent_kind, subagent_id, subagent_role, subagent_closed_at, cwd,
                   workspace_roots_json, current_model_provider_id, current_model,
                   context_compression_epoch, title, title_source,
                   parent_session_id, child_session_id,
                   source_trace_id, source_active_session_id,
                   source_checkpoint_id, source_checkpoint_ns, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) values (
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
                 """,
                 (
                     session_id,
@@ -3885,6 +4015,11 @@ class SessionsRepository:
                     resolved_active_session_id,
                     workspace_id,
                     session_type,
+                    visibility,
+                    agent_kind,
+                    subagent_id,
+                    subagent_role,
+                    subagent_closed_at,
                     cwd,
                     _json_dumps(workspace_roots or []),
                     current_model_provider_id,
@@ -3902,33 +4037,174 @@ class SessionsRepository:
                     now,
                 ),
             )
-        record = self.get(session_id)
-        if record is None:
+            row = conn.execute(
+                "select * from sessions where id = ?",
+                (session_id,),
+            ).fetchone()
+        if row is None:
             raise RuntimeError(f"创建 session 后无法读取: {session_id}")
-        return record
+        return self._from_row(row)
 
-    def get(self, session_id: str) -> SessionRecord | None:
+    def get(
+        self,
+        session_id: str,
+        *,
+        include_internal: bool = False,
+    ) -> SessionRecord | None:
         query = "select * from sessions where id = ? and archived_at is null"
+        if not include_internal:
+            query += " and visibility = 'visible'"
         with self.db.connect() as conn:
             row = conn.execute(query, (session_id,)).fetchone()
         return self._from_row(row) if row else None
 
-    def get_many(self, session_ids: list[str]) -> list[SessionRecord]:
+    def get_internal_for_parent(
+        self,
+        *,
+        child_session_id: str,
+        parent_session_id: str,
+        run_id: str,
+    ) -> SessionRecord | None:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                """
+                select s.*
+                from sessions s
+                join subagent_run r
+                  on r.child_session_id = s.id
+                 and r.parent_session_id = s.parent_session_id
+                 and r.subagent_id = s.subagent_id
+                where s.id = ?
+                  and s.parent_session_id = ?
+                  and r.run_id = ?
+                  and s.visibility = 'internal'
+                  and s.agent_kind = 'subagent'
+                  and s.archived_at is null
+                """,
+                (child_session_id, parent_session_id, run_id),
+            ).fetchone()
+        return self._from_row(row) if row is not None else None
+
+    def get_subagent_for_parent(
+        self,
+        *,
+        subagent_id: str,
+        parent_session_id: str,
+        include_archived: bool = False,
+    ) -> SessionRecord | None:
+        archive_filter = "" if include_archived else "and archived_at is null"
+        with self.db.connect() as conn:
+            row = conn.execute(
+                f"""
+                select * from sessions
+                where subagent_id = ?
+                  and parent_session_id = ?
+                  and visibility = 'internal'
+                  and agent_kind = 'subagent'
+                  {archive_filter}
+                """,
+                (subagent_id, parent_session_id),
+            ).fetchone()
+        return self._from_row(row) if row is not None else None
+
+    def get_subagent(self, subagent_id: str) -> SessionRecord | None:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                """
+                select * from sessions
+                where subagent_id = ?
+                  and visibility = 'internal'
+                  and agent_kind = 'subagent'
+                  and archived_at is null
+                """,
+                (subagent_id,),
+            ).fetchone()
+        return self._from_row(row) if row is not None else None
+
+    def close_subagent_instance(
+        self,
+        subagent_id: str,
+        *,
+        closed_at: datetime,
+    ) -> SessionRecord:
+        closed_at_value = to_iso_z(closed_at)
+        with self.db.transaction(immediate=True) as conn:
+            row = conn.execute(
+                """
+                select * from sessions
+                where subagent_id = ?
+                  and visibility = 'internal'
+                  and agent_kind = 'subagent'
+                  and archived_at is null
+                """,
+                (subagent_id,),
+            ).fetchone()
+            if row is None:
+                raise SubagentError(
+                    SubagentErrorCode.SUBAGENT_NOT_FOUND,
+                    "the requested Sub-Agent instance does not exist",
+                    details={"subagent_id": subagent_id},
+                )
+            if row["subagent_closed_at"] is None:
+                active = conn.execute(
+                    """
+                    select run_id from subagent_run
+                    where subagent_id = ? and state in ('queued', 'running')
+                    """,
+                    (subagent_id,),
+                ).fetchone()
+                if active is not None:
+                    raise SubagentError(
+                        SubagentErrorCode.SUBAGENT_CLOSE_REQUIRES_CANCEL,
+                        "an active Run must be cancelled before closing the instance",
+                        details={"run_id": active["run_id"]},
+                    )
+                conn.execute(
+                    """
+                    update sessions
+                    set subagent_closed_at = ?, status = 'closed', updated_at = ?
+                    where id = ? and subagent_closed_at is null
+                    """,
+                    (closed_at_value, closed_at_value, row["id"]),
+                )
+                row = conn.execute(
+                    "select * from sessions where id = ?",
+                    (row["id"],),
+                ).fetchone()
+        if row is None:
+            raise RuntimeError("Sub-Agent instance disappeared while closing")
+        return self._from_row(row)
+
+    def get_many(
+        self,
+        session_ids: list[str],
+        *,
+        include_internal: bool = False,
+    ) -> list[SessionRecord]:
         resolved_ids = list(dict.fromkeys(session_id for session_id in session_ids if session_id))
         if not resolved_ids:
             return []
         placeholders = ", ".join("?" for _ in resolved_ids)
+        visibility_filter = "" if include_internal else " and visibility = 'visible'"
         with self.db.connect() as conn:
             rows = conn.execute(
-                f"select * from sessions where id in ({placeholders}) and archived_at is null",
+                f"select * from sessions where id in ({placeholders}) "
+                f"and archived_at is null{visibility_filter}",
                 resolved_ids,
             ).fetchall()
         return [self._from_row(row) for row in rows]
 
-    def get_archived(self, session_id: str) -> SessionRecord | None:
+    def get_archived(
+        self,
+        session_id: str,
+        *,
+        include_internal: bool = False,
+    ) -> SessionRecord | None:
+        visibility_filter = "" if include_internal else " and visibility = 'visible'"
         with self.db.connect() as conn:
             row = conn.execute(
-                "select * from sessions where id = ? and archived_at is not null",
+                "select * from sessions where id = ? and archived_at is not null"
+                + visibility_filter,
                 (session_id,),
             ).fetchone()
         return self._from_row(row) if row else None
@@ -3944,10 +4220,22 @@ class SessionsRepository:
                 """
                 update sessions
                 set archived_at = ?, archive_origin = 'manual'
-                where id = ? and archived_at is null
+                where id = ? and archived_at is null and visibility = 'visible'
                 """,
                 (archived_at, session_id),
             )
+            if cursor.rowcount > 0:
+                conn.execute(
+                    """
+                    update sessions
+                    set archived_at = ?, archive_origin = 'manual'
+                    where parent_session_id = ?
+                      and agent_kind = 'subagent'
+                      and visibility = 'internal'
+                      and archived_at is null
+                    """,
+                    (archived_at, session_id),
+                )
             row = conn.execute("select * from sessions where id = ?", (session_id,)).fetchone()
         return SessionLifecycleMutation(
             record=self._from_row(row) if row is not None else None,
@@ -3960,10 +4248,22 @@ class SessionsRepository:
                 """
                 update sessions
                 set archived_at = null, archive_origin = null
-                where id = ? and archived_at is not null
+                where id = ? and archived_at is not null and visibility = 'visible'
                 """,
                 (session_id,),
             )
+            if cursor.rowcount > 0:
+                conn.execute(
+                    """
+                    update sessions
+                    set archived_at = null, archive_origin = null
+                    where parent_session_id = ?
+                      and agent_kind = 'subagent'
+                      and visibility = 'internal'
+                      and archived_at is not null
+                    """,
+                    (session_id,),
+                )
             row = conn.execute("select * from sessions where id = ?", (session_id,)).fetchone()
         return SessionLifecycleMutation(
             record=self._from_row(row) if row is not None else None,
@@ -4085,19 +4385,21 @@ class SessionsRepository:
         if title:
             filters.append("instr(lower(coalesce(title, '')), ?) > 0")
             params.append(title.strip().lower())
-        if not include_internal and session_tag is None:
-            filters.append("(session_tag is null or session_tag != ?)")
-            params.append(self.INTERNAL_CONTEXT_COMPRESSION_SESSION_TAG)
-            filters.append(
-                """
-                not (
-                  source_active_session_id is not null
-                  and source_checkpoint_id is not null
-                  and parent_session_id is not null
-                  and active_session_id = id
+        if not include_internal:
+            filters.append("visibility = 'visible'")
+            if session_tag is None:
+                filters.append("(session_tag is null or session_tag != ?)")
+                params.append(self.INTERNAL_CONTEXT_COMPRESSION_SESSION_TAG)
+                filters.append(
+                    """
+                    not (
+                      source_active_session_id is not null
+                      and source_checkpoint_id is not null
+                      and parent_session_id is not null
+                      and active_session_id = id
+                    )
+                    """
                 )
-                """
-            )
         filters.append("archived_at is null")
 
         where = f"where {' and '.join(filters)}" if filters else ""
@@ -4114,7 +4416,7 @@ class SessionsRepository:
         limit: int = 100,
     ) -> ArchivedSessionPage:
         page_size = max(1, min(limit, 200))
-        filters = ["s.archived_at is not null"]
+        filters = ["s.archived_at is not null", "s.visibility = 'visible'"]
         params: list[Any] = []
         if workspace_id is not None:
             filters.append("s.workspace_id = ?")
@@ -4253,7 +4555,7 @@ class SessionsRepository:
             assignments.append("source_checkpoint_ns = ?")
             params.append(source_checkpoint_ns)
         if not assignments:
-            return self.get(session_id)
+            return self.get(session_id, include_internal=True)
 
         assignments.append("updated_at = ?")
         params.append(to_iso_z(utc_now()))
@@ -4263,7 +4565,7 @@ class SessionsRepository:
                 f"update sessions set {', '.join(assignments)} where id = ? and archived_at is null",
                 params,
             )
-        return self.get(session_id)
+        return self.get(session_id, include_internal=True)
 
     def get_context_compression_epoch(self, session_id: str) -> int:
         with self.db.connect() as conn:
@@ -4333,7 +4635,7 @@ class SessionsRepository:
             )
         if cursor.rowcount == 0:
             return None
-        return self.get(session_id)
+        return self.get(session_id, include_internal=True)
 
     def touch(self, session_id: str) -> SessionRecord | None:
         assignments = ["updated_at = ?"]
@@ -4344,7 +4646,7 @@ class SessionsRepository:
                 f"update sessions set {', '.join(assignments)} where id = ? and archived_at is null",
                 params,
             )
-        return self.get(session_id)
+        return self.get(session_id, include_internal=True)
 
     def update_context_window_usage(
         self,
@@ -4363,7 +4665,7 @@ class SessionsRepository:
             )
         if cursor.rowcount == 0:
             return None
-        return self.get(session_id)
+        return self.get(session_id, include_internal=True)
 
     def set_pinned(self, session_id: str, pinned: bool) -> SessionRecord | None:
         pinned_at = to_iso_z(utc_now()) if pinned else None
@@ -4372,7 +4674,7 @@ class SessionsRepository:
                 """
                 update sessions
                 set pinned_at = ?
-                where id = ? and archived_at is null
+                where id = ? and archived_at is null and visibility = 'visible'
                 """,
                 (pinned_at, session_id),
             )
@@ -4392,6 +4694,45 @@ class SessionsRepository:
     def _validate_session_type(cls, session_type: str) -> None:
         if session_type not in cls.VALID_SESSION_TYPES:
             raise ValueError(f"不支持的 session 类型: {session_type}")
+
+    @classmethod
+    def _validate_agent_metadata(
+        cls,
+        *,
+        visibility: str,
+        agent_kind: str,
+        subagent_id: str | None,
+        subagent_role: str | None,
+        subagent_closed_at: str | None,
+        parent_session_id: str | None,
+        session_type: str,
+        session_tag: str,
+    ) -> None:
+        if visibility not in cls.VALID_VISIBILITIES:
+            raise ValueError(f"不支持的 session 可见性: {visibility}")
+        if agent_kind not in cls.VALID_AGENT_KINDS:
+            raise ValueError(f"不支持的 agent 类型: {agent_kind}")
+        if subagent_role is not None and subagent_role not in cls.VALID_SUBAGENT_ROLES:
+            raise ValueError(f"不支持的 Sub-Agent 角色: {subagent_role}")
+        if agent_kind == "main":
+            if (
+                subagent_id is not None
+                or subagent_role is not None
+                or subagent_closed_at is not None
+            ):
+                raise ValueError("main session 不能携带 Sub-Agent 元数据")
+            return
+        if (
+            visibility != "internal"
+            or not str(subagent_id or "").strip()
+            or subagent_role not in cls.VALID_SUBAGENT_ROLES
+            or not str(parent_session_id or "").strip()
+            or session_type != "workspace"
+            or session_tag != cls.SUBAGENT_SESSION_TAG
+        ):
+            raise ValueError(
+                "Sub-Agent session 必须是 internal workspace，并包含 parent/id/role/tag"
+            )
 
     @classmethod
     def _validate_title_source(cls, title_source: str) -> None:
@@ -4428,6 +4769,11 @@ class SessionsRepository:
             source_checkpoint_ns=row["source_checkpoint_ns"],
             workspace_id=row["workspace_id"],
             session_type=row["session_type"],
+            visibility=row["visibility"],
+            agent_kind=row["agent_kind"],
+            subagent_id=row["subagent_id"],
+            subagent_role=row["subagent_role"],
+            subagent_closed_at=row["subagent_closed_at"],
             cwd=row["cwd"],
             workspace_roots=_json_loads(row["workspace_roots_json"], []),
             current_model_provider_id=row["current_model_provider_id"],
@@ -4441,6 +4787,384 @@ class SessionsRepository:
             updated_at=row["updated_at"],
             archived_at=archived_at,
             archive_origin=archive_origin,
+        )
+
+
+class SubagentRunRepository:
+    ACTIVE_STATES = ("queued", "running")
+
+    def __init__(self, db: Database) -> None:
+        self.db = db
+
+    def create(
+        self,
+        record: SubagentRunRecord | SubagentRunSnapshot,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> SubagentRunRecord:
+        resolved = (
+            record
+            if isinstance(record, SubagentRunRecord)
+            else SubagentRunRecord.from_snapshot(record)
+        )
+        if connection is not None:
+            self._insert(connection, resolved)
+            row = connection.execute(
+                "select * from subagent_run where run_id = ?",
+                (resolved.run_id,),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError(f"创建 Sub-Agent Run 后无法读取: {resolved.run_id}")
+            return self._from_row(row)
+        with self.db.transaction(immediate=True) as conn:
+            self._insert(conn, resolved)
+            row = conn.execute(
+                "select * from subagent_run where run_id = ?",
+                (resolved.run_id,),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError(f"创建 Sub-Agent Run 后无法读取: {resolved.run_id}")
+        return self._from_row(row)
+
+    @staticmethod
+    def _insert(conn: sqlite3.Connection, record: SubagentRunRecord) -> None:
+        conn.execute(
+            """
+            insert into subagent_run (
+              run_id, subagent_id, child_session_id, parent_session_id,
+              parent_trace_id, parent_tool_call_id, parent_timeline_sequence,
+              initiated_by, role, task, state, blocked_on, version,
+              final_report, report_truncated, error_code, error_message,
+              created_at, queued_at, started_at, finished_at, updated_at,
+              cancel_requested_at
+            ) values (
+              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+            """,
+            (
+                record.run_id,
+                record.subagent_id,
+                record.child_session_id,
+                record.parent_session_id,
+                record.parent_trace_id,
+                record.parent_tool_call_id,
+                record.parent_timeline_sequence,
+                record.initiated_by,
+                record.role,
+                record.task,
+                record.state,
+                record.blocked_on,
+                record.version,
+                record.final_report,
+                int(record.report_truncated),
+                record.error_code,
+                record.error_message,
+                record.created_at,
+                record.queued_at,
+                record.started_at,
+                record.finished_at,
+                record.updated_at,
+                record.cancel_requested_at,
+            ),
+        )
+
+    def get(
+        self,
+        run_id: str,
+        *,
+        parent_session_id: str | None = None,
+    ) -> SubagentRunRecord | None:
+        filters = ["run_id = ?"]
+        params: list[Any] = [run_id]
+        if parent_session_id is not None:
+            filters.append("parent_session_id = ?")
+            params.append(parent_session_id)
+        with self.db.connect() as conn:
+            row = conn.execute(
+                f"select * from subagent_run where {' and '.join(filters)}",
+                params,
+            ).fetchone()
+        return self._from_row(row) if row is not None else None
+
+    def list_by_parent(self, parent_session_id: str) -> list[SubagentRunRecord]:
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """
+                select * from subagent_run
+                where parent_session_id = ?
+                order by parent_timeline_sequence, created_at, run_id
+                """,
+                (parent_session_id,),
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    def list_active_by_parent_trace(
+        self,
+        parent_session_id: str,
+        parent_trace_id: str,
+    ) -> list[SubagentRunRecord]:
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """
+                select * from subagent_run
+                where parent_session_id = ?
+                  and parent_trace_id = ?
+                  and state in ('queued', 'running')
+                order by parent_timeline_sequence, created_at, run_id
+                """,
+                (parent_session_id, parent_trace_id),
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    def list_by_subagent(
+        self,
+        subagent_id: str,
+        *,
+        parent_session_id: str | None = None,
+    ) -> list[SubagentRunRecord]:
+        filters = ["subagent_id = ?"]
+        params: list[Any] = [subagent_id]
+        if parent_session_id is not None:
+            filters.append("parent_session_id = ?")
+            params.append(parent_session_id)
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                f"""
+                select * from subagent_run
+                where {' and '.join(filters)}
+                order by parent_timeline_sequence, created_at, run_id
+                """,
+                params,
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    def get_active(
+        self,
+        subagent_id: str,
+        *,
+        parent_session_id: str | None = None,
+    ) -> SubagentRunRecord | None:
+        filters = ["subagent_id = ?", "state in ('queued', 'running')"]
+        params: list[Any] = [subagent_id]
+        if parent_session_id is not None:
+            filters.append("parent_session_id = ?")
+            params.append(parent_session_id)
+        with self.db.connect() as conn:
+            row = conn.execute(
+                f"select * from subagent_run where {' and '.join(filters)}",
+                params,
+            ).fetchone()
+        return self._from_row(row) if row is not None else None
+
+    def list_reconciliation_candidates(self) -> list[SubagentRunRecord]:
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """
+                select * from subagent_run
+                where state in ('queued', 'running')
+                order by updated_at, run_id
+                """
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    def next_parent_sequence(
+        self,
+        parent_session_id: str,
+        *,
+        connection: sqlite3.Connection,
+    ) -> int:
+        row = connection.execute(
+            """
+            select coalesce(max(parent_timeline_sequence), -1) + 1 as next_sequence
+            from subagent_run
+            where parent_session_id = ?
+            """,
+            (parent_session_id,),
+        ).fetchone()
+        return int(row["next_sequence"] if row is not None else 0)
+
+    def transition(
+        self,
+        run_id: str,
+        to_state: str,
+        *,
+        expected_version: int,
+        now: datetime,
+        final_report: str | None = None,
+        report_truncated: bool = False,
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> SubagentRunRecord:
+        with self.db.transaction(immediate=True) as conn:
+            row = conn.execute(
+                "select * from subagent_run where run_id = ?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                raise SubagentError(
+                    SubagentErrorCode.RUN_NOT_FOUND,
+                    "the requested Sub-Agent Run does not exist",
+                    details={"run_id": run_id},
+                )
+            current_record = self._from_row(row)
+            current = current_record.to_snapshot()
+            if current.version != expected_version:
+                try:
+                    replay = transition_run(
+                        current,
+                        to_state,
+                        expected_version=current.version,
+                        now=now,
+                        final_report=final_report,
+                        report_truncated=report_truncated,
+                        error_code=error_code,
+                        error_message=error_message,
+                    )
+                except SubagentError as exc:
+                    raise SubagentError(
+                        SubagentErrorCode.RUN_VERSION_CONFLICT,
+                        "the Run snapshot version is stale",
+                        details={
+                            "run_id": run_id,
+                            "expected_version": expected_version,
+                            "actual_version": current.version,
+                        },
+                    ) from exc
+                if replay is current:
+                    return current_record
+
+            updated = transition_run(
+                current,
+                to_state,
+                expected_version=expected_version,
+                now=now,
+                final_report=final_report,
+                report_truncated=report_truncated,
+                error_code=error_code,
+                error_message=error_message,
+            )
+            if updated is current:
+                return current_record
+            updated_record = SubagentRunRecord.from_snapshot(updated)
+            cursor = conn.execute(
+                """
+                update subagent_run
+                set state = ?, blocked_on = ?, version = ?,
+                    final_report = ?, report_truncated = ?,
+                    error_code = ?, error_message = ?,
+                    started_at = ?, finished_at = ?, updated_at = ?,
+                    cancel_requested_at = ?
+                where run_id = ? and version = ? and state = ?
+                """,
+                (
+                    updated_record.state,
+                    updated_record.blocked_on,
+                    updated_record.version,
+                    updated_record.final_report,
+                    int(updated_record.report_truncated),
+                    updated_record.error_code,
+                    updated_record.error_message,
+                    updated_record.started_at,
+                    updated_record.finished_at,
+                    updated_record.updated_at,
+                    updated_record.cancel_requested_at,
+                    run_id,
+                    expected_version,
+                    current_record.state,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise SubagentError(
+                    SubagentErrorCode.RUN_VERSION_CONFLICT,
+                    "the Run changed before the atomic transition committed",
+                    details={"run_id": run_id, "expected_version": expected_version},
+                )
+            persisted = conn.execute(
+                "select * from subagent_run where run_id = ?", (run_id,)
+            ).fetchone()
+        if persisted is None:
+            raise RuntimeError(f"状态转换后无法读取 Sub-Agent Run: {run_id}")
+        return self._from_row(persisted)
+
+    def update_blocked_on(
+        self,
+        run_id: str,
+        blocked_on: str | None,
+        *,
+        expected_version: int,
+        now: datetime,
+    ) -> SubagentRunRecord:
+        with self.db.transaction(immediate=True) as conn:
+            row = conn.execute(
+                "select * from subagent_run where run_id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise SubagentError(
+                    SubagentErrorCode.RUN_NOT_FOUND,
+                    "the requested Sub-Agent Run does not exist",
+                    details={"run_id": run_id},
+                )
+            current_record = self._from_row(row)
+            updated = set_blocked_on(
+                current_record.to_snapshot(),
+                blocked_on,
+                expected_version=expected_version,
+            )
+            if updated.version == current_record.version:
+                return current_record
+            cursor = conn.execute(
+                """
+                update subagent_run
+                set blocked_on = ?, version = ?, updated_at = ?
+                where run_id = ? and version = ? and state = 'running'
+                """,
+                (
+                    updated.blocked_on.value if updated.blocked_on is not None else None,
+                    updated.version,
+                    to_iso_z(now),
+                    run_id,
+                    expected_version,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise SubagentError(
+                    SubagentErrorCode.RUN_VERSION_CONFLICT,
+                    "the Run changed before the blocked_on update committed",
+                    details={"run_id": run_id, "expected_version": expected_version},
+                )
+            persisted = conn.execute(
+                "select * from subagent_run where run_id = ?", (run_id,)
+            ).fetchone()
+        if persisted is None:
+            raise RuntimeError(f"blocked_on 更新后无法读取 Sub-Agent Run: {run_id}")
+        return self._from_row(persisted)
+
+    @staticmethod
+    def _from_row(row: sqlite3.Row) -> SubagentRunRecord:
+        return SubagentRunRecord(
+            run_id=row["run_id"],
+            subagent_id=row["subagent_id"],
+            child_session_id=row["child_session_id"],
+            parent_session_id=row["parent_session_id"],
+            parent_trace_id=row["parent_trace_id"],
+            parent_tool_call_id=row["parent_tool_call_id"],
+            parent_timeline_sequence=int(row["parent_timeline_sequence"]),
+            initiated_by=row["initiated_by"],
+            role=row["role"],
+            task=row["task"],
+            state=row["state"],
+            blocked_on=row["blocked_on"],
+            version=int(row["version"]),
+            final_report=row["final_report"],
+            report_truncated=bool(row["report_truncated"]),
+            error_code=row["error_code"],
+            error_message=row["error_message"],
+            created_at=row["created_at"],
+            queued_at=row["queued_at"],
+            started_at=row["started_at"],
+            finished_at=row["finished_at"],
+            updated_at=row["updated_at"],
+            cancel_requested_at=row["cancel_requested_at"],
         )
 
 
@@ -8131,6 +8855,7 @@ class StorageRepositories:
         self.lifecycle_operations = LifecycleOperationsRepository(db)
         self.workspaces = WorkspacesRepository(db)
         self.sessions = SessionsRepository(db)
+        self.subagent_runs = SubagentRunRepository(db)
         self.session_forks = SessionForksRepository(db)
         self.attachments = AttachmentsRepository(db)
         self.annotations = WorkspaceAnnotationsRepository(db)

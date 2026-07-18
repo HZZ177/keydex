@@ -7,8 +7,31 @@ from typing import Any
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import StructuredTool
 
+from backend.app.core.errors import normalize_error_envelope
 from backend.app.tools import LocalTool, ToolExecutionContext, ToolRegistry
 from backend.app.tools.file_snapshots import ensure_file_snapshot_store
+
+
+class _LocalStructuredTool(StructuredTool):
+    """Preserve the model ToolCall id for LocalTool execution contexts."""
+
+    async def ainvoke(
+        self,
+        input: str | dict[str, Any],
+        config: RunnableConfig | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        resolved_config = config
+        if isinstance(input, dict) and input.get("type") == "tool_call":
+            tool_call_id = str(input.get("id") or "").strip()
+            if tool_call_id:
+                resolved_config = dict(config or {})
+                configurable = resolved_config.get("configurable")
+                resolved_config["configurable"] = {
+                    **(configurable if isinstance(configurable, dict) else {}),
+                    "tool_call_id": tool_call_id,
+                }
+        return await super().ainvoke(input, resolved_config, **kwargs)
 
 
 def _json_result(value: Any) -> str:
@@ -26,14 +49,17 @@ def local_tool_to_langchain_tool(
     context_factory: Callable[[], ToolExecutionContext],
 ) -> StructuredTool:
     async def _run(config: RunnableConfig, **kwargs: Any) -> str:
-        result = await tool.run(dict(kwargs), _context_for_tool(tool, context_factory(), config))
+        result = await tool.run(
+            dict(kwargs),
+            _context_for_tool(tool, context_factory(), config),
+        )
         if result.ok:
             return _json_result(_successful_tool_payload(result))
         return _json_result(_failed_tool_payload(tool.name, result.error, result.metadata))
 
     _run.__name__ = tool.name
     _run.__doc__ = tool.description or tool.name
-    return StructuredTool.from_function(
+    return _LocalStructuredTool.from_function(
         coroutine=_run,
         name=tool.name,
         description=tool.description or tool.name,
@@ -104,19 +130,17 @@ def _failed_tool_payload(
     error: dict[str, Any] | None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    normalized_error = error or {"code": "tool_failed", "message": "工具执行失败", "details": {}}
-    code = str(normalized_error.get("code") or "tool_failed")
-    message = str(normalized_error.get("message") or "工具执行失败")
-    details = normalized_error.get("details")
-    if not isinstance(details, dict):
-        details = {}
+    normalized_error = normalize_error_envelope(
+        error,
+        fallback_code="tool_failed",
+        fallback_message="工具执行失败",
+    ).to_public_dict()
+    code = normalized_error["code"]
+    message = normalized_error["message"]
     return {
         "tool": tool_name,
         "ok": False,
         "status": "failed",
-        "code": code,
-        "message": message,
-        "details": details,
         "error": normalized_error,
         "tool_summary": f"工具 {tool_name} 执行失败：{message}（错误码：{code}）。",
         **({"metadata": metadata} if metadata else {}),

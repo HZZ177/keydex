@@ -13,6 +13,8 @@ import {
 import { useA2UIRenderSuspension } from "./messages/a2ui/A2UIRenderSuspensionContext";
 import { ReverseDialog } from "./ReverseDialog";
 import type { ConversationPanelModel } from "./useConversationPanelModel";
+import type { SubagentRunSnapshot } from "@/types/subagents";
+import { mergeSubagentRunsIntoConversation } from "./subagents/subagentTimeline";
 
 import styles from "./ConversationPanel.module.css";
 
@@ -36,6 +38,7 @@ export interface ConversationPanelProps {
   showForkActions?: boolean;
   onAskSelectionInBtwConversation?: (text: string) => void;
   className?: string;
+  subagentRuns?: SubagentRunSnapshot[];
 }
 
 export function ConversationPanel({
@@ -56,9 +59,11 @@ export function ConversationPanel({
   showForkActions = true,
   onAskSelectionInBtwConversation,
   className = "",
+  subagentRuns = [],
 }: ConversationPanelProps) {
   const inheritedA2UIRenderSuspended = useA2UIRenderSuspension();
   const effectiveA2UIRenderSuspended = a2uiRenderSuspended || inheritedA2UIRenderSuspended;
+  const timelineMessages = mergeSubagentRunsIntoConversation(model.messages, subagentRuns);
 
   return (
     <div
@@ -68,7 +73,7 @@ export function ConversationPanel({
     >
       <MessageList
         key={model.sessionId || "empty-session"}
-        messages={model.messages}
+        messages={timelineMessages}
         variant={variant}
         performanceProfile={performanceProfile}
         loading={model.loading}

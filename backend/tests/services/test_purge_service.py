@@ -518,8 +518,21 @@ def test_session_database_purge_covers_complete_inventory_and_preserves_neighbor
         neighbor_before = PurgePlanner._relation_counts(conn, (neighbor.id,))
 
     assert set(plan.database_counts) >= set(target_before)
-    assert all(total == 1 for total in target_before.values())
-    assert all(total == 1 for total in neighbor_before.values())
+    # An ordinary main-agent session has no subagent run. The dedicated
+    # lifecycle tests below cover that relation with a parent/child fixture;
+    # every legacy direct and indirect relation remains populated here.
+    assert target_before["subagent_run"] == 0
+    assert neighbor_before["subagent_run"] == 0
+    assert all(
+        total == 1
+        for table, total in target_before.items()
+        if table != "subagent_run"
+    )
+    assert all(
+        total == 1
+        for table, total in neighbor_before.items()
+        if table != "subagent_run"
+    )
 
     deleted = PurgeDatabaseExecutor(repositories).execute(plan)
 

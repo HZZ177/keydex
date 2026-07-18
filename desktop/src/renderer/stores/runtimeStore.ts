@@ -1,4 +1,4 @@
-import { RuntimeError, RuntimeHttpError, type RuntimeErrorEnvelope } from "@/runtime/errors";
+import { normalizeRuntimeErrorEnvelope, type RuntimeErrorEnvelope } from "@/runtime/errors";
 import type { WsConnectionStatus } from "@/runtime/wsClient";
 
 export type RuntimeConnectionSource = "health" | "ws" | "model" | "settings" | "agent";
@@ -212,40 +212,10 @@ function clearAllErrors(state: RuntimeState): RuntimeState {
 }
 
 function normalizeRuntimeError(source: RuntimeConnectionSource, error: unknown): RuntimeErrorEnvelope {
-  if (error instanceof RuntimeHttpError || error instanceof RuntimeError) {
-    return {
-      code: error.code,
-      message: error.message,
-      details: error.details,
-      status: error.status,
-    };
-  }
-  if (error && typeof error === "object") {
-    const record = error as Record<string, unknown>;
-    if (typeof record.message === "string") {
-      return {
-        code: typeof record.code === "string" ? record.code : `${source}_error`,
-        message: record.message,
-        details:
-          record.details && typeof record.details === "object" && !Array.isArray(record.details)
-            ? (record.details as Record<string, unknown>)
-            : {},
-        status: typeof record.status === "number" ? record.status : undefined,
-      };
-    }
-  }
-  if (error instanceof Error) {
-    return {
-      code: `${source}_error`,
-      message: error.message,
-      details: {},
-    };
-  }
-  return {
-    code: `${source}_error`,
-    message: typeof error === "string" && error ? error : `${SOURCE_LABELS[source]}连接失败`,
-    details: {},
-  };
+  return normalizeRuntimeErrorEnvelope(error, {
+    fallbackCode: `${source}_error`,
+    fallbackMessage: `${SOURCE_LABELS[source]}连接失败`,
+  });
 }
 
 function mapWsStatus(status: WsConnectionStatus): RuntimeConnectionStatus {

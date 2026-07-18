@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import Field
 
+from backend.app.core.errors import error_envelope
 from backend.app.core.logger import REDACTED, redact_sensitive
 from backend.app.web.models import WebDomainModel
 
@@ -94,14 +95,29 @@ class WebErrorPayload(WebDomainModel):
     message: str = Field(min_length=1)
     retryable: bool = False
     provider_id: str | None = None
+    provider_request_id: str | None = None
     retry_after_seconds: int | None = Field(default=None, ge=0)
+    status: int | None = Field(default=None, ge=100, le=599)
     diagnostic: dict[str, Any] = Field(default_factory=dict)
 
     def to_public_dict(self) -> dict[str, Any]:
-        return self.model_dump(mode="json", exclude={"diagnostic"})
+        details: dict[str, Any] = {}
+        if self.provider_id:
+            details["provider_id"] = self.provider_id
+        if self.provider_request_id:
+            details["provider_request_id"] = self.provider_request_id
+        if self.retry_after_seconds is not None:
+            details["retry_after_seconds"] = self.retry_after_seconds
+        return error_envelope(
+            str(self.code),
+            self.message,
+            details=details,
+            retryable=self.retryable,
+            status=self.status,
+        ).to_public_dict()
 
     def to_log_dict(self) -> dict[str, Any]:
-        return self.model_dump(mode="json")
+        return {**self.to_public_dict(), "diagnostic": self.diagnostic}
 
 
 def web_error(
@@ -109,8 +125,10 @@ def web_error(
     *,
     message: str | None = None,
     provider_id: str | None = None,
+    provider_request_id: str | None = None,
     retryable: bool | None = None,
     retry_after_seconds: int | None = None,
+    status: int | None = None,
     diagnostic: dict[str, Any] | None = None,
     sensitive_values: tuple[str, ...] = (),
 ) -> WebErrorPayload:
@@ -119,7 +137,9 @@ def web_error(
         message=message or _DEFAULT_MESSAGES[code],
         retryable=code in _RETRYABLE_CODES if retryable is None else retryable,
         provider_id=provider_id,
+        provider_request_id=provider_request_id,
         retry_after_seconds=retry_after_seconds,
+        status=status,
         diagnostic=sanitize_web_diagnostic(
             diagnostic or {},
             sensitive_values=sensitive_values,

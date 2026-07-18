@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from backend.app.core.errors import error_envelope
 from backend.app.core.logger import logger
 from backend.app.events import DomainEventType
 from backend.app.services import (
@@ -1288,6 +1289,13 @@ async def test_thread_task_runtime_marks_run_failed_and_records_system_failure(
     assert run is not None
     assert run.status == "failed"
     assert run.error["reason"] == "start_chat failed: RuntimeError"
+    assert run.error["error"] == {
+        "schema_version": 1,
+        "code": "thread_task_start_failed",
+        "message": "长程任务启动失败",
+        "details": {"exception_type": "RuntimeError"},
+        "retryable": True,
+    }
     updated = repositories.thread_tasks.get(task["id"])
     assert updated.metadata["system_failures"]["count"] == 1
     assert updated.metadata["system_failures"]["run_id"] == run.id
@@ -1378,14 +1386,29 @@ async def test_thread_task_runtime_finish_failed_run_records_error_and_failure(
             trace_id="trace-failed",
             turn_index=5,
             status="failed",
-            error="模型失败",
+            error=error_envelope(
+                "llm_bad_request",
+                "模型请求参数无效",
+                details={"provider": {"code": "content_anti_probe_blocking"}},
+                status=400,
+            ),
         ),
     )
 
     assert result["run_status"] == "failed"
     finished_run = repositories.thread_task_runs.get(run.id)
     assert finished_run.status == "failed"
-    assert finished_run.error == {"reason": "turn_failed", "message": "模型失败"}
+    assert finished_run.error == {
+        "reason": "turn_failed",
+        "error": {
+            "schema_version": 1,
+            "code": "llm_bad_request",
+            "message": "模型请求参数无效",
+            "details": {"provider": {"code": "content_anti_probe_blocking"}},
+            "retryable": False,
+            "status": 400,
+        },
+    }
     updated = repositories.thread_tasks.get(task["id"])
     assert updated.turn_count == 1
     assert updated.metadata["system_failures"]["count"] == 1

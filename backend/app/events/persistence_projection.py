@@ -36,6 +36,7 @@ class PersistenceProjection:
         DomainEventType.SUBAGENT_STARTED: ReplayAction.SUBAGENT_START,
         DomainEventType.SUBAGENT_FINISHED: ReplayAction.SUBAGENT_END,
         DomainEventType.SUBAGENT_FAILED: ReplayAction.SUBAGENT_ERROR,
+        DomainEventType.SUBAGENT_RUN_UPDATED: ReplayAction.SUBAGENT_RUN_UPDATED,
         DomainEventType.MEMORY_RECALLED: ReplayAction.MEMORY_RECALLED,
         DomainEventType.TURN_CANCELLED: ReplayAction.CANCELLED,
         DomainEventType.TURN_FAILED: ReplayAction.ERROR,
@@ -416,7 +417,7 @@ class PersistenceProjection:
     ) -> None:
         fallback_trace_id = event.trace_id if event else ""
         trace_record_id = str(payload.get("trace_record_id") or fallback_trace_id or "").strip()
-        event_id = new_id()
+        event_id = str(getattr(event, "tags", {}).get("event_id") or "").strip() or new_id()
         if action == ReplayAction.USER_MESSAGE.value:
             requested_id = str(payload.get("message_event_id") or "").strip()
             if requested_id:

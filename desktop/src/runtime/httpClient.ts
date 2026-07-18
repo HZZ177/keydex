@@ -1,4 +1,4 @@
-import { RuntimeHttpError } from "./errors";
+import { RuntimeHttpError, normalizeRuntimeErrorEnvelope } from "./errors";
 import type { RuntimeErrorEnvelope } from "./errors";
 
 export interface HttpClientOptions {
@@ -104,47 +104,15 @@ export function redactForLog(value: unknown, depth = 0): unknown {
 }
 
 export function normalizeErrorEnvelope(status: number, body: unknown, rawText = ""): RuntimeErrorEnvelope {
-  if (body && typeof body === "object") {
-    const record = body as Record<string, unknown>;
-    const direct = fromRecord(status, record);
-    if (direct) {
-      return direct;
-    }
-
-    const detail = record.detail;
-    if (typeof detail === "string" && detail.trim()) {
-      return { code: `http_${status}`, message: detail, status };
-    }
-    if (detail && typeof detail === "object" && !Array.isArray(detail)) {
-      const nested = fromRecord(status, detail as Record<string, unknown>);
-      if (nested) {
-        return nested;
-      }
-    }
-  }
-
-  const message = typeof body === "string" && body.trim() ? body : rawText.trim();
+  const input = typeof body === "string" && !body.trim() ? rawText : body;
   return {
-    code: `http_${status}`,
-    message: message || `模型运行时请求失败：HTTP ${status}`,
+    ...normalizeRuntimeErrorEnvelope(input, {
+      fallbackCode: `http_${status}`,
+      fallbackMessage: `模型运行时请求失败：HTTP ${status}`,
+      status,
+    }),
     status,
   };
-}
-
-function fromRecord(status: number, record: Record<string, unknown>): RuntimeErrorEnvelope | null {
-  const code = typeof record.code === "string" && record.code.trim() ? record.code : `http_${status}`;
-  const messageSource = record.message ?? record.error;
-  const message = typeof messageSource === "string" && messageSource.trim() ? messageSource : null;
-  const details = record.details && typeof record.details === "object" && !Array.isArray(record.details)
-    ? (record.details as Record<string, unknown>)
-    : undefined;
-
-  if (!message) {
-    return null;
-  }
-
-  const retryable = typeof record.retryable === "boolean" ? record.retryable : undefined;
-  return { code, message, details, status, retryable };
 }
 
 async function readResponseBody(response: Response): Promise<{ body: unknown; rawText: string }> {

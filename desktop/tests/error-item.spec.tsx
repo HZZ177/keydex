@@ -25,7 +25,7 @@ describe("ErrorItem", () => {
     expect(screen.getByText(/openai-compatible/)).not.toBeNull();
   });
 
-  it("summarizes verbose gateway rate-limit errors and folds the raw payload", () => {
+  it("uses the centralized gateway compatibility parser", () => {
     render(
       <ErrorItem
         message={errorMessage({
@@ -37,13 +37,11 @@ describe("ErrorItem", () => {
       />,
     );
 
-    expect(screen.getByText("请求过于频繁（rpm 限流），请稍后再试")).not.toBeNull();
+    expect(screen.getByText("rate limit exceeded on dimension: rpm")).not.toBeNull();
     expect(screen.getByText("429001")).not.toBeNull();
     expect(screen.getByText("HTTP 429")).not.toBeNull();
-    expect(screen.queryByText(/rate limit exceeded on dimension/)).toBeNull();
-
     fireEvent.click(screen.getByRole("button", { name: "展开错误详情" }));
-    expect(screen.getByText(/rate limit exceeded on dimension/)).not.toBeNull();
+    expect(screen.getByText(/provider_request_id/)).not.toBeNull();
   });
 
   it("copies structured error payload", async () => {
@@ -54,6 +52,11 @@ describe("ErrorItem", () => {
 
     await waitFor(() => {
       expect(clipboard).toHaveBeenCalledWith(expect.stringContaining("模型请求失败：HTTP 400"));
+    });
+    const copied = JSON.parse(clipboard.mock.calls[0][0] as string) as Record<string, unknown>;
+    expect(copied).toMatchObject({
+      error: { code: "turn_error", status: 400 },
+      context: { thread_id: "thread-1", turn_id: "turn-1" },
     });
     expect(screen.getByText("已复制")).not.toBeNull();
   });
@@ -94,6 +97,7 @@ function errorMessage(errorPatch: Record<string, unknown> = {}): ConversationMes
     content: "模型请求失败：HTTP 400",
     payload: {
       error: {
+        schema_version: 1,
         code: "turn_error",
         message: "模型请求失败：HTTP 400",
         status: 400,
@@ -101,6 +105,7 @@ function errorMessage(errorPatch: Record<string, unknown> = {}): ConversationMes
           provider: "openai-compatible",
           path: "/v1/chat/completions",
         },
+        retryable: false,
         ...errorPatch,
       },
     },

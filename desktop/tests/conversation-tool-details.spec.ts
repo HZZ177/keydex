@@ -114,6 +114,23 @@ describe("conversation tool detail helpers", () => {
     expect(conversationStatusFromToolDetail({ status: "success" }, "pending")).toBe("pending");
     expect(conversationStatusFromToolDetail({ status: "success" }, "completed")).toBe("completed");
   });
+
+  it("preserves canonical tool and MCP error details in deferred history", () => {
+    const error = {
+      schema_version: 1 as const,
+      code: "server_offline",
+      message: "MCP 服务器当前不可用",
+      details: { server_id: "srv-1", model_tool_name: "mcp__srv_1__search" },
+      retryable: true,
+    };
+    const patch = conversationPatchFromToolDetails(
+      toolMessage({ status: "completed" }),
+      { status: "failed", toolError: "MCP 服务器当前不可用", error },
+    );
+
+    expect(patch.status).toBe("failed");
+    expect((patch.payload?.result as Record<string, unknown>).error).toEqual(error);
+  });
 });
 
 function toolMessage(overrides: Partial<ConversationMessage> = {}): ConversationMessage {

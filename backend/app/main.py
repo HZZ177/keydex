@@ -32,6 +32,7 @@ from backend.app.api.mcp import router as mcp_router
 from backend.app.api.model_providers import router as model_providers_router
 from backend.app.api.models import router as models_router
 from backend.app.api.sessions import router as sessions_router
+from backend.app.api.subagents import router as subagents_router
 from backend.app.api.settings import (
     load_effective_model_settings,
     load_general_settings,
@@ -66,11 +67,13 @@ from backend.app.services.chat_stream_manager import ChatStreamManager
 from backend.app.services.file_change_hub import FileChangeHub
 from backend.app.services.file_history_service import FileHistoryService
 from backend.app.services.lifecycle_events import LifecycleEventPublisher
+from backend.app.services.subagent_events import SubagentRunEventPublisher
 from backend.app.services.thread_task_elapsed_ticker import ThreadTaskElapsedTicker
 from backend.app.services.thread_task_events import ThreadTaskEventPublisher
 from backend.app.services.thread_task_runtime import ThreadTaskRuntime, ThreadTaskStateLocks
 from backend.app.services.thread_task_service import ThreadTaskService
 from backend.app.storage import StorageRepositories, init_database
+from backend.app.subagents.runtime import SessionBackedSubagentRuntime
 from backend.app.tools import create_default_tool_registry
 from backend.app.tools.command_runtime import command_process_manager
 from backend.app.web.registry import build_default_web_provider_registry
@@ -99,6 +102,7 @@ def create_app(
                 pass
 
         await app.state.chat_stream_manager.recover_interrupted_sessions()
+        await app.state.subagent_runtime.reconcile_interrupted_runs()
         await app.state.mcp_manager.start()
         if app.state.file_history_service.enabled:
             recovered = await asyncio.to_thread(
@@ -139,6 +143,7 @@ def create_app(
                     f"[App] GitMetadataEventService close failed | error={exc}"
                 )
             await app.state.thread_task_elapsed_ticker.stop()
+            await app.state.subagent_runtime.shutdown()
             await app.state.mcp_manager.shutdown()
             if not warmup_task.done():
                 warmup_task.cancel()
@@ -293,6 +298,11 @@ def create_app(
                 app.state.repositories,
                 app.state.web_provider_registry,
             ),
+            subagent_runtime_provider=lambda: getattr(
+                app.state,
+                "subagent_runtime",
+                None,
+            ),
         )
 
     app.state.agent_runtime_provider = AgentRuntimeProvider(build_chat_service)
@@ -301,6 +311,15 @@ def create_app(
         repositories=app.state.repositories,
     )
     app.state.chat_stream_manager = ChatStreamManager(app.state.chat_service)
+    app.state.subagent_event_publisher = SubagentRunEventPublisher(
+        repositories=app.state.repositories,
+        chat_stream_manager=app.state.chat_stream_manager,
+    )
+    app.state.subagent_runtime = SessionBackedSubagentRuntime(
+        repositories=app.state.repositories,
+        chat_stream_manager=app.state.chat_stream_manager,
+        event_publisher=app.state.subagent_event_publisher,
+    )
     app.state.lifecycle_event_publisher = LifecycleEventPublisher(app.state.chat_stream_manager)
     app.state.mcp_elicitation_service = McpElicitationService(
         app.state.repositories,
@@ -375,6 +394,7 @@ def create_app(
     app.include_router(model_providers_router)
     app.include_router(models_router)
     app.include_router(sessions_router)
+    app.include_router(subagents_router)
     app.include_router(thread_tasks_router)
     app.include_router(usage_router)
     app.include_router(workspaces_router)

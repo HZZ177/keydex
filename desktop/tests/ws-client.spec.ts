@@ -133,6 +133,68 @@ describe("RuntimeWsClient", () => {
       action: "bind_session",
       data: { session_id: "ses-1" },
     });
+    expect(JSON.parse(FakeWebSocket.instances[1].sent[1])).toEqual({
+      action: "subagent_list_runs",
+      data: { session_id: "ses-1" },
+    });
+  });
+
+  it("can request a full parent Run snapshot without replaying an event tail", () => {
+    const client = new RuntimeWsClient({
+      baseUrl: "ws://127.0.0.1:8765",
+      WebSocketImpl: FakeWebSocket,
+      onEvent: vi.fn(),
+    });
+    client.connect("parent-1");
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+
+    client.requestSubagentRuns("parent-1");
+
+    expect(JSON.parse(socket.sent.at(-1) ?? "{}")).toEqual({
+      action: "subagent_list_runs",
+      data: { session_id: "parent-1" },
+    });
+  });
+
+  it("binds an internal child through the parent/Run address and restores only that controlled binding", () => {
+    vi.useFakeTimers();
+    const client = new RuntimeWsClient({
+      baseUrl: "ws://127.0.0.1:8765",
+      WebSocketImpl: FakeWebSocket,
+      reconnectDelayMs: 10,
+      onEvent: vi.fn(),
+    });
+    client.connect("parent-1");
+    FakeWebSocket.instances[0].open();
+    client.bindSubagentSession("parent-1", "run-1", "child-1");
+
+    expect(JSON.parse(FakeWebSocket.instances[0].sent.at(-1) ?? "{}")).toEqual({
+      action: "subagent_bind_session",
+      data: {
+        parent_session_id: "parent-1",
+        run_id: "run-1",
+        child_session_id: "child-1",
+      },
+    });
+
+    FakeWebSocket.instances[0].serverClose();
+    vi.advanceTimersByTime(10);
+    FakeWebSocket.instances[1].open();
+    expect(FakeWebSocket.instances[1].sent.map((item) => JSON.parse(item))).toContainEqual({
+      action: "subagent_bind_session",
+      data: {
+        parent_session_id: "parent-1",
+        run_id: "run-1",
+        child_session_id: "child-1",
+      },
+    });
+
+    client.unbindSubagentSession("child-1");
+    expect(JSON.parse(FakeWebSocket.instances[1].sent.at(-1) ?? "{}")).toEqual({
+      action: "unbind_session",
+      data: { session_id: "child-1" },
+    });
   });
 
   it("parses typed workspace and local file watch events", () => {

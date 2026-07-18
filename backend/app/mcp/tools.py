@@ -1038,7 +1038,7 @@ def _failed_mcp_tool_result(
     metadata: McpLocalToolMetadata,
 ) -> ToolExecutionResult:
     runtime_error = error if isinstance(error, McpRuntimeError) else to_mcp_runtime_error(error)
-    details = dict(runtime_error.detail)
+    details = dict(runtime_error.details)
     details["mcp"] = metadata.to_dict()
     return ToolExecutionResult.failed(
         ToolExecutionError(

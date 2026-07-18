@@ -5,6 +5,7 @@ from contextlib import AbstractContextManager, contextmanager
 from threading import RLock
 from typing import Any
 
+from backend.app.core.errors import error_envelope, normalize_error_envelope
 from backend.app.core.logger import logger
 from backend.app.events import DomainEventType
 from backend.app.services.chat_stream_manager import ChatStreamAlreadyRunningError
@@ -394,12 +395,18 @@ class ThreadTaskRuntime:
             }
         except Exception as exc:
             failure_reason = f"start_chat failed: {type(exc).__name__}"
+            failure_error = error_envelope(
+                "thread_task_start_failed",
+                "长程任务启动失败",
+                details={"exception_type": type(exc).__name__},
+                retryable=True,
+            )
             finished = self._repositories.thread_task_runs.finish(
                 run.id,
                 status=THREAD_TASK_RUN_STATUS_FAILED,
                 error={
                     "reason": failure_reason,
-                    "message": str(exc),
+                    "error": failure_error.to_public_dict(),
                 },
             )
             if self._thread_task_service is not None:
@@ -522,11 +529,16 @@ class ThreadTaskRuntime:
         error: BaseException | None,
     ) -> dict[str, dict[str, Any]]:
         if error is not None:
+            turn_error = normalize_error_envelope(
+                error,
+                fallback_code="thread_task_turn_error",
+                fallback_message="长程任务对话执行失败",
+            )
             return {
                 "summary": {"turn_status": turn_status or "error"},
                 "error": {
                     "reason": f"turn_error: {type(error).__name__}",
-                    "message": str(error),
+                    "error": turn_error.to_public_dict(),
                 },
             }
         if turn_status == "completed":
@@ -543,11 +555,16 @@ class ThreadTaskRuntime:
                 "summary": {"turn_status": "cancelled"},
                 "error": {},
             }
+        turn_error = normalize_error_envelope(
+            getattr(result, "error", None),
+            fallback_code="thread_task_turn_failed",
+            fallback_message="长程任务对话执行失败",
+        )
         return {
             "summary": {"turn_status": turn_status or "failed"},
             "error": {
                 "reason": "turn_failed",
-                "message": str(getattr(result, "error", "") or ""),
+                "error": turn_error.to_public_dict(),
             },
         }
 

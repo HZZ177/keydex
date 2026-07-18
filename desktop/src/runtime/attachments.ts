@@ -1,4 +1,5 @@
 import type { HttpClient } from "./httpClient";
+import { normalizeRuntimeErrorEnvelope, RuntimeHttpError } from "./errors";
 
 export interface AttachmentRecord {
   id: string;
@@ -137,35 +138,30 @@ async function rawJsonRequest<T>(
 ): Promise<T> {
   const response = await fetch(`${http.getBaseUrl()}${path}`, init);
   if (!response.ok) {
-    throw new Error(await responseErrorMessage(response));
-  }
-  return (await response.json()) as T;
-}
-
-async function responseErrorMessage(response: Response): Promise<string> {
-  const text = await response.text().catch(() => "");
-  if (!text.trim()) {
-    return `请求失败：HTTP ${response.status}`;
-  }
-  try {
-    const body = JSON.parse(text) as { detail?: unknown; message?: unknown; error?: unknown };
-    const detail = body.detail;
-    if (detail && typeof detail === "object" && !Array.isArray(detail)) {
-      const message = (detail as { message?: unknown }).message;
-      if (typeof message === "string" && message.trim()) {
-        return message;
+    const rawText = await response.text().catch(() => "");
+    let body: unknown = rawText;
+    if (rawText.trim()) {
+      try {
+        body = JSON.parse(rawText);
+      } catch {
+        // Keep the original text as the legacy input for the shared normalizer.
       }
     }
-    if (typeof body.message === "string" && body.message.trim()) {
-      return body.message;
-    }
-    if (typeof body.error === "string" && body.error.trim()) {
-      return body.error;
-    }
-  } catch {
-    return text;
+    const envelope = normalizeRuntimeErrorEnvelope(body, {
+      fallbackCode: `http_${response.status}`,
+      fallbackMessage: rawText.trim() || `请求失败：HTTP ${response.status}`,
+      status: response.status,
+    });
+    throw new RuntimeHttpError({
+      ...envelope,
+      method: init.method ?? "GET",
+      path,
+      status: response.status,
+      body,
+      rawText,
+    });
   }
-  return text;
+  return (await response.json()) as T;
 }
 
 function blobName(file: Blob): string | null {

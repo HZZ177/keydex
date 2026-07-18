@@ -172,13 +172,14 @@ async def test_web_search_tool_preserves_stable_web_error(tmp_path) -> None:
 
     assert result.ok is False
     assert result.error == {
+        "schema_version": 1,
         "code": "rate_limited",
         "message": "搜索请求过于频繁，请稍后重试",
         "details": {
-            "retryable": True,
             "provider_id": "fake",
             "retry_after_seconds": 7,
         },
+        "retryable": True,
     }
 
 
