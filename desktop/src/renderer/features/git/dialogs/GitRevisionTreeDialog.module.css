@@ -1,0 +1,16 @@
+.backdrop { position: fixed; inset: 0; z-index: 245; display: grid; place-items: center; background: rgb(15 23 42 / 20%); backdrop-filter: blur(3px); }
+.dialog { display: grid; width: min(760px, calc(100vw - 48px)); height: min(680px, calc(100vh - 48px)); min-height: 360px; grid-template-rows: 54px minmax(0, 1fr) 44px; overflow: hidden; border: 1px solid var(--color-border-2); border-radius: 14px; background: var(--surface-bg); box-shadow: 0 24px 80px rgb(15 23 42 / 22%); }
+.header { display: grid; grid-template-columns: 20px minmax(0, 1fr) 30px; align-items: center; gap: 8px; border-bottom: 1px solid var(--color-border-2); padding: 0 14px; }
+.header > svg { color: var(--color-text-2); }
+.header div { display: grid; min-width: 0; gap: 2px; }
+.header strong { color: var(--color-text-1); font-size: 13px; }
+.header span { overflow: hidden; color: var(--color-text-3); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.header button { display: grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-3); cursor: pointer; }
+.header button:hover { background: var(--surface-hover); color: var(--color-text-1); }
+.body { min-height: 0; overflow: auto; padding: 8px 10px; }
+.loading { height: 100%; }
+.state { display: grid; height: 100%; place-items: center; color: var(--color-text-3); font-size: 12px; }
+.footer { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; border-top: 1px solid var(--color-border-2); padding: 0 12px; color: var(--color-text-3); font-size: 10px; }
+.footer span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.footer code { color: var(--color-text-2); }
+.footer button { min-height: 28px; border: 1px solid var(--color-border-2); border-radius: var(--radius-sm); background: var(--surface-bg); color: var(--color-text-2); padding: 0 12px; cursor: pointer; }
