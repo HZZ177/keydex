@@ -2288,6 +2288,20 @@ describe("WorkbenchAssistantSurface", () => {
       expect(screen.getByTestId("subagent-run-capsule:run-backend").getAttribute("data-state")).toBe("running");
       expect(screen.getByTestId("subagent-run-capsule:run-desktop").getAttribute("data-state")).toBe("completed");
     });
+
+    const backendCapsule = screen.getByTestId("subagent-run-capsule:run-backend") as HTMLButtonElement;
+    expect(backendCapsule.disabled).toBe(false);
+    fireEvent.click(backendCapsule);
+
+    const subagentPanel = await screen.findByTestId("workbench-subagent-panel");
+    expect(subagentPanel.getAttribute("data-child-session-id")).toBe("child-backend");
+    expect(screen.getByTestId("workbench-assistant-surface").getAttribute("data-subagent-active")).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "返回主对话" }));
+    await waitFor(() => {
+      expect(screen.queryByTestId("workbench-subagent-panel")).toBeNull();
+      expect(screen.getByTestId("workbench-assistant-surface").getAttribute("data-subagent-active")).toBe("false");
+    });
   });
 
   it("does not project a Sub-Agent Run owned by another Session into Workbench", async () => {

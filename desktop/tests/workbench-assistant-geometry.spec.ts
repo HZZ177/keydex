@@ -42,7 +42,8 @@ describe("workbench assistant geometry", () => {
   it("clamps drawer width for common desktop and narrow viewport sizes", () => {
     expect(clampWorkbenchDrawerWidth(280, 1440)).toBe(320);
     expect(clampWorkbenchDrawerWidth(420, 1280)).toBe(420);
-    expect(clampWorkbenchDrawerWidth(720, 1600)).toBe(520);
+    expect(clampWorkbenchDrawerWidth(720, 1600)).toBe(720);
+    expect(clampWorkbenchDrawerWidth(2000, 3000)).toBe(1040);
     expect(clampWorkbenchDrawerWidth(520, 900)).toBe(414);
   });
 
@@ -63,7 +64,7 @@ describe("workbench assistant geometry", () => {
       "utf8",
     );
 
-    expect(css).toContain("--workbench-assistant-dock-inline-size: min(clamp(320px, var(--workbench-assistant-dock-width), 520px), 46vw)");
+    expect(css).toContain("--workbench-assistant-dock-inline-size: min(clamp(320px, var(--workbench-assistant-dock-width), 1040px), 46vw)");
     expect(css).toContain("--workbench-assistant-dock-out-target-width: min(420px, calc(100% - 56px))");
     expect(css).toContain(".chrome[data-shell-mode=\"capsule\"]");
     expect(css).toMatch(/\.chrome\[data-shell-mode="capsule"\]\s*\{[\s\S]*width: var\(--workbench-assistant-dock-out-target-width\)/);

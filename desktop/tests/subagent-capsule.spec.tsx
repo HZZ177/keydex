@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -40,7 +40,7 @@ describe("SubagentRunCapsule", () => {
     expect(openSubagentPanel).toHaveBeenCalledWith(run);
   });
 
-  it("does not leak task, reports, errors or elapsed information into the capsule", () => {
+  it("keeps task, reports, and errors out of the compact capsule button", () => {
     const { unmount } = renderCapsule(snapshotForState("completed", {
       role: "explorer",
       final_report: "source-backed explorer report",
@@ -56,6 +56,29 @@ describe("SubagentRunCapsule", () => {
     }));
     expect(screen.getByRole("button").textContent).toBe("sub-worker");
     expect(screen.getByRole("button").textContent).not.toContain("diagnostic worker failure");
+  });
+
+  it("mirrors the standard live and frozen processing duration beside the capsule", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-07-18T13:00:06.000Z"));
+      const running = renderCapsule(snapshotForState("running", {
+        started_at: "2026-07-18T13:00:00.000Z",
+      }));
+      expect(screen.getByRole("status").textContent).toBe("正在工作 · 已处理 6秒");
+
+      act(() => vi.advanceTimersByTime(2_000));
+      expect(screen.getByRole("status").textContent).toBe("正在工作 · 已处理 8秒");
+      running.unmount();
+
+      renderCapsule(snapshotForState("completed", {
+        started_at: "2026-07-18T13:00:00.000Z",
+        finished_at: "2026-07-18T13:00:12.000Z",
+      }));
+      expect(screen.getByRole("status").textContent).toBe("已完成 · 已处理 12秒");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps all block reasons available to assistive technology", () => {

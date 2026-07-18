@@ -13,7 +13,22 @@ describe("conversation message density CSS contract", () => {
     expect(cssRule(messageListCss, ".scroller")).toContain(
       "padding-inline: var(--message-list-inline-padding)",
     );
-    expect(cssRule(messageListCss, ".list")).toContain("width: min(var(--composer-width), 100%)");
+    expect(cssRule(messageListCss, '.root[data-message-list-variant="compact"]')).toContain(
+      "--message-list-inline-padding: 18px",
+    );
+    expect(cssRule(messageListCss, ".list")).toContain(
+      "--message-list-content-width: min(var(--composer-width), var(--message-list-max-width), 100%)",
+    );
+    expect(cssRule(messageListCss, ".list")).toContain(
+      "width: calc(var(--message-list-content-width) - var(--turn-navigator-content-reserved))",
+    );
+    expect(cssRule(messageListCss, ".list")).toContain(
+      "margin-inline-start: max(0px, calc((100% - var(--message-list-content-width)) / 2))",
+    );
+    expect(cssRule(messageListCss, '.root[data-turn-navigator="true"]')).toContain(
+      "--turn-navigator-content-reserved: var(--turn-navigator-reserved)",
+    );
+    expect(messageListCss).not.toMatch(/@media \(max-width: 860px\)\s*\{\s*\.list,/u);
     expect(messageListCss).toContain("--message-user-bubble-max-width");
     expect(messageListCss).toContain("--message-tool-detail-width");
     expect(messageTextCss).toContain("var(--message-user-bubble-max-width");

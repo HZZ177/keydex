@@ -9,25 +9,44 @@
   font-weight: 600;
 }
 
+.inputSurface {
+  background: var(--composer-frame, var(--composer-bg));
+  border: 1px solid var(--composer-border);
+  border-radius: var(--sendbox-keydex-radius, 20px);
+  box-shadow: var(--sendbox-keydex-shadow, var(--composer-shadow));
+  box-sizing: border-box;
+  display: grid;
+  gap: 6px;
+  padding: 12px 12px 8px;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.inputSurface:focus-within {
+  border-color: color-mix(in srgb, var(--color-border-default) 72%, var(--composer-border));
+  box-shadow: var(--sendbox-keydex-shadow, var(--composer-shadow));
+}
+
 .composer textarea {
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border-default);
-  border-radius: 9px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
   box-sizing: border-box;
   color: var(--color-text-primary);
-  font: inherit;
-  line-height: 1.45;
+  font-family: inherit;
+  font-size: var(--sendbox-keydex-input-font-size, 14px);
+  line-height: var(--sendbox-keydex-input-line-height, 1.45);
   max-height: 128px;
   min-height: 58px;
-  outline: none;
-  padding: 9px 10px;
-  resize: vertical;
+  outline: 0;
+  padding: 0 2px;
+  resize: none;
   width: 100%;
 }
 
-.composer textarea:focus {
-  border-color: color-mix(in srgb, var(--color-primary, #1677ff) 50%, var(--color-border-default));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #1677ff) 9%, transparent);
+.composer textarea::placeholder {
+  color: color-mix(in srgb, var(--color-text-tertiary) 68%, transparent);
 }
 
 .actions {
@@ -35,6 +54,7 @@
   display: flex;
   gap: 8px;
   justify-content: flex-end;
+  min-height: 32px;
 }
 
 .actions button {

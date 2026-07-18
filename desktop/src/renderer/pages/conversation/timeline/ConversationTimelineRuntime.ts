@@ -157,7 +157,11 @@ export class ConversationTimelineRuntime {
     // The document renderer normally styles a Markdown canvas. Conversation
     // blocks contain their own Markdown roots plus arbitrary React/A2UI, so
     // the outer retained canvas must not leak Markdown typography into them.
+    // Its width is owned by MessageList CSS so the dynamic turn-navigator
+    // reservation can narrow the actual runtime units without moving their
+    // established left edge.
     this.canvas.classList.remove("keydex-markdown");
+    this.canvas.style.removeProperty("width");
     this.canvas.dataset.conversationTimelineCanvas = "true";
     this.canvas.style.overflowX = "visible";
     this.canvas.style.overflowY = "clip";

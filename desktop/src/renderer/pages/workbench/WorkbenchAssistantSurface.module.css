@@ -1,5 +1,5 @@
 .surface {
-  --workbench-assistant-dock-inline-size: min(clamp(320px, var(--workbench-assistant-dock-width), 520px), 46vw);
+  --workbench-assistant-dock-inline-size: min(clamp(320px, var(--workbench-assistant-dock-width), 1040px), 46vw);
   --workbench-assistant-transition-bg: var(--color-bg-elevated);
   --workbench-assistant-drawer-radius: 18px;
   --workbench-assistant-compose-duration: 420ms;
@@ -1821,6 +1821,12 @@
   background: transparent;
   box-shadow: none;
   backdrop-filter: blur(16px);
+}
+
+.workbenchSubagentPanel {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .drawerReviewPanel {

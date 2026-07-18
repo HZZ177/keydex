@@ -1,4 +1,7 @@
+import { useEffect, useState } from "react";
+
 import { useOptionalRightSidebarConversation } from "@/renderer/components/layout/RightSidebarConversationContext";
+import { formatConversationDuration } from "@/renderer/pages/conversation/messages/duration";
 import { useOptionalAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
 import type { SubagentRunSnapshot } from "@/types/subagents";
 
@@ -10,7 +13,11 @@ export function SubagentRunCapsule({ run }: { run: SubagentRunSnapshot }) {
   const agentRuntime = useOptionalAgentSessionRuntime();
   const unread = Boolean(agentRuntime?.subagentState.unreadRunIds[run.run_id]);
   const stateLabel = runStateLabel(run);
-  const label = `${subagentRoleLabel(run.role)}，${stateLabel}，任务：${run.task}`;
+  const durationMs = useSubagentRunDuration(run);
+  const visibleState = durationMs === null
+    ? stateLabel
+    : `${stateLabel} · 已处理 ${formatConversationDuration(durationMs)}`;
+  const label = `${subagentRoleLabel(run.role)}，${visibleState}，任务：${run.task}`;
 
   return (
     <span
@@ -38,10 +45,33 @@ export function SubagentRunCapsule({ run }: { run: SubagentRunSnapshot }) {
         <span className={styles.role}>{subagentRoleLabel(run.role)}</span>
       </button>
       <span className={styles.runState} role="status" aria-live="polite">
-        {stateLabel}
+        {visibleState}
       </span>
     </span>
   );
+}
+
+function useSubagentRunDuration(run: SubagentRunSnapshot): number | null {
+  const startedAtMs = timestampMs(run.started_at);
+  const live = run.state === "running" && startedAtMs !== null;
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!live) return undefined;
+    setNowMs(Date.now());
+    const interval = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [live, run.run_id, startedAtMs]);
+
+  if (startedAtMs === null) return null;
+  const endedAtMs = live ? nowMs : timestampMs(run.finished_at);
+  return endedAtMs === null ? null : Math.max(0, endedAtMs - startedAtMs);
+}
+
+function timestampMs(value: string | null): number | null {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
 }
 
 function runStateLabel(run: SubagentRunSnapshot): string {

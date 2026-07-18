@@ -1,5 +1,7 @@
 import type { AssistantSurfaceMode } from "./workbenchAssistantState";
 
+import { MAX_WORKBENCH_ASSISTANT_DRAWER_WIDTH } from "@/renderer/hooks/layout/layoutStore";
+
 export interface WorkbenchAssistantGeometryOptions {
   drawerWidth: number;
   viewportWidth: number;
@@ -60,7 +62,7 @@ export function getWorkbenchAssistantGeometry(
 
 export function clampWorkbenchDrawerWidth(preferredWidth: number, viewportWidth: number): number {
   const viewportCap = Math.max(320, Math.floor(viewportWidth * 0.46));
-  return Math.min(Math.max(320, preferredWidth), 520, viewportCap);
+  return Math.min(Math.max(320, preferredWidth), MAX_WORKBENCH_ASSISTANT_DRAWER_WIDTH, viewportCap);
 }
 
 export function workbenchAssistantGeometryCssVars(

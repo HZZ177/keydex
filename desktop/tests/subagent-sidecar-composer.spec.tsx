@@ -8,7 +8,7 @@ import { SubagentSidecarComposer } from "@/renderer/pages/conversation/subagents
 import { normalizeSubagentRunSnapshot } from "@/types/subagents";
 
 describe("SubagentSidecarComposer", () => {
-  it("steers and cancels only the selected active Run with optimistic version binding", async () => {
+  it("steers and stops only the selected active Run with optimistic version binding", async () => {
     const run = runningSnapshot();
     const steerSubagent = vi.fn().mockResolvedValue({ ...run, version: run.version + 1 });
     const cancelSubagent = vi.fn().mockResolvedValue(cancelledSnapshot());
@@ -27,7 +27,8 @@ describe("SubagentSidecarComposer", () => {
       }),
     ));
 
-    await userEvent.click(screen.getByRole("button", { name: "取消当前 Run" }));
+    expect(screen.getByTestId("subagent-sidecar-input-surface")).not.toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "停止该 Sub-Agent" }));
     await waitFor(() => expect(cancelSubagent).toHaveBeenCalledWith(
       run.parent_session_id,
       run.run_id,
@@ -60,7 +61,7 @@ describe("SubagentSidecarComposer", () => {
     await userEvent.click(screen.getAllByRole("button")[1]);
 
     expect((await screen.findByRole("alert")).textContent).toContain("stale Run version");
-    expect((screen.getByRole("button", { name: /Run/ }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "停止该 Sub-Agent" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it.each(["completed", "failed", "cancelled", "interrupted"] as const)(

@@ -15,6 +15,7 @@ describe("ConversationTimelineRuntime", () => {
     expect(patch.mounted).toBeLessThan(40);
     expect(harness.root.dataset.conversationTimelineLayoutMode).toBe("virtual");
     expect(harness.runtime.mountedUnitIds()).toHaveLength(patch.mounted);
+    expect(harness.runtime.canvas.style.width).toBe("");
     expect(harness.runtime.canvas.style.overflowY).toBe("clip");
   });
 

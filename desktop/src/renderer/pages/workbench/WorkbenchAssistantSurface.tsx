@@ -3,6 +3,8 @@ import { AnimatePresence, motion } from "motion/react";
 import {
   useCallback,
   useEffect,
+  lazy,
+  Suspense,
   useLayoutEffect,
   useMemo,
   useReducer,
@@ -34,6 +36,11 @@ import {
   type SlashCommand,
 } from "@/renderer/components/chat/SlashCommandMenu";
 import { LoadingSkeleton } from "@/renderer/components/loading";
+import {
+  RightSidebarConversationContext,
+  type RightSidebarConversationContextValue,
+  type SubagentInvocationPanelDetails,
+} from "@/renderer/components/layout/RightSidebarConversationContext";
 import { useRafPanelResize } from "@/renderer/components/layout/useRafPanelResize";
 import { useRuntimeModelSelection, type RuntimeSelectedModel } from "@/renderer/components/model";
 import { fileReviewDocumentFromChanges } from "@/renderer/components/diff/adapters/fileReviewDocument";
@@ -43,6 +50,7 @@ import { useHeldActiveFlag } from "@/renderer/hooks/useHeldActiveFlag";
 import {
   clampWorkbenchAssistantDrawerWidth,
   DEFAULT_WORKBENCH_ASSISTANT_DRAWER_WIDTH,
+  MAX_WORKBENCH_ASSISTANT_DRAWER_WIDTH,
 } from "@/renderer/hooks/layout/layoutStore";
 import type {
   AgentSessionController,
@@ -70,6 +78,7 @@ import {
 } from "@/renderer/pages/conversation/messages";
 import { LineChangeTicker } from "@/renderer/pages/conversation/messages/LineChangeTicker";
 import { preloadMarkdownCodeBlockRuntime } from "@/renderer/pages/conversation/messages/MarkdownCodeBlock";
+import { subagentRoleLabel } from "@/renderer/pages/conversation/subagents/SubagentRoleIcon";
 import {
   useConversationPanelModel,
   type ContextWindowUsageStatus,
@@ -97,6 +106,7 @@ import type {
   PendingInputMode,
   Workspace,
 } from "@/types/protocol";
+import type { SubagentRunSnapshot } from "@/types/subagents";
 
 import styles from "./WorkbenchAssistantSurface.module.css";
 import { workbenchAssistantGeometryCssVars } from "./workbenchAssistantGeometry";
@@ -110,6 +120,12 @@ type DockTransitionPhase = "dock-in" | "dock-out";
 type AssistantVisualMode = AssistantSurfaceMode | "dock-morph" | "dock-out-morph";
 type MessageTriggerState = "idle" | "priming" | "streaming" | "completed" | "failed" | "approval";
 type MessageTriggerPreviewKind = "assistant" | "tool" | "file-change";
+
+const LazyConversationSessionSurface = lazy(() =>
+  import("@/renderer/pages/conversation/ConversationSessionSurface").then((module) => ({
+    default: module.ConversationSessionSurface,
+  })),
+);
 
 interface MessageTriggerPreview {
   addedLines: number;
@@ -246,6 +262,7 @@ export function WorkbenchAssistantSurface({
   const [overlayTurnNavigationRequest, setOverlayTurnNavigationRequest] =
     useState<MessageListTurnNavigationRequest | null>(null);
   const [btwHistorySnapshot, setBtwHistorySnapshot] = useState<BtwConversationHistorySnapshot | null>(null);
+  const [workbenchSubagentRun, setWorkbenchSubagentRun] = useState<SubagentRunSnapshot | null>(null);
   const composerFiles = controller.composerDraft.files;
   const composerQuotes = controller.composerDraft.quotes;
   const composerAttachments = controller.composerDraft.attachments;
@@ -281,6 +298,10 @@ export function WorkbenchAssistantSurface({
         : [],
     [agentRuntime?.runtime, agentRuntime?.subagentState, panelSessionId, runtime],
   );
+  const selectedWorkbenchSubagentRun =
+    workbenchSubagentRun && agentRuntime?.runtime === runtime
+      ? agentRuntime.subagentState.runsById[workbenchSubagentRun.run_id] ?? workbenchSubagentRun
+      : workbenchSubagentRun;
   const workbenchReviewDocument = useMemo(
     () => workbenchReviewPanel
       ? workbenchReviewPanel.document ??
@@ -348,7 +369,8 @@ export function WorkbenchAssistantSurface({
   const activeBtwHistorySnapshot =
     btwActive && btwHistorySnapshot?.sessionId === panelSessionId ? btwHistorySnapshot : null;
   const reviewActive = Boolean(workbenchReviewPanel);
-  const secondaryPageActive = btwActive || reviewActive;
+  const subagentActive = Boolean(selectedWorkbenchSubagentRun);
+  const secondaryPageActive = btwActive || reviewActive || subagentActive;
   const displayPanelMessages = useMemo(() => {
     if (!btwActive) {
       return panelModel.messages;
@@ -563,11 +585,13 @@ export function WorkbenchAssistantSurface({
     [controller, modelSelection, runtime],
   );
   const currentSessionTitle =
-    (btwActive
-      ? BTW_CONVERSATION_TITLE
-      : workbenchReviewPanel
-        ? workbenchReviewPanel.title || "审阅"
-        : controller.session?.title?.trim() || controller.session?.id?.trim()) || "";
+    (selectedWorkbenchSubagentRun
+      ? subagentRoleLabel(selectedWorkbenchSubagentRun.role)
+      : btwActive
+        ? BTW_CONVERSATION_TITLE
+        : workbenchReviewPanel
+          ? workbenchReviewPanel.title || "审阅"
+          : controller.session?.title?.trim() || controller.session?.id?.trim()) || "";
   const sessionTitleVisible = Boolean(currentSessionTitle);
   const collapsedDraftPreview = controller.draft.replace(/\s+/g, " ").trim();
   const collapsedComposerLabel = collapsedDraftPreview || (hasComposerContext ? "已添加上下文" : "要求后续变更");
@@ -644,7 +668,7 @@ export function WorkbenchAssistantSurface({
     commitDrawerWidth(DEFAULT_WORKBENCH_ASSISTANT_DRAWER_WIDTH);
   };
   const renderMorphContent = dockTransitionPhase !== null;
-  const renderBottomContent = !reviewActive;
+  const renderBottomContent = !reviewActive && !subagentActive;
   const reducedMotion = prefersReducedMotion();
   const drawerDockActionActive = renderDrawerContent || dockTransitionPhase === "dock-out";
   const headerActionsDisabled = dockTransitionPhase !== null;
@@ -1273,6 +1297,7 @@ export function WorkbenchAssistantSurface({
   }, [dockTransitionPhase, openComposer, surfaceMode]);
 
   const closeDrawer = useCallback(() => {
+    setWorkbenchSubagentRun(null);
     if (btwActive) {
       onCloseBtwConversation?.();
     }
@@ -1288,6 +1313,7 @@ export function WorkbenchAssistantSurface({
   }, [beginDockTransition, btwActive, hasComposerContent, onCloseBtwConversation, reviewActive]);
 
   const collapseDrawerToCapsule = useCallback(() => {
+    setWorkbenchSubagentRun(null);
     if (btwActive) {
       onCloseBtwConversation?.();
     }
@@ -1316,6 +1342,41 @@ export function WorkbenchAssistantSurface({
       dispatchAssistantState({ type: "dock-to-drawer" });
     });
   }, [beginDockTransition, finishMessageTriggerPriming]);
+
+  const closeWorkbenchSubagent = useCallback(() => {
+    setWorkbenchSubagentRun(null);
+  }, []);
+
+  const openWorkbenchSubagent = useCallback(
+    (run: SubagentRunSnapshot) => {
+      if (!run.child_session_id.trim()) {
+        notifications.warning("该 Sub-Agent 尚未建立对话流");
+        return;
+      }
+      setWorkbenchReviewPanel(null);
+      setWorkbenchSubagentRun(run);
+      if (surfaceMode !== "drawer") {
+        dockToDrawer();
+      }
+    },
+    [dockToDrawer, notifications, surfaceMode],
+  );
+
+  const workbenchConversationNavigation = useMemo<RightSidebarConversationContextValue>(
+    () => ({
+      openConversationPanel: () => undefined,
+      openSubagentList: closeWorkbenchSubagent,
+      openSubagentPanel: openWorkbenchSubagent,
+      openSubagentInvocationPanel: (details: SubagentInvocationPanelDetails) => {
+        notifications.warning(details.errorMessage || "该 Sub-Agent 尚未建立可查看的对话流");
+      },
+      openBtwConversationFromSession: async () => {
+        const session = await onOpenBtwConversation?.();
+        return session ?? null;
+      },
+    }),
+    [closeWorkbenchSubagent, notifications, onOpenBtwConversation, openWorkbenchSubagent],
+  );
 
   const openBtwConversation = useCallback(() => {
     if (!onOpenBtwConversation || btwActive) {
@@ -1346,6 +1407,7 @@ export function WorkbenchAssistantSurface({
   useEffect(() => {
     handledReviewPanelRequestIdRef.current = previewContext.reviewPanelRequest?.requestId ?? 0;
     setWorkbenchReviewPanel(null);
+    setWorkbenchSubagentRun(null);
   }, [panelSessionId, workspaceId]);
 
   useEffect(() => {
@@ -1668,6 +1730,26 @@ export function WorkbenchAssistantSurface({
       className={styles.drawerPanel}
     />
   ) : null;
+  const stableSubagentPanel =
+    shouldMountStablePanel && stablePanelContentReady && selectedWorkbenchSubagentRun ? (
+      <div
+        className={styles.workbenchSubagentPanel}
+        data-child-session-id={selectedWorkbenchSubagentRun.child_session_id}
+        data-testid="workbench-subagent-panel"
+      >
+        <Suspense fallback={<LoadingSkeleton label="正在加载 Sub-Agent 对话" lineCount={4} width="compact" />}>
+          <LazyConversationSessionSurface
+            threadId={selectedWorkbenchSubagentRun.child_session_id}
+            runtime={runtime}
+            mode="sidecar"
+            previewPanelScopeKey={workbenchPreviewScopeKey}
+            subagentRun={selectedWorkbenchSubagentRun}
+            a2uiRenderSuspended={drawerA2UIRenderSuspended}
+            onOpenMcpSettings={onOpenMcpSettings}
+          />
+        </Suspense>
+      </div>
+    ) : null;
   const drawerLoadingPanel =
     shouldMountStablePanel && stablePanelMode === "drawer" && !stablePanelContentReady ? (
       <LoadingSkeleton
@@ -1771,7 +1853,7 @@ export function WorkbenchAssistantSurface({
             type="button"
             className={styles.btwBackButton}
             aria-label="返回主对话"
-            onClick={btwActive ? onCloseBtwConversation : closeWorkbenchReviewPanel}
+            onClick={subagentActive ? closeWorkbenchSubagent : btwActive ? onCloseBtwConversation : closeWorkbenchReviewPanel}
           >
             <ArrowLeft size={14} />
             <span>主对话</span>
@@ -1779,7 +1861,11 @@ export function WorkbenchAssistantSurface({
         ) : null}
         <div className={styles.drawerTitle}>
           <span title={currentSessionTitle || undefined}>{currentSessionTitle || "助手"}</span>
-          <small>{drawerStatusText(runtimeState, pendingApproval)}</small>
+          <small>
+            {selectedWorkbenchSubagentRun
+              ? workbenchSubagentStatusText(selectedWorkbenchSubagentRun)
+              : drawerStatusText(runtimeState, pendingApproval)}
+          </small>
         </div>
         <button
           type="button"
@@ -1797,14 +1883,15 @@ export function WorkbenchAssistantSurface({
         data-content-state={stablePanelContentReady ? "ready" : "deferred"}
         data-testid={stablePanelMode === "morph" ? "workbench-assistant-morph-middle" : undefined}
       >
-        {stableReviewPanel ?? stableConversationPanel ?? drawerLoadingPanel}
+        {stableSubagentPanel ?? stableReviewPanel ?? stableConversationPanel ?? drawerLoadingPanel}
       </div>
     </section>
   ) : null;
   const capsuleAutoYielded = capsuleYielded && capsuleYieldEligible;
 
   return (
-    <div
+    <RightSidebarConversationContext.Provider value={workbenchConversationNavigation}>
+      <div
       ref={surfaceRef}
       className={styles.surface}
       data-testid="workbench-assistant-surface"
@@ -1816,6 +1903,7 @@ export function WorkbenchAssistantSurface({
       data-dock-transition={dockTransitionPhase ?? "idle"}
       data-drawer-resizing={drawerResize.dragging ? "true" : "false"}
       data-btw-active={btwActive ? "true" : "false"}
+      data-subagent-active={subagentActive ? "true" : "false"}
       data-review-active={reviewActive ? "true" : "false"}
       data-message-trigger-state={messageTriggerLayoutState}
       data-session-title-visible={bottomSessionTitleVisible ? "true" : "false"}
@@ -1862,7 +1950,7 @@ export function WorkbenchAssistantSurface({
                   <button
                     type="button"
                     className={styles.btwBackButton}
-                    onClick={btwActive ? onCloseBtwConversation : closeWorkbenchReviewPanel}
+                    onClick={subagentActive ? closeWorkbenchSubagent : btwActive ? onCloseBtwConversation : closeWorkbenchReviewPanel}
                     aria-label="返回主对话"
                   >
                     <ArrowLeft size={14} />
@@ -2031,7 +2119,8 @@ export function WorkbenchAssistantSurface({
           <ChevronUp aria-hidden="true" size={15} strokeWidth={2} />
         </button>
       ) : null}
-    </div>
+      </div>
+    </RightSidebarConversationContext.Provider>
   );
 }
 
@@ -2705,7 +2794,7 @@ export function resolveWorkbenchAssistantDockInlineWidth(drawerWidth: number, vi
   if (viewportWidth <= 900) {
     return Math.min(380, Math.max(300, viewportWidth * 0.48));
   }
-  return Math.min(Math.max(320, drawerWidth), 520, viewportWidth * 0.46);
+  return Math.min(Math.max(320, drawerWidth), MAX_WORKBENCH_ASSISTANT_DRAWER_WIDTH, viewportWidth * 0.46);
 }
 
 function latestAssistantMessageFrom(messages: AgentChatMessage[]): AgentChatMessage | null {
@@ -3198,4 +3287,22 @@ function drawerStatusText(state: ConversationRuntimeState, pendingApproval: Comm
     return "停止中";
   }
   return "就绪";
+}
+
+function workbenchSubagentStatusText(run: SubagentRunSnapshot): string {
+  if (run.blocked_on === "approval") return "等待审批";
+  switch (run.state) {
+    case "queued":
+      return "正在启动";
+    case "running":
+      return "正在工作";
+    case "completed":
+      return "已完成";
+    case "cancelled":
+      return "已取消";
+    case "failed":
+      return "失败";
+    case "interrupted":
+      return "已中断";
+  }
 }

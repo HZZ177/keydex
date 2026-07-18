@@ -63,7 +63,7 @@ export function SubagentSidecarComposer({
   if (!isCurrentRun) {
     return (
       <div className={styles.readonly} role="status" data-testid="subagent-historical-run-notice">
-        这是历史 Run，可查看完整过程，但不能在此发送引导或取消。
+        这是历史 Run，可查看完整过程，但不能在此发送引导或停止。
       </div>
     );
   }
@@ -81,24 +81,26 @@ export function SubagentSidecarComposer({
       <label className={styles.label} htmlFor={`subagent-composer:${run.run_id}`}>
         中途引导 Sub-Agent
       </label>
-      <textarea
-        id={`subagent-composer:${run.run_id}`}
-        value={value}
-        rows={2}
-        maxLength={10_000}
-        disabled={Boolean(busy)}
-        placeholder="补充约束、纠正方向或提供新线索…"
-        onChange={(event) => setValue(event.currentTarget.value)}
-      />
-      {error ? <div className={styles.error} role="alert">{error}</div> : null}
-      <div className={styles.actions}>
-        <button type="button" className={styles.cancel} disabled={Boolean(busy)} onClick={() => void cancel()}>
-          {busy === "cancel" ? "正在取消…" : "取消当前 Run"}
-        </button>
-        <button type="submit" className={styles.submit} disabled={Boolean(busy) || !value.trim()}>
-          {busy === "submit" ? "正在发送…" : "发送引导"}
-        </button>
+      <div className={styles.inputSurface} data-testid="subagent-sidecar-input-surface">
+        <textarea
+          id={`subagent-composer:${run.run_id}`}
+          value={value}
+          rows={2}
+          maxLength={10_000}
+          disabled={Boolean(busy)}
+          placeholder="补充约束、纠正方向或提供新线索…"
+          onChange={(event) => setValue(event.currentTarget.value)}
+        />
+        <div className={styles.actions}>
+          <button type="button" className={styles.cancel} disabled={Boolean(busy)} onClick={() => void cancel()}>
+            {busy === "cancel" ? "正在停止…" : "停止该 Sub-Agent"}
+          </button>
+          <button type="submit" className={styles.submit} disabled={Boolean(busy) || !value.trim()}>
+            {busy === "submit" ? "正在发送…" : "发送引导"}
+          </button>
+        </div>
       </div>
+      {error ? <div className={styles.error} role="alert">{error}</div> : null}
     </form>
   );
 }
