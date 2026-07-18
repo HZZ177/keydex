@@ -484,6 +484,16 @@ def test_fetch_options_are_explicit_and_prune_is_off_by_default() -> None:
         "--no-prune",
         "--progress",
     )
+    branch_update = ordinary.model_copy(update={
+        "refspec": "refs/heads/feature:refs/heads/feature",
+    })
+    assert definition.prepare(branch_update).argv == (
+        "fetch",
+        "origin",
+        "--no-prune",
+        "--progress",
+        "refs/heads/feature:refs/heads/feature",
+    )
 
     with pytest.raises(GitApiError, match="remote or all remotes"):
         definition.prepare(ordinary.model_copy(update={"remote": None}))

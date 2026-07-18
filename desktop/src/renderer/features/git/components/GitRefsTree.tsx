@@ -2,13 +2,17 @@ import {
   ChevronRight,
   GitBranch,
   GitCompareArrows,
+  GitMerge,
   GitPullRequest,
+  GitPullRequestArrow,
   Pencil,
   Plus,
+  RefreshCw,
   Search,
   Star,
   Tag,
   Trash2,
+  Upload,
 } from "lucide-react";
 import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
@@ -22,7 +26,18 @@ import type { GitRef } from "@/runtime/gitTypes";
 import { GitDivergenceIndicator } from "./GitDivergenceIndicator";
 import styles from "./GitRefsTree.module.css";
 
-export type GitRefAction = "checkout" | "create_branch" | "compare" | "rename" | "delete";
+export type GitRefAction =
+  | "checkout"
+  | "checkout_rebase"
+  | "create_branch"
+  | "compare_refs"
+  | "compare_worktree"
+  | "rebase_current"
+  | "merge_current"
+  | "update"
+  | "push"
+  | "rename"
+  | "delete";
 
 export interface GitRefGroupModel {
   kind: GitRef["kind"];
@@ -48,8 +63,9 @@ export function GitRefsTree({ refs, selectedRef, onSelect, onAction }: GitRefsTr
   const visibleRefs = useMemo(() => filterGitRefs(refs, query), [query, refs]);
   const groups = useMemo(() => buildGitRefTree(visibleRefs), [visibleRefs]);
   const [collapsed, setCollapsed] = useState<Set<GitRef["kind"]>>(() => new Set(["tag"]));
+  const currentRef = refs.find((ref) => ref.current) ?? null;
   const head = visibleRefs.find((ref) => ref.current) ?? null;
-  const currentUpstream = refs.find((ref) => ref.current)?.upstream ?? null;
+  const currentUpstream = currentRef?.upstream ?? null;
   const [focusedKey, setFocusedKey] = useState(head ? "head" : `group:${groups[0]?.kind ?? "local"}`);
   const appContextMenu = useOptionalAppContextMenu();
 
@@ -67,7 +83,7 @@ export function GitRefsTree({ refs, selectedRef, onSelect, onAction }: GitRefsTr
   const openRefContextMenu = (ref: GitRef, target: HTMLButtonElement, x: number, y: number) => {
     onSelect(ref);
     appContextMenu?.openContextMenu({
-      items: buildGitRefContextMenuItems(ref, onAction),
+      items: buildGitRefContextMenuItems(ref, currentRef, onAction),
       target,
       x,
       y,
@@ -232,25 +248,40 @@ function GitRefIcon({ refValue, currentUpstream }: { refValue: GitRef; currentUp
 
 export function buildGitRefContextMenuItems(
   ref: GitRef,
+  currentRef: GitRef | null,
   onAction?: (action: GitRefAction, ref: GitRef) => void,
 ): AppContextMenuItem[] {
   const item = (
     action: GitRefAction,
     label: string,
     icon: AppContextMenuItem["icon"],
+    options: Pick<AppContextMenuItem, "disabled" | "separatorBefore"> = {},
   ): AppContextMenuItem => ({
     action: () => onAction?.(action, ref),
     icon,
     id: `git-ref-${action}-${ref.fullName}`,
     label,
+    ...options,
   });
 
+  const currentName = currentRef?.shortName ?? "当前分支";
+  const local = ref.kind === "local";
   return [
     ...(!ref.current ? [item("checkout", "签出", GitBranch)] : []),
-    item("create_branch", "从此处新建分支", Plus),
-    item("compare", "与当前分支比较", GitCompareArrows),
-    ...(ref.kind === "local" ? [item("rename", "重命名", Pencil)] : []),
-    ...(!ref.current ? [item("delete", "删除…", Trash2)] : []),
+    item("create_branch", `从 '${ref.shortName}' 新建分支…`, Plus),
+    ...(!ref.current && local ? [item("checkout_rebase", `签出并变基到 '${currentName}'`, GitPullRequestArrow)] : []),
+    ...(!ref.current ? [item("compare_refs", `与 '${currentName}' 比较`, GitCompareArrows, { separatorBefore: true })] : []),
+    item("compare_worktree", "显示与工作树的差异", GitCompareArrows, { separatorBefore: ref.current }),
+    ...(!ref.current && local ? [
+      item("rebase_current", `将 '${currentName}' 变基到 '${ref.shortName}'`, GitPullRequestArrow, { separatorBefore: true }),
+      item("merge_current", `将 '${ref.shortName}' 合并到 '${currentName}' 中`, GitMerge),
+    ] : []),
+    ...(local ? [
+      item("update", "更新", RefreshCw, { separatorBefore: true }),
+      item("push", "推送…", Upload),
+      item("rename", "重命名…", Pencil, { separatorBefore: true }),
+    ] : []),
+    ...(!ref.current && ref.kind !== "tag" ? [item("delete", "删除", Trash2)] : []),
   ];
 }
 

@@ -13,4 +13,6 @@ export {
   type GitCommitPushTarget,
   type GitPushTagMode,
 } from "./GitCommitPushDialog";
+export { GitCommitFileDiffDialog } from "./GitCommitFileDiffDialog";
+export { GitRevisionTreeDialog } from "./GitRevisionTreeDialog";
 export * from "./gitDialogContracts";

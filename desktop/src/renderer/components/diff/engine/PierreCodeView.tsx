@@ -150,7 +150,7 @@ export function pierreCodeViewProps(
   });
   return {
     items,
-    className: adapter.className,
+    className: [styles.scrollViewport, adapter.className].filter(Boolean).join(" "),
     style: keydexPierreStyle(adapter.profile, {
       minWidth: 0,
       minHeight: 0,

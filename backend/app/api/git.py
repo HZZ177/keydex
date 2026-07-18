@@ -31,6 +31,7 @@ from backend.app.git.models import (
     GitCommandResponse,
     GitCommitCommandRequest,
     GitCommitDetailResponse,
+    GitRevisionTreeResponse,
     GitCompareResponse,
     GitConfirmationRequest,
     GitConfirmationResponse,
@@ -421,6 +422,20 @@ async def repository_commit(
     return await _await(service.commit_detail, request, revision, parent=parent)
 
 
+@router.get(
+    "/repositories/{repository_id}/revision-tree/{revision}",
+    response_model=GitRevisionTreeResponse,
+)
+async def repository_revision_tree(
+    repository_id: str,
+    revision: str,
+    service: GitQueries,
+    request: GitRepositoryRequestDep,
+) -> GitRevisionTreeResponse:
+    request.repository_id = repository_id
+    return await _await(service.revision_tree, request, revision)
+
+
 @router.get("/repositories/{repository_id}/diff", response_model=GitDiffResponse)
 async def repository_diff(
     repository_id: str,
@@ -447,9 +462,10 @@ async def repository_compare(
     mode: str = Query(pattern=r"^(commit|two_dot|three_dot|working_tree)$"),
     left: str = Query(min_length=1, max_length=255),
     right: str | None = Query(default=None, max_length=255),
+    path: str | None = Query(default=None, min_length=1, max_length=4096),
 ) -> GitCompareResponse:
     request.repository_id = repository_id
-    return await _await(service.compare, request, mode=mode, left=left, right=right)
+    return await _await(service.compare, request, mode=mode, left=left, right=right, path=path)
 
 
 @router.get("/repositories/{repository_id}/merge-preview", response_model=GitMergePreviewResponse)

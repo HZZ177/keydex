@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from backend.app.git.diff import apply_numstat, parse_git_diff, parse_numstat_z
+from backend.app.git.diff import (
+    apply_numstat,
+    diff_summaries,
+    parse_git_diff,
+    parse_name_status_z,
+    parse_numstat_z,
+)
 
 
 def test_parses_text_hunks_rename_binary_modes_and_no_newline_marker() -> None:
@@ -58,6 +64,31 @@ def test_parses_zero_terminated_numstat_for_text_binary_and_rename() -> None:
         ("image.bin", None, None, None),
         ("new.txt", "old.txt", 1, 1),
     ]
+
+
+def test_builds_complete_patchless_summaries_from_name_status_and_numstat() -> None:
+    changes = parse_name_status_z(
+        "M\x00src/a.ts\x00A\x00new.txt\x00D\x00old.txt\x00"
+        "R095\x00before.md\x00after.md\x00C100\x00source.bin\x00copy.bin\x00"
+    )
+    summaries = diff_summaries(changes, parse_numstat_z(
+        "10\t2\tsrc/a.ts\x001\t0\tnew.txt\x000\t4\told.txt\x00"
+        "3\t1\t\x00before.md\x00after.md\x00-\t-\t\x00source.bin\x00copy.bin\x00"
+    ))
+
+    assert [item.status for item in summaries] == [
+        "modified", "added", "deleted", "renamed", "copied",
+    ]
+    assert [(item.old_path, item.new_path) for item in summaries] == [
+        ("src/a.ts", "src/a.ts"),
+        (None, "new.txt"),
+        ("old.txt", None),
+        ("before.md", "after.md"),
+        ("source.bin", "copy.bin"),
+    ]
+    assert summaries[3].additions == 3
+    assert summaries[4].binary is True
+    assert all(item.raw_patch == "" and item.truncated is False for item in summaries)
 
 
 def test_parses_real_diff_and_applies_numstat(git_repo_factory) -> None:

@@ -1,11 +1,12 @@
-import { Cloud, GitBranch, RefreshCw, Search, Tag } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Archive, Cherry, Cloud, Code2, Copy, FileArchive, GitBranch, GitCompareArrows, GitCommit, RefreshCw, RotateCcw, Search, Tag, Undo2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import type { GitHistoryFilters } from "@/runtime/git";
 import type { GitCommitSummary, GitObjectId } from "@/runtime/gitTypes";
 import { gitGraphColor } from "@/renderer/features/git/graph/gitGraphColor";
 import { computeGitGraph, type GitGraphRow } from "@/renderer/features/git/graph/gitGraph";
 import { SettingsSelect } from "@/renderer/pages/settings/components";
+import { type AppContextMenuItem, useOptionalAppContextMenu } from "@/renderer/providers/AppContextMenuProvider";
 
 import styles from "./GitHistoryView.module.css";
 
@@ -37,6 +38,17 @@ export interface GitHistoryDecorationPresentation {
   label: string;
 }
 
+export type GitHistoryContextAction =
+  | "copy_revision"
+  | "create_patch"
+  | "cherry_pick"
+  | "checkout_revision"
+  | "show_repository"
+  | "compare_worktree"
+  | "reset_branch"
+  | "revert_commit"
+  | "undo_commit";
+
 export function GitHistoryView({
   commits,
   selectedObjectId,
@@ -50,6 +62,7 @@ export function GitHistoryView({
   revisionOptions = [],
   authorOptions = [],
   onApplyFilters,
+  onContextAction,
 }: {
   commits: readonly GitCommitSummary[];
   selectedObjectId: GitObjectId | null;
@@ -63,6 +76,7 @@ export function GitHistoryView({
   revisionOptions?: readonly GitHistoryRevisionOption[];
   authorOptions?: readonly string[];
   onApplyFilters?: (filters: GitHistoryFilters) => void;
+  onContextAction?: (action: GitHistoryContextAction, commit: GitCommitSummary) => void | Promise<void>;
 }) {
   const [scrollTop, setScrollTop] = useState(0);
   const [draftFilters, setDraftFilters] = useState<GitHistoryFilters>({ ...filters });
@@ -73,6 +87,7 @@ export function GitHistoryView({
   }, []);
   const graph = useMemo(() => computeGitGraph(commits), [commits]);
   const graphWidth = historyGraphWidth(graph.columnCount);
+  const appContextMenu = useOptionalAppContextMenu();
   const window = useMemo(
     () => historyVirtualWindow(commits.length, scrollTop, viewportHeight),
     [commits.length, scrollTop, viewportHeight],
@@ -97,6 +112,22 @@ export function GitHistoryView({
       }, 300);
       return next;
     });
+  };
+  const openCommitContextMenu = (commit: GitCommitSummary, target: HTMLButtonElement, x: number, y: number) => {
+    onSelect(commit);
+    appContextMenu?.openContextMenu({
+      items: buildGitHistoryContextMenuItems(commit, onContextAction),
+      target,
+      x,
+      y,
+    });
+  };
+  const openKeyboardContextMenu = (event: ReactKeyboardEvent<HTMLButtonElement>, commit: GitCommitSummary) => {
+    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const bounds = event.currentTarget.getBoundingClientRect();
+    openCommitContextMenu(commit, event.currentTarget, bounds.left + 24, bounds.bottom + 4);
   };
 
   return (
@@ -219,6 +250,14 @@ export function GitHistoryView({
                   style={{ transform: `translateY(${index * ROW_HEIGHT}px)` }}
                   key={commit.objectId}
                   onClick={() => onSelect(commit)}
+                  aria-haspopup="menu"
+                  data-app-context-menu="local"
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openCommitContextMenu(commit, event.currentTarget, event.clientX, event.clientY);
+                  }}
+                  onKeyDown={(event) => openKeyboardContextMenu(event, commit)}
                 >
                   <GitGraphCell row={graph.rows[index]} columnCount={graph.columnCount} />
                   <span className={styles.subject} data-git-history-subject="true">{commit.subject}</span>
@@ -242,6 +281,37 @@ export function GitHistoryView({
       </button>
     </section>
   );
+}
+
+export function buildGitHistoryContextMenuItems(
+  commit: GitCommitSummary,
+  onAction?: (action: GitHistoryContextAction, commit: GitCommitSummary) => void | Promise<void>,
+): AppContextMenuItem[] {
+  const item = (
+    action: GitHistoryContextAction,
+    label: string,
+    icon: AppContextMenuItem["icon"],
+    options: Pick<AppContextMenuItem, "disabled" | "separatorBefore"> = {},
+  ): AppContextMenuItem => ({
+    action: () => onAction?.(action, commit),
+    icon,
+    id: `git-history-${action}-${commit.objectId}`,
+    label,
+    ...options,
+  });
+  const isHead = commit.parentIds.length > 0
+    && commit.decorations.some((decoration) => /(^|\s)HEAD(?:\s|$|->|→)/.test(decoration));
+  return [
+    item("copy_revision", "复制修订号", Copy),
+    item("create_patch", "创建补丁…", FileArchive),
+    item("cherry_pick", "优选", Cherry),
+    item("checkout_revision", "签出修订", GitCommit, { separatorBefore: true }),
+    item("show_repository", "在修订版中显示仓库", Archive),
+    item("compare_worktree", "与本地比较", GitCompareArrows),
+    item("reset_branch", "将当前分支重置到此处…", RotateCcw, { separatorBefore: true }),
+    item("revert_commit", "还原提交", Undo2),
+    item("undo_commit", "撤销提交…", Code2, { disabled: !isHead }),
+  ];
 }
 
 interface ParsedGitHistoryDecoration {

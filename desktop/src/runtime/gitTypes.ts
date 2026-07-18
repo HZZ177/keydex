@@ -320,6 +320,22 @@ export interface GitCommitDetail {
   files: readonly GitFileDiff[];
 }
 
+export interface GitRevisionTreeEntry {
+  path: string;
+  objectId: GitObjectId;
+  mode: string;
+  kind: "blob" | "submodule";
+  size: number | null;
+}
+
+export interface GitRevisionTree {
+  repositoryId: GitRepositoryId;
+  repositoryVersion: GitRepositoryVersion;
+  revision: string;
+  objectId: GitObjectId;
+  entries: readonly GitRevisionTreeEntry[];
+}
+
 export type GitCompareMode = "commit" | "two_dot" | "three_dot" | "working_tree";
 
 export interface GitCompareResult {
@@ -642,6 +658,31 @@ export function normalizeGitCommitDetail(value: unknown): GitCommitDetail {
     commit: normalizeGitCommit(raw.commit, "Git commit detail.commit"),
     selectedParentId: optionalText(raw.selected_parent_id, "Git commit detail.selected_parent_id") as GitObjectId | null,
     files: raw.files.map((file, index) => normalizeGitFileDiff(file, `Git commit detail.files[${index}]`)),
+  };
+}
+
+export function normalizeGitRevisionTree(value: unknown): GitRevisionTree {
+  const raw = record(value, "Git revision tree");
+  if (!Array.isArray(raw.entries)) throw new Error("Git revision tree.entries must be an array");
+  return {
+    repositoryId: text(raw.repository_id, "Git revision tree.repository_id") as GitRepositoryId,
+    repositoryVersion: text(raw.repository_version, "Git revision tree.repository_version") as GitRepositoryVersion,
+    revision: text(raw.revision, "Git revision tree.revision"),
+    objectId: text(raw.object_id, "Git revision tree.object_id") as GitObjectId,
+    entries: raw.entries.map((value, index) => {
+      const entry = record(value, `Git revision tree.entries[${index}]`);
+      const kind = text(entry.kind, `Git revision tree.entries[${index}].kind`) as GitRevisionTreeEntry["kind"];
+      if (kind !== "blob" && kind !== "submodule") throw new Error("Git revision tree entry.kind is unknown");
+      return {
+        path: text(entry.path, `Git revision tree.entries[${index}].path`),
+        objectId: text(entry.object_id, `Git revision tree.entries[${index}].object_id`) as GitObjectId,
+        mode: text(entry.mode, `Git revision tree.entries[${index}].mode`),
+        kind,
+        size: entry.size === null || entry.size === undefined
+          ? null
+          : count(entry.size, `Git revision tree.entries[${index}].size`),
+      };
+    }),
   };
 }
 

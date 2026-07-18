@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -10,6 +10,7 @@ import {
   presentGitHistoryDecorations,
 } from "@/renderer/features/git/components/GitHistoryView";
 import type { GitCommitSummary, GitObjectId } from "@/runtime/gitTypes";
+import { AppContextMenuProvider } from "@/renderer/providers/AppContextMenuProvider";
 
 afterEach(cleanup);
 
@@ -43,6 +44,29 @@ describe("GitHistoryView", () => {
     fireEvent.click(screen.getByRole("option", { name: /commit 3/ }));
     expect(onSelect).toHaveBeenCalledWith(first[2]);
     expect(screen.getByRole("button", { name: "已加载全部 3 个提交" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("exposes the real commit context actions instead of the generic refresh menu", async () => {
+    const selected = commit(7);
+    const onContextAction = vi.fn();
+    render(
+      <AppContextMenuProvider>
+        <GitHistoryView commits={[selected]} selectedObjectId={selected.objectId} loading={false} hasMore={false} onSelect={vi.fn()} onLoadMore={vi.fn()} onRefresh={vi.fn()} onContextAction={onContextAction} />
+      </AppContextMenuProvider>,
+    );
+
+    fireEvent.contextMenu(screen.getByRole("option", { name: /commit 7/ }), { clientX: 160, clientY: 120 });
+    expect(screen.getByRole("menuitem", { name: "复制修订号" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "创建补丁…" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "优选" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "签出修订" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "在修订版中显示仓库" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "与本地比较" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "将当前分支重置到此处…" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "还原提交" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "撤销提交…" }).hasAttribute("disabled")).toBe(true);
+    fireEvent.click(screen.getByRole("menuitem", { name: "与本地比较" }));
+    await waitFor(() => expect(onContextAction).toHaveBeenCalledWith("compare_worktree", selected));
   });
 
   it("renders lane and merge edges from the shared graph model", () => {

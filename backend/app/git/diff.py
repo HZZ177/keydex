@@ -22,6 +22,13 @@ class GitNumstat:
     deletions: int | None
 
 
+@dataclass(frozen=True)
+class GitNameStatus:
+    status: GitFileStatusCode
+    old_path: str | None
+    new_path: str | None
+
+
 def parse_git_diff(payload: str, *, truncated: bool = False) -> list[GitFileDiffResponse]:
     lines = payload.splitlines(keepends=True)
     starts = [index for index, line in enumerate(lines) if line.startswith("diff --git ")]
@@ -140,6 +147,68 @@ def parse_numstat_z(payload: str) -> list[GitNumstat]:
             )
         )
     return results
+
+
+def parse_name_status_z(payload: str) -> list[GitNameStatus]:
+    tokens = payload.split("\x00")
+    results: list[GitNameStatus] = []
+    index = 0
+    status_codes = {
+        "A": GitFileStatusCode.ADDED,
+        "M": GitFileStatusCode.MODIFIED,
+        "D": GitFileStatusCode.DELETED,
+        "R": GitFileStatusCode.RENAMED,
+        "C": GitFileStatusCode.COPIED,
+        "T": GitFileStatusCode.TYPE_CHANGED,
+        "U": GitFileStatusCode.CONFLICTED,
+    }
+    while index < len(tokens):
+        token = tokens[index]
+        index += 1
+        if not token:
+            continue
+        status = status_codes.get(token[:1])
+        if status is None:
+            raise GitDiffParseError(f"Unknown name-status code: {token}")
+        if status in {GitFileStatusCode.RENAMED, GitFileStatusCode.COPIED}:
+            if index + 1 >= len(tokens):
+                raise GitDiffParseError("Rename name-status record is incomplete")
+            old_path = tokens[index]
+            new_path = tokens[index + 1]
+            index += 2
+        else:
+            if index >= len(tokens):
+                raise GitDiffParseError("Name-status record is incomplete")
+            path = tokens[index]
+            index += 1
+            old_path = None if status is GitFileStatusCode.ADDED else path
+            new_path = None if status is GitFileStatusCode.DELETED else path
+        results.append(GitNameStatus(status=status, old_path=old_path, new_path=new_path))
+    return results
+
+
+def diff_summaries(
+    changes: list[GitNameStatus],
+    numstats: list[GitNumstat],
+) -> list[GitFileDiffResponse]:
+    by_path = {item.path: item for item in numstats}
+    summaries: list[GitFileDiffResponse] = []
+    for change in changes:
+        path = change.new_path or change.old_path or ""
+        stat = by_path.get(path)
+        binary = bool(stat and stat.additions is None and stat.deletions is None)
+        summaries.append(GitFileDiffResponse(
+            old_path=change.old_path,
+            new_path=change.new_path,
+            status=change.status,
+            binary=binary,
+            additions=stat.additions if stat else None,
+            deletions=stat.deletions if stat else None,
+            hunks=[],
+            raw_patch="",
+            truncated=False,
+        ))
+    return summaries
 
 
 def apply_numstat(

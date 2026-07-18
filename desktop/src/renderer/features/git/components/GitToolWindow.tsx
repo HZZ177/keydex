@@ -2,20 +2,25 @@ import { AlertTriangle, ChevronDown, FileClock, GitBranch, GitCommitHorizontal, 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import type { ActiveProjectState, GitRepositoryRoot } from "@/renderer/features/git/activeProject";
-import type { GitProjectStoreState, GitStoreState } from "@/renderer/features/git/store/gitStore";
+import type { GitProjectStoreState, GitStoreState, GitToolWindowNavigationIntent, GitToolWindowNavigationRequest } from "@/renderer/features/git/store/gitStore";
 import { useOptionalGitController, useOptionalGitRuntime, useOptionalGitStoreSelector } from "@/renderer/providers/GitProvider";
 import { useOptionalGitStore } from "@/renderer/providers/GitProvider";
 import { useOptionalPreview, type PreviewRenderContext } from "@/renderer/providers/PreviewProvider";
-import type { GitBisectSnapshot, GitBlamePage, GitCommandResult, GitCommitDetail, GitCommitSummary, GitConflictFile, GitConflictsSnapshot, GitDiffSnapshot, GitLfsSnapshot, GitMergePreview, GitMergeStrategy, GitObjectId, GitRebasePreview, GitRebaseTodoItem, GitReflogPage, GitRepositoryDescriptor, GitRepositoryId, GitResetMode, GitResetPreview, GitStatusSnapshot, GitSubmodulesSnapshot, GitWorktree, GitWorktreesSnapshot } from "@/runtime/gitTypes";
+import type { GitBisectSnapshot, GitBlamePage, GitCommandResult, GitCommitDetail, GitCommitSummary, GitCompareResult, GitConflictFile, GitConflictsSnapshot, GitDiffSnapshot, GitLfsSnapshot, GitMergePreview, GitMergeStrategy, GitObjectId, GitRebasePreview, GitRebaseTodoItem, GitReflogPage, GitRepositoryDescriptor, GitRepositoryId, GitResetMode, GitResetPreview, GitRevisionTree, GitStatusSnapshot, GitSubmodulesSnapshot, GitWorktree, GitWorktreesSnapshot } from "@/runtime/gitTypes";
 import type { GitCommitCommand, GitConflictActionCommand, GitConflictFileAction, GitHistoryFilters, GitIdentity, GitPatchExport, GitPatchExportMode, GitPushCommand, GitRemoteInfo, GitStashDetail, GitStashEntry, GitStashEntryCommand } from "@/runtime/git";
 import { GIT_HISTORY_PAGE_SIZE } from "@/renderer/features/git/performancePolicy";
 import { gitOperationErrorMessage, gitUiErrorMessage } from "@/renderer/features/git/errorPresentation";
 import { useGitErrorNotificationState } from "@/renderer/features/git/GitNotifications";
 import { WorkspaceSelector, type WorkspaceSelectorProps } from "@/renderer/components/workspace";
 import { useRafPanelResize } from "@/renderer/components/layout/useRafPanelResize";
+import { LoadingSkeleton } from "@/renderer/components/loading";
 import {
   GitCommitPushDialog,
   GitConfirmActionDialog,
+  GitDialogField,
+  GitDialogSummary,
+  GitFormDialog,
+  GitRevisionTreeDialog,
   type GitCommitPushTarget,
   type GitPushTagMode,
 } from "../dialogs";
@@ -30,8 +35,9 @@ import { GitBranchActions } from "./GitBranchActions";
 import { GitRemoteManager } from "./GitRemoteManager";
 import { GitSyncActions, type GitFetchOptions, type GitPushOptions, type GitUpdateStrategy } from "./GitSyncActions";
 import { GitStashView } from "./GitStashView";
-import { EMPTY_GIT_HISTORY_FILTERS, GitHistoryView, mergeHistoryPages } from "./GitHistoryView";
+import { EMPTY_GIT_HISTORY_FILTERS, GitHistoryView, mergeHistoryPages, type GitHistoryContextAction } from "./GitHistoryView";
 import { GitCommitDetailsView } from "./GitCommitDetailsView";
+import { GitComparisonView } from "./GitComparisonView";
 import { GitBlameView, type GitBlameRequest } from "./GitBlameView";
 import { GitReflogView } from "./GitReflogView";
 import { GitMergeView } from "./GitMergeView";
@@ -59,13 +65,29 @@ import {
   type GitPatchActionIdentity,
 } from "../diffPatchActions";
 import { gitWorkspacePreviewPath } from "../gitDiffFileActions";
+import { validateGitBranchName } from "../dialogs";
 
-export type GitToolWindowView = "changes" | "history" | "blame" | "reflog" | "branches" | "stash" | "operations";
+export type GitToolWindowView = "changes" | "history" | "blame" | "reflog" | "branches" | "stash" | "operations" | "compare";
 
 type PendingMergeDraftDiscard =
   | { kind: "view"; view: GitToolWindowView }
   | { kind: "repository"; repositoryId: GitRepositoryId }
   | { kind: "conflict"; path: string };
+
+type PendingHistoryAction = {
+  kind: "cherry_pick" | "revert_commit" | "undo_commit";
+  commit: GitCommitSummary;
+};
+
+type BranchContextDialog = {
+  kind: "create" | "rename" | "delete";
+  ref: GitRefsSnapshotRef;
+};
+
+type PendingBranchOperation = {
+  kind: "merge" | "rebase";
+  ref: GitRefsSnapshotRef;
+};
 
 const COMMIT_PANE_MIN_PERCENT = 18;
 const COMMIT_PANE_MAX_PERCENT = 80;
@@ -90,6 +112,7 @@ const VIEW_LABELS: Readonly<Record<GitToolWindowView, string>> = {
   branches: "分支",
   stash: "暂存的改动",
   operations: "高级 Git 工具",
+  compare: "比较",
 };
 
 export interface GitToolWindowProps {
@@ -179,6 +202,21 @@ export function GitToolWindow({
   const [historyDetail, setHistoryDetail] = useState<GitCommitDetail | null>(null);
   const [historyDetailLoading, setHistoryDetailLoading] = useState(false);
   const [historyFileIndex, setHistoryFileIndex] = useState(0);
+  const [comparisonIntent, setComparisonIntent] = useState<GitToolWindowNavigationIntent | null>(null);
+  const [comparisonResult, setComparisonResult] = useState<GitCompareResult | null>(null);
+  const [comparisonCurrentOnly, setComparisonCurrentOnly] = useState<readonly GitCommitSummary[]>([]);
+  const [comparisonTargetOnly, setComparisonTargetOnly] = useState<readonly GitCommitSummary[]>([]);
+  const [comparisonSelectedCommitId, setComparisonSelectedCommitId] = useState<GitObjectId | null>(null);
+  const [comparisonCommitDetail, setComparisonCommitDetail] = useState<GitCommitDetail | null>(null);
+  const [comparisonCommitDetailLoading, setComparisonCommitDetailLoading] = useState(false);
+  const [comparisonFileIndex, setComparisonFileIndex] = useState(0);
+  const [comparisonFileResult, setComparisonFileResult] = useState<GitCompareResult | null>(null);
+  const [comparisonFileLoading, setComparisonFileLoading] = useState(false);
+  const [comparisonFileError, setComparisonFileError] = useState<string | null>(null);
+  const [comparisonFileReloadKey, setComparisonFileReloadKey] = useState(0);
+  const [comparisonLoading, setComparisonLoading] = useState(false);
+  const [comparisonError, setComparisonError] = useState<string | null>(null);
+  const [comparisonReloadKey, setComparisonReloadKey] = useState(0);
   const [blamePage, setBlamePage] = useState<GitBlamePage | null>(null);
   const [blameLoading, setBlameLoading] = useState(false);
   const [reflogPage, setReflogPage] = useState<GitReflogPage | null>(null);
@@ -201,6 +239,15 @@ export function GitToolWindow({
   const [resetPreview, setResetPreview] = useState<GitResetPreview | null>(null);
   const [resetTargetSeed, setResetTargetSeed] = useState("");
   const [patchExport, setPatchExport] = useState<GitPatchExport | null>(null);
+  const [pendingHistoryAction, setPendingHistoryAction] = useState<PendingHistoryAction | null>(null);
+  const [historyRevertMainline, setHistoryRevertMainline] = useState("1");
+  const [revisionTreeOpen, setRevisionTreeOpen] = useState(false);
+  const [revisionTree, setRevisionTree] = useState<GitRevisionTree | null>(null);
+  const [revisionTreeLoading, setRevisionTreeLoading] = useState(false);
+  const [revisionTreeError, setRevisionTreeError] = useState<string | null>(null);
+  const [branchContextDialog, setBranchContextDialog] = useState<BranchContextDialog | null>(null);
+  const [branchContextName, setBranchContextName] = useState("");
+  const [pendingBranchOperation, setPendingBranchOperation] = useState<PendingBranchOperation | null>(null);
   const [patchDryRunSignature, setPatchDryRunSignature] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<GitConflictsSnapshot | null>(null);
   const [conflictsLoading, setConflictsLoading] = useState(false);
@@ -228,6 +275,9 @@ export function GitToolWindow({
   const selectedChangeDiffRef = useRef<GitDiffSnapshot | null>(null);
   const commitPushPreviewAbortRef = useRef<AbortController | null>(null);
   const commitPushDetailAbortRef = useRef<AbortController | null>(null);
+  const comparisonAbortRef = useRef<AbortController | null>(null);
+  const comparisonDetailAbortRef = useRef<AbortController | null>(null);
+  const comparisonFileAbortRef = useRef<AbortController | null>(null);
   const patchActionInFlightRef = useRef(false);
   const patchActionFeedbackTimerRef = useRef<number | null>(null);
   const historyDetailCacheRef = useRef(new Map<string, GitCommitDetail>());
@@ -237,6 +287,9 @@ export function GitToolWindow({
     changeDiffAbortRef.current?.abort();
     commitPushPreviewAbortRef.current?.abort();
     commitPushDetailAbortRef.current?.abort();
+    comparisonAbortRef.current?.abort();
+    comparisonDetailAbortRef.current?.abort();
+    comparisonFileAbortRef.current?.abort();
     if (patchActionFeedbackTimerRef.current !== null) {
       window.clearTimeout(patchActionFeedbackTimerRef.current);
     }
@@ -245,7 +298,7 @@ export function GitToolWindow({
   const applyView = (nextView: GitToolWindowView) => {
     setMergeEditorDirty(false);
     setView(nextView);
-    if (storeSnapshot?.project) {
+    if (storeSnapshot?.project && nextView !== "compare") {
       gitStore?.getState().updateProjectUi(storeSnapshot.project.workspaceId, { activeTab: nextView });
     }
   };
@@ -480,7 +533,214 @@ export function GitToolWindow({
     selectedChangeDiffRef.current = null;
     setSelectedChangeDiff(null);
     setSelectedChangeDiffLoading(false);
+    setPendingHistoryAction(null);
+    setRevisionTreeOpen(false);
+    setRevisionTree(null);
+    setRevisionTreeError(null);
+    setBranchContextDialog(null);
+    setPendingBranchOperation(null);
+    comparisonAbortRef.current?.abort();
+    comparisonDetailAbortRef.current?.abort();
+    comparisonFileAbortRef.current?.abort();
+    setComparisonIntent(null);
+    setComparisonResult(null);
+    setComparisonCurrentOnly([]);
+    setComparisonTargetOnly([]);
+    setComparisonSelectedCommitId(null);
+    setComparisonCommitDetail(null);
+    setComparisonFileIndex(0);
+    setComparisonFileResult(null);
+    setComparisonFileLoading(false);
+    setComparisonFileError(null);
+    setComparisonFileReloadKey(0);
+    setComparisonLoading(false);
+    setComparisonError(null);
   }, [projectKey, storeSnapshot?.project?.selectedRepositoryId]);
+
+  useEffect(() => {
+    const request = storeSnapshot?.navigationRequest;
+    const projectState = storeSnapshot?.project;
+    if (!request || !projectState) return;
+    setComparisonIntent(request);
+    setComparisonReloadKey(0);
+    if (mergeEditorDirty) setPendingMergeDraftDiscard({ kind: "view", view: "compare" });
+    else setView("compare");
+    gitStore?.getState().consumeToolWindowNavigation(projectState.workspaceId, request.requestId);
+  }, [gitStore, mergeEditorDirty, storeSnapshot?.navigationRequest, storeSnapshot?.project]);
+
+  useEffect(() => {
+    const projectState = storeSnapshot?.project;
+    const repositoryId = projectState?.selectedRepositoryId;
+    if (!comparisonIntent || !runtime || !projectState || !repositoryId) return;
+    const abortController = new AbortController();
+    comparisonAbortRef.current?.abort();
+    comparisonAbortRef.current = abortController;
+    const scope = {
+      workspaceId: projectState.workspaceId,
+      projectRoot: projectState.projectRoot,
+      repositoryId,
+    };
+    setComparisonLoading(true);
+    setComparisonError(null);
+    setComparisonResult(null);
+    setComparisonCurrentOnly([]);
+    setComparisonTargetOnly([]);
+    setComparisonSelectedCommitId(null);
+    setComparisonCommitDetail(null);
+    setComparisonFileIndex(0);
+    setComparisonFileResult(null);
+    setComparisonFileLoading(false);
+    setComparisonFileError(null);
+
+    const request = comparisonIntent.kind === "compare_refs"
+      ? Promise.all([
+          runtime.compare(scope, {
+            mode: "two_dot",
+            left: comparisonIntent.targetRef,
+            right: comparisonIntent.currentRef,
+            signal: abortController.signal,
+          }),
+          runtime.history(scope, {
+            revision: `${comparisonIntent.targetRef}..${comparisonIntent.currentRef}`,
+            limit: 200,
+            signal: abortController.signal,
+          }),
+          runtime.history(scope, {
+            revision: `${comparisonIntent.currentRef}..${comparisonIntent.targetRef}`,
+            limit: 200,
+            signal: abortController.signal,
+          }),
+        ]).then(([result, currentOnly, targetOnly]) => {
+          if (abortController.signal.aborted) return;
+          setComparisonResult(result);
+          setComparisonCurrentOnly(currentOnly.commits);
+          setComparisonTargetOnly(targetOnly.commits);
+          setComparisonSelectedCommitId((currentOnly.commits[0] ?? targetOnly.commits[0])?.objectId ?? null);
+        })
+      : runtime.compare(scope, {
+          mode: "working_tree",
+          left: comparisonIntent.targetRef,
+          signal: abortController.signal,
+        }).then((result) => {
+          if (!abortController.signal.aborted) setComparisonResult(result);
+        });
+
+    void request.catch((error) => {
+      if (!abortController.signal.aborted) setComparisonError(gitUiErrorMessage(error));
+    }).finally(() => {
+      if (comparisonAbortRef.current === abortController) {
+        comparisonAbortRef.current = null;
+        setComparisonLoading(false);
+      }
+    });
+    return () => abortController.abort();
+  }, [comparisonIntent, comparisonReloadKey, runtime, storeSnapshot?.project]);
+
+  useEffect(() => {
+    const projectState = storeSnapshot?.project;
+    const repositoryId = projectState?.selectedRepositoryId;
+    const selectedFile = comparisonResult?.files[comparisonFileIndex] ?? null;
+    const path = selectedFile?.newPath ?? selectedFile?.oldPath ?? null;
+    if (comparisonIntent?.kind !== "compare_worktree" || !runtime || !projectState || !repositoryId || !path) {
+      comparisonFileAbortRef.current?.abort();
+      setComparisonFileResult(null);
+      setComparisonFileLoading(false);
+      setComparisonFileError(null);
+      return;
+    }
+    const abortController = new AbortController();
+    comparisonFileAbortRef.current?.abort();
+    comparisonFileAbortRef.current = abortController;
+    setComparisonFileResult(null);
+    setComparisonFileLoading(true);
+    setComparisonFileError(null);
+    void runtime.compare({
+      workspaceId: projectState.workspaceId,
+      projectRoot: projectState.projectRoot,
+      repositoryId,
+    }, {
+      mode: "working_tree",
+      left: comparisonIntent.targetRef,
+      path,
+      signal: abortController.signal,
+    }).then((result) => {
+      if (!abortController.signal.aborted) setComparisonFileResult(result);
+    }).catch((error) => {
+      if (!abortController.signal.aborted) setComparisonFileError(gitUiErrorMessage(error));
+    }).finally(() => {
+      if (comparisonFileAbortRef.current === abortController) {
+        comparisonFileAbortRef.current = null;
+        setComparisonFileLoading(false);
+      }
+    });
+    return () => abortController.abort();
+  }, [
+    comparisonFileIndex,
+    comparisonFileReloadKey,
+    comparisonIntent,
+    comparisonResult,
+    runtime,
+    storeSnapshot?.project,
+  ]);
+
+  useEffect(() => {
+    const projectState = storeSnapshot?.project;
+    const repositoryId = projectState?.selectedRepositoryId;
+    if (comparisonIntent?.kind !== "compare_refs" || !comparisonSelectedCommitId || !runtime || !projectState || !repositoryId) {
+      setComparisonCommitDetail(null);
+      setComparisonCommitDetailLoading(false);
+      return;
+    }
+    const abortController = new AbortController();
+    comparisonDetailAbortRef.current?.abort();
+    comparisonDetailAbortRef.current = abortController;
+    const cacheKey = `${repositoryId}:${comparisonSelectedCommitId}`;
+    const cached = historyDetailCacheRef.current.get(cacheKey) ?? null;
+    const summary = [...comparisonCurrentOnly, ...comparisonTargetOnly]
+      .find((commit) => commit.objectId === comparisonSelectedCommitId) ?? null;
+    const preview = summary && (comparisonResult || storeSnapshot.status)
+      ? {
+          repositoryId,
+          repositoryVersion: (comparisonResult ?? storeSnapshot.status)!.repositoryVersion,
+          commit: summary,
+          selectedParentId: summary.parentIds[0] ?? null,
+          files: [],
+        } satisfies GitCommitDetail
+      : null;
+    setComparisonCommitDetail(cached ?? preview);
+    setComparisonFileIndex(0);
+    if (cached) {
+      setComparisonCommitDetailLoading(false);
+      return () => abortController.abort();
+    }
+    setComparisonCommitDetailLoading(true);
+    void runtime.commit({
+      workspaceId: projectState.workspaceId,
+      projectRoot: projectState.projectRoot,
+      repositoryId,
+    }, comparisonSelectedCommitId, { signal: abortController.signal }).then((detail) => {
+      historyDetailCacheRef.current.set(cacheKey, detail);
+      trimMap(historyDetailCacheRef.current, 100);
+      if (!abortController.signal.aborted) setComparisonCommitDetail(detail);
+    }).catch((error) => {
+      if (!abortController.signal.aborted) setComparisonError(gitUiErrorMessage(error));
+    }).finally(() => {
+      if (comparisonDetailAbortRef.current === abortController) {
+        comparisonDetailAbortRef.current = null;
+        setComparisonCommitDetailLoading(false);
+      }
+    });
+    return () => abortController.abort();
+  }, [
+    comparisonCurrentOnly,
+    comparisonIntent,
+    comparisonResult,
+    comparisonSelectedCommitId,
+    comparisonTargetOnly,
+    runtime,
+    storeSnapshot?.project,
+    storeSnapshot?.status,
+  ]);
 
   useEffect(() => {
     const projectState = storeSnapshot?.project;
@@ -1197,7 +1457,7 @@ export function GitToolWindow({
     }
   };
 
-  const prepareCommitPushPreview = async () => {
+  const prepareCommitPushPreview = async (branchRef: GitRefsSnapshotRef | null = null) => {
     if (!runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
     commitPushPreviewAbortRef.current?.abort();
     const abortController = new AbortController();
@@ -1218,7 +1478,38 @@ export function GitToolWindow({
     try {
       let target: GitCommitPushTarget;
       let revision: string;
-      if (upstreamTarget) {
+      if (branchRef) {
+        if (branchRef.kind !== "local") throw new Error("只能推送本地分支。");
+        const source = branchRef.shortName;
+        const upstream = branchRef.upstream;
+        const separator = upstream?.indexOf("/") ?? -1;
+        if (upstream && separator > 0 && separator < upstream.length - 1) {
+          target = {
+            remote: upstream.slice(0, separator),
+            source,
+            target: upstream.slice(separator + 1),
+            upstream,
+            setUpstream: false,
+          };
+          revision = `${upstream}..${source}`;
+        } else {
+          const availableRemotes = await runtime.remotes(scope, { signal: abortController.signal });
+          const remote = availableRemotes[0]?.name;
+          if (!remote) throw new Error("当前仓库没有可用的远程仓库。");
+          target = {
+            remote,
+            source,
+            target: source,
+            upstream: `${remote}/${source}`,
+            setUpstream: true,
+          };
+          const hasRemoteTrackingRef = (storeSnapshot.refs ?? []).some((candidate) =>
+            candidate.kind === "remote"
+            && (candidate.shortName === target.upstream || candidate.fullName === `refs/remotes/${target.upstream}`),
+          );
+          revision = hasRemoteTrackingRef ? `${target.upstream}..${source}` : source;
+        }
+      } else if (upstreamTarget) {
         target = {
           remote: upstreamTarget.remote,
           source: upstreamTarget.branch,
@@ -1296,7 +1587,7 @@ export function GitToolWindow({
         followTags: tagMode === "current_branch",
       }));
       if (result.state !== "succeeded") {
-        setActionError(`提交已成功，但推送失败：${gitOperationFailureMessage(result)}`);
+        setActionError(`推送失败：${gitOperationFailureMessage(result)}`);
         return;
       }
       closeCommitPushDialog();
@@ -1347,16 +1638,40 @@ export function GitToolWindow({
   const runRefAction = async (action: GitRefAction, ref: GitRefsSnapshotRef) => {
     if (!storeSnapshot?.project) return;
     gitStore?.getState().updateProjectUi(storeSnapshot.project.workspaceId, { selectedRef: ref.fullName });
-    if (action === "compare") {
-      activateView("history");
+    if (action === "compare_refs" || action === "compare_worktree") {
+      const currentRef = storeSnapshot.status?.branch.head ?? "HEAD";
+      gitStore?.getState().requestToolWindowNavigation(
+        storeSnapshot.project.workspaceId,
+        action === "compare_refs"
+          ? { kind: "compare_refs", currentRef, targetRef: ref.shortName }
+          : { kind: "compare_worktree", targetRef: ref.shortName },
+      );
+      return;
+    }
+    if (action === "push") {
+      await prepareCommitPushPreview(ref);
       return;
     }
     if (action === "create_branch" || action === "rename" || action === "delete") {
-      activateView("branches");
+      setBranchContextName(action === "rename" ? ref.shortName : "");
+      setBranchContextDialog({ kind: action === "create_branch" ? "create" : action, ref });
+      return;
+    }
+    if (action === "merge_current" || action === "rebase_current") {
+      setPendingBranchOperation({ kind: action === "merge_current" ? "merge" : "rebase", ref });
+      if (action === "merge_current") await previewMerge(ref.shortName);
+      else await previewRebase(ref.shortName, null);
+      return;
+    }
+    if (action === "update") {
+      await runContextBranchUpdate(ref);
+      return;
+    }
+    if (action === "checkout_rebase") {
+      await runCheckoutAndRebase(ref);
       return;
     }
     if (storeSnapshot.status?.files.length) {
-      activateView("branches");
       setActionError("工作区存在本地改动，请先选择提交、储藏或取消；Keydex 不会自动储藏。");
       return;
     }
@@ -1380,6 +1695,197 @@ export function GitToolWindow({
       setMutation(null);
     }
   };
+  async function runCheckoutAndRebase(ref: GitRefsSnapshotRef) {
+    if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId || ref.current) return;
+    const currentBranch = storeSnapshot.status?.branch.head;
+    if (!currentBranch) {
+      setActionError("当前处于分离指针状态，无法确定变基目标。");
+      return;
+    }
+    if (storeSnapshot.status?.files.length) {
+      setActionError("签出并变基要求工作树干净，请先提交或储藏本地改动。");
+      return;
+    }
+    const scope = {
+      workspaceId: storeSnapshot.project.workspaceId,
+      projectRoot: storeSnapshot.project.projectRoot,
+      repositoryId: storeSnapshot.project.selectedRepositoryId,
+    };
+    setMutation("checkout");
+    setActionError(null);
+    try {
+      const checkout = await controller.runCommand(() => runtime.checkout({
+        ...scope,
+        idempotencyKey: `tool-window-checkout-rebase-${Date.now()}`,
+        expectedRepositoryVersion: storeSnapshot.status?.repositoryVersion ?? null,
+        ref: ref.shortName,
+        detach: false,
+      }));
+      if (checkout.state !== "succeeded") throw new Error(gitOperationFailureMessage(checkout));
+      setMutation("rebase");
+      const preview = await runtime.rebasePreview(scope, currentBranch, null);
+      if (preview.commits.length === 0) return;
+      const command = {
+        ...scope,
+        idempotencyKey: `tool-window-checkout-rebase-apply-${Date.now()}`,
+        expectedRepositoryVersion: preview.repositoryVersion,
+        upstream: currentBranch,
+        onto: null,
+        interactive: false,
+        todo: [],
+      };
+      const confirmation = await runtime.confirmation("rebase", command);
+      const result = await controller.runCommand(() => runtime.rebase({ ...command, confirmationToken: confirmation.token }));
+      if (result.state !== "succeeded") throw new Error(gitOperationFailureMessage(result));
+    } catch (error) {
+      setActionError(gitUiErrorMessage(error));
+    } finally {
+      setMutation(null);
+    }
+  }
+  async function runContextBranchUpdate(ref: GitRefsSnapshotRef) {
+    if (ref.current) {
+      await runUpdate(updateStrategy);
+      return;
+    }
+    if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
+    const upstream = ref.upstream;
+    const separator = upstream?.indexOf("/") ?? -1;
+    if (!upstream || separator <= 0 || separator === upstream.length - 1) {
+      setActionError(`${ref.shortName} 没有可用于更新的上游分支。`);
+      return;
+    }
+    const remote = upstream.slice(0, separator);
+    const remoteBranch = upstream.slice(separator + 1);
+    setMutation("update");
+    setActionError(null);
+    try {
+      const result = await controller.runCommand(() => runtime.fetch({
+        workspaceId: storeSnapshot.project!.workspaceId,
+        projectRoot: storeSnapshot.project!.projectRoot,
+        repositoryId: storeSnapshot.project!.selectedRepositoryId!,
+        idempotencyKey: `tool-window-update-branch-${Date.now()}`,
+        expectedRepositoryVersion: storeSnapshot.status?.repositoryVersion ?? null,
+        remote,
+        refspec: `refs/heads/${remoteBranch}:refs/heads/${ref.shortName}`,
+        allRemotes: false,
+        prune: false,
+        tags: false,
+      }));
+      if (result.state !== "succeeded") throw new Error(gitOperationFailureMessage(result));
+    } catch (error) {
+      setActionError(gitUiErrorMessage(error));
+    } finally {
+      setMutation(null);
+    }
+  }
+  async function runHistoryContextAction(action: GitHistoryContextAction, commit: GitCommitSummary) {
+    if (!runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
+    const scope = {
+      workspaceId: storeSnapshot.project.workspaceId,
+      projectRoot: storeSnapshot.project.projectRoot,
+      repositoryId: storeSnapshot.project.selectedRepositoryId,
+    };
+    if (action === "copy_revision") {
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error("剪贴板不可用。");
+        await navigator.clipboard.writeText(commit.objectId);
+      } catch (error) {
+        setActionError(gitUiErrorMessage(error));
+      }
+      return;
+    }
+    if (action === "compare_worktree") {
+      gitStore?.getState().requestToolWindowNavigation(scope.workspaceId, { kind: "compare_worktree", targetRef: commit.objectId });
+      return;
+    }
+    if (action === "reset_branch") {
+      setResetTargetSeed(commit.objectId);
+      setResetPreview(null);
+      activateView("operations");
+      return;
+    }
+    if (action === "create_patch") {
+      setMutation("patch");
+      setActionError(null);
+      try {
+        setPatchExport(await runtime.exportPatch(scope, "commit", { left: commit.objectId, right: null, paths: [] }));
+        activateView("operations");
+      } catch (error) {
+        setActionError(gitUiErrorMessage(error));
+      } finally {
+        setMutation(null);
+      }
+      return;
+    }
+    if (action === "show_repository") {
+      setRevisionTreeOpen(true);
+      setRevisionTree(null);
+      setRevisionTreeError(null);
+      setRevisionTreeLoading(true);
+      try {
+        setRevisionTree(await runtime.revisionTree(scope, commit.objectId));
+      } catch (error) {
+        setRevisionTreeError(gitUiErrorMessage(error));
+      } finally {
+        setRevisionTreeLoading(false);
+      }
+      return;
+    }
+    if (action === "checkout_revision") {
+      if (!controller) return;
+      if (storeSnapshot.status?.files.length) {
+        setActionError("签出修订要求工作树干净，请先提交或储藏本地改动。");
+        return;
+      }
+      setMutation("checkout");
+      setActionError(null);
+      try {
+        const result = await controller.runCommand(() => runtime.checkout({
+          ...scope,
+          idempotencyKey: `tool-window-checkout-revision-${Date.now()}`,
+          expectedRepositoryVersion: storeSnapshot.status?.repositoryVersion ?? null,
+          ref: commit.objectId,
+          detach: true,
+        }));
+        if (result.state !== "succeeded") throw new Error(gitOperationFailureMessage(result));
+      } catch (error) {
+        setActionError(gitUiErrorMessage(error));
+      } finally {
+        setMutation(null);
+      }
+      return;
+    }
+    setHistoryRevertMainline("1");
+    setPendingHistoryAction({ kind: action, commit });
+  }
+  async function runUndoHeadCommit(commit: GitCommitSummary) {
+    if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId || !commit.parentIds[0]) return;
+    const scope = {
+      workspaceId: storeSnapshot.project.workspaceId,
+      projectRoot: storeSnapshot.project.projectRoot,
+      repositoryId: storeSnapshot.project.selectedRepositoryId,
+    };
+    setMutation("reset");
+    setActionError(null);
+    try {
+      const preview = await runtime.resetPreview(scope, commit.parentIds[0], "soft");
+      const command = {
+        ...scope,
+        idempotencyKey: `tool-window-undo-commit-${Date.now()}`,
+        expectedRepositoryVersion: preview.repositoryVersion,
+        target: commit.parentIds[0],
+        mode: "soft" as const,
+      };
+      const confirmation = await runtime.confirmation("reset", command);
+      const result = await controller.runCommand(() => runtime.reset({ ...command, confirmationToken: confirmation.token }));
+      if (result.state !== "succeeded") throw new Error(gitOperationFailureMessage(result));
+    } catch (error) {
+      setActionError(gitUiErrorMessage(error));
+    } finally {
+      setMutation(null);
+    }
+  }
   const runCreateBranch = async (branchName: string, startPoint: string) => {
     if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
     setMutation("branch");
@@ -2810,6 +3316,10 @@ export function GitToolWindow({
     ? (storeSnapshot?.diff?.files ?? []).filter((file) =>
         file.newPath === selectedConflict.path || file.oldPath === selectedConflict.path)
     : [];
+  const comparisonSelectedFiles = comparisonIntent?.kind === "compare_worktree"
+    ? comparisonFileResult?.files ?? []
+    : [];
+  const comparisonNavigationHidden = view === "changes" || view === "compare";
 
   return (
     <section
@@ -2916,7 +3426,7 @@ export function GitToolWindow({
 
       <div
         className={styles.workspace}
-        data-navigation={view === "changes" ? "hidden" : "visible"}
+        data-navigation={comparisonNavigationHidden ? "hidden" : "visible"}
         data-view={view}
         data-testid="git-workspace"
         ref={workspaceRef}
@@ -2925,7 +3435,7 @@ export function GitToolWindow({
           "--git-detail-pane-width": `${view === "changes" ? commitPanePercent : detailPanePercent}%`,
         } as CSSProperties}
       >
-        {view !== "changes" ? (
+        {!comparisonNavigationHidden ? (
           <>
             <aside className={styles.navigation} aria-label="Git 仓库导航">
               <div className={styles.repositorySection}>
@@ -2968,7 +3478,7 @@ export function GitToolWindow({
           aria-label={activeViewLabel}
           tabIndex={0}
         >
-          {view !== "history" && view !== "changes" ? (
+          {view !== "history" && view !== "changes" && view !== "compare" ? (
             <div className={styles.paneHeader} data-testid="git-pane-header">
               <strong>{activeViewLabel}</strong>
             </div>
@@ -3030,6 +3540,21 @@ export function GitToolWindow({
                 .map((ref) => ({ value: ref.fullName, label: ref.shortName }))}
               authorOptions={historyAuthors}
               onApplyFilters={(filters) => applyHistoryFilters({ ...filters })}
+              onContextAction={(action, commit) => void runHistoryContextAction(action, commit)}
+            />
+          ) : view === "compare" && comparisonIntent ? (
+            <GitComparisonView
+              intent={comparisonIntent}
+              result={comparisonResult}
+              currentOnlyCommits={comparisonCurrentOnly}
+              targetOnlyCommits={comparisonTargetOnly}
+              selectedCommitId={comparisonSelectedCommitId}
+              selectedFileIndex={comparisonFileIndex}
+              loading={comparisonLoading}
+              error={comparisonError}
+              onSelectCommit={(commit) => setComparisonSelectedCommitId(commit.objectId)}
+              onSelectFile={setComparisonFileIndex}
+              onRetry={() => setComparisonReloadKey((current) => current + 1)}
             />
           ) : view === "blame" ? (
             <GitBlameView
@@ -3334,6 +3859,45 @@ export function GitToolWindow({
                 />
               ) : null}
             </>
+          ) : view === "compare" ? (
+            comparisonIntent?.kind === "compare_worktree" && comparisonResult ? (
+              comparisonFileLoading ? (
+                <LoadingSkeleton
+                  className={styles.comparisonDetailLoading}
+                  aria-label="正在加载文件差异"
+                  lineCount={12}
+                />
+              ) : comparisonFileError ? (
+                <div className={styles.state} role="alert">
+                  <AlertTriangle size={18} aria-hidden="true" />
+                  <strong>无法加载文件差异</strong>
+                  <span>{comparisonFileError}</span>
+                  <button type="button" onClick={() => setComparisonFileReloadKey((current) => current + 1)}>
+                    重新加载
+                  </button>
+                </div>
+              ) : (
+              <GitReadOnlyDiff
+                repositoryId={comparisonFileResult?.repositoryId ?? comparisonResult.repositoryId}
+                repositoryVersion={comparisonFileResult?.repositoryVersion ?? comparisonResult.repositoryVersion}
+                sourceKind="compare"
+                files={comparisonSelectedFiles}
+                emptyMessage="选择文件查看差异"
+                scrollScopeKey={`git-compare-worktree:${comparisonResult.repositoryId}:${comparisonIntent.targetRef}:${comparisonFileIndex}`}
+                onCopyText={copyGitDiffText}
+                onOpenFile={openGitDiffFile}
+              />
+              )
+            ) : comparisonIntent?.kind === "compare_refs" ? (
+              <GitCommitDetailsView
+                detail={comparisonCommitDetail}
+                loading={comparisonCommitDetailLoading}
+                selectedFileIndex={comparisonFileIndex}
+                onSelectFile={setComparisonFileIndex}
+              />
+            ) : (
+              <div className={styles.placeholder}>请选择比较内容</div>
+            )
           ) : view === "stash" ? (
             stashDetail ? (
               <GitReadOnlyDiff
@@ -3371,6 +3935,142 @@ export function GitToolWindow({
         onCancel={closeCommitPushDialog}
         onConfirm={confirmCommitPush}
       />
+      <GitRevisionTreeDialog
+        open={revisionTreeOpen}
+        tree={revisionTree}
+        loading={revisionTreeLoading}
+        error={revisionTreeError}
+        onClose={() => setRevisionTreeOpen(false)}
+      />
+      {branchContextDialog?.kind === "create" ? (
+        <GitFormDialog
+          title="创建新分支"
+          description={`基于 ${branchContextDialog.ref.shortName} 创建本地分支。`}
+          confirmLabel={mutation === "branch" ? "正在创建…" : "创建"}
+          busy={mutation === "branch"}
+          valid={validateGitBranchName(branchContextName).valid}
+          onCancel={() => setBranchContextDialog(null)}
+          onSubmit={async () => {
+            await runCreateBranch(branchContextName.trim(), branchContextDialog.ref.shortName);
+            setBranchContextDialog(null);
+          }}
+        >
+          <GitDialogSummary>起点：{branchContextDialog.ref.shortName}</GitDialogSummary>
+          <GitDialogField label="分支名称" error={branchContextName && !validateGitBranchName(branchContextName).valid ? validateGitBranchName(branchContextName).message : undefined}>
+            <input autoFocus aria-label="新分支名称" value={branchContextName} onChange={(event) => setBranchContextName(event.currentTarget.value)} />
+          </GitDialogField>
+        </GitFormDialog>
+      ) : null}
+      {branchContextDialog?.kind === "rename" ? (
+        <GitFormDialog
+          title={`重命名分支 ${branchContextDialog.ref.shortName}`}
+          description="输入新的本地分支名称。"
+          confirmLabel={mutation === "branch" ? "正在重命名…" : "重命名"}
+          busy={mutation === "branch"}
+          valid={validateGitBranchName(branchContextName).valid && branchContextName.trim() !== branchContextDialog.ref.shortName}
+          onCancel={() => setBranchContextDialog(null)}
+          onSubmit={async () => {
+            await runRenameBranch(branchContextDialog.ref, branchContextName.trim());
+            setBranchContextDialog(null);
+          }}
+        >
+          <GitDialogField label="分支名称" error={branchContextName && !validateGitBranchName(branchContextName).valid ? validateGitBranchName(branchContextName).message : undefined}>
+            <input autoFocus aria-label="重命名分支" value={branchContextName} onChange={(event) => setBranchContextName(event.currentTarget.value)} />
+          </GitDialogField>
+        </GitFormDialog>
+      ) : null}
+      {branchContextDialog?.kind === "delete" ? (
+        <GitConfirmActionDialog
+          title="删除分支"
+          description="仅删除所选分支引用；未被其他引用保留的提交之后只能通过恢复提交找回。"
+          target={branchContextDialog.ref.shortName}
+          details={["使用安全删除；尚未合并的分支会被 Git 拒绝", "不会切换或修改当前工作树"]}
+          confirmLabel="删除"
+          busy={mutation === "branch"}
+          onCancel={() => setBranchContextDialog(null)}
+          onConfirm={() => {
+            const ref = branchContextDialog.ref;
+            setBranchContextDialog(null);
+            void runDeleteBranch(ref, false);
+          }}
+        />
+      ) : null}
+      {pendingBranchOperation?.kind === "merge" && mergePreview?.source === pendingBranchOperation.ref.shortName ? (
+        <GitConfirmActionDialog
+          title="合并分支"
+          description="将所选分支合并到当前分支。"
+          target={`${pendingBranchOperation.ref.shortName} → ${storeSnapshot?.status?.branch.head ?? "当前分支"}`}
+          details={[`进入提交：${mergePreview.incomingCommits} 个`, mergePreview.fastForward ? "可以快进" : "将创建合并提交"]}
+          confirmLabel="合并"
+          busy={mutation === "merge"}
+          onCancel={() => setPendingBranchOperation(null)}
+          onConfirm={() => {
+            const source = pendingBranchOperation.ref.shortName;
+            setPendingBranchOperation(null);
+            void runMerge(source, "ff", "");
+          }}
+        />
+      ) : null}
+      {pendingBranchOperation?.kind === "rebase" && rebasePreview?.upstream === pendingBranchOperation.ref.shortName ? (
+        <GitConfirmActionDialog
+          title="变基当前分支"
+          description="当前分支的本地提交将重新应用到所选分支之上，并获得新的提交标识。"
+          target={`${storeSnapshot?.status?.branch.head ?? "当前分支"} → ${pendingBranchOperation.ref.shortName}`}
+          details={[`需要重放：${rebasePreview.commits.length} 个提交`, rebasePreview.dirty ? "工作树存在本地改动，Git 将拒绝执行" : "工作树干净"]}
+          confirmLabel="变基"
+          busy={mutation === "rebase"}
+          onCancel={() => setPendingBranchOperation(null)}
+          onConfirm={() => {
+            const upstream = pendingBranchOperation.ref.shortName;
+            setPendingBranchOperation(null);
+            void runRebase(upstream, null, false, []);
+          }}
+        />
+      ) : null}
+      {pendingHistoryAction?.kind === "revert_commit" && pendingHistoryAction.commit.parentIds.length > 1 ? (
+        <GitFormDialog
+          title="还原合并提交"
+          description="合并提交需要明确选择要保留其历史的主线父提交。"
+          confirmLabel="还原提交"
+          busy={mutation === "revert"}
+          valid={Number.isInteger(Number(historyRevertMainline)) && Number(historyRevertMainline) >= 1 && Number(historyRevertMainline) <= pendingHistoryAction.commit.parentIds.length}
+          onCancel={() => setPendingHistoryAction(null)}
+          onSubmit={() => {
+            const commit = pendingHistoryAction.commit;
+            const mainline = Number(historyRevertMainline);
+            setPendingHistoryAction(null);
+            void runRevert([commit.objectId], mainline);
+          }}
+        >
+          <GitDialogSummary>{pendingHistoryAction.commit.subject}</GitDialogSummary>
+          <GitDialogField label="主线父提交">
+            <select autoFocus aria-label="还原主线父提交" value={historyRevertMainline} onChange={(event) => setHistoryRevertMainline(event.currentTarget.value)}>
+              {pendingHistoryAction.commit.parentIds.map((parent, index) => <option value={String(index + 1)} key={parent}>{index + 1} · {parent.slice(0, 12)}</option>)}
+            </select>
+          </GitDialogField>
+        </GitFormDialog>
+      ) : null}
+      {pendingHistoryAction && !(pendingHistoryAction.kind === "revert_commit" && pendingHistoryAction.commit.parentIds.length > 1) ? (
+        <GitConfirmActionDialog
+          title={pendingHistoryAction.kind === "cherry_pick" ? "优选提交" : pendingHistoryAction.kind === "undo_commit" ? "撤销最后一次提交" : "还原提交"}
+          description={pendingHistoryAction.kind === "cherry_pick"
+            ? "将所选提交应用到当前分支，并创建新的提交。"
+            : pendingHistoryAction.kind === "undo_commit"
+              ? "当前分支将软重置到父提交，提交内容会保留在暂存区。"
+              : "将创建一个新提交来反向应用所选提交，不会改写已有历史。"}
+          target={`${pendingHistoryAction.commit.objectId.slice(0, 12)} · ${pendingHistoryAction.commit.subject}`}
+          confirmLabel={pendingHistoryAction.kind === "cherry_pick" ? "优选" : pendingHistoryAction.kind === "undo_commit" ? "撤销提交" : "还原提交"}
+          busy={mutation === "cherry_pick" || mutation === "revert" || mutation === "reset"}
+          onCancel={() => setPendingHistoryAction(null)}
+          onConfirm={() => {
+            const pending = pendingHistoryAction;
+            setPendingHistoryAction(null);
+            if (pending.kind === "cherry_pick") void runCherryPick([pending.commit.objectId], false);
+            else if (pending.kind === "undo_commit") void runUndoHeadCommit(pending.commit);
+            else void runRevert([pending.commit.objectId], null);
+          }}
+        />
+      ) : null}
       {pendingMergeDraftDiscard ? (
         <GitConfirmActionDialog
           title="丢弃未保存的合并结果？"
@@ -3441,6 +4141,7 @@ interface GitToolWindowStoreSnapshot {
   refs: GitStoreState["refsByRepository"][string];
   ui: GitStoreState["uiByProject"][string] | null;
   operations: readonly GitCommandResult[];
+  navigationRequest: GitToolWindowNavigationRequest | null;
 }
 
 const HIDDEN_TOOL_WINDOW_SNAPSHOT: GitToolWindowStoreSnapshot = {
@@ -3452,6 +4153,7 @@ const HIDDEN_TOOL_WINDOW_SNAPSHOT: GitToolWindowStoreSnapshot = {
   refs: [],
   ui: null,
   operations: [],
+  navigationRequest: null,
 };
 
 function selectHiddenToolWindowSnapshot(): GitToolWindowStoreSnapshot {
@@ -3488,6 +4190,7 @@ function selectToolWindowSnapshot(state: GitStoreState): GitToolWindowStoreSnaps
     diff: selectedRepositoryId ? state.diffByRepository[selectedRepositoryId] ?? null : null,
     refs: selectedRepositoryId ? state.refsByRepository[selectedRepositoryId] ?? [] : [],
     ui: project ? state.uiByProject[project.workspaceId] ?? null : null,
+    navigationRequest: project ? state.navigationRequestsByProject[project.workspaceId] ?? null : null,
     operations: project
       ? state.operationIds
           .map((operationId) => state.operations[operationId])
@@ -3507,6 +4210,7 @@ function sameToolWindowSnapshot(
     && left.diff === right.diff
     && left.refs === right.refs
     && left.ui === right.ui
+    && left.navigationRequest === right.navigationRequest
     && sameReferenceList(left.repositories, right.repositories)
     && sameRepositoryItems(left.repositoryItems, right.repositoryItems)
     && sameReferenceList(left.operations, right.operations);

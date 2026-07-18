@@ -107,15 +107,14 @@ describe("Keydex Diff scroll contract", () => {
     expect(windowListener.mock.calls.some(([event]) => event === "scroll")).toBe(false);
   });
 
-  it("keeps CodeView as the single contained scroll owner", () => {
+  it("keeps the Pierre root as the single contained CodeView scroll owner", () => {
     const css = readFileSync(resolve(
       process.cwd(),
       "src/renderer/components/diff/engine/PierreCodeView.module.css",
     ), "utf8");
-    expect(css).toContain("min-height: 0");
-    expect(css).toContain("height: 100%");
-    expect(css).toContain("overflow: auto");
-    expect(css).toContain("overscroll-behavior: contain");
+    expect(css).toMatch(/\.scrollHost\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/s);
+    expect(css).toMatch(/\.scrollViewport\s*\{[^}]*flex:\s*1 1 0;[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*overflow:\s*auto;/s);
+    expect(css).toMatch(/\.scrollViewport\s*\{[^}]*overscroll-behavior:\s*contain;[^}]*scrollbar-gutter:\s*stable;/s);
   });
 
   it("bounds PatchDiff scrolling and gives the Git flex item a definite height", () => {

@@ -76,6 +76,7 @@ export interface AppContextMenuItem {
   icon: LucideIcon;
   id: string;
   label: string;
+  separatorBefore?: boolean;
 }
 
 export interface OpenAppContextMenuRequest {
@@ -366,6 +367,7 @@ function ContextMenuItemView({
           aria-haspopup="menu"
           className={styles.item}
           data-has-submenu="true"
+          data-separator-before={item.separatorBefore ? "true" : undefined}
           data-menu-item="true"
           disabled={item.disabled}
           role="menuitem"
@@ -395,6 +397,7 @@ function ContextMenuItemView({
       aria-disabled={item.disabled ? "true" : undefined}
       className={styles.item}
       data-menu-item="true"
+      data-separator-before={item.separatorBefore ? "true" : undefined}
       disabled={item.disabled}
       role="menuitem"
       tabIndex={tabIndex}

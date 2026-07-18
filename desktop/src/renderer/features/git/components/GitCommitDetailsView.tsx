@@ -1,20 +1,25 @@
 import {
   ChevronRight,
+  FileDiff,
   GitCommitHorizontal,
   ShieldCheck,
   ShieldQuestion,
   ShieldX,
 } from "lucide-react";
 import {
+  useEffect,
   useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 
 import { useMaterialEntryIcon } from "@/renderer/components/workspace/materialIconTheme";
+import { useOptionalAppContextMenu } from "@/renderer/providers/AppContextMenuProvider";
 import type { GitCommitDetail, GitFileDiff, GitFileStatusCode } from "@/runtime/gitTypes";
 
+import { GitCommitFileDiffDialog } from "../dialogs/GitCommitFileDiffDialog";
 import styles from "./GitCommitDetailsView.module.css";
 
 type CommitFileStatus = "added" | "modified" | "deleted";
@@ -46,6 +51,11 @@ export function GitCommitDetailsView({
 }) {
   const [filesPanePercent, setFilesPanePercent] = useState(DEFAULT_FILES_PANE_PERCENT);
   const [resizing, setResizing] = useState(false);
+  const [previewFileIndex, setPreviewFileIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    setPreviewFileIndex(null);
+  }, [detail?.commit.objectId]);
 
   if (loading && !detail) return <div className={styles.empty} role="status">正在加载提交详情…</div>;
   if (!detail) return <div className={styles.empty} role="status">请选择一个提交以查看详情。</div>;
@@ -113,6 +123,7 @@ export function GitCommitDetailsView({
             files={detail.files}
             selectedFileIndex={selectedFileIndex}
             onSelectFile={onSelectFile}
+            onOpenFileDiff={setPreviewFileIndex}
           />
         ) : loading
           ? <div className={styles.paneEmpty} role="status">正在加载变更文件…</div>
@@ -178,6 +189,11 @@ export function GitCommitDetailsView({
           </div>
         </dl>
       </section>
+      <GitCommitFileDiffDialog
+        detail={detail}
+        fileIndex={previewFileIndex}
+        onClose={() => setPreviewFileIndex(null)}
+      />
     </div>
   );
 }
@@ -241,12 +257,16 @@ export function GitCommitFileTree({
   ariaLabel = "变更文件树",
   rootLabel,
   onSelectFile = () => undefined,
+  onOpenFileDiff,
+  neutral = false,
 }: {
   files: readonly GitFileDiff[];
   selectedFileIndex?: number;
   ariaLabel?: string;
   rootLabel?: string;
   onSelectFile?: (index: number) => void;
+  onOpenFileDiff?: (index: number) => void;
+  neutral?: boolean;
 }) {
   const tree = buildCommitFileTree(files);
   const nodes: readonly GitCommitFileNode[] = rootLabel
@@ -268,6 +288,8 @@ export function GitCommitFileTree({
           selectedFileIndex={selectedFileIndex}
           secondaryLabel={rootLabel && node.path.startsWith("__repository_root__/") ? `${files.length} 个文件` : undefined}
           onSelectFile={onSelectFile}
+          onOpenFileDiff={onOpenFileDiff}
+          neutral={neutral}
         />
       ))}
     </ul>
@@ -279,15 +301,58 @@ function FileTreeNode({
   selectedFileIndex,
   secondaryLabel,
   onSelectFile,
+  onOpenFileDiff,
+  neutral,
 }: {
   node: GitCommitFileNode;
   selectedFileIndex: number;
   secondaryLabel?: string;
   onSelectFile: (index: number) => void;
+  onOpenFileDiff?: (index: number) => void;
+  neutral: boolean;
 }) {
   const [expanded, setExpanded] = useState(true);
   const icon = useMaterialEntryIcon(node.path, node.kind);
+  const appContextMenu = useOptionalAppContextMenu();
   const selected = node.kind === "file" && node.fileIndex === selectedFileIndex;
+  const canOpenDiff = node.kind === "file" && node.fileIndex !== null && Boolean(onOpenFileDiff);
+
+  const openFileDiffMenu = (
+    target: HTMLButtonElement,
+    x: number,
+    y: number,
+  ) => {
+    if (!canOpenDiff || node.fileIndex === null || !onOpenFileDiff || !appContextMenu) return;
+    const fileIndex = node.fileIndex;
+    onSelectFile(fileIndex);
+    appContextMenu.openContextMenu({
+      items: [{
+        id: `git-commit-file-diff-${node.path}`,
+        label: "查看 Diff 详情",
+        icon: FileDiff,
+        action: () => onOpenFileDiff(fileIndex),
+      }],
+      target,
+      x,
+      y,
+    });
+  };
+
+  const handleContextMenu = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    if (!canOpenDiff || !appContextMenu) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openFileDiffMenu(event.currentTarget, event.clientX, event.clientY);
+  };
+
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+    if (!canOpenDiff || !appContextMenu) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const bounds = event.currentTarget.getBoundingClientRect();
+    openFileDiffMenu(event.currentTarget, bounds.left + 20, bounds.bottom + 4);
+  };
 
   return (
     <li
@@ -300,8 +365,13 @@ function FileTreeNode({
         className={styles.treeRow}
         type="button"
         data-kind={node.kind}
-        data-status={node.status}
+        data-status={neutral ? undefined : node.status}
         data-selected={selected ? "true" : undefined}
+        onContextMenu={handleContextMenu}
+        onDoubleClick={() => {
+          if (canOpenDiff && node.fileIndex !== null) onOpenFileDiff?.(node.fileIndex);
+        }}
+        onKeyDown={handleKeyDown}
         onClick={() => {
           if (node.kind === "directory") {
             setExpanded((current) => !current);
@@ -329,7 +399,14 @@ function FileTreeNode({
       {node.kind === "directory" ? (
         <div className={styles.treeGroup} data-expanded={expanded ? "true" : undefined}>
           <ul role="group">{node.children.map((child) => (
-            <FileTreeNode key={child.path} node={child} selectedFileIndex={selectedFileIndex} onSelectFile={onSelectFile} />
+            <FileTreeNode
+              key={child.path}
+              node={child}
+              selectedFileIndex={selectedFileIndex}
+              onSelectFile={onSelectFile}
+              onOpenFileDiff={onOpenFileDiff}
+              neutral={neutral}
+            />
           ))}</ul>
         </div>
       ) : null}

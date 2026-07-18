@@ -429,6 +429,22 @@ class GitCommitDetailResponse(GitModel):
     files: list[GitFileDiffResponse] = Field(default_factory=list)
 
 
+class GitRevisionTreeEntryResponse(GitModel):
+    path: str = Field(min_length=1)
+    object_id: str = Field(min_length=4)
+    mode: str = Field(min_length=6, max_length=6)
+    kind: Literal["blob", "submodule"]
+    size: int | None = Field(default=None, ge=0)
+
+
+class GitRevisionTreeResponse(GitModel):
+    repository_id: str = Field(min_length=1)
+    repository_version: str = Field(min_length=1)
+    revision: str = Field(min_length=1)
+    object_id: str = Field(min_length=4)
+    entries: list[GitRevisionTreeEntryResponse] = Field(default_factory=list)
+
+
 class GitCompareResponse(GitModel):
     repository_id: str = Field(min_length=1)
     repository_version: str = Field(min_length=1)
@@ -714,6 +730,7 @@ class GitRemoteCommandRequest(GitCommandRequest):
 class GitFetchCommandRequest(GitCommandRequest):
     remote: str | None = Field(default="origin", min_length=1, max_length=255)
     all_remotes: bool = False
+    refspec: str | None = Field(default=None, max_length=1024)
     prune: bool = False
     tags: bool = False
 

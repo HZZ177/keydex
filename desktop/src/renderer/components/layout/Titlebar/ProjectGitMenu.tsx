@@ -30,8 +30,10 @@ import type { GitPushCommand } from "@/runtime/git";
 import type {
   GitCommitDetail,
   GitCommitSummary,
+  GitMergePreview,
   GitObjectId,
   GitRef,
+  GitRebasePreview,
   GitRepositoryDescriptor,
   GitStatusSnapshot,
 } from "@/runtime/gitTypes";
@@ -49,6 +51,7 @@ import {
   GitDialogField,
   GitChoiceDialog,
   GitCommitPushDialog,
+  GitConfirmActionDialog,
   GitDialogSummary,
   GitFormDialog,
   GitUpdateDialog,
@@ -85,13 +88,33 @@ type GitCommandForm =
   | { kind: "checkout"; detach: boolean }
   | { kind: "rename"; ref: GitRef };
 
-type GitRefMenuAction = "checkout" | "create_branch" | "compare" | "update" | "push" | "rename" | "manage";
+type GitRefMenuAction =
+  | "checkout"
+  | "checkout_rebase"
+  | "create_branch"
+  | "compare_refs"
+  | "compare_worktree"
+  | "rebase_current"
+  | "merge_current"
+  | "update"
+  | "push"
+  | "rename"
+  | "delete"
+  | "manage";
 
 interface GitRefMenuState {
   ref: GitRef;
   top: number;
   side: "left" | "right";
 }
+
+type PendingRefOperation = {
+  kind: "merge_current" | "rebase_current" | "delete";
+  ref: GitRef;
+  mergePreview?: GitMergePreview | null;
+  rebasePreview?: GitRebasePreview | null;
+  loading?: boolean;
+};
 
 export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuProps) {
   const activeProject = useOptionalActiveProjectState();
@@ -101,7 +124,7 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
   const [collapsedGroups, setCollapsedGroups] = useState<Set<GitRef["kind"]>>(() => new Set(["tag"]));
   const [commandForm, setCommandForm] = useState<GitCommandForm | null>(null);
   const [commandValue, setCommandValue] = useState("");
-  const [busyAction, setBusyAction] = useState<GitQuickActionId | "checkout" | "rename" | "init" | null>(null);
+  const [busyAction, setBusyAction] = useState<GitQuickActionId | "checkout" | "rename" | "merge" | "rebase" | "delete" | "init" | null>(null);
   const [commandError, setCommandError] = useGitErrorNotificationState();
   const [pendingDirtyCheckout, setPendingDirtyCheckout] = useState<{ ref: string; detach: boolean } | null>(null);
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
@@ -112,6 +135,7 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
   const [pushDetail, setPushDetail] = useState<GitCommitDetail | null>(null);
   const [pushPreviewLoading, setPushPreviewLoading] = useState(false);
   const [refMenu, setRefMenu] = useState<GitRefMenuState | null>(null);
+  const [pendingRefOperation, setPendingRefOperation] = useState<PendingRefOperation | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -168,6 +192,7 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
     setSelectedPushObjectId(null);
     setPushDetail(null);
     setPushPreviewLoading(false);
+    setPendingRefOperation(null);
     setCommandError(null);
     return () => {
       pushPreviewAbortRef.current?.abort();
@@ -264,7 +289,7 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
     }
   };
 
-  const preparePushPreview = async () => {
+  const preparePushPreview = async (selectedRef: GitRef | null = null) => {
     const commandScope = commandScopeFromSnapshot(snapshot);
     if (!runtime || !commandScope || !snapshot?.status) return;
     pushPreviewAbortRef.current?.abort();
@@ -279,12 +304,13 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
     setPushPreviewLoading(true);
     setCommandError(null);
     try {
-      const source = snapshot.status.branch.head;
-      if (!source || snapshot.status.branch.detachedAt || snapshot.status.branch.unborn) {
+      const source = selectedRef?.shortName ?? snapshot.status.branch.head;
+      if (!source || (!selectedRef && (snapshot.status.branch.detachedAt || snapshot.status.branch.unborn))) {
         throw new Error("当前不在可推送的本地分支上。");
       }
+      if (selectedRef && selectedRef.kind !== "local") throw new Error("只能推送本地分支。");
 
-      const upstream = snapshot.status.branch.upstream;
+      const upstream = selectedRef?.upstream ?? snapshot.status.branch.upstream;
       const separator = upstream?.indexOf("/") ?? -1;
       let target: GitCommitPushTarget;
       let revision: string;
@@ -296,7 +322,7 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
           upstream,
           setUpstream: false,
         };
-        revision = `${upstream}..HEAD`;
+        revision = `${upstream}..${selectedRef ? source : "HEAD"}`;
       } else {
         const remotes = await runtime.remotes(commandScope, { signal: abortController.signal });
         const remote = remotes[0]?.name;
@@ -312,7 +338,9 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
           ref.kind === "remote"
           && (ref.shortName === target.upstream || ref.fullName === `refs/remotes/${target.upstream}`),
         );
-        revision = hasRemoteTrackingRef ? `${target.upstream}..HEAD` : "HEAD";
+        revision = hasRemoteTrackingRef
+          ? `${target.upstream}..${selectedRef ? source : "HEAD"}`
+          : selectedRef ? source : "HEAD";
       }
       if (abortController.signal.aborted) return;
       setPushTarget(target);
@@ -341,9 +369,9 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
     }
   };
 
-  const openPushDialog = () => {
+  const openPushDialog = (selectedRef: GitRef | null = null) => {
     closeMenu();
-    void preparePushPreview();
+    void preparePushPreview(selectedRef);
   };
 
   const runUpdateAction = async (strategy: GitUpdateStrategy): Promise<boolean> => {
@@ -535,14 +563,179 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
     }
   };
 
+  const runSelectedBranchUpdate = async (ref: GitRef) => {
+    if (ref.current) {
+      openUpdateDialog();
+      return;
+    }
+    const commandScope = commandScopeFromSnapshot(snapshot);
+    if (!controller || !runtime || !commandScope || ref.kind !== "local") return;
+    const upstream = ref.upstream;
+    const separator = upstream?.indexOf("/") ?? -1;
+    if (!upstream || separator <= 0 || separator === upstream.length - 1) {
+      setCommandError(`${ref.shortName} 没有可用于更新的上游分支。`);
+      return;
+    }
+    closeMenu();
+    setBusyAction("update");
+    try {
+      const operation = await controller.runCommand(() => runtime.fetch({
+        ...commandScope,
+        idempotencyKey: createGitIdempotencyKey("update-branch"),
+        expectedRepositoryVersion: snapshot?.status?.repositoryVersion ?? null,
+        remote: upstream.slice(0, separator),
+        refspec: `refs/heads/${upstream.slice(separator + 1)}:refs/heads/${ref.shortName}`,
+        allRemotes: false,
+        prune: false,
+        tags: false,
+      }));
+      if (operation.state !== "succeeded") throw new Error(gitOperationErrorMessage(operation));
+    } catch (error) {
+      setCommandError(gitUiErrorMessage(error));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const runCheckoutAndRebase = async (ref: GitRef) => {
+    const commandScope = commandScopeFromSnapshot(snapshot);
+    const currentBranch = snapshot?.status?.branch.head;
+    if (!controller || !runtime || !commandScope || !currentBranch || ref.kind !== "local" || ref.current) return;
+    closeMenu();
+    if (snapshot?.status?.files.length) {
+      setCommandError("签出并变基要求工作树干净，请先提交或储藏本地改动。");
+      return;
+    }
+    setBusyAction("checkout");
+    try {
+      const checkout = await controller.runCommand(() => runtime.checkout({
+        ...commandScope,
+        idempotencyKey: createGitIdempotencyKey("checkout-rebase"),
+        expectedRepositoryVersion: snapshot?.status?.repositoryVersion ?? null,
+        ref: ref.shortName,
+        detach: false,
+      }));
+      if (checkout.state !== "succeeded") throw new Error(gitOperationErrorMessage(checkout));
+      const preview = await runtime.rebasePreview(commandScope, currentBranch, null);
+      if (preview.commits.length === 0) return;
+      const command = {
+        ...commandScope,
+        idempotencyKey: createGitIdempotencyKey("checkout-rebase-apply"),
+        expectedRepositoryVersion: preview.repositoryVersion,
+        upstream: currentBranch,
+        onto: null,
+        interactive: false,
+        todo: [],
+      };
+      const confirmation = await runtime.confirmation("rebase", command);
+      const operation = await controller.runCommand(() => runtime.rebase({ ...command, confirmationToken: confirmation.token }));
+      if (operation.state !== "succeeded") throw new Error(gitOperationErrorMessage(operation));
+    } catch (error) {
+      setCommandError(gitUiErrorMessage(error));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const prepareRefOperation = async (kind: PendingRefOperation["kind"], ref: GitRef) => {
+    const commandScope = commandScopeFromSnapshot(snapshot);
+    if (!runtime || !commandScope) return;
+    closeMenu();
+    if (kind === "delete") {
+      setPendingRefOperation({ kind, ref, loading: false });
+      return;
+    }
+    setPendingRefOperation({ kind, ref, loading: true });
+    setBusyAction(kind === "merge_current" ? "merge" : "rebase");
+    try {
+      if (kind === "merge_current") {
+        const mergePreview = await runtime.mergePreview(commandScope, ref.shortName);
+        setPendingRefOperation({ kind, ref, mergePreview, loading: false });
+      } else {
+        const rebasePreview = await runtime.rebasePreview(commandScope, ref.shortName, null);
+        setPendingRefOperation({ kind, ref, rebasePreview, loading: false });
+      }
+    } catch (error) {
+      setPendingRefOperation(null);
+      setCommandError(gitUiErrorMessage(error));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const runPendingRefOperation = async () => {
+    const pending = pendingRefOperation;
+    const commandScope = commandScopeFromSnapshot(snapshot);
+    if (!pending || !controller || !runtime || !commandScope) return;
+    const busy = pending.kind === "merge_current" ? "merge" : pending.kind === "rebase_current" ? "rebase" : "delete";
+    setBusyAction(busy);
+    setCommandError(null);
+    try {
+      if (pending.kind === "merge_current" && pending.mergePreview) {
+        const command = {
+          ...commandScope,
+          idempotencyKey: createGitIdempotencyKey("merge-branch"),
+          expectedRepositoryVersion: pending.mergePreview.repositoryVersion,
+          source: pending.ref.shortName,
+          strategy: "ff" as const,
+          message: null,
+        };
+        const confirmation = await runtime.confirmation("merge", command);
+        const operation = await controller.runCommand(() => runtime.merge({ ...command, confirmationToken: confirmation.token }));
+        if (operation.state !== "succeeded") throw new Error(gitOperationErrorMessage(operation));
+      } else if (pending.kind === "rebase_current" && pending.rebasePreview) {
+        const command = {
+          ...commandScope,
+          idempotencyKey: createGitIdempotencyKey("rebase-branch"),
+          expectedRepositoryVersion: pending.rebasePreview.repositoryVersion,
+          upstream: pending.ref.shortName,
+          onto: null,
+          interactive: false,
+          todo: [],
+        };
+        const confirmation = await runtime.confirmation("rebase", command);
+        const operation = await controller.runCommand(() => runtime.rebase({ ...command, confirmationToken: confirmation.token }));
+        if (operation.state !== "succeeded") throw new Error(gitOperationErrorMessage(operation));
+      } else if (pending.kind === "delete") {
+        const remoteFullName = pending.ref.fullName.startsWith("refs/remotes/")
+          ? pending.ref.fullName.slice("refs/remotes/".length)
+          : null;
+        const separator = remoteFullName?.indexOf("/") ?? -1;
+        const remote = remoteFullName && separator > 0 ? remoteFullName.slice(0, separator) : null;
+        const branchName = remote
+          ? remoteFullName!.slice(separator + 1)
+          : pending.ref.fullName.startsWith("refs/heads/")
+            ? pending.ref.fullName.slice("refs/heads/".length)
+            : pending.ref.shortName;
+        const command = {
+          ...commandScope,
+          idempotencyKey: createGitIdempotencyKey("delete-branch"),
+          expectedRepositoryVersion: snapshot?.status?.repositoryVersion ?? null,
+          branchName,
+          force: false,
+          remote,
+        };
+        const confirmation = await runtime.confirmation("delete_branch", command);
+        const operation = await controller.runCommand(() => runtime.deleteBranch({ ...command, confirmationToken: confirmation.token }));
+        if (operation.state !== "succeeded") throw new Error(gitOperationErrorMessage(operation));
+      }
+      setPendingRefOperation(null);
+      window.requestAnimationFrame(() => triggerRef.current?.focus());
+    } catch (error) {
+      setCommandError(gitUiErrorMessage(error));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
   const openRefMenu = (ref: GitRef, event: ReactMouseEvent<HTMLButtonElement>) => {
     const menu = rootRef.current?.querySelector<HTMLElement>(`.${styles.menu}`);
     if (!menu) return;
     const menuBounds = menu.getBoundingClientRect();
     const rowBounds = event.currentTarget.getBoundingClientRect();
-    const submenuHeight = 236;
+    const submenuHeight = ref.kind === "local" && !ref.current ? 430 : 236;
     const top = Math.max(6, Math.min(rowBounds.top - menuBounds.top, window.innerHeight - menuBounds.top - submenuHeight - 8));
-    const side = menuBounds.right + 264 <= window.innerWidth - 8 ? "right" : "left";
+    const side = menuBounds.right + 320 <= window.innerWidth - 8 ? "right" : "left";
     setRefMenu((current) => current?.ref.fullName === ref.fullName ? null : { ref, top, side });
   };
 
@@ -551,6 +744,10 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
     if (action === "checkout") {
       closeMenu();
       requestRefCheckout(ref.shortName, ref.kind !== "local");
+      return;
+    }
+    if (action === "checkout_rebase") {
+      void runCheckoutAndRebase(ref);
       return;
     }
     if (action === "create_branch") {
@@ -562,12 +759,22 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
       return;
     }
     if (action === "update") {
-      openUpdateDialog();
+      void runSelectedBranchUpdate(ref);
       return;
     }
     if (action === "push") {
-      openPushDialog();
+      openPushDialog(ref);
       return;
+    }
+    if (action === "merge_current" || action === "rebase_current" || action === "delete") {
+      void prepareRefOperation(action, ref);
+      return;
+    }
+    if ((action === "compare_refs" || action === "compare_worktree") && snapshot?.project) {
+      const currentRef = snapshot.status?.branch.head ?? "HEAD";
+      gitStore?.getState().requestToolWindowNavigation(snapshot.project.workspaceId, action === "compare_refs"
+        ? { kind: "compare_refs", currentRef, targetRef: ref.shortName }
+        : { kind: "compare_worktree", targetRef: ref.shortName });
     }
     closeMenu();
     onOpenToolWindow();
@@ -829,6 +1036,58 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
         onCancel={closePushDialog}
         onConfirm={runPushAction}
       /> : null}
+      {pendingRefOperation ? (
+        <GitConfirmActionDialog
+          title={pendingRefOperation.kind === "merge_current"
+            ? "合并分支"
+            : pendingRefOperation.kind === "rebase_current"
+              ? "变基当前分支"
+              : "删除分支"}
+          description={pendingRefOperation.kind === "merge_current"
+            ? "将所选分支合并到当前分支。"
+            : pendingRefOperation.kind === "rebase_current"
+              ? "当前分支的提交将重新应用到所选分支之上，并获得新的提交标识。"
+              : pendingRefOperation.ref.kind === "remote"
+                ? "从对应远程仓库删除所选分支。该操作会影响其他协作者。"
+                : "仅删除所选本地分支引用；尚未合并的分支会被 Git 安全删除规则拒绝。"}
+          target={pendingRefOperation.kind === "merge_current"
+            ? `${pendingRefOperation.ref.shortName} → ${snapshot?.status?.branch.head ?? "当前分支"}`
+            : pendingRefOperation.kind === "rebase_current"
+              ? `${snapshot?.status?.branch.head ?? "当前分支"} → ${pendingRefOperation.ref.shortName}`
+              : pendingRefOperation.ref.shortName}
+          details={pendingRefOperation.kind === "merge_current"
+            ? pendingRefOperation.mergePreview
+              ? [
+                  `进入提交：${pendingRefOperation.mergePreview.incomingCommits} 个`,
+                  pendingRefOperation.mergePreview.alreadyMerged
+                    ? "该分支已经合并"
+                    : pendingRefOperation.mergePreview.fastForward ? "可以快进" : "将创建合并提交",
+                  pendingRefOperation.mergePreview.dirty ? "工作树存在本地改动，Git 将拒绝执行" : "工作树干净",
+                ]
+              : ["正在读取合并预览…"]
+            : pendingRefOperation.kind === "rebase_current"
+              ? pendingRefOperation.rebasePreview
+                ? [
+                    `需要重放：${pendingRefOperation.rebasePreview.commits.length} 个提交`,
+                    pendingRefOperation.rebasePreview.dirty ? "工作树存在本地改动，Git 将拒绝执行" : "工作树干净",
+                  ]
+                : ["正在读取变基预览…"]
+              : pendingRefOperation.ref.kind === "remote"
+                ? ["将执行远程分支删除", "不会切换或修改当前工作树"]
+                : ["使用安全删除，不会强制删除尚未合并的本地分支", "不会切换或修改当前工作树"]}
+          confirmLabel={pendingRefOperation.loading
+            ? "正在读取…"
+            : pendingRefOperation.kind === "merge_current" ? "合并" : pendingRefOperation.kind === "rebase_current" ? "变基" : "删除"}
+          confirmTone={pendingRefOperation.kind === "delete" ? "danger" : "default"}
+          busy={Boolean(pendingRefOperation.loading || busyAction === "merge" || busyAction === "rebase" || busyAction === "delete")}
+          onCancel={() => {
+            setPendingRefOperation(null);
+            setCommandError(null);
+            window.requestAnimationFrame(() => triggerRef.current?.focus());
+          }}
+          onConfirm={() => void runPendingRefOperation()}
+        />
+      ) : null}
       {helpOpen ? <GitHelpDialog onClose={() => setHelpOpen(false)} /> : null}
     </div>
   );
@@ -1014,11 +1273,7 @@ function GitRefActionsMenu({
 }) {
   const name = refValue.shortName;
   const isCurrent = refValue.kind === "local" && refValue.current;
-  const checkoutLabel = refValue.kind === "local"
-    ? `签出 '${name}'`
-    : refValue.kind === "remote"
-      ? `签出 '${name}'（分离当前指针）`
-      : `签出标记 '${name}'（分离当前指针）`;
+  const isLocal = refValue.kind === "local";
   const compareLabel = currentBranch
     ? `与 '${currentBranch}' 比较`
     : "与当前指针比较";
@@ -1032,15 +1287,25 @@ function GitRefActionsMenu({
       style={{ top }}
     >
       {!isCurrent ? (
-        <RefSubmenuItem label={checkoutLabel} action="checkout" refValue={refValue} onAction={onAction} />
+        <RefSubmenuItem label="签出" action="checkout" refValue={refValue} onAction={onAction} />
       ) : null}
       <RefSubmenuItem label={`从 '${name}' 新建分支…`} action="create_branch" refValue={refValue} onAction={onAction} />
+      {!isCurrent && isLocal ? (
+        <RefSubmenuItem label={`签出并变基到 '${currentBranch ?? "当前分支"}'`} action="checkout_rebase" refValue={refValue} onAction={onAction} />
+      ) : null}
       <div className={styles.submenuSeparator} role="separator" />
       {!isCurrent ? (
-        <RefSubmenuItem label={compareLabel} action="compare" refValue={refValue} onAction={onAction} />
+        <RefSubmenuItem label={compareLabel} action="compare_refs" refValue={refValue} onAction={onAction} />
       ) : null}
-      <RefSubmenuItem label="显示与工作树的差异" action="compare" refValue={refValue} onAction={onAction} />
-      {isCurrent ? (
+      <RefSubmenuItem label="显示与工作树的差异" action="compare_worktree" refValue={refValue} onAction={onAction} />
+      {!isCurrent && isLocal ? (
+        <>
+          <div className={styles.submenuSeparator} role="separator" />
+          <RefSubmenuItem label={`将 '${currentBranch ?? "当前分支"}' 变基到 '${name}'`} action="rebase_current" refValue={refValue} onAction={onAction} />
+          <RefSubmenuItem label={`将 '${name}' 合并到 '${currentBranch ?? "当前分支"}' 中`} action="merge_current" refValue={refValue} onAction={onAction} />
+        </>
+      ) : null}
+      {isLocal ? (
         <>
           <div className={styles.submenuSeparator} role="separator" />
           <RefSubmenuItem label="更新" action="update" refValue={refValue} onAction={onAction} />
@@ -1048,20 +1313,20 @@ function GitRefActionsMenu({
           <div className={styles.submenuSeparator} role="separator" />
           <RefSubmenuItem label="重命名…" action="rename" refValue={refValue} onAction={onAction} />
         </>
-      ) : (
+      ) : refValue.kind === "tag" ? (
         <>
           <div className={styles.submenuSeparator} role="separator" />
           <RefSubmenuItem
-            label={refValue.kind === "tag" ? "在 Git 面板中管理标签…" : "在 Git 面板中合并或变基…"}
+            label="在 Git 面板中管理标签…"
             action="manage"
             refValue={refValue}
             onAction={onAction}
           />
-          {refValue.kind === "local" ? (
-            <RefSubmenuItem label="重命名…" action="rename" refValue={refValue} onAction={onAction} />
-          ) : null}
         </>
-      )}
+      ) : null}
+      {!isCurrent && refValue.kind !== "tag" ? (
+        <RefSubmenuItem label="删除" action="delete" refValue={refValue} onAction={onAction} />
+      ) : null}
     </div>
   );
 }

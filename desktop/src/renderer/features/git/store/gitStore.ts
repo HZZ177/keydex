@@ -16,6 +16,14 @@ import type {
 
 export type GitToolWindowTab = "changes" | "history" | "blame" | "reflog" | "branches" | "stash" | "operations";
 
+export type GitToolWindowNavigationIntent =
+  | { kind: "compare_refs"; currentRef: string; targetRef: string }
+  | { kind: "compare_worktree"; targetRef: string };
+
+export type GitToolWindowNavigationRequest = GitToolWindowNavigationIntent & {
+  requestId: number;
+};
+
 export interface GitProjectStoreState {
   workspaceId: string;
   projectRoot: string;
@@ -63,6 +71,7 @@ export interface GitStoreState {
   uiByProject: Record<string, GitProjectUiState>;
   repositoryEpochs: Record<string, number | undefined>;
   invalidatedDomainsByRepository: Record<string, readonly string[] | undefined>;
+  navigationRequestsByProject: Record<string, GitToolWindowNavigationRequest | undefined>;
 
   activateProject(workspaceId: string, projectRoot: string): void;
   clearActiveProject(): void;
@@ -78,6 +87,8 @@ export interface GitStoreState {
   invalidateRepository(repositoryId: GitRepositoryId, domains: readonly string[]): number;
   clearInvalidatedDomains(repositoryId: GitRepositoryId, domains: readonly string[]): void;
   updateProjectUi(workspaceId: string, update: Partial<GitProjectUiState>): void;
+  requestToolWindowNavigation(workspaceId: string, intent: GitToolWindowNavigationIntent): void;
+  consumeToolWindowNavigation(workspaceId: string, requestId: number): void;
 }
 
 export type GitStore = StoreApi<GitStoreState>;
@@ -122,6 +133,7 @@ export function createGitStore(options: GitStoreOptions = {}): GitStore {
   const storage = options.storage ?? null;
   const persisted = readPersistedGitUi(storage);
   const persist = (state: GitStoreState) => writePersistedGitUi(storage, state);
+  let navigationRequestSequence = 0;
   return createStore<GitStoreState>((set, get) => ({
     activeWorkspaceId: null,
     projects: {},
@@ -135,6 +147,7 @@ export function createGitStore(options: GitStoreOptions = {}): GitStore {
     uiByProject: {},
     repositoryEpochs: {},
     invalidatedDomainsByRepository: {},
+    navigationRequestsByProject: {},
 
     activateProject(workspaceId, projectRoot) {
       set((state) => ({
@@ -340,6 +353,23 @@ export function createGitStore(options: GitStoreOptions = {}): GitStore {
         },
       }));
       persist(get());
+    },
+    requestToolWindowNavigation(workspaceId, intent) {
+      navigationRequestSequence += 1;
+      set((state) => ({
+        navigationRequestsByProject: {
+          ...state.navigationRequestsByProject,
+          [workspaceId]: { ...intent, requestId: navigationRequestSequence },
+        },
+      }));
+    },
+    consumeToolWindowNavigation(workspaceId, requestId) {
+      set((state) => {
+        if (state.navigationRequestsByProject[workspaceId]?.requestId !== requestId) return state;
+        const navigationRequestsByProject = { ...state.navigationRequestsByProject };
+        delete navigationRequestsByProject[workspaceId];
+        return { navigationRequestsByProject };
+      });
     },
   }));
 }

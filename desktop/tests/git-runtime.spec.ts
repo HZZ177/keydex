@@ -73,6 +73,45 @@ describe("Git runtime", () => {
     );
   });
 
+  it("loads a complete revision tree and maps branch-update fetch refspecs", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        repository_id: repositoryId,
+        repository_version: "v1",
+        revision: "feature/demo",
+        object_id: "a".repeat(40),
+        entries: [{ path: "src/app.ts", object_id: "b".repeat(40), mode: "100644", kind: "blob", size: 42 }],
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        operation_id: "op-fetch",
+        repository_id: repositoryId,
+        repository_version: "v2",
+        state: "queued",
+        summary: "fetch",
+        result: {},
+      }));
+    const runtime = createGitRuntime(new HttpClient({ baseUrl: "http://127.0.0.1:8765", fetcher }));
+
+    await expect(runtime.revisionTree(scope, "feature/demo")).resolves.toMatchObject({
+      revision: "feature/demo",
+      entries: [{ path: "src/app.ts", size: 42 }],
+    });
+    await runtime.fetch({
+      ...scope,
+      idempotencyKey: "update-feature",
+      remote: "origin",
+      refspec: "refs/heads/feature:refs/heads/feature",
+    });
+
+    expect(fetcher.mock.calls[0][0]).toBe(
+      "http://127.0.0.1:8765/api/git/repositories/git-test/revision-tree/feature%2Fdemo?workspace_id=workspace-a&project_root=C%3A%2Fproject",
+    );
+    expect(JSON.parse(String((fetcher.mock.calls[1][1] as RequestInit).body))).toMatchObject({
+      remote: "origin",
+      refspec: "refs/heads/feature:refs/heads/feature",
+    });
+  });
+
   it("filters worktree event paths through the repository ignore rules", async () => {
     const fetcher = vi.fn().mockResolvedValue(jsonResponse({
       repository_id: repositoryId,

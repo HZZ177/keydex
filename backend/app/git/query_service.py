@@ -34,7 +34,7 @@ from .conflicts import (
     parse_unmerged_index,
     resolution_actions,
 )
-from .diff import apply_numstat, parse_git_diff, parse_numstat_z
+from .diff import apply_numstat, diff_summaries, parse_git_diff, parse_name_status_z, parse_numstat_z
 from .discovery import discover_git_repositories
 from .history import LOG_FORMAT, parse_git_log
 from .history_query import (
@@ -51,6 +51,8 @@ from .models import (
     GitBlameResponse,
     GitCapabilityResponse,
     GitCommitDetailResponse,
+    GitRevisionTreeEntryResponse,
+    GitRevisionTreeResponse,
     GitCompareResponse,
     GitConflictFileResponse,
     GitConflictResultSaveRequest,
@@ -985,6 +987,7 @@ class GitQueryService:
         mode: str,
         left: str,
         right: str | None = None,
+        path: str | None = None,
         cancel_event: asyncio.Event | None = None,
     ) -> GitCompareResponse:
         if mode not in {"commit", "two_dot", "three_dot", "working_tree"}:
@@ -993,6 +996,10 @@ class GitQueryService:
         try:
             left_revision = validate_revision(left)
             right_revision = validate_revision(right) if right else None
+        except GitParameterError as exc:
+            raise GitApiError("git_validation_failed", str(exc)) from exc
+        try:
+            normalized_path = validate_repo_relative_path(path) if path is not None else None
         except GitParameterError as exc:
             raise GitApiError("git_validation_failed", str(exc)) from exc
         if mode != "working_tree" and not right_revision:
@@ -1027,7 +1034,6 @@ class GitQueryService:
                 raise GitApiError("git_failed", "Git revisions do not have a merge base")
             comparison_base = merge_base
 
-        patch_args = ["diff", "--no-ext-diff", "--binary", "--find-renames", comparison_base]
         numstat_args = [
             "diff",
             "--no-ext-diff",
@@ -1037,12 +1043,40 @@ class GitQueryService:
             comparison_base,
         ]
         if right_object_id:
-            patch_args.append(right_object_id)
             numstat_args.append(right_object_id)
-        patch, numstat = await asyncio.gather(
-            self._run(registered, patch_args, cancel_event=cancel_event),
-            self._run(registered, numstat_args, cancel_event=cancel_event),
-        )
+        if normalized_path is not None:
+            patch_args = ["diff", "--no-ext-diff", "--binary", "--find-renames", comparison_base]
+            if right_object_id:
+                patch_args.append(right_object_id)
+            patch_args.extend(("--", normalized_path))
+            numstat_args.extend(("--", normalized_path))
+            patch, numstat = await asyncio.gather(
+                self._run(registered, patch_args, cancel_event=cancel_event),
+                self._run(registered, numstat_args, cancel_event=cancel_event),
+            )
+            files = apply_numstat(
+                parse_git_diff(patch.stdout, truncated=patch.stdout_truncated),
+                parse_numstat_z(numstat.stdout),
+            )
+        else:
+            name_status_args = [
+                "diff",
+                "--no-ext-diff",
+                "--find-renames",
+                "--name-status",
+                "-z",
+                comparison_base,
+            ]
+            if right_object_id:
+                name_status_args.append(right_object_id)
+            name_status, numstat = await asyncio.gather(
+                self._run(registered, name_status_args, cancel_event=cancel_event),
+                self._run(registered, numstat_args, cancel_event=cancel_event),
+            )
+            files = diff_summaries(
+                parse_name_status_z(name_status.stdout),
+                parse_numstat_z(numstat.stdout),
+            )
         return GitCompareResponse(
             repository_id=registered.response.id,
             repository_version=await self.version_async(registered.response),
@@ -1053,10 +1087,7 @@ class GitQueryService:
             right_object_id=right_object_id,
             comparison_base_object_id=comparison_base,
             merge_base_object_id=merge_base,
-            files=apply_numstat(
-                parse_git_diff(patch.stdout, truncated=patch.stdout_truncated),
-                parse_numstat_z(numstat.stdout),
-            ),
+            files=files,
         )
 
     async def merge_preview(
@@ -1353,6 +1384,58 @@ class GitQueryService:
             while len(self._commit_detail_cache) > 128:
                 self._commit_detail_cache.popitem(last=False)
         return detail
+
+    async def revision_tree(
+        self,
+        request: GitRepositoryRequest,
+        revision: str,
+        *,
+        cancel_event: asyncio.Event | None = None,
+    ) -> GitRevisionTreeResponse:
+        registered = self._resolve(request)
+        try:
+            normalized_revision = validate_revision(revision)
+        except GitParameterError as exc:
+            raise GitApiError("git_validation_failed", str(exc)) from exc
+        object_id = await self._resolve_commit_object(
+            registered,
+            normalized_revision,
+            cancel_event=cancel_event,
+        )
+        result = await self._run(
+            registered,
+            ["ls-tree", "-r", "-z", "--long", object_id],
+            cancel_event=cancel_event,
+        )
+        entries: list[GitRevisionTreeEntryResponse] = []
+        for record in result.stdout.split("\0"):
+            if not record:
+                continue
+            metadata, separator, path = record.partition("\t")
+            fields = metadata.split()
+            if not separator or len(fields) != 4 or not path:
+                raise GitApiError("git_parse_failed", "Git returned an invalid revision tree entry")
+            mode, object_type, entry_object_id, raw_size = fields
+            if object_type not in {"blob", "commit"}:
+                continue
+            try:
+                size = None if raw_size == "-" else int(raw_size)
+            except ValueError as exc:
+                raise GitApiError("git_parse_failed", "Git returned an invalid revision tree size") from exc
+            entries.append(GitRevisionTreeEntryResponse(
+                path=path,
+                object_id=entry_object_id,
+                mode=mode,
+                kind="submodule" if object_type == "commit" else "blob",
+                size=size,
+            ))
+        return GitRevisionTreeResponse(
+            repository_id=registered.response.id,
+            repository_version=await self.version_async(registered.response),
+            revision=normalized_revision,
+            object_id=object_id,
+            entries=entries,
+        )
 
     async def blame(
         self,

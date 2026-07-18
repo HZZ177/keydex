@@ -64,8 +64,11 @@ describe("Keydex Diff CodeView virtualization policy", () => {
     const props = pierreCodeViewProps([], {
       profile: "git",
       theme: "light",
+      className: "consumer-class",
       virtualizationPolicy: policy,
     });
+    expect(props.className).toContain("consumer-class");
+    expect(props.className).not.toBe("consumer-class");
     expect(props.options?.itemMetrics).toEqual(policy.itemMetrics);
     expect(props.options?.__devOnlyValidateItemHeights).toBe(false);
   });

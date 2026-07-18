@@ -59,10 +59,22 @@ async def test_compare_working_tree_and_validation_are_explicit(
     service, request = _service(repo, tmp_path)
 
     working = await service.compare(request, mode="working_tree", left="HEAD")
+    selected = await service.compare(
+        request,
+        mode="working_tree",
+        left="HEAD",
+        path="README.md",
+    )
     assert working.right_label == "Working tree"
     assert working.right_object_id is None
     assert working.left_object_id == working.comparison_base_object_id
     assert {item.new_path for item in working.files} == {"README.md"}
+    assert working.files[0].raw_patch == ""
+    assert working.files[0].hunks == []
+    assert len(selected.files) == 1
+    assert selected.files[0].new_path == "README.md"
+    assert selected.files[0].raw_patch.startswith("diff --git ")
+    assert selected.files[0].hunks
 
     with pytest.raises(GitApiError, match="requires two revisions"):
         await service.compare(request, mode="three_dot", left="HEAD")

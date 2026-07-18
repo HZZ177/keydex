@@ -68,6 +68,20 @@ describe("GitRefsTree", () => {
       expect.objectContaining({ fullName: "refs/remotes/origin/main" }),
     ));
     expect(screen.queryByRole("menu", { name: "页面右键菜单" })).toBeNull();
+
+    const featureBranch = screen.getByRole("treeitem", { name: "feature/git-view" });
+    fireEvent.contextMenu(featureBranch, { clientX: 150, clientY: 130 });
+    expect(screen.getByRole("menuitem", { name: "签出" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "从 'feature/git-view' 新建分支…" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "签出并变基到 'main'" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "与 'main' 比较" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "显示与工作树的差异" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "将 'main' 变基到 'feature/git-view'" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "将 'feature/git-view' 合并到 'main' 中" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "更新" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "推送…" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "重命名…" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "删除" })).not.toBeNull();
   });
 
   it("filters the independently scrollable branch region by branch name", () => {

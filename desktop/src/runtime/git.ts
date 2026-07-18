@@ -5,6 +5,7 @@ import {
   normalizeGitBisect,
   normalizeGitCommandResult,
   normalizeGitCommitDetail,
+  normalizeGitRevisionTree,
   normalizeGitCompare,
   normalizeGitConflicts,
   normalizeGitDiff,
@@ -25,6 +26,7 @@ import {
   type GitBisectSnapshot,
   type GitCommandResult,
   type GitCommitDetail,
+  type GitRevisionTree,
   type GitCompareMode,
   type GitCompareResult,
   type GitConflictsSnapshot,
@@ -304,6 +306,7 @@ export interface GitRemoteCommand extends GitCommandBase {
 export interface GitFetchCommand extends GitCommandBase {
   remote?: string | null;
   allRemotes?: boolean;
+  refspec?: string | null;
   prune?: boolean;
   tags?: boolean;
 }
@@ -412,9 +415,10 @@ export interface GitRuntime {
     revision: string,
     options?: GitQueryOptions & { parentId?: GitObjectId | null },
   ): Promise<GitCommitDetail>;
+  revisionTree(scope: GitRepositoryScope, revision: string, options?: GitQueryOptions): Promise<GitRevisionTree>;
   compare(
     scope: GitRepositoryScope,
-    options: GitQueryOptions & { mode: GitCompareMode; left: string; right?: string | null },
+    options: GitQueryOptions & { mode: GitCompareMode; left: string; right?: string | null; path?: string | null },
   ): Promise<GitCompareResult>;
   blame(
     scope: GitRepositoryScope,
@@ -678,11 +682,18 @@ export function createGitRuntime(http: HttpClient): GitRuntime {
         { signal: options.signal },
       ));
     },
+    async revisionTree(scope, revision, options = {}) {
+      return normalizeGitRevisionTree(await http.request(
+        `${repositoryPath(scope, `/revision-tree/${encodeURIComponent(revision)}`)}?${query(scope)}`,
+        { signal: options.signal },
+      ));
+    },
     async compare(scope, options) {
       const params = query(scope);
       params.set("mode", options.mode);
       params.set("left", options.left);
       if (options.right) params.set("right", options.right);
+      if (options.path) params.set("path", options.path);
       return normalizeGitCompare(await http.request(
         `${repositoryPath(scope, "/compare")}?${params}`,
         { signal: options.signal },

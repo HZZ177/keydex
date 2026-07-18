@@ -75,10 +75,18 @@ def test_git_read_api_exposes_discovery_and_all_query_routes(tmp_path: Path) -> 
         f"/api/git/repositories/{repository_id}/commits/HEAD",
         params=params,
     )
+    revision_tree = client.get(
+        f"/api/git/repositories/{repository_id}/revision-tree/HEAD",
+        params=params,
+    )
     diff = client.get(f"/api/git/repositories/{repository_id}/diff", params=params)
     compare = client.get(
         f"/api/git/repositories/{repository_id}/compare",
         params={**params, "mode": "working_tree", "left": "HEAD"},
+    )
+    selected_compare = client.get(
+        f"/api/git/repositories/{repository_id}/compare",
+        params={**params, "mode": "working_tree", "left": "HEAD", "path": "README.md"},
     )
     blame = client.get(
         f"/api/git/repositories/{repository_id}/blame",
@@ -87,14 +95,18 @@ def test_git_read_api_exposes_discovery_and_all_query_routes(tmp_path: Path) -> 
     reflog = client.get(f"/api/git/repositories/{repository_id}/reflog", params=params)
 
     assert status.status_code == refs.status_code == history.status_code == 200
-    assert commit.status_code == diff.status_code == compare.status_code == 200
+    assert commit.status_code == revision_tree.status_code == diff.status_code == compare.status_code == 200
     assert blame.status_code == reflog.status_code == 200
     assert status.json()["files"][0]["path"] == "README.md"
     assert refs.json()["refs"][0]["kind"] == "local"
     assert history.json()["commits"][0]["object_id"] == commit.json()["commit"]["object_id"]
     assert commit.json()["files"][0]["new_path"] == "README.md"
+    assert revision_tree.json()["entries"][0]["path"] == "README.md"
     assert diff.json()["files"][0]["new_path"] == "README.md"
     assert compare.json()["right_label"] == "Working tree"
+    assert compare.json()["files"][0]["raw_patch"] == ""
+    assert selected_compare.status_code == 200
+    assert selected_compare.json()["files"][0]["raw_patch"].startswith("diff --git ")
     assert blame.json()["lines"][0]["filename"] == "README.md"
     assert reflog.json()["entries"]
 

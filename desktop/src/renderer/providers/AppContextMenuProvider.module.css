@@ -47,6 +47,14 @@
     opacity var(--motion-fast) var(--motion-ease-out);
 }
 
+.item[data-separator-before="true"] {
+  height: 34px;
+  margin-top: 2px;
+  border-top: 1px solid var(--color-border-2);
+  border-radius: 0 0 var(--radius-xs) var(--radius-xs);
+  padding-top: 5px;
+}
+
 .item[data-has-submenu="true"] {
   grid-template-columns: 14px minmax(0, 1fr) 13px;
 }

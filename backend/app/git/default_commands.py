@@ -943,6 +943,14 @@ def _prepare_fetch(request: GitFetchCommandRequest) -> GitPreparedCommand:
         argv = ["fetch", target]
     else:
         raise GitApiError("git_validation_failed", "Fetch requires a remote or all remotes")
+    normalized_refspec: str | None = None
+    if request.refspec:
+        if request.all_remotes:
+            raise GitApiError("git_validation_failed", "A fetch refspec requires one remote")
+        source, separator, target_ref = request.refspec.partition(":")
+        if not separator:
+            raise GitApiError("git_validation_failed", "Fetch refspec must include a source and target")
+        normalized_refspec = f"{validate_ref_name(source)}:{validate_ref_name(target_ref)}"
     # Keep the API contract deterministic even when the user has configured
     # fetch.prune globally or for this repository.  The UI's unchecked state
     # means "retain stale remote-tracking refs", not "inherit Git config".
@@ -950,6 +958,8 @@ def _prepare_fetch(request: GitFetchCommandRequest) -> GitPreparedCommand:
     if request.tags:
         argv.append("--tags")
     argv.append("--progress")
+    if normalized_refspec:
+        argv.append(normalized_refspec)
     return GitPreparedCommand(argv=tuple(argv), summary=f"Fetched {target}", timeout_seconds=300)
 
 

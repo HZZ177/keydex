@@ -1,7 +1,8 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildCommitFileTree, GitCommitDetailsView } from "@/renderer/features/git/components/GitCommitDetailsView";
+import { AppContextMenuProvider } from "@/renderer/providers/AppContextMenuProvider";
 import { createGitRuntime } from "@/runtime/git";
 import { HttpClient } from "@/runtime/httpClient";
 import type { GitCommitDetail, GitFileDiff } from "@/runtime/gitTypes";
@@ -88,6 +89,32 @@ describe("Git commit details", () => {
 
     expect(screen.getByText("merge topic")).toBeTruthy();
     expect(screen.getByRole("status").textContent).toBe("正在加载变更文件…");
+  });
+
+  it("opens the selected commit file diff from double click and the shared context menu", async () => {
+    render(
+      <AppContextMenuProvider>
+        <GitCommitDetailsView
+          detail={normalizedDetail()}
+          loading={false}
+          selectedFileIndex={0}
+          onSelectFile={vi.fn()}
+        />
+      </AppContextMenuProvider>,
+    );
+
+    const renamedFile = screen.getByRole("button", { name: "new.ts" });
+    fireEvent.doubleClick(renamedFile);
+    expect(screen.getByRole("dialog", { name: "差异详情 · src/new.ts" })).toBeTruthy();
+    expect(screen.getByLabelText("只读 Git 差异")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+
+    const addedFile = screen.getByRole("button", { name: "readme.md" });
+    fireEvent.contextMenu(addedFile, { clientX: 240, clientY: 160 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "查看 Diff 详情" }));
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: "差异详情 · docs/readme.md" })).toBeTruthy();
+    });
   });
 
   it("resizes the two scroll regions from the horizontal separator", () => {

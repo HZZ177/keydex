@@ -68,6 +68,28 @@ async def test_merge_commit_detail_switches_parent_and_rejects_unrelated_parent(
     assert error.value.payload.code == "git_validation_failed"
 
 
+@pytest.mark.asyncio
+async def test_revision_tree_lists_the_complete_repository_snapshot(
+    git_repo_factory,
+    tmp_path: Path,
+) -> None:
+    repo = git_repo_factory.create("revision-tree")
+    repo.write("src/app.py", "print('app')\n")
+    repo.write("docs/guide.md", "guide\n")
+    revision = repo.commit("add repository tree", "src/app.py", "docs/guide.md")
+    service, request = _service(repo, tmp_path)
+
+    tree = await service.revision_tree(request, revision)
+
+    assert tree.object_id == revision
+    assert tree.revision == revision
+    assert {entry.path for entry in tree.entries} == {"README.md", "src/app.py", "docs/guide.md"}
+    app = next(entry for entry in tree.entries if entry.path == "src/app.py")
+    assert app.kind == "blob"
+    assert app.mode == "100644"
+    assert app.size == len("print('app')\n")
+
+
 def _service(repo, tmp_path: Path) -> tuple[GitQueryService, GitRepositoryRequest]:
     service = GitQueryService(grants=GitAncestorGrantStore(tmp_path / "detail-grants.json"))
     discovery = service.discover(
