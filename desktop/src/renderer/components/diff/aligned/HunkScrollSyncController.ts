@@ -11,6 +11,7 @@ export type DiffScrollIntentSource =
 export interface DiffScrollablePane {
   scrollTop: number;
   scrollLeft: number;
+  readonly clientHeight?: number;
   readonly scrollWidth?: number;
   readonly clientWidth?: number;
   addEventListener(type: string, listener: EventListener, options?: AddEventListenerOptions): void;
@@ -31,6 +32,20 @@ export interface HunkScrollSyncControllerOptions {
     source: DiffScrollIntentSource,
   ) => void;
   readonly onEstimatedTarget?: (transaction: DiffEstimatedScrollTransaction) => void;
+  readonly onScrollFrame?: (frame: DiffScrollFrame) => void;
+}
+
+export interface DiffScrollFrame {
+  readonly epoch: number;
+  readonly sourceSide: DiffPaneSide;
+  readonly source: DiffScrollIntentSource;
+  readonly left: DiffScrollFramePane;
+  readonly right: DiffScrollFramePane;
+}
+
+export interface DiffScrollFramePane {
+  readonly scrollTop: number;
+  readonly height: number;
 }
 
 export interface DiffEstimatedScrollTransaction {
@@ -53,6 +68,8 @@ interface InternalPosition {
   readonly left: number;
 }
 
+const OBSERVED_SCROLL_EPSILON = 0.01;
+
 export class HunkScrollSyncController {
   private readonly panes: Readonly<Record<DiffPaneSide, DiffScrollablePane>>;
   private readonly listeners: Array<{
@@ -70,6 +87,12 @@ export class HunkScrollSyncController {
   private enabled: boolean;
   private destroyed = false;
   private frame: number | null = null;
+  private visualFrame: number | null = null;
+  private pendingVisualSource: Readonly<{
+    side: DiffPaneSide;
+    source: DiffScrollIntentSource;
+  }> | null = null;
+  private visualEpoch = 0;
   private pending: PendingSync | null = null;
   private correctionEpoch = 0;
   private pendingCorrection: DiffEstimatedScrollTransaction | null = null;
@@ -103,10 +126,12 @@ export class HunkScrollSyncController {
     if (!enabled) {
       this.pending = null;
       this.cancelPendingFrame();
+      this.queueVisualFrame(this.master, "scroll");
       return;
     }
     const master = this.panes[this.master];
     this.queueSync(this.master, master.scrollTop, master.scrollLeft, true);
+    this.queueVisualFrame(this.master, "scroll");
   }
 
   notifyIntent(side: DiffPaneSide, source: DiffScrollIntentSource): void {
@@ -122,6 +147,7 @@ export class HunkScrollSyncController {
     this.notifyIntent(side, "navigation");
     const pane = this.panes[side];
     this.queueSync(side, pane.scrollTop, pane.scrollLeft, true);
+    this.queueVisualFrame(side, "navigation");
   }
 
   scrollTo(side: DiffPaneSide, top: number, left?: number): void {
@@ -131,6 +157,12 @@ export class HunkScrollSyncController {
     pane.scrollTop = Math.max(0, top);
     if (left !== undefined && Number.isFinite(left)) pane.scrollLeft = Math.max(0, left);
     this.queueSync(side, pane.scrollTop, pane.scrollLeft, true);
+    this.queueVisualFrame(side, "navigation");
+  }
+
+  refresh(side: DiffPaneSide = this.master, source: DiffScrollIntentSource = "scroll"): void {
+    if (this.destroyed) return;
+    this.queueVisualFrame(side, source);
   }
 
   /** Applies at most one post-mount measurement correction for the latest estimated sync. */
@@ -150,6 +182,7 @@ export class HunkScrollSyncController {
     if (Math.abs(target.scrollTop - next) <= this.tolerance) return false;
     this.internalPositions.set(targetSide, Object.freeze({ top: next, left: target.scrollLeft }));
     target.scrollTop = next;
+    this.queueVisualFrame(targetSide, "navigation");
     return true;
   }
 
@@ -157,7 +190,9 @@ export class HunkScrollSyncController {
     if (this.destroyed) return;
     this.destroyed = true;
     this.cancelPendingFrame();
+    this.cancelVisualFrame();
     this.pending = null;
+    this.pendingVisualSource = null;
     this.pendingCorrection = null;
     this.internalPositions.clear();
     for (const { pane, type, listener, options } of this.listeners) {
@@ -205,11 +240,12 @@ export class HunkScrollSyncController {
       return;
     }
     this.internalPositions.delete(side);
-    const verticalChanged = Math.abs(previous.top - offset) > this.tolerance;
-    const horizontalChanged = Math.abs(previous.left - horizontalOffset) > this.tolerance;
+    const verticalChanged = Math.abs(previous.top - offset) > OBSERVED_SCROLL_EPSILON;
+    const horizontalChanged = Math.abs(previous.left - horizontalOffset) > OBSERVED_SCROLL_EPSILON;
     if (!verticalChanged && !horizontalChanged) return;
     this.notifyIntent(side, "scroll");
     this.queueSync(side, offset, horizontalOffset, verticalChanged);
+    this.queueVisualFrame(side, "scroll");
   }
 
   private queueSync(
@@ -231,6 +267,9 @@ export class HunkScrollSyncController {
       this.flush();
       return;
     }
+    // When a visual-frame consumer is present, it owns the frame boundary and
+    // flushes the pending mapping immediately before reading both pane offsets.
+    if (this.options.onScrollFrame) return;
     if (this.frame !== null) return;
     this.frame = this.requestFrame(() => {
       this.frame = null;
@@ -275,10 +314,43 @@ export class HunkScrollSyncController {
     this.cancelFrame(this.frame);
     this.frame = null;
   }
+
+  private queueVisualFrame(side: DiffPaneSide, source: DiffScrollIntentSource): void {
+    if (!this.options.onScrollFrame || this.destroyed) return;
+    this.pendingVisualSource = Object.freeze({ side, source });
+    if (this.visualFrame !== null) return;
+    this.visualFrame = this.requestFrame(() => {
+      this.visualFrame = null;
+      if (this.synchronizationMode === "animation_frame") this.flush();
+      const pending = this.pendingVisualSource;
+      this.pendingVisualSource = null;
+      if (!pending || this.destroyed) return;
+      this.options.onScrollFrame?.(Object.freeze({
+        epoch: ++this.visualEpoch,
+        sourceSide: pending.side,
+        source: pending.source,
+        left: framePosition(this.panes.old),
+        right: framePosition(this.panes.new),
+      }));
+    });
+  }
+
+  private cancelVisualFrame(): void {
+    if (this.visualFrame === null) return;
+    this.cancelFrame(this.visualFrame);
+    this.visualFrame = null;
+  }
 }
 
 function currentPosition(pane: DiffScrollablePane): InternalPosition {
   return Object.freeze({ top: pane.scrollTop, left: pane.scrollLeft });
+}
+
+function framePosition(pane: DiffScrollablePane): DiffScrollFramePane {
+  return Object.freeze({
+    scrollTop: Math.max(0, pane.scrollTop),
+    height: Math.max(0, pane.clientHeight ?? 0),
+  });
 }
 
 function clampHorizontalOffset(pane: DiffScrollablePane, offset: number): number {

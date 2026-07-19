@@ -1,7 +1,7 @@
 .pane {
   position: relative;
   isolation: isolate;
-  container-type: inline-size;
+  container-type: size;
   min-width: 0;
   min-height: 0;
   block-size: 100%;
@@ -49,8 +49,39 @@
   scrollbar-gutter: auto;
 }
 
+.pane[data-keydex-aligned-scroll-mode="frame"] {
+  overflow-anchor: none;
+}
+
+.scrollCanvas {
+  position: relative;
+  inline-size: max(
+    100%,
+    calc(
+      var(--keydex-aligned-pane-content-width, 0ch)
+      + var(--keydex-diff-gutter-lane-width)
+      + 24px
+    )
+  );
+  min-inline-size: 100%;
+  font-family: var(--font-mono);
+  font-size: var(--diff-code-font-size, 13px);
+}
+
+.visualViewport {
+  position: sticky;
+  top: 0;
+  overflow: clip;
+  inline-size: 100%;
+  block-size: 100cqb;
+}
+
 .content {
   min-width: 100%;
   min-height: 100%;
   width: max-content;
+}
+
+.pane[data-keydex-aligned-scroll-mode="frame"] .content {
+  will-change: transform;
 }

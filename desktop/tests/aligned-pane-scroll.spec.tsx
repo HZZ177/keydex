@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { AlignedDiffPaneHandle } from "@/renderer/components/diff/aligned/AlignedDiffPane";
 import { KeydexAlignedSplitDiff } from "@/renderer/components/diff/aligned/KeydexAlignedSplitDiff";
 import {
+  alignedDiffBottomScrollSpace,
   alignedHorizontalWheelDelta,
   alignedVerticalWheelDelta,
   applyAlignedDiffPaneHorizontalWheel,
@@ -13,6 +14,13 @@ import {
 } from "@/renderer/components/diff/aligned/alignedPaneScroll";
 
 describe("aligned pane nested and blank-area scrolling", () => {
+  it("reserves thirty percent of the viewport below long files only", () => {
+    expect(alignedDiffBottomScrollSpace(1_200, 800)).toBe(240);
+    expect(alignedDiffBottomScrollSpace(800, 800)).toBe(0);
+    expect(alignedDiffBottomScrollSpace(300, 800)).toBe(0);
+    expect(alignedDiffBottomScrollSpace(Number.NaN, 800)).toBe(0);
+  });
+
   it("converts Shift-wheel with a fine capped step and leaves native horizontal input untouched", () => {
     const left = pane(320, 900, 300, 1_000);
     const right = pane(320, 900, 300, 1_000);

@@ -9,6 +9,17 @@ export interface AlignedScrollablePane {
   readonly clientWidth: number;
 }
 
+const BOTTOM_SCROLL_SPACE_FRACTION = 0.3;
+
+export function alignedDiffBottomScrollSpace(
+  contentHeight: number,
+  viewportHeight: number,
+): number {
+  if (!Number.isFinite(contentHeight) || !Number.isFinite(viewportHeight)) return 0;
+  if (viewportHeight <= 0 || contentHeight <= viewportHeight) return 0;
+  return Math.round(viewportHeight * BOTTOM_SCROLL_SPACE_FRACTION);
+}
+
 export interface AlignedDiffWheelInput {
   readonly deltaX: number;
   readonly deltaY: number;

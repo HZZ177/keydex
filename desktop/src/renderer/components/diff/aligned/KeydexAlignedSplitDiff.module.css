@@ -79,11 +79,6 @@
   z-index: 1;
 }
 
-.connector[data-keydex-aligned-viewport-sync="pending"] .connectorVisual,
-.connector[data-keydex-aligned-viewport-sync="pending"] .connectorActions {
-  visibility: hidden;
-}
-
 .srOnly {
   position: absolute;
   width: 1px;

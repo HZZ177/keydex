@@ -9,7 +9,6 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { flushSync } from "react-dom";
 
 import type { KeydexDiffFile } from "../model";
 import type {
@@ -38,10 +37,14 @@ import {
   resolveDiffChangeScrollTarget,
   type DiffChangeNavigationDirection,
 } from "./DiffHunkActionLayer";
-import { HunkScrollSyncController } from "./HunkScrollSyncController";
+import {
+  HunkScrollSyncController,
+  type DiffScrollFrame,
+} from "./HunkScrollSyncController";
 import { KeydexAlignedSplitDiff } from "./KeydexAlignedSplitDiff";
 import { buildKeydexAlignedDiffModel } from "./alignmentSegments";
 import { resolveAlignedPaneVirtualWindow } from "./alignedPaneWindow";
+import { alignedDiffBottomScrollSpace } from "./alignedPaneScroll";
 import { computeVisibleDiffConnectorGeometry } from "./connectorGeometry";
 import {
   buildScrollMappingMetrics,
@@ -80,11 +83,6 @@ interface PreparedState {
   readonly key: string;
   readonly model: KeydexAlignedDiffModel | null;
   readonly error: unknown;
-}
-
-interface PaneViewport {
-  readonly scrollTop: number;
-  readonly height: number;
 }
 
 export const AlignedDiffFileView = forwardRef<
@@ -189,17 +187,20 @@ const PreparedAlignedDiff = forwardRef<AlignedDiffFileViewHandle, {
 }, forwardedRef) {
   const [leftPane, setLeftPane] = useState<AlignedDiffPaneHandle | null>(null);
   const [rightPane, setRightPane] = useState<AlignedDiffPaneHandle | null>(null);
-  const [connectorElement, setConnectorElement] = useState<HTMLDivElement | null>(null);
+  const [scrollFrame, setScrollFrame] = useState<DiffScrollFrame>(emptyDiffScrollFrame);
   const devicePixelRatio = useDiffDevicePixelRatio();
   const edgeWidth = diffPhysicalPixelWidth(devicePixelRatio);
   const [localActiveChangeId, setLocalActiveChangeId] = useState<string | null>(null);
   const activeChangeId = controlledActiveChangeId ?? localActiveChangeId;
   const leftPolicy = resolveKeydexAlignedVirtualizationPolicy(model.leftRows.length, profile, wrap);
   const rightPolicy = resolveKeydexAlignedVirtualizationPolicy(model.rightRows.length, profile, wrap);
+  const leftContentColumns = useMemo(() => widestDiffLineColumns(model.leftRows), [model.leftRows]);
+  const rightContentColumns = useMemo(() => widestDiffLineColumns(model.rightRows), [model.rightRows]);
   const leftVirtual = useVirtualDiffRows({
     rowCount: model.leftRows.length,
     estimatedHeight: leftPolicy.estimatedRowHeight,
     scrollElement: leftPane?.element ?? null,
+    viewport: scrollFrame.left,
     enabled: leftPolicy.enabled,
     overscanPx: leftPolicy.overscanPx,
     maxMountedRows: leftPolicy.maxMountedRows,
@@ -208,6 +209,7 @@ const PreparedAlignedDiff = forwardRef<AlignedDiffFileViewHandle, {
     rowCount: model.rightRows.length,
     estimatedHeight: rightPolicy.estimatedRowHeight,
     scrollElement: rightPane?.element ?? null,
+    viewport: scrollFrame.right,
     enabled: rightPolicy.enabled,
     overscanPx: rightPolicy.overscanPx,
     maxMountedRows: rightPolicy.maxMountedRows,
@@ -234,7 +236,7 @@ const PreparedAlignedDiff = forwardRef<AlignedDiffFileViewHandle, {
       left,
       right,
       enabled: syncScroll,
-      synchronizationMode: "immediate",
+      synchronizationMode: "animation_frame",
       mapOffset: (sourceSide, sourceOffset) => mapDiffPaneOffset(
         model,
         metricsRef.current,
@@ -243,21 +245,26 @@ const PreparedAlignedDiff = forwardRef<AlignedDiffFileViewHandle, {
         sourceSide,
         sourceOffset,
       ),
+      onScrollFrame: (frame) => setScrollFrame((current) => (
+        diffScrollFrameEqual(current, frame) ? current : frame
+      )),
     });
     controllerRef.current = controller;
+    const observer = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(() => controller.refresh());
+    observer?.observe(left);
+    observer?.observe(right);
+    controller.refresh();
     return () => {
+      observer?.disconnect();
       controller.destroy();
       if (controllerRef.current === controller) controllerRef.current = null;
     };
   }, [leftPane, leftVirtual.heightIndex, model, rightPane, rightVirtual.heightIndex]);
 
-  const pairedViewport = usePairedPaneViewport(
-    leftPane?.element ?? null,
-    rightPane?.element ?? null,
-    connectorElement,
-  );
-  const leftViewport = pairedViewport.left;
-  const rightViewport = pairedViewport.right;
+  const leftViewport = scrollFrame.left;
+  const rightViewport = scrollFrame.right;
   const leftAlignedWindow = useMemo(() => resolveAlignedPaneVirtualWindow(
     metrics,
     leftVirtual.heightIndex,
@@ -371,7 +378,6 @@ const PreparedAlignedDiff = forwardRef<AlignedDiffFileViewHandle, {
       className={styles.root}
       leftPaneRef={setLeftPane}
       rightPaneRef={setRightPane}
-      connectorRef={setConnectorElement}
       leftLabel="修改前"
       rightLabel="修改后"
       minHeight={0}
@@ -390,6 +396,28 @@ const PreparedAlignedDiff = forwardRef<AlignedDiffFileViewHandle, {
       connectorViewportHeight={connectorHeight}
       lineNumberDigits={lineNumberDigits}
       edgeWidth={edgeWidth}
+      leftPaneViewport={{
+        epoch: scrollFrame.epoch,
+        scrollTop: leftViewport.scrollTop,
+        height: leftViewport.height,
+        scrollHeight: leftAlignedWindow.totalHeight,
+        bottomScrollSpace: alignedDiffBottomScrollSpace(
+          leftAlignedWindow.totalHeight,
+          leftViewport.height,
+        ),
+        contentColumns: wrap ? 0 : leftContentColumns,
+      }}
+      rightPaneViewport={{
+        epoch: scrollFrame.epoch,
+        scrollTop: rightViewport.scrollTop,
+        height: rightViewport.height,
+        scrollHeight: rightAlignedWindow.totalHeight,
+        bottomScrollSpace: alignedDiffBottomScrollSpace(
+          rightAlignedWindow.totalHeight,
+          rightViewport.height,
+        ),
+        contentColumns: wrap ? 0 : rightContentColumns,
+      }}
       leftGutterScrollTop={leftViewport.scrollTop}
       rightGutterScrollTop={rightViewport.scrollTop}
       leftGutter={(
@@ -418,6 +446,7 @@ const PreparedAlignedDiff = forwardRef<AlignedDiffFileViewHandle, {
           rowIndexes={leftAlignedWindow.rowIndexes}
           rowOffsets={metrics.leftRowOffsets}
           totalHeight={leftAlignedWindow.totalHeight}
+          contentColumns={leftContentColumns}
           wrap={wrap}
           activeChangeId={activeChangeId}
           lineNumberDigits={lineNumberDigits}
@@ -431,6 +460,7 @@ const PreparedAlignedDiff = forwardRef<AlignedDiffFileViewHandle, {
           rowIndexes={rightAlignedWindow.rowIndexes}
           rowOffsets={metrics.rightRowOffsets}
           totalHeight={rightAlignedWindow.totalHeight}
+          contentColumns={rightContentColumns}
           wrap={wrap}
           activeChangeId={activeChangeId}
           lineNumberDigits={lineNumberDigits}
@@ -465,6 +495,7 @@ function VirtualRows({
   rowIndexes,
   rowOffsets,
   totalHeight,
+  contentColumns,
   wrap,
   activeChangeId,
   lineNumberDigits,
@@ -475,13 +506,13 @@ function VirtualRows({
   readonly rowIndexes: readonly number[];
   readonly rowOffsets: readonly number[] | undefined;
   readonly totalHeight: number;
+  readonly contentColumns: number;
   readonly wrap: boolean;
   readonly activeChangeId: string | null;
   readonly lineNumberDigits: number;
   readonly observeRow: (rowIndex: number, element: HTMLElement | null) => void;
   readonly changeKindById: ReadonlyMap<string, DiffChangeKind>;
 }) {
-  const contentColumns = useMemo(() => widestDiffLineColumns(rows), [rows]);
   const canvasStyle = {
     height: totalHeight,
     "--keydex-diff-canvas-content-width": `${contentColumns}ch`,
@@ -607,72 +638,21 @@ function readDevicePixelRatio(): number {
     : 1;
 }
 
-function usePairedPaneViewport(
-  leftElement: HTMLElement | null,
-  rightElement: HTMLElement | null,
-  connectorElement: HTMLElement | null,
-): Readonly<{ left: PaneViewport; right: PaneViewport }> {
-  const [viewport, setViewport] = useState(() => emptyPairedPaneViewport());
-  useEffect(() => {
-    if (!leftElement || !rightElement) {
-      setViewport(emptyPairedPaneViewport());
-      return undefined;
-    }
-    let frame: number | null = null;
-    const markPending = () => {
-      if (connectorElement) connectorElement.dataset.keydexAlignedViewportSync = "pending";
-    };
-    const update = () => {
-      if (frame !== null) return;
-      frame = requestFrame(() => {
-        frame = null;
-        const next = Object.freeze({
-          left: frozenPaneViewport(leftElement),
-          right: frozenPaneViewport(rightElement),
-        });
-        flushSync(() => setViewport(next));
-        if (connectorElement) connectorElement.dataset.keydexAlignedViewportSync = "stable";
-      });
-    };
-    const invalidate = () => {
-      markPending();
-      update();
-    };
-    const intentEvents = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
-    leftElement.addEventListener("scroll", invalidate, { passive: true });
-    rightElement.addEventListener("scroll", invalidate, { passive: true });
-    for (const type of intentEvents) {
-      leftElement.addEventListener(type, invalidate, { passive: true });
-      rightElement.addEventListener(type, invalidate, { passive: true });
-    }
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(invalidate);
-    observer?.observe(leftElement);
-    observer?.observe(rightElement);
-    update();
-    return () => {
-      leftElement.removeEventListener("scroll", invalidate);
-      rightElement.removeEventListener("scroll", invalidate);
-      for (const type of intentEvents) {
-        leftElement.removeEventListener(type, invalidate);
-        rightElement.removeEventListener(type, invalidate);
-      }
-      observer?.disconnect();
-      if (frame !== null) cancelFrame(frame);
-      if (connectorElement) connectorElement.dataset.keydexAlignedViewportSync = "stable";
-    };
-  }, [connectorElement, leftElement, rightElement]);
-  return viewport;
+function diffScrollFrameEqual(current: DiffScrollFrame, next: DiffScrollFrame): boolean {
+  return current.left.scrollTop === next.left.scrollTop
+    && current.left.height === next.left.height
+    && current.right.scrollTop === next.right.scrollTop
+    && current.right.height === next.right.height;
 }
 
-function emptyPairedPaneViewport(): Readonly<{ left: PaneViewport; right: PaneViewport }> {
-  const empty = frozenPaneViewport(null);
-  return Object.freeze({ left: empty, right: empty });
-}
-
-function frozenPaneViewport(element: HTMLElement | null): PaneViewport {
+function emptyDiffScrollFrame(): DiffScrollFrame {
+  const empty = Object.freeze({ scrollTop: 0, height: 0 });
   return Object.freeze({
-    scrollTop: element?.scrollTop ?? 0,
-    height: element?.clientHeight ?? 0,
+    epoch: 0,
+    sourceSide: "old",
+    source: "scroll",
+    left: empty,
+    right: empty,
   });
 }
 
@@ -687,15 +667,4 @@ function preparationFailurePhase(error: unknown): "parse" | "highlight" | "worke
 function isCancelledPreparation(error: unknown): boolean {
   return error instanceof PierreAlignedPreparationError
     && (error.code === "aborted" || error.code === "stale");
-}
-
-function requestFrame(callback: FrameRequestCallback): number {
-  return typeof requestAnimationFrame === "function"
-    ? requestAnimationFrame(callback)
-    : globalThis.setTimeout(() => callback(performance.now()), 0) as unknown as number;
-}
-
-function cancelFrame(frame: number): void {
-  if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame);
-  else globalThis.clearTimeout(frame);
 }

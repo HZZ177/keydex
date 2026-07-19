@@ -9,6 +9,7 @@ class FakePane extends EventTarget implements DiffScrollablePane {
   scrollLeft = 0;
   scrollWidth = 1_000;
   clientWidth = 400;
+  clientHeight = 300;
   private top = 0;
   writes = 0;
   dispatchOnWrite = true;
@@ -76,6 +77,103 @@ describe("HunkScrollSyncController", () => {
     left.userScroll(36);
     expect(right.scrollTop).toBe(36);
     expect(requestFrame).not.toHaveBeenCalled();
+    controller.destroy();
+  });
+
+  it("publishes both settled pane offsets as one visual frame", () => {
+    const left = new FakePane();
+    const right = new FakePane();
+    const frames = new Map<number, FrameRequestCallback>();
+    const visualFrames: Array<{ epoch: number; left: number; right: number }> = [];
+    let frameId = 0;
+    const controller = new HunkScrollSyncController({
+      left,
+      right,
+      synchronizationMode: "animation_frame",
+      mapOffset: (_side, offset) => offset * 2,
+      requestFrame: (callback) => {
+        const id = ++frameId;
+        frames.set(id, callback);
+        return id;
+      },
+      cancelFrame: (id) => { frames.delete(id); },
+      onScrollFrame: (frame) => visualFrames.push({
+        epoch: frame.epoch,
+        left: frame.left.scrollTop,
+        right: frame.right.scrollTop,
+      }),
+    });
+
+    left.userScroll(36);
+    expect(right.scrollTop).toBe(0);
+    expect(visualFrames).toEqual([]);
+    expect(frames.size).toBe(1);
+    for (const callback of frames.values()) callback(0);
+    frames.clear();
+    expect(right.scrollTop).toBe(72);
+    expect(visualFrames).toEqual([{ epoch: 1, left: 36, right: 72 }]);
+    controller.destroy();
+  });
+
+  it("publishes independent offsets from the same frame contract when sync is disabled", () => {
+    const left = new FakePane();
+    const right = new FakePane();
+    const frames = new Map<number, FrameRequestCallback>();
+    const visualFrames: Array<{ left: number; right: number }> = [];
+    let frameId = 0;
+    const controller = new HunkScrollSyncController({
+      left,
+      right,
+      enabled: false,
+      mapOffset: (_side, offset) => offset,
+      requestFrame: (callback) => {
+        const id = ++frameId;
+        frames.set(id, callback);
+        return id;
+      },
+      cancelFrame: (id) => { frames.delete(id); },
+      onScrollFrame: (frame) => visualFrames.push({
+        left: frame.left.scrollTop,
+        right: frame.right.scrollTop,
+      }),
+    });
+
+    left.userScroll(25);
+    right.userScroll(80);
+    expect(left.scrollTop).toBe(25);
+    expect(right.scrollTop).toBe(80);
+    expect(frames.size).toBe(1);
+    for (const callback of frames.values()) callback(0);
+    frames.clear();
+    expect(visualFrames).toEqual([{ left: 25, right: 80 }]);
+    controller.destroy();
+  });
+
+  it("does not discard subpixel trackpad movement below the sync write tolerance", () => {
+    const left = new FakePane();
+    const right = new FakePane();
+    const frames = new Map<number, FrameRequestCallback>();
+    const visualOffsets: number[] = [];
+    let frameId = 0;
+    const controller = new HunkScrollSyncController({
+      left,
+      right,
+      enabled: false,
+      tolerance: 0.5,
+      mapOffset: (_side, offset) => offset,
+      requestFrame: (callback) => {
+        const id = ++frameId;
+        frames.set(id, callback);
+        return id;
+      },
+      cancelFrame: (id) => { frames.delete(id); },
+      onScrollFrame: (frame) => visualOffsets.push(frame.left.scrollTop),
+    });
+
+    left.userScroll(0.25);
+    for (const callback of frames.values()) callback(0);
+    frames.clear();
+    expect(visualOffsets).toEqual([0.25]);
     controller.destroy();
   });
 

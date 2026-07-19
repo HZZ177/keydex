@@ -23,6 +23,7 @@ export interface UseVirtualDiffRowsOptions {
   readonly rowCount: number;
   readonly estimatedHeight: number | readonly number[];
   readonly scrollElement: HTMLElement | null;
+  readonly viewport?: Readonly<{ scrollTop: number; height: number }>;
   readonly enabled?: boolean;
   readonly overscanPx?: number;
   readonly maxMountedRows?: number;
@@ -88,6 +89,7 @@ export function useVirtualDiffRows({
   rowCount,
   estimatedHeight,
   scrollElement,
+  viewport: controlledViewport,
   enabled = true,
   overscanPx = DEFAULT_OVERSCAN_PX,
   maxMountedRows = DEFAULT_MAX_MOUNTED_ROWS,
@@ -97,6 +99,8 @@ export function useVirtualDiffRows({
     [estimatedHeight, rowCount],
   );
   const [viewport, setViewport] = useState(() => ({ scrollTop: 0, height: 0, revision: 0 }));
+  const controlledViewportRef = useRef(controlledViewport);
+  controlledViewportRef.current = controlledViewport;
   const frameRef = useRef<number | null>(null);
   const observedRows = useRef(new Map<HTMLElement, number>());
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
@@ -105,9 +109,10 @@ export function useVirtualDiffRows({
     if (frameRef.current !== null) return;
     frameRef.current = requestFrame(() => {
       frameRef.current = null;
+      const controlled = controlledViewportRef.current;
       setViewport((current) => ({
-        scrollTop: scrollElement?.scrollTop ?? current.scrollTop,
-        height: scrollElement?.clientHeight ?? current.height,
+        scrollTop: controlled?.scrollTop ?? scrollElement?.scrollTop ?? current.scrollTop,
+        height: controlled?.height ?? scrollElement?.clientHeight ?? current.height,
         revision: current.revision + 1,
       }));
     });
@@ -150,6 +155,7 @@ export function useVirtualDiffRows({
 
   useEffect(() => {
     if (!scrollElement) return undefined;
+    if (controlledViewport) return undefined;
     const onScroll = () => refresh();
     scrollElement.addEventListener("scroll", onScroll, { passive: true });
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(refresh);
@@ -159,12 +165,15 @@ export function useVirtualDiffRows({
       scrollElement.removeEventListener("scroll", onScroll);
       observer?.disconnect();
     };
-  }, [refresh, scrollElement]);
+  }, [controlledViewport, refresh, scrollElement]);
 
   useEffect(() => () => {
     if (frameRef.current !== null) cancelFrame(frameRef.current);
   }, []);
 
+  const effectiveViewport = controlledViewport
+    ? { ...controlledViewport, revision: viewport.revision }
+    : viewport;
   const window = useMemo(() => {
     if (!enabled) {
       return Object.freeze({
@@ -180,12 +189,12 @@ export function useVirtualDiffRows({
     }
     return resolveVirtualDiffWindow(
       heightIndex,
-      viewport.scrollTop,
-      viewport.height,
+      effectiveViewport.scrollTop,
+      effectiveViewport.height,
       overscanPx,
       maxMountedRows,
     );
-  }, [enabled, heightIndex, maxMountedRows, overscanPx, rowCount, viewport]);
+  }, [effectiveViewport, enabled, heightIndex, maxMountedRows, overscanPx, rowCount]);
   const rowIndexes = useMemo(
     () => Object.freeze(Array.from(
       { length: window.endIndex - window.startIndex },
