@@ -240,7 +240,12 @@ describe("useConversationPanelModel", () => {
     const runtime = fakeRuntime();
     const controller = fakeController();
     const { result } = renderHook(
-      () => useConversationPanelModel({ runtime, sessionId: "ses-1", controller }),
+      () => useConversationPanelModel({
+        runtime,
+        sessionId: "ses-1",
+        controller,
+        previewPanelScopeKey: "sidebar:parent-session",
+      }),
       { wrapper: Providers },
     );
 
@@ -268,6 +273,7 @@ describe("useConversationPanelModel", () => {
     });
 
     expect(latestReviewPanelRequest).toMatchObject({
+      scopeKey: "sidebar:parent-session",
       focusedPath: "src/main.ts",
       title: "已编辑文件",
       files: [

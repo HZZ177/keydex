@@ -362,9 +362,58 @@ describe("MessageText", () => {
     expect(screen.getByTestId("file-panel-request").textContent).toBe("session:ses-1:README.md");
   });
 
-  it("reveals restored directory context chips in the Files panel request", () => {
+  it("keeps nested conversation file references in the hosting sidebar tab scope", () => {
+    const runtime = {} as RuntimeBridge;
     render(
       <PreviewProvider>
+        <PreviewHostContextSetter
+          context={{
+            panelScopeKey: "sidebar:parent-session",
+            sessionId: "parent-session",
+            workspaceAvailable: true,
+            runtime,
+          }}
+        />
+        <MessageText
+          message={message("user", "inspect the nested reference", "completed", {
+            contextItems: [
+              {
+                id: "ctx-nested-file",
+                type: "file",
+                label: "README.md",
+                content: "workspace file: README.md",
+                source: "follow",
+                path: "README.md",
+                fileType: "file",
+              },
+            ],
+          })}
+          workspaceRuntime={runtime}
+          workspaceScope={{ sessionId: "child-session" }}
+        />
+        <FilePanelProbe />
+      </PreviewProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "打开文件引用 README.md" }));
+
+    const request = screen.getByTestId("file-panel-request");
+    expect(request.dataset.scopeKey).toBe("sidebar:parent-session");
+    expect(request.dataset.sessionId).toBe("child-session");
+  });
+
+  it("reveals restored directory context chips in the Files panel request", () => {
+    const runtime = {} as RuntimeBridge;
+    render(
+      <PreviewProvider>
+        <PreviewHostContextSetter
+          context={{
+            panelScopeKey: "sidebar:parent-session",
+            sessionId: "parent-session",
+            workspaceAvailable: true,
+            runtime,
+          }}
+        />
         <MessageText
           message={message("user", "请看这个目录", "completed", {
             contextItems: [
@@ -380,8 +429,8 @@ describe("MessageText", () => {
               },
             ],
           })}
-          workspaceRuntime={{} as RuntimeBridge}
-          workspaceScope={{ sessionId: "ses-1" }}
+          workspaceRuntime={runtime}
+          workspaceScope={{ sessionId: "child-session" }}
         />
         <FilePanelProbe />
       </PreviewProvider>,
@@ -392,7 +441,8 @@ describe("MessageText", () => {
     const request = screen.getByTestId("file-panel-request");
     expect(request.dataset.filePath).toBe("");
     expect(request.dataset.directoryRevealPath).toBe("src");
-    expect(request.dataset.scopeKey).toBe("session:ses-1");
+    expect(request.dataset.scopeKey).toBe("sidebar:parent-session");
+    expect(request.dataset.sessionId).toBe("child-session");
   });
 
   it("opens absolute markdown file links as single local previews with line reveal", () => {
@@ -512,6 +562,37 @@ describe("MessageText", () => {
         lineEnd: 120,
       },
       scopeKey: "session:ses-1",
+    });
+  });
+
+  it("opens nested conversation Markdown links as sibling previews in the hosting panel scope", () => {
+    const runtime = {} as RuntimeBridge;
+    render(
+      <PreviewProvider>
+        <PreviewHostContextSetter
+          context={{
+            panelScopeKey: "sidebar:parent-session",
+            sessionId: "parent-session",
+            workspaceAvailable: true,
+            runtime,
+          }}
+        />
+        <MessageText
+          message={message("assistant", "Inspect [README.md](<README.md:12>)", "completed")}
+          workspaceRuntime={runtime}
+          workspaceScope={{ sessionId: "child-session" }}
+        />
+        <PreviewEntryProbe />
+      </PreviewProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "README.md" }));
+
+    expect(previewEntryPayload()).toMatchObject({
+      request: { type: "file", path: "README.md" },
+      revealTarget: { lineStart: 12, lineEnd: 12 },
+      scopeKey: "sidebar:parent-session",
+      renderContext: { sessionId: "child-session", panelScopeKey: "sidebar:parent-session" },
     });
   });
 
@@ -1418,6 +1499,31 @@ describe("MessageText", () => {
     expect(screen.getByTestId("preview-request").textContent).toContain("mermaid:Mermaid 图表");
   });
 
+  it("keeps nested rich-code previews in the hosting sidebar tab scope", async () => {
+    render(
+      <PreviewProvider>
+        <PreviewHostContextSetter
+          context={{
+            panelScopeKey: "sidebar:parent-session",
+            sessionId: "parent-session",
+            workspaceAvailable: true,
+          }}
+        />
+        <MessageText
+          message={message("assistant", "```mermaid\ngraph TD\nA --> B\n```", "completed")}
+        />
+        <PreviewEntryProbe />
+      </PreviewProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "在预览面板打开 Mermaid 图表" }));
+
+    expect(previewEntryPayload()).toMatchObject({
+      request: { type: "content", contentType: "mermaid" },
+      scopeKey: "sidebar:parent-session",
+    });
+  });
+
   it.each(["diff", "patch"])("opens %s fenced code through the shared diff preview request", async (language) => {
     render(
       <PreviewProvider>
@@ -2039,6 +2145,7 @@ function PreviewEntryProbe() {
             request: entry.request,
             revealTarget: entry.revealTarget,
             scopeKey: entry.scopeKey,
+            renderContext: entry.renderContext,
           })
         : ""}
     </output>
@@ -2060,6 +2167,7 @@ function previewEntryPayload() {
     request: Record<string, unknown>;
     revealTarget: Record<string, unknown> | null;
     scopeKey: string;
+    renderContext: Record<string, unknown> | null;
   };
 }
 
@@ -2072,6 +2180,7 @@ function FilePanelProbe() {
       data-file-path={request?.path ?? ""}
       data-directory-reveal-path={request?.directoryRevealPath ?? ""}
       data-scope-key={request?.scopeKey ?? ""}
+      data-session-id={request?.renderContext?.sessionId ?? ""}
     >
       {request ? `${request.scopeKey}:${request.path}` : ""}
     </output>

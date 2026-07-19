@@ -51,7 +51,12 @@ describe("SkillActivationBlock", () => {
     const runtime = skillRuntime("workspace", "SKILL.md");
     const openPreview = vi.fn();
     const previewContext = {
-      hostContext: null,
+      hostContext: {
+        panelScopeKey: "sidebar:parent-session",
+        sessionId: "parent-session",
+        workspaceAvailable: true,
+        runtime,
+      },
       openPreview,
     } as unknown as PreviewContextValue;
 
@@ -75,7 +80,10 @@ describe("SkillActivationBlock", () => {
           skillName: "dev-plan",
           resourcePath: "SKILL.md",
         }),
-        expect.objectContaining({ sessionId: "ses-1" }),
+        expect.objectContaining({
+          panelScopeKey: "sidebar:parent-session",
+          sessionId: "ses-1",
+        }),
         undefined,
       );
     });

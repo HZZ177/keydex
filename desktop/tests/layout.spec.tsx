@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Layout, resetLayoutUiStateCacheForTests } from "@/renderer/components/layout/Layout";
+import { useOptionalRightSidebarConversation } from "@/renderer/components/layout/RightSidebarConversationContext";
 import type { RuntimeBridge } from "@/runtime";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { MessageText } from "@/renderer/pages/conversation/messages";
@@ -839,7 +840,89 @@ describe("Layout", () => {
     expect(screen.getByRole("button", { name: "折叠 src" })).not.toBeNull();
     expect(screen.getByTestId("workspace-file-browser").dataset.previewOpen).toBe("false");
   });
+
+  it("keeps the Sub-Agent tab while nested file, preview, and review actions open sibling tabs", async () => {
+    renderLayoutWithPreview(
+      <Layout contentMode="full">
+        <NestedSidebarActionHarness />
+      </Layout>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Sub-Agent workspace" }));
+    await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(1));
+    const subagentTab = screen.getAllByRole("tab")[0];
+
+    fireEvent.click(screen.getByRole("button", { name: "打开文件引用 README.md" }));
+    await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(2));
+    expect(screen.getAllByRole("tab")[0]).toBe(subagentTab);
+
+    fireEvent.click(subagentTab);
+    expect(subagentTab.getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Open nested preview" }));
+    await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(3));
+    expect(screen.getAllByRole("tab")[0]).toBe(subagentTab);
+
+    fireEvent.click(subagentTab);
+    fireEvent.click(screen.getByRole("button", { name: "Open nested review" }));
+    await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(4));
+    expect(screen.getAllByRole("tab")[0]).toBe(subagentTab);
+    expect(document.querySelector('[data-content="review"]')).not.toBeNull();
+  });
 });
+
+function NestedSidebarActionHarness() {
+  const preview = usePreview();
+  const sidebar = useOptionalRightSidebarConversation();
+  const { setPreviewHostContext } = preview;
+
+  useEffect(() => {
+    setPreviewHostContext(nestedSidebarPreviewContext("parent-session"));
+    return () => setPreviewHostContext(null);
+  }, [setPreviewHostContext]);
+
+  return (
+    <div>
+      <button type="button" onClick={() => sidebar?.openSubagentList("parent-session")}>
+        Open Sub-Agent workspace
+      </button>
+      <button
+        type="button"
+        onClick={() => preview.openPreview(
+          { type: "content", title: "Nested preview", content: "Nested preview", contentType: "markdown" },
+          nestedSidebarPreviewContext("child-session"),
+        )}
+      >
+        Open nested preview
+      </button>
+      <button
+        type="button"
+        onClick={() => preview.openReviewPanel(
+          { title: "Nested review", panelKey: "nested-review", files: [] },
+          nestedSidebarPreviewContext("child-session"),
+        )}
+      >
+        Open nested review
+      </button>
+      <MessageText
+        message={message("user", "Inspect README", "completed", {
+          contextItems: [
+            {
+              id: "nested-readme",
+              type: "file",
+              label: "README.md",
+              content: "workspace file: README.md",
+              source: "follow",
+              path: "README.md",
+              fileType: "file",
+            },
+          ],
+        })}
+        workspaceRuntime={filePanelRuntime}
+        workspaceScope={{ sessionId: "child-session" }}
+      />
+    </div>
+  );
+}
 
 function RightSidebarPreviewHarness() {
   const preview = usePreview();
@@ -1010,6 +1093,14 @@ function sessionPreviewContext() {
   };
 }
 
+function nestedSidebarPreviewContext(sessionId: string) {
+  return {
+    ...sessionPreviewContext(),
+    panelScopeKey: "sidebar:parent-session",
+    sessionId,
+  };
+}
+
 function closeRightSidebarByIcon() {
   const closeButton = document.querySelector<HTMLButtonElement>("[data-icon='panel-right-close']");
   expect(closeButton).not.toBeNull();
@@ -1049,6 +1140,7 @@ function message(
   kind: ConversationMessage["kind"],
   content: string,
   status: ConversationMessage["status"],
+  payload: ConversationMessage["payload"] = {},
 ): ConversationMessage {
   return {
     id: "message-1",
@@ -1058,7 +1150,7 @@ function message(
     kind,
     status,
     content,
-    payload: {},
+    payload,
     createdAt: "2026-06-17T10:00:00Z",
     updatedAt: "2026-06-17T10:01:00Z",
   };

@@ -16,6 +16,13 @@ export function previewRenderContextFromWorkspaceScope(
   const context: PreviewRenderContext = {
     workspaceAvailable: true,
   };
+  if (hostContext?.panelScopeKey) {
+    // A nested conversation reads files through its own Session, but previews still
+    // belong to the panel that hosts it. Preserve that UI scope so opening a file,
+    // Skill resource, or Markdown preview creates/activates a sibling tab instead
+    // of replacing the current Sub-Agent tab with a child-session preview scope.
+    context.panelScopeKey = hostContext.panelScopeKey;
+  }
   if ("sessionId" in workspaceScope && workspaceScope.sessionId) {
     context.sessionId = workspaceScope.sessionId;
   }

@@ -101,6 +101,8 @@ function MessageTextComponent({
   const notifications = useNotifications();
   const previewAvailable = previewContext !== null;
   const previewScopeKey = previewContext?.activeScopeKey ?? null;
+  const previewPanelOpen = previewContext?.panelOpen ?? false;
+  const previewPanelActiveEntryId = previewContext?.panelActiveEntryId ?? null;
   const isUser = message.kind === "user";
   const useConversationRuntime = conversationMarkdownRuntimeEnabled(import.meta.env.MODE, typeof Worker !== "undefined");
   const isStreaming = message.status === "pending" || message.status === "running";
@@ -245,7 +247,7 @@ function MessageTextComponent({
     !suppressStreamingCursor && !isUser && isStreaming && !isAnimating && !hasPendingDisplayBacklog && !cancelled;
   const conversationRuntimeRegistry = useMemo(
     () => createConversationMarkdownRendererRegistry({ previewContext: previewContextRef.current }),
-    [previewAvailable, previewScopeKey],
+    [previewAvailable, previewPanelActiveEntryId, previewPanelOpen, previewScopeKey],
   );
   const conversationImageRuntime = useMemo(
     () => new ImageResourceRuntime({
