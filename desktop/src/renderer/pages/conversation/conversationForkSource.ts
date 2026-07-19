@@ -107,6 +107,17 @@ export function filterBtwConversationVisibleMessages(
   });
 }
 
+export function selectBtwConversationVisibleMessages(
+  messages: ConversationMessage[],
+  snapshot: BtwConversationHistorySnapshot | null,
+  loadedHistoryTurnCount: number | null,
+): ConversationMessage[] {
+  if (loadedHistoryTurnCount === 0) {
+    return messages;
+  }
+  return snapshot ? filterBtwConversationVisibleMessages(messages, snapshot) : [];
+}
+
 function numberValue(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) ? value : null;
 }

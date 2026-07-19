@@ -4,6 +4,7 @@ import {
   createBtwConversationFromSession,
   createBtwConversationHistorySnapshot,
   filterBtwConversationVisibleMessages,
+  selectBtwConversationVisibleMessages,
 } from "@/renderer/pages/conversation/conversationForkSource";
 import type { RuntimeBridge } from "@/runtime";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
@@ -68,6 +69,18 @@ describe("bypass conversation history snapshot", () => {
       ["新问题", "新回答"],
     );
     expect(snapshot.loadedTurnCount).toBe(2);
+  });
+
+  it("keeps checkpoint-only bypass messages visible after the panel remounts", () => {
+    const ownHistory = [
+      conversationMessage("agent:user:btw-1:1", "user", "旁路问题", 1),
+      conversationMessage("agent:assistant:btw-1:1", "assistant", "仍在流式的旁路回答", 1),
+    ];
+    const remountedSnapshot = createBtwConversationHistorySnapshot("btw-1", ownHistory, {
+      loadedTurnCount: 0,
+    });
+
+    expect(selectBtwConversationVisibleMessages(ownHistory, remountedSnapshot, 0)).toBe(ownHistory);
   });
 });
 

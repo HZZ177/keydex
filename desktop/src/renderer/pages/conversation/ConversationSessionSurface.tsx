@@ -60,7 +60,7 @@ import { useConversationPanelModel } from "./useConversationPanelModel";
 import { ComposerApprovalCard } from "./ComposerApprovalCard";
 import {
   createBtwConversationHistorySnapshot,
-  filterBtwConversationVisibleMessages,
+  selectBtwConversationVisibleMessages,
   type BtwConversationHistorySnapshot,
 } from "./conversationForkSource";
 import { consumeQuickChatSend, type QueuedQuickChatSend } from "./quickSend";
@@ -261,16 +261,25 @@ export function ConversationSessionSurface({
   });
   const runtimeState = panelModel.runtimeState;
   const activeSidecarHistorySnapshot =
-    isSidecar && sidecarHistorySnapshot?.sessionId === threadId ? sidecarHistorySnapshot : null;
+    isSidecar && sidecarLoadedHistoryTurnCount !== 0 && sidecarHistorySnapshot?.sessionId === threadId
+      ? sidecarHistorySnapshot
+      : null;
   const sidecarMessages = useMemo(() => {
     if (!isSidecar || selectedSubagentRun) {
       return panelModel.messages;
     }
-    if (!activeSidecarHistorySnapshot) {
-      return [];
-    }
-    return filterBtwConversationVisibleMessages(panelModel.messages, activeSidecarHistorySnapshot);
-  }, [activeSidecarHistorySnapshot, isSidecar, panelModel.messages, selectedSubagentRun]);
+    return selectBtwConversationVisibleMessages(
+      panelModel.messages,
+      activeSidecarHistorySnapshot,
+      sidecarLoadedHistoryTurnCount,
+    );
+  }, [
+    activeSidecarHistorySnapshot,
+    isSidecar,
+    panelModel.messages,
+    selectedSubagentRun,
+    sidecarLoadedHistoryTurnCount,
+  ]);
   const resolvedSidecarLoadedHistoryTurnCount = activeSidecarHistorySnapshot?.loadedTurnCount ?? 0;
   const sidecarPanelModel = useMemo(() => {
     if (!isSidecar) {
@@ -449,6 +458,10 @@ export function ConversationSessionSurface({
 
   useEffect(() => {
     if (!isSidecar || selectedSubagentRun || loading) {
+      return;
+    }
+    if (sidecarLoadedHistoryTurnCount === 0) {
+      setSidecarHistorySnapshot(null);
       return;
     }
     setSidecarHistorySnapshot((current) => {

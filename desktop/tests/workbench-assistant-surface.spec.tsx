@@ -336,6 +336,49 @@ describe("WorkbenchAssistantSurface", () => {
     expect(onCloseBtwConversation).toHaveBeenCalledTimes(1);
   });
 
+  it("shows checkpoint-only bypass messages when the workbench drawer opens", async () => {
+    const ownHistory = [
+      agentMessage({
+        id: "btw-user-1",
+        sessionId: "btw-1",
+        role: "user",
+        content: "旁路问题",
+        turnIndex: 1,
+        status: "completed",
+      }),
+      agentMessage({
+        id: "btw-assistant-1",
+        sessionId: "btw-1",
+        role: "assistant",
+        content: "仍在流式的旁路回答",
+        turnIndex: 1,
+        status: "completed",
+      }),
+    ];
+    const renderSurface = () => (
+      <WorkbenchSurfaceTestProviders>
+        <WorkbenchAssistantSurface
+          runtime={fakeRuntime()}
+          workspaceId="ws-1"
+          workspace={workspace()}
+          controller={fakeController({
+            session: session("btw-1", { title: "旁路对话", session_tag: "btw" }),
+            agentMessages: ownHistory,
+          })}
+          btwActive
+          btwLoadedHistoryTurnCount={0}
+        />
+      </WorkbenchSurfaceTestProviders>
+    );
+    render(renderSurface());
+
+    fireEvent.click(screen.getByRole("button", { name: "将工作台助手展开到右侧" }));
+    await waitForSurfaceMode("drawer", 8000);
+    expect(await screen.findByText("旁路问题")).not.toBeNull();
+    expect(screen.getByText("仍在流式的旁路回答")).not.toBeNull();
+    expect(screen.queryByTestId("btw-conversation-history-notice")).toBeNull();
+  });
+
   it("keeps the workbench bypass drawer pinned to new turns after history refreshes", async () => {
     const btwSession = session("btw-1", { title: "旁路对话", session_tag: "btw" });
     const initialHistory = [

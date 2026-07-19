@@ -63,7 +63,7 @@ import { ConversationPanel, ConversationPanelComposerAccessory } from "@/rendere
 import {
   BTW_CONVERSATION_TITLE,
   createBtwConversationHistorySnapshot,
-  filterBtwConversationVisibleMessages,
+  selectBtwConversationVisibleMessages,
   type BtwConversationHistorySnapshot,
 } from "@/renderer/pages/conversation/conversationForkSource";
 import {
@@ -353,6 +353,10 @@ export function WorkbenchAssistantSurface({
     if (!btwActive || !panelSessionId || controller.loading) {
       return;
     }
+    if (btwLoadedHistoryTurnCount === 0) {
+      setBtwHistorySnapshot(null);
+      return;
+    }
     setBtwHistorySnapshot((current) => {
       if (current?.sessionId === panelSessionId) {
         if (btwLoadedHistoryTurnCount !== null && current.loadedTurnCount !== btwLoadedHistoryTurnCount) {
@@ -369,7 +373,9 @@ export function WorkbenchAssistantSurface({
     });
   }, [btwActive, btwLoadedHistoryTurnCount, controller.loading, panelModel.messages, panelSessionId]);
   const activeBtwHistorySnapshot =
-    btwActive && btwHistorySnapshot?.sessionId === panelSessionId ? btwHistorySnapshot : null;
+    btwActive && btwLoadedHistoryTurnCount !== 0 && btwHistorySnapshot?.sessionId === panelSessionId
+      ? btwHistorySnapshot
+      : null;
   const reviewActive = Boolean(workbenchReviewPanel);
   const subagentActive = Boolean(selectedWorkbenchSubagentRun);
   const secondaryPageActive = btwActive || reviewActive || subagentActive;
@@ -377,11 +383,12 @@ export function WorkbenchAssistantSurface({
     if (!btwActive) {
       return panelModel.messages;
     }
-    if (!activeBtwHistorySnapshot) {
-      return [];
-    }
-    return filterBtwConversationVisibleMessages(panelModel.messages, activeBtwHistorySnapshot);
-  }, [activeBtwHistorySnapshot, btwActive, panelModel.messages]);
+    return selectBtwConversationVisibleMessages(
+      panelModel.messages,
+      activeBtwHistorySnapshot,
+      btwLoadedHistoryTurnCount,
+    );
+  }, [activeBtwHistorySnapshot, btwActive, btwLoadedHistoryTurnCount, panelModel.messages]);
   const resolvedBtwLoadedHistoryTurnCount = activeBtwHistorySnapshot?.loadedTurnCount ?? 0;
   const displayPanelModel = useMemo(() => {
     if (!btwActive) {

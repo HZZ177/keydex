@@ -2996,6 +2996,74 @@ describe("ConversationPage", () => {
     expect(await screen.findByTestId("btw-conversation-panel")).not.toBeNull();
   });
 
+  it("keeps a streaming checkpoint-only bypass conversation across session switches", async () => {
+    const sessionA = agentSession({ id: "ses-a", title: "会话 A" });
+    const sessionB = agentSession({ id: "ses-b", title: "会话 B" });
+    const btwSession = agentSession({
+      id: "ses-btw",
+      title: "旁路对话",
+      session_tag: "btw",
+    });
+    const sessions = new Map([
+      [sessionA.id, sessionA],
+      [sessionB.id, sessionB],
+      [btwSession.id, btwSession],
+    ]);
+    const loadHistory = vi.fn((sessionId: string) =>
+      Promise.resolve(historyResponse(sessions.get(sessionId) ?? sessionA, [])),
+    );
+    const forkSession = vi.fn().mockResolvedValue({
+      session: btwSession,
+      source: branchSource({
+        message_event_id: null,
+        source_type: "latest_checkpoint",
+        turn_index: null,
+      }),
+    });
+    const { runtime, emit } = fakeRuntime({
+      session: sessionA,
+      history: [],
+      loadHistory,
+      forkSession,
+    });
+    const view = renderConversationInSharedRuntimeLayout(
+      <ConversationPage threadId="ses-a" runtime={runtime} />,
+      runtime,
+    );
+
+    await screen.findByLabelText("继续输入");
+    fireEvent.click(screen.getByLabelText("展开右侧栏"));
+    fireEvent.click(await screen.findByRole("button", { name: "旁路对话" }));
+    const firstPanel = await screen.findByTestId("btw-conversation-panel");
+
+    act(() => {
+      emit(agentEvent("stream", {
+        id: "evt-btw-stream-1",
+        session_id: "ses-btw",
+        content: "仍在流式的旁路回答",
+      }));
+    });
+    expect(await within(firstPanel).findByText("仍在流式的旁路回答")).not.toBeNull();
+
+    view.rerender(conversationInSharedRuntimeLayout(
+      <ConversationPage threadId="ses-b" runtime={runtime} />,
+      runtime,
+    ));
+    await waitFor(() => {
+      expect(screen.queryByTestId("btw-conversation-panel")).toBeNull();
+      expect(screen.getByTestId("right-sidebar-initial-page")).not.toBeNull();
+    });
+
+    view.rerender(conversationInSharedRuntimeLayout(
+      <ConversationPage threadId="ses-a" runtime={runtime} />,
+      runtime,
+    ));
+    const restoredPanel = await screen.findByTestId("btw-conversation-panel");
+
+    expect(await within(restoredPanel).findByText("仍在流式的旁路回答")).not.toBeNull();
+    expect(forkSession).toHaveBeenCalledTimes(1);
+  });
+
   it("opens the current project file tree from the right sidebar initial page", async () => {
     const projectSession = agentSession({
       session_type: "workspace",
@@ -3319,13 +3387,35 @@ function renderConversationInLayout(ui: ReactElement, runtime?: RuntimeBridge) {
   return render(conversationInLayout(ui, runtime));
 }
 
+function renderConversationInSharedRuntimeLayout(ui: ReactElement, runtime: RuntimeBridge) {
+  return render(conversationInSharedRuntimeLayout(ui, runtime));
+}
+
+function conversationInSharedRuntimeLayout(ui: ReactElement, runtime: RuntimeBridge) {
+  return (
+    <ThemeProvider>
+      <LayoutStateProvider>
+        <ActiveProjectCoordinatorProvider>
+          <AgentSessionProvider runtime={runtime}>
+            <PreviewProvider>
+              <Layout contentMode="full" runtime={runtime}>{ui}</Layout>
+            </PreviewProvider>
+          </AgentSessionProvider>
+        </ActiveProjectCoordinatorProvider>
+      </LayoutStateProvider>
+    </ThemeProvider>
+  );
+}
+
 function conversationInLayout(ui: ReactElement, runtime?: RuntimeBridge) {
   return (
     <ThemeProvider>
       <LayoutStateProvider>
-        <PreviewProvider>
-          <Layout contentMode="full" runtime={runtime}>{ui}</Layout>
-        </PreviewProvider>
+        <ActiveProjectCoordinatorProvider>
+          <PreviewProvider>
+            <Layout contentMode="full" runtime={runtime}>{ui}</Layout>
+          </PreviewProvider>
+        </ActiveProjectCoordinatorProvider>
       </LayoutStateProvider>
     </ThemeProvider>
   );
