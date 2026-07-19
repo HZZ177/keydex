@@ -18,6 +18,8 @@ export interface AppUpdateProgress {
   finished: boolean;
 }
 
+export const APP_UPDATE_CHECK_TIMEOUT_MS = 15_000;
+
 export async function getCurrentAppVersion(): Promise<string> {
   if (!isTauriRuntime()) {
     return appPackage.version;
@@ -39,7 +41,7 @@ export async function checkForAppUpdate(): Promise<PendingAppUpdate | null> {
     throw new Error("当前环境不支持应用内更新");
   }
   const { check } = await import("@tauri-apps/plugin-updater");
-  const update = await check();
+  const update = await check({ timeout: APP_UPDATE_CHECK_TIMEOUT_MS });
   if (!update) {
     return null;
   }

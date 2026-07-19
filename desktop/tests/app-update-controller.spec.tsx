@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
@@ -8,6 +8,7 @@ import { Sider } from "@/renderer/components/layout/Sider";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { SettingsShell } from "@/renderer/pages/settings/SettingsShell";
 import {
+  APP_UPDATE_POLL_INTERVAL_MS,
   AppUpdateController,
   useAppUpdate,
 } from "@/renderer/providers/AppUpdateController";
@@ -42,6 +43,7 @@ describe("AppUpdateController", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.clearAllMocks();
   });
 
@@ -53,13 +55,75 @@ describe("AppUpdateController", () => {
     expect(screen.queryByRole("dialog", { name: "发现新版本" })).toBeNull();
   });
 
-  it("skips startup checks outside the updater runtime", () => {
+  it("skips startup checks outside the updater runtime", async () => {
     canUseAppUpdaterMock.mockReturnValue(false);
 
     render(<AppUpdateController />);
+    await flushUpdateEffects();
 
     expect(checkForAppUpdateMock).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog", { name: "发现新版本" })).toBeNull();
+  });
+
+  it("polls every five minutes and exposes a new update without opening the dialog", async () => {
+    vi.useFakeTimers();
+    checkForAppUpdateMock
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(createPendingUpdate());
+
+    const { container } = renderUpdateIndicatorHarness();
+    await flushUpdateEffects();
+
+    expect(checkForAppUpdateMock).toHaveBeenCalledTimes(1);
+    expect(container.querySelectorAll("[data-app-update-indicator]")).toHaveLength(0);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(APP_UPDATE_POLL_INTERVAL_MS);
+    });
+
+    expect(checkForAppUpdateMock).toHaveBeenCalledTimes(2);
+    expect(container.querySelectorAll("[data-app-update-indicator]")).toHaveLength(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("keeps a detected update and its indicator unchanged when a poll fails", async () => {
+    vi.useFakeTimers();
+    checkForAppUpdateMock
+      .mockResolvedValueOnce(createPendingUpdate())
+      .mockRejectedValueOnce(new Error("GitHub is unavailable"));
+
+    const { container } = renderUpdateIndicatorHarness();
+    await flushUpdateEffects();
+
+    expect(screen.queryByRole("dialog")).not.toBeNull();
+    fireEvent.click(screen.getByTestId("dismiss-update-dialog"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(container.querySelectorAll("[data-app-update-indicator]")).toHaveLength(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(APP_UPDATE_POLL_INTERVAL_MS);
+    });
+
+    expect(checkForAppUpdateMock).toHaveBeenCalledTimes(2);
+    expect(container.querySelectorAll("[data-app-update-indicator]")).toHaveLength(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("does not overlap polling requests when GitHub remains slow", async () => {
+    vi.useFakeTimers();
+    checkForAppUpdateMock
+      .mockResolvedValueOnce(null)
+      .mockImplementationOnce(() => new Promise<PendingAppUpdate | null>(() => undefined));
+
+    render(<AppUpdateController />);
+    await flushUpdateEffects();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(APP_UPDATE_POLL_INTERVAL_MS * 2);
+    });
+
+    expect(checkForAppUpdateMock).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("shows an update dialog and starts download/install from the primary action", async () => {
@@ -203,6 +267,40 @@ function UpdatePageHarness() {
       </button>
     </>
   );
+}
+
+function renderUpdateIndicatorHarness() {
+  const indicatorRuntime = { conversation: {} } as RuntimeBridge;
+  return render(
+    <ThemeProvider>
+      <NotificationProvider>
+        <AppUpdateController>
+          <MemoryRouter>
+            <LayoutStateProvider>
+              <Sider conversations={[]} runtime={indicatorRuntime} />
+              <DismissUpdateDialogButton />
+            </LayoutStateProvider>
+          </MemoryRouter>
+        </AppUpdateController>
+      </NotificationProvider>
+    </ThemeProvider>,
+  );
+}
+
+function DismissUpdateDialogButton() {
+  const appUpdate = useAppUpdate();
+  return (
+    <button data-testid="dismiss-update-dialog" onClick={appUpdate.dismissDialog} type="button">
+      dismiss
+    </button>
+  );
+}
+
+async function flushUpdateEffects() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
 }
 
 function UpdatePageActions() {

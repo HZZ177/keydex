@@ -49,6 +49,8 @@ export interface AppUpdateCheckOptions {
   notify?: boolean;
   openDialog?: boolean;
   openDialogOnAvailable?: boolean;
+  /** Preserve visible update state and suppress errors while polling in the background. */
+  background?: boolean;
 }
 
 export interface AppUpdateInstallOptions {
@@ -75,12 +77,16 @@ const EMPTY_PROGRESS: AppUpdateProgress = {
   finished: false,
 };
 
+export const APP_UPDATE_POLL_INTERVAL_MS = 5 * 60 * 1000;
+
 const AppUpdateContext = createContext<AppUpdateContextValue | null>(null);
 
 export function AppUpdateController({ children }: PropsWithChildren) {
   const notifications = useNotifications();
   const updaterAvailable = canUseAppUpdater();
   const startupCheckStartedRef = useRef(false);
+  const backgroundCheckInFlightRef = useRef(false);
+  const foregroundCheckGenerationRef = useRef(0);
   const [currentVersion, setCurrentVersion] = useState("...");
   const [status, setStatus] = useState<AppUpdateStatus>("idle");
   const [pendingUpdate, setPendingUpdate] = useState<PendingAppUpdate | null>(null);
@@ -93,16 +99,20 @@ export function AppUpdateController({ children }: PropsWithChildren) {
 
   const checkUpdate = useCallback(
     async (options: AppUpdateCheckOptions = {}) => {
-      const notify = options.notify === true;
+      const background = options.background === true;
+      const notify = !background && options.notify === true;
       const openDialogForCheck = options.openDialog === true;
       const openDialogOnAvailable = options.openDialogOnAvailable !== false;
-      if (openDialogForCheck) {
+      if (!background && openDialogForCheck) {
         setDialogOpen(true);
       }
-      if (busy) {
+      if (busy || status === "installed" || (background && (dialogOpen || backgroundCheckInFlightRef.current))) {
         return pendingUpdate;
       }
       if (!updaterAvailable) {
+        if (background) {
+          return null;
+        }
         const message = "当前环境不支持应用内更新";
         setStatus("error");
         setError(message);
@@ -113,17 +123,30 @@ export function AppUpdateController({ children }: PropsWithChildren) {
         return null;
       }
 
-      setStatus("checking");
-      setPendingUpdate(null);
-      setError("");
-      setErrorKind(null);
-      setProgress(EMPTY_PROGRESS);
+      const foregroundGeneration = foregroundCheckGenerationRef.current + (background ? 0 : 1);
+      if (background) {
+        backgroundCheckInFlightRef.current = true;
+      } else {
+        foregroundCheckGenerationRef.current = foregroundGeneration;
+        setStatus("checking");
+        setPendingUpdate(null);
+        setError("");
+        setErrorKind(null);
+        setProgress(EMPTY_PROGRESS);
+      }
       try {
         const update = await checkForAppUpdate();
+        if (background && foregroundGeneration !== foregroundCheckGenerationRef.current) {
+          return update;
+        }
         if (!update) {
           setPendingUpdate(null);
           setStatus("current");
-          setDialogOpen(openDialogForCheck);
+          setError("");
+          setErrorKind(null);
+          if (!background) {
+            setDialogOpen(openDialogForCheck);
+          }
           if (notify) {
             notifications.success("已是最新版本");
           }
@@ -133,12 +156,19 @@ export function AppUpdateController({ children }: PropsWithChildren) {
         setPendingUpdate(update);
         setCurrentVersion(update.currentVersion);
         setStatus("available");
-        setDialogOpen(openDialogForCheck || openDialogOnAvailable);
+        setError("");
+        setErrorKind(null);
+        if (!background) {
+          setDialogOpen(openDialogForCheck || openDialogOnAvailable);
+        }
         if (notify) {
           notifications.info(`发现新版本 ${update.version}`);
         }
         return update;
       } catch (reason) {
+        if (background) {
+          return null;
+        }
         const message = errorMessage(reason);
         setStatus("error");
         setError(message);
@@ -148,9 +178,13 @@ export function AppUpdateController({ children }: PropsWithChildren) {
           notifications.error(`更新检查失败：${message}`);
         }
         return null;
+      } finally {
+        if (background) {
+          backgroundCheckInFlightRef.current = false;
+        }
       }
     },
-    [busy, notifications, pendingUpdate, updaterAvailable],
+    [busy, dialogOpen, notifications, pendingUpdate, status, updaterAvailable],
   );
 
   const installUpdate = useCallback(
@@ -159,6 +193,7 @@ export function AppUpdateController({ children }: PropsWithChildren) {
         return;
       }
 
+      foregroundCheckGenerationRef.current += 1;
       setStatus("downloading");
       setDialogOpen(true);
       setProgress(EMPTY_PROGRESS);
@@ -216,6 +251,18 @@ export function AppUpdateController({ children }: PropsWithChildren) {
     }
     startupCheckStartedRef.current = true;
     void checkUpdate({ openDialogOnAvailable: true });
+  }, [checkUpdate, updaterAvailable]);
+
+  useEffect(() => {
+    if (!updaterAvailable) {
+      return;
+    }
+    const intervalId = window.setInterval(() => {
+      void checkUpdate({ background: true, openDialogOnAvailable: false });
+    }, APP_UPDATE_POLL_INTERVAL_MS);
+    return () => {
+      window.clearInterval(intervalId);
+    };
   }, [checkUpdate, updaterAvailable]);
 
   const value = useMemo<AppUpdateContextValue>(
