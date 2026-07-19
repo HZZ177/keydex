@@ -2524,6 +2524,7 @@ function insertPastedTextFragment(editor: HTMLDivElement, rawText: string) {
   const fragmentId = createPastedTextFragmentId();
   const element = createPastedTextFragmentElement(rawText, { id: fragmentId, collapsed: true });
   const selection = window.getSelection();
+  moveCollapsedPasteInsertionOutsideCaretHost(editor, selection);
   const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
   const hasEditorRange = Boolean(range && rangeBelongsToEditor(editor, range));
 
@@ -2552,6 +2553,32 @@ function insertPastedTextFragment(editor: HTMLDivElement, rawText: string) {
 
   editor.append(element);
   placeCaretAtNodeBoundary(editor, element, true);
+}
+
+function moveCollapsedPasteInsertionOutsideCaretHost(
+  editor: HTMLDivElement,
+  selection: Selection | null,
+) {
+  if (!selection?.rangeCount) return;
+  const range = selection.getRangeAt(0);
+  if (!range.collapsed || !rangeBelongsToEditor(editor, range)) return;
+  const caretHost = pastedTextCaretHostContaining(range.startContainer);
+  if (!caretHost || !editor.contains(caretHost)) return;
+  const position = caretHost.dataset.pasteCaretHost;
+  const insertionRange = document.createRange();
+  if (position === "leading") {
+    insertionRange.setStartBefore(caretHost);
+  } else {
+    insertionRange.setStartAfter(caretHost);
+  }
+  insertionRange.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(insertionRange);
+}
+
+function pastedTextCaretHostContaining(node: Node): HTMLElement | null {
+  const element = node instanceof Element ? node : node.parentElement;
+  return element?.closest<HTMLElement>(PASTED_TEXT_CARET_HOST_SELECTOR) ?? null;
 }
 
 function selectionBelongsToEditor(editor: HTMLElement, selection: Selection): boolean {

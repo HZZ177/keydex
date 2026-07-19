@@ -650,6 +650,56 @@ describe("SendBox", () => {
     expect(input.querySelector('[data-sendbox-pasted-text="true"]')).toBeNull();
   });
 
+  it("sends every collapsed fragment after consecutive long pastes", () => {
+    const first = "a".repeat(200);
+    const second = "b".repeat(200);
+    const sentValues: string[] = [];
+
+    function Harness() {
+      const [value, setValue] = useState("");
+      const [fragments, setFragments] = useState<PastedTextFragment[]>([]);
+      return (
+        <SendBox
+          value={value}
+          pastedTextFragments={fragments}
+          runtimeState="idle"
+          canSend
+          canStop={false}
+          onChange={setValue}
+          onPastedTextFragmentsChange={setFragments}
+          onSend={() => {
+            sentValues.push(value);
+            return true;
+          }}
+          onStop={vi.fn()}
+        />
+      );
+    }
+
+    render(<Harness />);
+    const input = screen.getByLabelText("继续输入");
+    placeSelectionAtEnd(input);
+    fireEvent.paste(input, {
+      clipboardData: {
+        files: fileList(),
+        getData: vi.fn((type: string) => (type === "text/plain" ? first : "")),
+      },
+    });
+    const trailingBoundary = input.querySelector<HTMLElement>('[data-paste-boundary="trailing"]')!;
+    fireEvent.mouseDown(trailingBoundary);
+    fireEvent.click(trailingBoundary);
+    fireEvent.paste(input, {
+      clipboardData: {
+        files: fileList(),
+        getData: vi.fn((type: string) => (type === "text/plain" ? second : "")),
+      },
+    });
+
+    expect(input.querySelectorAll('[data-sendbox-pasted-text="true"]')).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    expect(sentValues).toEqual([first + second]);
+  });
+
   it("copies the complete raw text when a folded paste is selected", () => {
     const text = `0123456789${"x".repeat(180)}ABCDEFGHIJ`;
     const fragment: PastedTextFragment = {

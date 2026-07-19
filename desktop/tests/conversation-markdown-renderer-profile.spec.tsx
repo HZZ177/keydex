@@ -101,6 +101,27 @@ describe("Conversation Markdown renderer profile", () => {
     expect(link.dataset.keydexFilePath).toBe("D:\\Pycharm Projects\\keydex\\test2.md");
   });
 
+  it("preserves a Windows separator before a dot-prefixed directory", () => {
+    const parser = new StreamingTailParser(parserOptions);
+    const root = document.createElement("div");
+    const view = new StreamingTailView(root, {
+      registry: createConversationMarkdownRendererRegistry(),
+    });
+    const path = "D:\\Pycharm Projects\\kt-pm-platform\\.ktaicoding\\des\\DES-20260712-001-Keydex项目模式任务闭环与云端接入.md";
+    const snapshot = parser.update({
+      source: `[DES-20260712-001](<${path}>)`,
+      revision: "windows-dot-directory",
+      epoch: 1,
+      final: true,
+    }).snapshot;
+    view.publish(snapshot, { showCursor: false });
+    const link = root.querySelector<HTMLAnchorElement>("a")!;
+
+    expect(link.getAttribute("href")).toContain("kt-pm-platform%5C.ktaicoding%5Cdes%5C");
+    expect(link.dataset.keydexFileLink).toBe("true");
+    expect(link.dataset.keydexFilePath).toBe(path);
+  });
+
   it("adds real color swatches after inline hexadecimal color values without duplicating them", () => {
     const parser = new StreamingTailParser(parserOptions);
     const root = document.createElement("div");

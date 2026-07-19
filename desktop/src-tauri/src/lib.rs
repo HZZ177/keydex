@@ -283,11 +283,11 @@ fn write_text_file(path: String, contents: String) -> Result<(), String> {
 fn read_text_file(path: String) -> Result<LocalTextFileResponse, String> {
     let cleaned = path.trim();
     if cleaned.is_empty() {
-        return Err("鏂囦欢璺緞涓嶈兘涓虹┖".to_string());
+        return Err("文件路径不能为空".to_string());
     }
     let requested = PathBuf::from(cleaned);
     if !requested.is_file() {
-        return Err("鍙兘棰勮鏂囦欢".to_string());
+        return Err("只能预览文件".to_string());
     }
     let resolved = requested.canonicalize().unwrap_or(requested);
     let content = std::fs::read_to_string(&resolved).map_err(|err| err.to_string())?;

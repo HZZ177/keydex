@@ -122,6 +122,22 @@ describe("ConversationMarkdownRuntimeHost", () => {
       });
   });
 
+  it("opens a Windows file link through a dot-prefixed directory without dropping its separator", async () => {
+    const path = "D:\\Pycharm Projects\\kt-pm-platform\\.ktaicoding\\des\\DES-20260712-001-Keydex项目模式任务闭环与云端接入.md";
+    const rendered = render(
+      <PreviewProvider>
+        <MessageText message={message("assistant-dot-directory", `[DES-20260712-001](<${path}>)`, "completed")} />
+        <RuntimePreviewProbe />
+      </PreviewProvider>,
+    );
+    await ready(rendered.container, "DES-20260712-001");
+    fireEvent.click(screen.getByRole("link", { name: "DES-20260712-001" }));
+    expect(JSON.parse(screen.getByTestId("runtime-preview-entry").textContent ?? "{}"))
+      .toMatchObject({
+        request: { type: "local-file", path },
+      });
+  });
+
   it("quotes and asks from a native runtime selection without replacing the selected DOM", async () => {
     const quote = vi.fn();
     const ask = vi.fn();

@@ -65,19 +65,35 @@ interface BlockDraft {
 }
 
 const defaultMarkdownItByRendererProfile: Record<MarkdownParserInput["rendererProfile"], MarkdownIt> = {
-  conversation: new MarkdownIt({
-    breaks: true,
-    html: false,
-    linkify: false,
-    typographer: false,
-  }),
-  "file-preview": new MarkdownIt({
-    breaks: true,
-    html: false,
-    linkify: true,
-    typographer: false,
-  }),
+  conversation: createMarkdownIt(false),
+  "file-preview": createMarkdownIt(true),
 };
+
+function createMarkdownIt(linkify: boolean): MarkdownIt {
+  const markdownIt = new MarkdownIt({
+    breaks: true,
+    html: false,
+    linkify,
+    typographer: false,
+  });
+  const parseLinkDestination = markdownIt.helpers.parseLinkDestination;
+  markdownIt.helpers.parseLinkDestination = (source, start, max) => {
+    const result = parseLinkDestination(source, start, max);
+    if (!result.ok) return result;
+    const rawDestination = source.charCodeAt(start) === 0x3C /* < */
+      ? source.slice(start + 1, result.pos - 1)
+      : source.slice(start, result.pos);
+    if (!/^(?:[a-zA-Z]:[\\/]|\\\\|\/\/)/u.test(rawDestination)) return result;
+    return {
+      ...result,
+      // CommonMark treats a backslash before punctuation as an escape. In a
+      // Windows path that backslash is always a separator, so preserve the raw
+      // destination and let normalizeLink percent-encode it safely.
+      str: rawDestination,
+    };
+  };
+  return markdownIt;
+}
 
 const TOP_LEVEL_BLOCK_TYPES = new Set([
   "blockquote_open",
