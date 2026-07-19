@@ -13,6 +13,7 @@ export interface KeydexDiffDisplayPreference {
   readonly layout: KeydexDiffLayout;
   readonly wrap: boolean;
   readonly navigationOpen: boolean;
+  readonly syncScroll: boolean;
 }
 
 export interface KeydexDiffPreferenceStorage {
@@ -37,6 +38,7 @@ export function defaultKeydexDiffPreference(
     layout: contract.defaultLayout,
     wrap: contract.defaultWrap,
     navigationOpen: false,
+    syncScroll: contract.syncScroll && contract.defaultSyncScroll,
   });
 }
 
@@ -140,6 +142,9 @@ function normalizePreference(
     navigationOpen: typeof record.navigationOpen === "boolean"
       ? record.navigationOpen
       : fallback.navigationOpen,
+    syncScroll: contract.syncScroll && typeof record.syncScroll === "boolean"
+      ? record.syncScroll
+      : fallback.syncScroll,
   });
 }
 

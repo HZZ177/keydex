@@ -2,7 +2,7 @@ import { ChevronRight } from "lucide-react";
 import { useEffect, useRef, type MouseEvent as ReactMouseEvent } from "react";
 
 import type { KeydexDiffDocument, KeydexDiffFile } from "../model";
-import type { KeydexDiffActions } from "../profiles";
+import type { KeydexDiffActions, KeydexDiffLayout } from "../profiles";
 import { keydexDiffFileHeaderPresentation } from "../DiffChrome";
 import { KeydexDiffView } from "../KeydexDiffView";
 import { useKeydexDiffViewController } from "../diffViewController";
@@ -18,6 +18,11 @@ export interface ReviewDiffViewProps {
   readonly scrollScopeKey?: string;
   readonly wrap?: boolean;
   readonly onWrapChange?: (wrap: boolean) => void;
+  readonly layout?: KeydexDiffLayout;
+  readonly onLayoutChange?: (layout: KeydexDiffLayout) => void;
+  readonly syncScroll?: boolean;
+  readonly onSyncScrollChange?: (syncScroll: boolean) => void;
+  readonly allowSplit?: boolean;
   readonly embedded?: boolean;
   readonly density?: "comfortable" | "compact";
   readonly showToolbar?: boolean;
@@ -31,6 +36,11 @@ export function ReviewDiffView({
   scrollScopeKey = "review",
   wrap,
   onWrapChange,
+  layout,
+  onLayoutChange,
+  syncScroll,
+  onSyncScrollChange,
+  allowSplit = false,
   embedded = true,
   density = "comfortable",
   showToolbar = true,
@@ -40,6 +50,8 @@ export function ReviewDiffView({
     activeFileId: focusedFile?.id ?? null,
     expandedFileIds: document.files.map((file) => file.id),
     ...(wrap === undefined ? {} : { wrap }),
+    layout: allowSplit ? layout ?? "stacked" : "stacked",
+    ...(syncScroll === undefined ? {} : { syncScroll }),
   });
   const appliedExternalFocusRef = useRef<string | null>(null);
   const activeFile = document.files.find(
@@ -65,6 +77,16 @@ export function ReviewDiffView({
       controller.setWrap(wrap);
     }
   }, [controller, wrap]);
+  useEffect(() => {
+    if (allowSplit && layout !== undefined && layout !== controller.state.layout) {
+      controller.setLayout(layout);
+    }
+  }, [allowSplit, controller, layout]);
+  useEffect(() => {
+    if (syncScroll !== undefined && syncScroll !== controller.state.syncScroll) {
+      controller.setSyncScroll(syncScroll);
+    }
+  }, [controller, syncScroll]);
 
   const focusFile = (fileId: string) => {
     controller.setActiveFile(fileId);
@@ -86,41 +108,58 @@ export function ReviewDiffView({
       aria-label="文件审阅"
       onClick={toggleFromToolbarRow}
     >
-      <KeydexDiffView
-        document={document}
-        profile="review"
-        embedded={embedded}
-        actions={actions}
-        state={{
-          layout: controller.state.layout,
-          wrap: controller.state.wrap,
-          activeFileId: controller.state.activeFileId,
-          expandedFileIds: controller.state.expandedFileIds,
-          selection: controller.state.selection,
-        }}
-        scrollScopeKey={`${scrollScopeKey}:${document.id}`}
-        loadingAction={controller.state.loadingAction as never}
-        onLoadingActionChange={controller.setLoadingAction}
-        onSelectionChange={controller.setSelection}
-        onActiveFileChange={focusFile}
-        onExpandedFilesChange={controller.setExpandedFiles}
-        showToolbar={showToolbar}
-        showFileHeader={false}
-        hiddenToolbarActions={["open_file"]}
-        singleFileExpanded={activeFileExpanded}
-        singleFileDensity={density}
-        toolbarLeading={activeFile ? (
-          <ReviewDiffToolbarFile
-            file={activeFile}
-            expanded={activeFileExpanded}
-            onToggle={() => controller.toggleFile(activeFile.id)}
-          />
-        ) : null}
-        onWrapChange={(nextWrap) => {
-          controller.setWrap(nextWrap);
-          onWrapChange?.(nextWrap);
-        }}
-      />
+      <div
+        className={styles.fileGroup}
+        role="group"
+        aria-label={activeFile ? reviewDiffFileGroupAccessibleName(activeFile) : "文件审阅"}
+      >
+        <KeydexDiffView
+          document={document}
+          profile="review"
+          embedded={embedded}
+          actions={actions}
+          state={{
+            layout: controller.state.layout,
+            wrap: controller.state.wrap,
+            syncScroll: controller.state.syncScroll,
+            activeChangeId: controller.state.activeChangeId,
+            activeFileId: controller.state.activeFileId,
+            expandedFileIds: controller.state.expandedFileIds,
+            selection: controller.state.selection,
+          }}
+          scrollScopeKey={`${scrollScopeKey}:${document.id}`}
+          loadingAction={controller.state.loadingAction as never}
+          onLoadingActionChange={controller.setLoadingAction}
+          onSelectionChange={controller.setSelection}
+          onActiveFileChange={focusFile}
+          onExpandedFilesChange={controller.setExpandedFiles}
+          showToolbar={showToolbar}
+          showFileHeader={false}
+          hiddenToolbarActions={["open_file"]}
+          singleFileExpanded={activeFileExpanded}
+          singleFileDensity={density}
+          toolbarLeading={activeFile ? (
+            <ReviewDiffToolbarFile
+              file={activeFile}
+              expanded={activeFileExpanded}
+              onToggle={() => controller.toggleFile(activeFile.id)}
+            />
+          ) : null}
+          onWrapChange={(nextWrap) => {
+            controller.setWrap(nextWrap);
+            onWrapChange?.(nextWrap);
+          }}
+          onLayoutChange={allowSplit ? (nextLayout) => {
+            controller.setLayout(nextLayout);
+            onLayoutChange?.(nextLayout);
+          } : undefined}
+          onSyncScrollChange={(nextSyncScroll) => {
+            controller.setSyncScroll(nextSyncScroll);
+            onSyncScrollChange?.(nextSyncScroll);
+          }}
+          onActiveChangeChange={controller.setActiveChange}
+        />
+      </div>
     </section>
   );
 }
@@ -162,6 +201,11 @@ function ReviewDiffToolbarFile({
       </span>
     </button>
   );
+}
+
+export function reviewDiffFileGroupAccessibleName(file: KeydexDiffFile): string {
+  const presentation = keydexDiffFileHeaderPresentation(file);
+  return `${presentation.fullPath}，${presentation.statusLabel}文件`;
 }
 
 export function resolveReviewFocusedFile(

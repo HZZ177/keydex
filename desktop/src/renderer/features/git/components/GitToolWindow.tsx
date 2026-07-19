@@ -19,6 +19,7 @@ import {
   GitConfirmActionDialog,
   GitDialogField,
   GitDialogSummary,
+  GitFileDiffDialog,
   GitFormDialog,
   GitRevisionTreeDialog,
   type GitCommitPushTarget,
@@ -56,7 +57,7 @@ import { GitWorktreeView, type GitWorktreeAddOptions } from "./GitWorktreeView";
 import { GitLfsView, type GitLfsAction } from "./GitLfsView";
 import { GitRepositoryList } from "./GitRepositoryList";
 import { GitOperationLog } from "./GitOperationLog";
-import { commitSelectionFromEntries, type GitChangeEntry } from "../changesTree";
+import { commitSelectionFromEntries, gitChangeRollbackPaths, type GitChangeEntry } from "../changesTree";
 import { gitDocumentFromFiles } from "@/renderer/components/diff/adapters/gitDocument";
 import type { KeydexGitDiffActionStatus } from "@/renderer/components/diff/profiles";
 import {
@@ -177,6 +178,8 @@ export function GitToolWindow({
   const [selectedChangeDiff, setSelectedChangeDiff] = useState<GitDiffSnapshot | null>(null);
   const [selectedChangeDiffLoading, setSelectedChangeDiffLoading] = useState(false);
   const [selectedChangePatchAction, setSelectedChangePatchAction] = useState<"stage" | "unstage">("stage");
+  const [changeDiffDialogEntry, setChangeDiffDialogEntry] = useState<GitChangeEntry | null>(null);
+  const [pendingChangeRollback, setPendingChangeRollback] = useState<readonly GitChangeEntry[] | null>(null);
   const [patchActionStatus, setPatchActionStatus] = useState<KeydexGitDiffActionStatus>("idle");
   const [remotes, setRemotes] = useState<readonly GitRemoteInfo[]>([]);
   const [outgoingCommits, setOutgoingCommits] = useState<readonly GitCommitSummary[]>([]);
@@ -530,6 +533,8 @@ export function GitToolWindow({
     setSelectedUntrackedCommitPaths([]);
     setSelectedCommitFileCount(0);
     setChangeSelectionResetKey((current) => current + 1);
+    setChangeDiffDialogEntry(null);
+    setPendingChangeRollback(null);
     selectedChangeDiffRef.current = null;
     setSelectedChangeDiff(null);
     setSelectedChangeDiffLoading(false);
@@ -1249,6 +1254,76 @@ export function GitToolWindow({
         changeDiffAbortRef.current = null;
         setSelectedChangeDiffLoading(false);
       }
+    }
+  };
+  const focusCommitEditorForFile = () => {
+    window.requestAnimationFrame(() => {
+      changesWorkspaceRef.current
+        ?.querySelector<HTMLTextAreaElement>('textarea[aria-label="提交说明"]')
+        ?.focus();
+    });
+  };
+  const openChangeDiffDialog = (entry: GitChangeEntry) => {
+    setChangeDiffDialogEntry(entry);
+  };
+  const runRollbackChanges = async (entries: readonly GitChangeEntry[]) => {
+    if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId || mutation) return;
+    const repositoryId = storeSnapshot.project.selectedRepositoryId;
+    const scope = {
+      workspaceId: storeSnapshot.project.workspaceId,
+      projectRoot: storeSnapshot.project.projectRoot,
+      repositoryId,
+    };
+    const { trackedPaths, untrackedPaths } = gitChangeRollbackPaths(entries);
+    setMutation("restore");
+    setActionError(null);
+    try {
+      if (trackedPaths.length > 0) {
+        const command = {
+          ...scope,
+          paths: trackedPaths,
+          idempotencyKey: `tool-window-restore-changes-${Date.now()}`,
+          source: "HEAD",
+          staged: true,
+          worktree: true,
+        };
+        const confirmation = await runtime.confirmation("restore", command);
+        const result = await controller.runCommand(() => runtime.restore({
+          ...command,
+          confirmationToken: confirmation.token,
+        }));
+        if (result.state !== "succeeded") {
+          setActionError(gitOperationFailureMessage(result));
+          return;
+        }
+      }
+      if (untrackedPaths.length > 0) {
+        const command = {
+          ...scope,
+          paths: [...untrackedPaths],
+          idempotencyKey: `tool-window-clean-changes-${Date.now()}`,
+        };
+        const confirmation = await runtime.confirmation("clean", command);
+        const result = await controller.runCommand(() => runtime.clean({
+          ...command,
+          confirmationToken: confirmation.token,
+        }));
+        if (result.state !== "succeeded") {
+          setActionError(gitOperationFailureMessage(result));
+          return;
+        }
+      }
+      setPendingChangeRollback(null);
+      const rolledBackIds = new Set(entries.map((entry) => entry.id));
+      setChangeDiffDialogEntry((current) => current && rolledBackIds.has(current.id) ? null : current);
+      setSelectedChangeDiff(null);
+      selectedChangeDiffRef.current = null;
+      setChangeSelectionResetKey((current) => current + 1);
+      await controller.refreshRepository(scope, ["status"]);
+    } catch (error) {
+      setActionError(gitUiErrorMessage(error));
+    } finally {
+      setMutation(null);
     }
   };
   const refreshStalePatchSource = async (identity: GitPatchActionIdentity) => {
@@ -3494,8 +3569,12 @@ export function GitToolWindow({
                 status={storeSnapshot?.status ?? null}
                 onSelectionChange={updateCommitSelection}
                 onPreviewChange={(entry) => void loadChangeDiff(entry)}
+                onCommitFiles={focusCommitEditorForFile}
+                onRollbackFiles={setPendingChangeRollback}
+                onShowDiff={openChangeDiffDialog}
                 onRefresh={() => void refreshChanges()}
                 refreshing={changesRefreshing}
+                actionBusy={mutation !== null}
                 selectionResetKey={changeSelectionResetKey}
               />
               <div
@@ -3942,6 +4021,32 @@ export function GitToolWindow({
         error={revisionTreeError}
         onClose={() => setRevisionTreeOpen(false)}
       />
+      <GitFileDiffDialog
+        open={changeDiffDialogEntry !== null}
+        path={changeDiffDialogEntry?.displayPath ?? "未知文件"}
+        ariaLabel={`本地文件差异：${changeDiffDialogEntry?.displayPath ?? "未知文件"}`}
+        repositoryId={selectedChangeDiff?.repositoryId ?? storeSnapshot?.project?.selectedRepositoryId ?? "unknown"}
+        repositoryVersion={selectedChangeDiff?.repositoryVersion ?? storeSnapshot?.status?.repositoryVersion ?? "unknown"}
+        sourceKind={selectedChangePatchAction === "unstage" ? "index" : "working_tree"}
+        files={selectedChangeDiff?.files ?? []}
+        loading={selectedChangeDiffLoading}
+        scrollScopeKey={`git-changes-dialog:${storeSnapshot?.project?.selectedRepositoryId ?? "unknown"}:${changeDiffDialogEntry?.id ?? "none"}`}
+        onClose={() => setChangeDiffDialogEntry(null)}
+      />
+      {pendingChangeRollback && pendingChangeRollback.length > 0 ? (
+        <GitConfirmActionDialog
+          title={pendingChangeRollback.length === 1 ? "回滚文件改动" : `回滚 ${pendingChangeRollback.length} 个文件的改动`}
+          description="所选文件在索引和工作树中的本地改动将被永久丢弃，未跟踪文件将被删除。"
+          target={pendingChangeRollback.length === 1
+            ? pendingChangeRollback[0]!.displayPath
+            : `${pendingChangeRollback.length} 个文件`}
+          details={pendingChangeRollback.slice(0, 5).map((entry) => entry.displayPath)}
+          confirmLabel={mutation === "restore" ? "正在回滚…" : "回滚"}
+          busy={mutation === "restore"}
+          onCancel={() => setPendingChangeRollback(null)}
+          onConfirm={() => void runRollbackChanges(pendingChangeRollback)}
+        />
+      ) : null}
       {branchContextDialog?.kind === "create" ? (
         <GitFormDialog
           title="创建新分支"

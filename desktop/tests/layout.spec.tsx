@@ -590,6 +590,45 @@ describe("Layout", () => {
     expect(screen.queryByTestId("right-sidebar-initial-page")).toBeNull();
   });
 
+  it("shows the target session loading state before routed navigation commits", () => {
+    const onNavigate = vi.fn();
+    function SessionNavigationHarness() {
+      const [activePath, setActivePath] = useState("/git/workspace-a");
+      return (
+        <>
+          <button type="button" onClick={() => setActivePath("/conversation/thread-a")}>Commit route</button>
+          <Layout
+            activePath={activePath}
+            conversations={[{ id: "thread-a", title: "Session A" }]}
+            onNavigate={onNavigate}
+            routePrimarySurface={activePath.startsWith("/git/") ? "git" : "content"}
+          >
+            <div data-testid="routed-content">Routed content</div>
+          </Layout>
+        </>
+      );
+    }
+    renderLayout(<SessionNavigationHarness />);
+
+    const shell = screen.getByTestId("app-shell");
+    expect(shell.dataset.primarySurface).toBe("git");
+
+    fireEvent.click(screen.getByRole("button", { name: "Session A" }));
+
+    expect(onNavigate).toHaveBeenCalledWith("/conversation/thread-a");
+    expect(shell.dataset.primarySurface).toBe("content");
+    expect(shell.dataset.sessionNavigationPending).toBe("true");
+    expect(screen.getByRole("button", { name: "Session A" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByTestId("session-navigation-loading")).not.toBeNull();
+    expect(screen.queryByTestId("routed-content")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Commit route" }));
+
+    expect(shell.dataset.sessionNavigationPending).toBe("false");
+    expect(screen.queryByTestId("session-navigation-loading")).toBeNull();
+    expect(screen.getByTestId("routed-content")).not.toBeNull();
+  });
+
   it("closes right sidebar tabs to the left and right from the tab context menu", () => {
     renderLayoutWithPreview(
       <>

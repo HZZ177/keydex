@@ -38,8 +38,8 @@ describe("theme tokens", () => {
     expect(css).toContain("--color-bg-1: #282a36");
     expect(css).toContain("--color-text-1: #f8f8f2");
     expect(css).toContain("--color-primary-6: #ff79c6");
-    expect(css).toContain("--diff-added-text: #87d99c");
-    expect(css).toContain("--diff-removed-text: #e8797f");
+    expect(css).toContain("--diff-added-text: #62c77a");
+    expect(css).toContain("--diff-removed-text: #ef6a70");
     expect(css).toContain("--color-skill: #ff79c6");
     expect(css).toContain("--syntax-comment: #6272a4");
     expect(css).toContain("--syntax-string: #f1fa8c");
@@ -70,6 +70,26 @@ describe("theme tokens", () => {
     expect(css).not.toContain("--diff-removed-text: #ff5555");
     expect(css).not.toContain("--diff-added-text: #1677ff");
     expect(css).not.toContain("--diff-removed-text: #1677ff");
+  });
+
+  it("derives layered Diff surfaces from restrained light and dark semantic colors", () => {
+    const css = readFileSync(resolve(themeDir, "default-color-scheme.css"), "utf8");
+    const light = css.match(/:root,\s*:root\[data-theme="light"\]\s*\{([\s\S]*?)\n\}/u)?.[1] ?? "";
+    const dark = css.match(/:root\[data-theme="dark"\]\s*\{([\s\S]*?)\n\}/u)?.[1] ?? "";
+    expect(light).toContain("--diff-aligned-connector-bg: #f7f8fa");
+    expect(dark).toContain("--diff-aligned-connector-bg: #252733");
+    expect(light).toContain("--diff-added-text: #1a9f50");
+    expect(light).toContain("--diff-removed-text: #d64c59");
+    expect(light).toContain("--diff-modified-text: #4f86c6");
+    expect(dark).toContain("--diff-added-text: #62c77a");
+    expect(dark).toContain("--diff-removed-text: #ef6a70");
+    expect(dark).toContain("--diff-modified-text: #6da5e3");
+    expect(light).toContain("--diff-aligned-change-fill: var(--diff-modified-bg)");
+    expect(light).toContain("--diff-aligned-added-edge: var(--diff-added-border)");
+    expect(dark).toContain("--diff-aligned-removed-fill: var(--diff-removed-bg)");
+    expect(dark).toContain("--diff-aligned-change-edge: var(--diff-modified-border)");
+    expect(light).not.toContain("--diff-aligned-change-edge: #1677ff");
+    expect(dark).not.toContain("--diff-aligned-added-edge: #50fa7b");
   });
 
   it("uses Dracula highlighting for dark conversation code and semantic syntax tokens in file preview", () => {

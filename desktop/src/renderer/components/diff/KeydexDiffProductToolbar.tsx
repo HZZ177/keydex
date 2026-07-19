@@ -1,10 +1,13 @@
 import {
   ArrowDownToLine,
+  ArrowDown,
   ArrowLeft,
   ArrowRight,
+  ArrowUp,
   Columns2,
   Copy,
   ExternalLink,
+  Link2,
   Rows3,
   TextWrap,
 } from "lucide-react";
@@ -36,6 +39,9 @@ export type KeydexDiffToolbarActionId =
   | "open_file"
   | "toggle_wrap"
   | "toggle_layout"
+  | "toggle_sync_scroll"
+  | "previous_change"
+  | "next_change"
   | "apply_git_patch";
 
 export interface KeydexDiffProductToolbarProps {
@@ -45,6 +51,8 @@ export interface KeydexDiffProductToolbarProps {
   readonly actions?: KeydexDiffActions;
   readonly layout: KeydexDiffLayout;
   readonly wrap: boolean;
+  readonly syncScroll?: boolean;
+  readonly changeCount?: number;
   readonly selectionText?: string;
   readonly selection?: KeydexDiffSelectionRange | null;
   readonly loadingAction?: KeydexDiffToolbarActionId | null;
@@ -53,6 +61,9 @@ export interface KeydexDiffProductToolbarProps {
   readonly onNextFile?: () => void;
   readonly onLayoutChange?: (layout: KeydexDiffLayout) => void;
   readonly onWrapChange?: (wrap: boolean) => void;
+  readonly onSyncScrollChange?: (syncScroll: boolean) => void;
+  readonly onPreviousChange?: () => void;
+  readonly onNextChange?: () => void;
   readonly hiddenActions?: readonly KeydexDiffToolbarActionId[];
   readonly leading?: ReactNode;
 }
@@ -64,6 +75,8 @@ export function KeydexDiffProductToolbar({
   actions = {},
   layout,
   wrap,
+  syncScroll = true,
+  changeCount = 0,
   selectionText = "",
   selection = null,
   loadingAction,
@@ -72,6 +85,9 @@ export function KeydexDiffProductToolbar({
   onNextFile,
   onLayoutChange,
   onWrapChange,
+  onSyncScrollChange,
+  onPreviousChange,
+  onNextChange,
   hiddenActions = [],
   leading,
 }: KeydexDiffProductToolbarProps) {
@@ -115,6 +131,48 @@ export function KeydexDiffProductToolbar({
       />,
     );
   }
+  const alignedSplitVisible = layout === "split";
+  const canNavigateChanges = alignedSplitVisible
+    && enabled.has("navigate_changes")
+    && Boolean(onPreviousChange && onNextChange)
+    && changeCount > 0;
+  if (canNavigateChanges && !hidden.has("previous_change") && !hidden.has("next_change")) {
+    buttons.push(
+      <KeydexDiffToolbarAction
+        key="previous_change"
+        label="上一个差异"
+        shortcut="Alt+↑"
+        icon={<ArrowUp size={16} />}
+        data-priority="primary"
+        onClick={onPreviousChange}
+      />,
+      <KeydexDiffToolbarAction
+        key="next_change"
+        label="下一个差异"
+        shortcut="Alt+↓"
+        icon={<ArrowDown size={16} />}
+        data-priority="primary"
+        onClick={onNextChange}
+      />,
+    );
+  }
+  if (
+    alignedSplitVisible
+    && !hidden.has("toggle_sync_scroll")
+    && enabled.has("toggle_sync_scroll")
+    && onSyncScrollChange
+  ) {
+    buttons.push(
+      <KeydexDiffToolbarAction
+        key="toggle_sync_scroll"
+        label={syncScroll ? "关闭同步滚动" : "开启同步滚动"}
+        icon={<Link2 size={16} />}
+        pressed={syncScroll}
+        data-priority="primary"
+        onClick={() => onSyncScrollChange(!syncScroll)}
+      />,
+    );
+  }
   if (!hidden.has("copy_selection") && enabled.has("copy_selection") && actions.copySelection) {
     buttons.push(
       <KeydexDiffToolbarAction
@@ -126,6 +184,7 @@ export function KeydexDiffProductToolbar({
         disabledReason="请先选择代码"
         state={feedback.stateFor("copy_selection")}
         onClick={() => feedback.run("copy_selection", () => actions.copySelection!(selectionText))}
+        data-priority="secondary"
       />,
     );
   }
@@ -137,6 +196,7 @@ export function KeydexDiffProductToolbar({
         icon={<Copy size={16} />}
         state={feedback.stateFor("copy_patch")}
         onClick={() => feedback.run("copy_patch", () => actions.copyPatch!(activeFile.patch))}
+        data-priority="secondary"
       />,
     );
   }
@@ -152,6 +212,7 @@ export function KeydexDiffProductToolbar({
         disabledReason="此变更没有可打开的工作区路径"
         state={feedback.stateFor("open_file")}
         onClick={() => feedback.run("open_file", () => actions.openFile!(path!))}
+        data-priority="secondary"
       />,
     );
   }

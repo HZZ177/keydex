@@ -151,6 +151,48 @@
   color: color-mix(in srgb, var(--color-text-secondary) 82%, var(--color-text-tertiary));
 }
 
+.contextWindowRing {
+  display: block;
+  width: 14px;
+  height: 14px;
+  overflow: visible;
+  transform: rotate(-90deg);
+}
+
+.contextWindowTrack,
+.contextWindowProgress {
+  fill: none;
+  stroke-width: 2;
+}
+
+.contextWindowTrack {
+  stroke: color-mix(in srgb, var(--color-text-tertiary) 24%, transparent);
+}
+
+.contextWindowProgress {
+  stroke: color-mix(in srgb, var(--color-text-secondary) 82%, var(--color-accent));
+  stroke-linecap: round;
+  transition:
+    stroke-dashoffset 520ms cubic-bezier(0.22, 1, 0.36, 1),
+    stroke var(--motion-fast) ease;
+}
+
+.contextWindowRing[data-level="warning"] .contextWindowProgress {
+  stroke: color-mix(in srgb, var(--color-warning) 88%, var(--color-text-secondary));
+}
+
+.contextWindowRing[data-level="danger"] .contextWindowProgress {
+  stroke: color-mix(in srgb, var(--color-danger) 88%, var(--color-text-secondary));
+}
+
+.contextWindowRing[data-level="idle"] .contextWindowTrack {
+  stroke: color-mix(in srgb, var(--color-text-tertiary) 20%, transparent);
+}
+
+.contextWindowRing[data-level="idle"] .contextWindowProgress {
+  stroke: transparent;
+}
+
 .enterIcon {
   color: var(--color-text-tertiary);
   opacity: 0.72;

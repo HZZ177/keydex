@@ -1,10 +1,21 @@
-import { ChevronDown, RefreshCw } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, FileDiff, GitCommitHorizontal, RefreshCw, Undo2 } from "lucide-react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 
 import { AppTooltipLayer } from "@/renderer/components/tooltip";
 import { useMaterialEntryIcon } from "@/renderer/components/workspace/materialIconTheme";
 import { groupGitChanges, uniqueSelectedChangePaths, type GitChangeEntry, type GitChangeGroup } from "@/renderer/features/git/changesTree";
 import { GIT_CHANGES_VIRTUALIZATION_THRESHOLD } from "@/renderer/features/git/performancePolicy";
+import {
+  useOptionalAppContextMenu,
+  type AppContextMenuItem,
+} from "@/renderer/providers/AppContextMenuProvider";
 import type { GitStatusSnapshot } from "@/runtime/gitTypes";
 
 import styles from "./GitChangesView.module.css";
@@ -15,8 +26,12 @@ export interface GitChangesViewProps {
   viewportHeight?: number;
   onSelectionChange?: (paths: readonly string[], entries: readonly GitChangeEntry[]) => void;
   onPreviewChange?: (entry: GitChangeEntry | null) => void;
+  onCommitFiles?: (entries: readonly GitChangeEntry[]) => void;
+  onRollbackFiles?: (entries: readonly GitChangeEntry[]) => void;
+  onShowDiff?: (entry: GitChangeEntry) => void;
   onRefresh?: () => void;
   refreshing?: boolean;
+  actionBusy?: boolean;
   selectionResetKey?: number;
 }
 
@@ -26,8 +41,12 @@ export function GitChangesView({
   viewportHeight = 520,
   onSelectionChange,
   onPreviewChange,
+  onCommitFiles,
+  onRollbackFiles,
+  onShowDiff,
   onRefresh,
   refreshing = false,
+  actionBusy = false,
   selectionResetKey = 0,
 }: GitChangesViewProps) {
   const groups = useMemo(() => groupGitChanges(status?.files ?? []), [status?.files]);
@@ -37,6 +56,9 @@ export function GitChangesView({
   const totalEntries = groups.reduce((total, group) => total + group.entries.length, 0);
   const virtualized = totalEntries > virtualizationThreshold;
   const selectedPaths = uniqueSelectedChangePaths(groups, selectedIds);
+  const selectedEntries = groups.flatMap((group) =>
+    group.entries.filter((entry) => selectedIds.has(entry.id)),
+  );
 
   useEffect(() => {
     setSelectedIds(new Set());
@@ -80,10 +102,20 @@ export function GitChangesView({
     onPreviewChange?.(entry);
   };
 
+  const commitEntries = (entries: readonly GitChangeEntry[]) => {
+    updateSelection(new Set(entries.map((entry) => entry.id)));
+    onCommitFiles?.(entries);
+  };
+
   if (!status) return <div className={styles.state} role="status">正在读取本地改动…</div>;
 
   return (
-    <div className={styles.root} data-git-changes-view="true" data-virtualized={virtualized ? "true" : "false"}>
+    <div
+      className={styles.root}
+      data-git-changes-view="true"
+      data-virtualized={virtualized ? "true" : "false"}
+      data-app-context-menu="local"
+    >
       <AppTooltipLayer scopeSelector="[data-git-changes-view='true']" />
       <div className={styles.summary}>
         <span>{totalEntries} 个文件</span>
@@ -115,6 +147,11 @@ export function GitChangesView({
             onSelectionChange={updateSelection}
             onToggleGroup={toggleGroup}
             onPreview={previewEntry}
+            selectedContextEntries={selectedEntries}
+            onCommit={onCommitFiles ? commitEntries : undefined}
+            onRollback={onRollbackFiles}
+            onShowDiff={onShowDiff}
+            actionBusy={actionBusy}
           />
         ) : groups.map((group) => {
           const collapsed = collapsedGroupIds.has(group.id);
@@ -147,6 +184,11 @@ export function GitChangesView({
                       previewed={previewedId === entry.id}
                       key={entry.id}
                       onPreview={() => previewEntry(entry)}
+                      contextEntries={selectedIds.has(entry.id) && selectedEntries.length > 0 ? selectedEntries : [entry]}
+                      onCommit={onCommitFiles ? commitEntries : undefined}
+                      onRollback={onRollbackFiles}
+                      onShowDiff={onShowDiff ? () => onShowDiff(entry) : undefined}
+                      actionBusy={actionBusy}
                       onSelect={(selected) => {
                         const next = new Set(selectedIds);
                         if (selected) next.add(entry.id);
@@ -207,16 +249,59 @@ function GitChangeRow({
   entry,
   selected,
   previewed,
+  contextEntries,
   onPreview,
+  onCommit,
+  onRollback,
+  onShowDiff,
+  actionBusy,
   onSelect,
 }: {
   entry: GitChangeEntry;
   selected: boolean;
   previewed: boolean;
+  contextEntries: readonly GitChangeEntry[];
   onPreview: () => void;
+  onCommit?: (entries: readonly GitChangeEntry[]) => void;
+  onRollback?: (entries: readonly GitChangeEntry[]) => void;
+  onShowDiff?: () => void;
+  actionBusy: boolean;
   onSelect: (selected: boolean) => void;
 }) {
   const icon = useMaterialEntryIcon(entry.path, "file");
+  const appContextMenu = useOptionalAppContextMenu();
+  const openContextMenu = (target: HTMLElement, x: number, y: number) => {
+    if (!appContextMenu) return;
+    onPreview();
+    appContextMenu.openContextMenu({
+      items: buildGitChangeContextMenuItems(entry, {
+        onCommit: onCommit ? () => onCommit(contextEntries) : undefined,
+        onRollback: onRollback ? () => onRollback(contextEntries) : undefined,
+        onShowDiff,
+        busy: actionBusy,
+      }, contextEntries),
+      target,
+      x,
+      y,
+    });
+  };
+  const handleContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openContextMenu(event.currentTarget, event.clientX, event.clientY);
+  };
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+      event.preventDefault();
+      event.stopPropagation();
+      const bounds = event.currentTarget.getBoundingClientRect();
+      openContextMenu(event.currentTarget, bounds.left + 24, bounds.bottom + 4);
+      return;
+    }
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    onPreview();
+  };
   return (
     <div
       className={styles.row}
@@ -226,11 +311,8 @@ function GitChangeRow({
       aria-label={`${entry.displayPath} ${entry.status}`}
       tabIndex={0}
       onClick={onPreview}
-      onKeyDown={(event) => {
-        if (event.key !== "Enter" && event.key !== " ") return;
-        event.preventDefault();
-        onPreview();
-      }}
+      onContextMenu={handleContextMenu}
+      onKeyDown={handleKeyDown}
     >
       <input
         type="checkbox"
@@ -258,6 +340,44 @@ function GitChangeRow({
   );
 }
 
+export function buildGitChangeContextMenuItems(
+  entry: GitChangeEntry,
+  actions: {
+    readonly onCommit?: () => void;
+    readonly onRollback?: () => void;
+    readonly onShowDiff?: () => void;
+    readonly busy?: boolean;
+  },
+  contextEntries: readonly GitChangeEntry[] = [entry],
+): AppContextMenuItem[] {
+  const fileCount = Math.max(1, contextEntries.length);
+  const containsConflict = contextEntries.some((candidate) => candidate.status === "conflicted");
+  return [
+    {
+      id: `git-change-commit-${entry.id}`,
+      label: `提交 ${fileCount} 个文件`,
+      icon: GitCommitHorizontal,
+      disabled: actions.busy || containsConflict || !actions.onCommit,
+      action: actions.onCommit,
+    },
+    {
+      id: `git-change-rollback-${entry.id}`,
+      label: fileCount === 1 ? "回滚" : `回滚 ${fileCount} 个文件`,
+      icon: Undo2,
+      disabled: actions.busy || !actions.onRollback,
+      action: actions.onRollback,
+    },
+    {
+      id: `git-change-show-diff-${entry.id}`,
+      label: "显示差异",
+      icon: FileDiff,
+      separatorBefore: true,
+      disabled: !actions.onShowDiff,
+      action: actions.onShowDiff,
+    },
+  ];
+}
+
 const VIRTUAL_CHANGE_ROW_HEIGHT = 30;
 const VIRTUAL_CHANGE_OVERSCAN = 8;
 
@@ -270,6 +390,11 @@ function VirtualizedChangesTree({
   onSelectionChange,
   onToggleGroup,
   onPreview,
+  selectedContextEntries,
+  onCommit,
+  onRollback,
+  onShowDiff,
+  actionBusy,
 }: {
   groups: readonly GitChangeGroup[];
   selectedIds: ReadonlySet<string>;
@@ -279,6 +404,11 @@ function VirtualizedChangesTree({
   onSelectionChange: (selectedIds: Set<string>) => void;
   onToggleGroup: (groupId: string) => void;
   onPreview: (entry: GitChangeEntry) => void;
+  selectedContextEntries: readonly GitChangeEntry[];
+  onCommit?: (entries: readonly GitChangeEntry[]) => void;
+  onRollback?: (entries: readonly GitChangeEntry[]) => void;
+  onShowDiff?: (entry: GitChangeEntry) => void;
+  actionBusy: boolean;
 }) {
   const [scrollTop, setScrollTop] = useState(0);
   const items = useMemo(
@@ -339,7 +469,14 @@ function VirtualizedChangesTree({
                 entry={item.entry}
                 selected={selectedIds.has(item.entry.id)}
                 previewed={previewedId === item.entry.id}
+                contextEntries={selectedIds.has(item.entry.id) && selectedContextEntries.length > 0
+                  ? selectedContextEntries
+                  : [item.entry]}
                 onPreview={() => onPreview(item.entry!)}
+                onCommit={onCommit}
+                onRollback={onRollback}
+                onShowDiff={onShowDiff ? () => onShowDiff(item.entry!) : undefined}
+                actionBusy={actionBusy}
                 onSelect={(selected) => {
                   const next = new Set(selectedIds);
                   if (selected) next.add(item.entry!.id);

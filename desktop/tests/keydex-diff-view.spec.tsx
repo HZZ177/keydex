@@ -51,6 +51,7 @@ vi.mock("@/renderer/components/diff/engine/PierreWorkerPoolHost", () => ({
     status: "ready",
     workers: { workersFailed: false },
   }),
+  usePierreWorkerPoolRuntime: () => null,
   usePierreWorkerPoolRetry: () => vi.fn(),
 }));
 

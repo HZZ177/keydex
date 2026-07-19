@@ -268,7 +268,7 @@ export function buildGitRefContextMenuItems(
   const local = ref.kind === "local";
   return [
     ...(!ref.current ? [item("checkout", "签出", GitBranch)] : []),
-    item("create_branch", `从 '${ref.shortName}' 新建分支…`, Plus),
+    item("create_branch", `从 '${ref.shortName}' 新建分支`, Plus),
     ...(!ref.current && local ? [item("checkout_rebase", `签出并变基到 '${currentName}'`, GitPullRequestArrow)] : []),
     ...(!ref.current ? [item("compare_refs", `与 '${currentName}' 比较`, GitCompareArrows, { separatorBefore: true })] : []),
     item("compare_worktree", "显示与工作树的差异", GitCompareArrows, { separatorBefore: ref.current }),
@@ -278,8 +278,8 @@ export function buildGitRefContextMenuItems(
     ] : []),
     ...(local ? [
       item("update", "更新", RefreshCw, { separatorBefore: true }),
-      item("push", "推送…", Upload),
-      item("rename", "重命名…", Pencil, { separatorBefore: true }),
+      item("push", "推送", Upload),
+      item("rename", "重命名", Pencil, { separatorBefore: true }),
     ] : []),
     ...(!ref.current && ref.kind !== "tag" ? [item("delete", "删除", Trash2)] : []),
   ];

@@ -59,12 +59,24 @@ describe("PreviewDiffView", () => {
   it("reports layout and wrap preferences without persisting business state", () => {
     const onDisplayPreferenceChange = vi.fn();
     render(<PreviewDiffView document={single} scrollScopeKey="tab" onDisplayPreferenceChange={onDisplayPreferenceChange} />);
-    let props = lastProps as { onLayoutChange: (layout: "split") => void; onWrapChange: (wrap: boolean) => void; state: { layout: string; wrap: boolean } };
+    let props = lastProps as {
+      onLayoutChange: (layout: "split") => void;
+      onWrapChange: (wrap: boolean) => void;
+      onSyncScrollChange: (syncScroll: boolean) => void;
+      state: { layout: string; wrap: boolean; syncScroll: boolean };
+    };
     act(() => props.onLayoutChange("split"));
-    expect(onDisplayPreferenceChange).toHaveBeenCalledWith({ layout: "split", wrap: true });
+    expect(onDisplayPreferenceChange).toHaveBeenCalledWith({ layout: "split", wrap: true, syncScroll: true });
     props = lastProps as typeof props;
     act(() => props.onWrapChange(false));
-    expect(onDisplayPreferenceChange).toHaveBeenLastCalledWith({ layout: "split", wrap: false });
+    expect(onDisplayPreferenceChange).toHaveBeenLastCalledWith({ layout: "split", wrap: false, syncScroll: true });
+    props = lastProps as typeof props;
+    act(() => props.onSyncScrollChange(false));
+    expect(onDisplayPreferenceChange).toHaveBeenLastCalledWith({
+      layout: "split",
+      wrap: false,
+      syncScroll: false,
+    });
   });
 
   it("exposes copy/open capabilities supplied by the preview host", () => {

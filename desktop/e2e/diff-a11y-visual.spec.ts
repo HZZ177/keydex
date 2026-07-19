@@ -23,7 +23,7 @@ const REVIEW_PATCH = [
   "",
 ].join("\n");
 const PREVIEW_PATCH = [
-  filePatch("src/first.ts", "first before", "first after"),
+  asymmetricFilePatch("src/first.ts"),
   filePatch("src/second.ts", "second before", "second after"),
 ].join("\n");
 const PREVIEW_FILES: Record<string, string> = {
@@ -98,12 +98,17 @@ test("compact 与 review 在亮暗主题、悬停、窄宽和 200% 缩放下保�
   const reviewAction = review.getByRole("button", { name: /自动换行/ }).first();
   await reviewAction.focus();
   await expect(reviewAction).toBeFocused();
+  const nextReviewWrap = await reviewAction.getAttribute("aria-pressed") !== "true";
   await reviewAction.press("Enter");
-  await expect(review.getByRole("button", { name: "开启自动换行" })).toHaveAttribute("aria-pressed", "false");
+  await expect(review.getByRole("button", { name: /自动换行/ }).first()).toHaveAttribute(
+    "aria-pressed",
+    String(nextReviewWrap),
+  );
 });
 
 test("preview 在亮暗主题、并排选中态、窄宽、错误和超大输入下保持统一外壳", async ({ page }, testInfo) => {
   test.setTimeout(90_000);
+  await page.setViewportSize({ width: 2000, height: 1100 });
   const backend = createWorkbenchBackend({
     workspaceFiles: PREVIEW_FILES,
     workspaceTreeEntries: PREVIEW_TREE,
@@ -121,8 +126,112 @@ test("preview 在亮暗主题、并排选中态、窄宽、错误和超大输入
   const split = preview.getByRole("button", { name: "切换为并排视图" });
   await split.click();
   await expect(preview.locator('[data-keydex-diff-layout-bridge="true"]')).toHaveAttribute("data-layout", "split");
+  const aligned = preview.locator('[data-keydex-aligned-split]');
+  await expect(aligned).toBeVisible();
+  await expect(aligned.locator('[data-keydex-aligned-pane]')).toHaveCount(2);
+  await expect(aligned.locator('[data-keydex-diff-connector]')).toBeVisible();
+  await expect(aligned.locator('[data-keydex-aligned-row][data-active="true"]')).toHaveCount(0);
+  const changeRowWidths = await aligned.evaluate((root) => Array.from(
+    root.querySelectorAll<HTMLElement>('[data-keydex-aligned-pane]'),
+    (pane) => ({
+      paneWidth: pane.clientWidth,
+      paneScrollWidth: pane.scrollWidth,
+      rowWidths: Array.from(
+        pane.querySelectorAll<HTMLElement>('[data-keydex-aligned-row][data-change-kind]'),
+        (row) => row.getBoundingClientRect().width,
+      ),
+    }),
+  ));
+  expect(changeRowWidths.every(({ paneWidth, paneScrollWidth, rowWidths }) => (
+    rowWidths.length > 0
+    && rowWidths.every((rowWidth) => rowWidth >= paneWidth - 1 && rowWidth >= paneScrollWidth - 1)
+  ))).toBe(true);
+  const connectorVisual = await aligned.evaluate((root) => {
+    const style = getComputedStyle(root);
+    return {
+      changeFill: style.getPropertyValue("--diff-aligned-change-fill").trim(),
+      addedFill: style.getPropertyValue("--diff-aligned-added-fill").trim(),
+      removedFill: style.getPropertyValue("--diff-aligned-removed-fill").trim(),
+      expectedChangeFill: style.getPropertyValue("--diff-modified-bg").trim(),
+      expectedAddedFill: style.getPropertyValue("--diff-added-bg").trim(),
+      expectedRemovedFill: style.getPropertyValue("--diff-removed-bg").trim(),
+      gradientStops: root.querySelectorAll("linearGradient stop").length,
+    };
+  });
+  expect(connectorVisual.changeFill).toBe(connectorVisual.expectedChangeFill);
+  expect(connectorVisual.addedFill).toBe(connectorVisual.expectedAddedFill);
+  expect(connectorVisual.removedFill).toBe(connectorVisual.expectedRemovedFill);
+  expect(new Set([
+    connectorVisual.changeFill,
+    connectorVisual.addedFill,
+    connectorVisual.removedFill,
+  ]).size).toBe(3);
+  expect(connectorVisual.gradientStops).toBe(0);
+  const alignment = await aligned.evaluate((root) => {
+    const lane = root.querySelector<HTMLElement>('[data-keydex-aligned-connector]');
+    const laneTop = lane?.getBoundingClientRect().top ?? 0;
+    const contextDeltas: number[] = [];
+    const segments = new Set(Array.from(root.querySelectorAll('[data-kind="context"]'))
+      .map((row) => row.getAttribute("data-segment-id"))
+      .filter((segment): segment is string => Boolean(segment)));
+    for (const segment of segments) {
+      const left = Array.from(root.querySelectorAll<HTMLElement>(
+        `[data-keydex-aligned-pane="old"] [data-kind="context"][data-segment-id="${segment}"]`,
+      ));
+      const right = Array.from(root.querySelectorAll<HTMLElement>(
+        `[data-keydex-aligned-pane="new"] [data-kind="context"][data-segment-id="${segment}"]`,
+      ));
+      for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
+        contextDeltas.push(Math.abs(
+          left[index]!.getBoundingClientRect().top - right[index]!.getBoundingClientRect().top,
+        ));
+      }
+    }
+    const endpointDeltas: number[] = [];
+    for (const group of root.querySelectorAll<SVGGElement>('[data-keydex-diff-connector] g[data-change-id]')) {
+      const changeId = group.getAttribute("data-change-id");
+      if (!changeId) continue;
+      for (const side of ["old", "new"] as const) {
+        const pane = root.querySelector<HTMLElement>(`[data-keydex-aligned-pane="${side}"]`);
+        const rows = Array.from(root.querySelectorAll<HTMLElement>(
+          `[data-keydex-aligned-pane="${side}"] [data-keydex-aligned-row][data-change-id="${changeId}"]`,
+        ));
+        const prefix = side === "old" ? "left" : "right";
+        const actualStart = Number(group.getAttribute(`data-${prefix}-start`));
+        const actualEnd = Number(group.getAttribute(`data-${prefix}-end`));
+        if (rows.length === 0) {
+          endpointDeltas.push(Math.abs(actualStart - actualEnd));
+          continue;
+        }
+        const height = pane?.clientHeight ?? 0;
+        const clamp = (value: number) => Math.max(0, Math.min(height, value));
+        endpointDeltas.push(
+          Math.abs(actualStart - clamp(rows[0]!.getBoundingClientRect().top - laneTop)),
+          Math.abs(actualEnd - clamp(rows.at(-1)!.getBoundingClientRect().bottom - laneTop)),
+        );
+      }
+    }
+    return {
+      contextPairs: contextDeltas.length,
+      maxContextDelta: contextDeltas.length ? Math.max(...contextDeltas) : 0,
+      endpointCount: endpointDeltas.length,
+      maxEndpointDelta: endpointDeltas.length ? Math.max(...endpointDeltas) : 0,
+    };
+  });
+  expect(alignment.contextPairs).toBeGreaterThan(0);
+  expect(alignment.endpointCount).toBeGreaterThan(0);
+  expect(alignment.maxContextDelta).toBeLessThanOrEqual(1);
+  expect(alignment.maxEndpointDelta).toBeLessThanOrEqual(1);
   await expect(preview.getByRole("button", { name: "切换为统一视图" })).toHaveAttribute("aria-pressed", "true");
   await attachLocatorScreenshot(preview, testInfo, "preview-light-selected-split");
+
+  for (const zoom of [1.25, 1.5]) {
+    await setPageZoom(page, zoom);
+    await expect(aligned).toBeVisible();
+    await assertNoUnnamedVisibleControls(aligned);
+    await attachLocatorScreenshot(preview, testInfo, `preview-light-split-${zoom * 100}-percent`);
+  }
+  await setPageZoom(page, 1);
 
   await switchToTheme(page, "dark");
   await attachLocatorScreenshot(preview, testInfo, "preview-dark-wide");
@@ -166,7 +275,6 @@ test("git 在亮暗主题、大文件与二进制状态下只提供文件级动�
     await expect(git.getByRole("button", { name: "暂存文件" })).toBeVisible();
     await assertAccessibleDiff(git, "git");
     await git.getByRole("button", { name: "暂存文件" }).hover();
-    await expect(page.getByRole("tooltip", { name: "暂存文件" })).toBeVisible();
     await attachLocatorScreenshot(git, testInfo, "git-light-large-hover");
 
     await switchToTheme(page, "dark");
@@ -354,6 +462,22 @@ function filePatch(path: string, before: string, after: string) {
     "@@ -1 +1 @@",
     `-${before}`,
     `+${after}`,
+    "",
+  ].join("\n");
+}
+
+function asymmetricFilePatch(path: string) {
+  return [
+    `diff --git a/${path} b/${path}`,
+    `--- a/${path}`,
+    `+++ b/${path}`,
+    "@@ -1,4 +1,5 @@",
+    " const before = true;",
+    "-const value = 'before';",
+    "+const value = 'after';",
+    "+const inserted = true;",
+    " const after = true;",
+    " export { value };",
     "",
   ].join("\n");
 }

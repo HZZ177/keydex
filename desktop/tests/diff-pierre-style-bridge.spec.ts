@@ -39,6 +39,15 @@ describe("Pierre official Shadow DOM style bridge", () => {
     });
   });
 
+  it("lets Pierre derive line backgrounds from the shared semantic base colors", () => {
+    expect(KEYDEX_PIERRE_STYLE_BRIDGE["--diffs-light-addition-color"]).toBe("var(--diff-added-text)");
+    expect(KEYDEX_PIERRE_STYLE_BRIDGE["--diffs-light-deletion-color"]).toBe("var(--diff-removed-text)");
+    expect(KEYDEX_PIERRE_STYLE_BRIDGE["--diffs-light-modified-color"]).toBe("var(--diff-modified-text)");
+    expect(KEYDEX_PIERRE_STYLE_BRIDGE["--diffs-modified-color-override"]).toBe("var(--diff-modified-text)");
+    expect(KEYDEX_PIERRE_STYLE_BRIDGE["--diffs-bg-addition-override"]).toBeUndefined();
+    expect(KEYDEX_PIERRE_STYLE_BRIDGE["--diffs-bg-deletion-override"]).toBeUndefined();
+  });
+
   it("applies the bridge through the public style prop and blocks raw overrides", () => {
     const style = keydexPierreStyle("preview", {
       width: "100%",

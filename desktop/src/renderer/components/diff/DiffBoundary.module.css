@@ -1,4 +1,3 @@
-.loading,
 .error {
   width: 100%;
   min-width: 0;
@@ -9,27 +8,20 @@
 
 .loading {
   display: grid;
-  gap: var(--space-2);
-  padding: var(--space-3);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 0;
+  place-items: center;
+  box-sizing: border-box;
+  padding: var(--loading-skeleton-padding, 24px);
   overflow: hidden;
 }
 
-.loadingLine {
-  width: min(72%, 560px);
-  height: 12px;
-  border-radius: var(--radius-sm);
-  background: linear-gradient(
-    90deg,
-    var(--diff-surface-muted),
-    var(--surface-hover),
-    var(--diff-surface-muted)
-  );
-  background-size: 220% 100%;
-  animation: diff-loading 1.4s var(--motion-ease-out) infinite;
+.loadingStack {
+  --loading-skeleton-stack-width: min(300px, 76%);
 }
-
-.loadingLine:nth-child(2) { width: min(88%, 680px); }
-.loadingLine:nth-child(3) { width: min(54%, 420px); }
 
 .error {
   display: flex;
@@ -103,13 +95,4 @@
   font-family: var(--font-mono);
   font-size: 11px;
   white-space: pre-wrap;
-}
-
-@keyframes diff-loading {
-  from { background-position: 100% 0; }
-  to { background-position: -100% 0; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .loadingLine { animation: none; }
 }

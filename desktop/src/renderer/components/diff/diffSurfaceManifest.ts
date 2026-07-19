@@ -1,5 +1,11 @@
 export type DiffSurfaceDecision = "migrate" | "retain";
 
+export type DiffAlignedDecision = "default" | "responsive" | "disabled" | "retain";
+
+export type DiffSurfaceContainer = "full" | "embedded" | "overlay" | "adjacent";
+
+export type DiffSurfaceScrollChaining = "contain" | "parent_at_edge" | "host" | "retain";
+
 export type DiffSurfaceKind = "viewer" | "adjacent";
 
 export type DiffSurfaceOwner =
@@ -15,6 +21,12 @@ export interface DiffSurfaceInventoryEntry {
   kind: DiffSurfaceKind;
   owner: DiffSurfaceOwner;
   decision: DiffSurfaceDecision;
+  profile: "compact" | "review" | "git" | "preview" | null;
+  container: DiffSurfaceContainer;
+  defaultLayout: "stacked" | "split" | null;
+  alignedDecision: DiffAlignedDecision;
+  scrollChaining: DiffSurfaceScrollChaining;
+  testOwner: `ASD-${number}`;
   rendererPaths: readonly string[];
   producerPaths: readonly string[];
   stylePaths: readonly string[];
@@ -23,8 +35,8 @@ export interface DiffSurfaceInventoryEntry {
 }
 
 export const DIFF_INVENTORY_BASELINE = {
-  revision: "ebbe30efbebc9c23d9e60328d8c63cfc18c5f80a",
-  capturedAt: "2026-07-17",
+  revision: "112cfd4875edbd4ab71b8f2857379d2de7e9cc06",
+  capturedAt: "2026-07-19",
   scanCommands: [
     "rg --files desktop/src/renderer/components/diff/wrappers",
     "rg --files desktop/src/renderer/features/git/components",
@@ -39,6 +51,12 @@ export const DIFF_SURFACE_INVENTORY = [
     kind: "viewer",
     owner: "git",
     decision: "migrate",
+    profile: "git",
+    container: "full",
+    defaultLayout: "split",
+    alignedDecision: "default",
+    scrollChaining: "contain",
+    testOwner: "ASD-030",
     rendererPaths: [
       "src/renderer/features/git/components/GitToolWindow.tsx",
       "src/renderer/features/git/components/GitSelectedChangeDiff.tsx",
@@ -55,6 +73,12 @@ export const DIFF_SURFACE_INVENTORY = [
     kind: "viewer",
     owner: "git",
     decision: "migrate",
+    profile: "git",
+    container: "full",
+    defaultLayout: "split",
+    alignedDecision: "default",
+    scrollChaining: "contain",
+    testOwner: "ASD-030",
     rendererPaths: [
       "src/renderer/features/git/components/GitToolWindow.tsx",
       "src/renderer/features/git/components/GitSelectedChangeDiff.tsx",
@@ -71,6 +95,12 @@ export const DIFF_SURFACE_INVENTORY = [
     kind: "viewer",
     owner: "git",
     decision: "migrate",
+    profile: "git",
+    container: "full",
+    defaultLayout: "split",
+    alignedDecision: "default",
+    scrollChaining: "contain",
+    testOwner: "ASD-031",
     rendererPaths: [
       "src/renderer/features/git/components/GitToolWindow.tsx",
       "src/renderer/features/git/components/GitReadOnlyDiff.tsx",
@@ -87,6 +117,12 @@ export const DIFF_SURFACE_INVENTORY = [
     kind: "viewer",
     owner: "git",
     decision: "migrate",
+    profile: "preview",
+    container: "full",
+    defaultLayout: "stacked",
+    alignedDecision: "responsive",
+    scrollChaining: "contain",
+    testOwner: "ASD-032",
     rendererPaths: [
       "src/renderer/features/git/components/GitToolWindow.tsx",
       "src/renderer/features/git/components/GitPatchExchangeView.tsx",
@@ -102,6 +138,12 @@ export const DIFF_SURFACE_INVENTORY = [
     kind: "viewer",
     owner: "conversation",
     decision: "migrate",
+    profile: "compact",
+    container: "embedded",
+    defaultLayout: "stacked",
+    alignedDecision: "disabled",
+    scrollChaining: "parent_at_edge",
+    testOwner: "ASD-034",
     rendererPaths: [
       "src/renderer/pages/conversation/messages/FileChangeBlock.tsx",
       "src/renderer/components/review/FileReviewDiff.tsx",
@@ -121,6 +163,12 @@ export const DIFF_SURFACE_INVENTORY = [
     kind: "viewer",
     owner: "conversation",
     decision: "migrate",
+    profile: "compact",
+    container: "embedded",
+    defaultLayout: "stacked",
+    alignedDecision: "disabled",
+    scrollChaining: "parent_at_edge",
+    testOwner: "ASD-034",
     rendererPaths: [
       "src/renderer/pages/conversation/messages/ToolCallBlock.tsx",
       "src/renderer/components/review/FileReviewDiff.tsx",
@@ -140,6 +188,12 @@ export const DIFF_SURFACE_INVENTORY = [
     kind: "viewer",
     owner: "conversation",
     decision: "migrate",
+    profile: "review",
+    container: "embedded",
+    defaultLayout: "stacked",
+    alignedDecision: "disabled",
+    scrollChaining: "parent_at_edge",
+    testOwner: "ASD-033",
     rendererPaths: [
       "src/renderer/components/layout/Layout.tsx",
       "src/renderer/components/review/FileReviewDiff.tsx",
@@ -155,6 +209,12 @@ export const DIFF_SURFACE_INVENTORY = [
     kind: "viewer",
     owner: "workspace",
     decision: "migrate",
+    profile: "review",
+    container: "embedded",
+    defaultLayout: "stacked",
+    alignedDecision: "responsive",
+    scrollChaining: "parent_at_edge",
+    testOwner: "ASD-033",
     rendererPaths: [
       "src/renderer/pages/workbench/WorkbenchAssistantSurface.tsx",
       "src/renderer/components/review/FileReviewDiff.tsx",
@@ -170,6 +230,12 @@ export const DIFF_SURFACE_INVENTORY = [
     kind: "viewer",
     owner: "workspace",
     decision: "migrate",
+    profile: "review",
+    container: "overlay",
+    defaultLayout: "stacked",
+    alignedDecision: "responsive",
+    scrollChaining: "parent_at_edge",
+    testOwner: "ASD-033",
     rendererPaths: [
       "src/renderer/pages/workbench/WorkbenchAssistantSurface.tsx",
       "src/renderer/components/review/FileReviewDiff.tsx",
@@ -185,6 +251,12 @@ export const DIFF_SURFACE_INVENTORY = [
     kind: "viewer",
     owner: "history",
     decision: "migrate",
+    profile: "review",
+    container: "overlay",
+    defaultLayout: "stacked",
+    alignedDecision: "disabled",
+    scrollChaining: "parent_at_edge",
+    testOwner: "ASD-035",
     rendererPaths: [
       "src/renderer/pages/conversation/ReverseDialog.tsx",
       "src/renderer/components/review/FileReviewDiff.tsx",
@@ -200,6 +272,12 @@ export const DIFF_SURFACE_INVENTORY = [
     kind: "viewer",
     owner: "workspace",
     decision: "migrate",
+    profile: "preview",
+    container: "full",
+    defaultLayout: "stacked",
+    alignedDecision: "responsive",
+    scrollChaining: "contain",
+    testOwner: "ASD-032",
     rendererPaths: [
       "src/renderer/providers/previewTypes.ts",
       "src/renderer/components/workspace/FilePreview.tsx",
@@ -215,6 +293,12 @@ export const DIFF_SURFACE_INVENTORY = [
     kind: "viewer",
     owner: "workspace",
     decision: "migrate",
+    profile: "preview",
+    container: "full",
+    defaultLayout: "stacked",
+    alignedDecision: "responsive",
+    scrollChaining: "contain",
+    testOwner: "ASD-032",
     rendererPaths: [
       "src/renderer/pages/conversation/messages/MarkdownCodeBlock.tsx",
       "src/renderer/components/workspace/FilePreview.tsx",
@@ -230,6 +314,12 @@ export const DIFF_SURFACE_INVENTORY = [
     kind: "viewer",
     owner: "workspace",
     decision: "migrate",
+    profile: "preview",
+    container: "full",
+    defaultLayout: "stacked",
+    alignedDecision: "responsive",
+    scrollChaining: "contain",
+    testOwner: "ASD-032",
     rendererPaths: ["src/renderer/components/workspace/FilePreview.tsx"],
     producerPaths: ["src/renderer/providers/PreviewProvider.tsx"],
     stylePaths: ["src/renderer/components/workspace/FilePreview.module.css"],
@@ -242,6 +332,12 @@ export const DIFF_SURFACE_INVENTORY = [
     kind: "viewer",
     owner: "git",
     decision: "migrate",
+    profile: "git",
+    container: "overlay",
+    defaultLayout: "split",
+    alignedDecision: "default",
+    scrollChaining: "contain",
+    testOwner: "ASD-031",
     rendererPaths: [
       "src/renderer/features/git/components/GitCommitDetailsView.tsx",
       "src/renderer/features/git/dialogs/GitCommitFileDiffDialog.tsx",
@@ -265,6 +361,12 @@ export const DIFF_SURFACE_INVENTORY = [
     kind: "adjacent",
     owner: "git",
     decision: "retain",
+    profile: null,
+    container: "adjacent",
+    defaultLayout: null,
+    alignedDecision: "retain",
+    scrollChaining: "retain",
+    testOwner: "ASD-035",
     rendererPaths: ["src/renderer/features/git/components/GitThreeWayMergeEditor.tsx"],
     producerPaths: ["src/runtime/gitTypes.ts"],
     stylePaths: ["src/renderer/features/git/components/GitThreeWayMergeEditor.module.css"],
@@ -277,6 +379,12 @@ export const DIFF_SURFACE_INVENTORY = [
     kind: "adjacent",
     owner: "conversation",
     decision: "retain",
+    profile: null,
+    container: "adjacent",
+    defaultLayout: null,
+    alignedDecision: "retain",
+    scrollChaining: "host",
+    testOwner: "ASD-035",
     rendererPaths: ["src/renderer/pages/conversation/messages/MarkdownCodeBlock.tsx"],
     producerPaths: ["src/renderer/markdownRuntime/streaming/StreamTailPatch.ts"],
     stylePaths: [],
@@ -289,6 +397,12 @@ export const DIFF_SURFACE_INVENTORY = [
     kind: "adjacent",
     owner: "platform",
     decision: "retain",
+    profile: null,
+    container: "adjacent",
+    defaultLayout: null,
+    alignedDecision: "retain",
+    scrollChaining: "retain",
+    testOwner: "ASD-035",
     rendererPaths: [
       "src/renderer/features/git/components/GitBlameView.tsx",
       "src/renderer/features/git/components/GitHistoryView.tsx",

@@ -33,6 +33,7 @@ describe("Keydex Diff layout bridge", () => {
   it.each([
     ["compact", "stacked", 1200, "stacked", false],
     ["review", "stacked", 400, "stacked", false],
+    ["review", "split", 700, "split", false],
     ["git", "split", 900, "split", false],
     ["git", "split", 620, "stacked", true],
     ["preview", "split", 700, "stacked", true],
@@ -110,6 +111,37 @@ describe("Keydex Diff layout bridge", () => {
     expect(decision.wrap).toBe(true);
   });
 
+  it("uses the actual container mode for embedded review and preview thresholds", () => {
+    const reviewFull = resolveKeydexDiffLayout({
+      profile: "review",
+      preferredLayout: "split",
+      wrap: true,
+      width: 720,
+      embedded: false,
+    });
+    const reviewEmbedded = resolveKeydexDiffLayout({
+      profile: "review",
+      preferredLayout: "split",
+      wrap: true,
+      width: 720,
+      embedded: true,
+    });
+    expect(reviewFull.effectiveLayout).toBe("split");
+    expect(reviewEmbedded.effectiveLayout).toBe("stacked");
+    expect(reviewEmbedded.preferredLayout).toBe("split");
+    expect(reviewEmbedded.splitCollapseWidth).toBe(760);
+
+    const previewEmbedded = resolveKeydexDiffLayout({
+      profile: "preview",
+      preferredLayout: "split",
+      wrap: true,
+      width: 750,
+      embedded: true,
+    });
+    expect(previewEmbedded.effectiveLayout).toBe("stacked");
+    expect(previewEmbedded.splitCollapseWidth).toBe(760);
+  });
+
   it("does not reconcile the Git Diff tree for width changes inside the same layout bucket", () => {
     const renderedWidths: number[] = [];
     const { container } = render(
@@ -129,6 +161,25 @@ describe("Keydex Diff layout bridge", () => {
     act(() => publishResize(bridge, 600));
     expect(renderedWidths).toHaveLength(splitRenderCount + 1);
     expect(bridge.getAttribute("data-layout")).toBe("stacked");
+  });
+
+  it("remembers a wide container while stacked so a later split preference is not downgraded from width zero", () => {
+    const { container, rerender } = render(
+      <KeydexDiffLayoutBridge profile="preview" preferredLayout="stacked" wrap={false}>
+        {(decision) => <span data-testid="layout-width">{decision.effectiveLayout}:{decision.width}</span>}
+      </KeydexDiffLayoutBridge>,
+    );
+    const bridge = container.querySelector("[data-keydex-diff-layout-bridge]") as HTMLDivElement;
+    act(() => publishResize(bridge, 1_200));
+
+    rerender(
+      <KeydexDiffLayoutBridge profile="preview" preferredLayout="split" wrap={false}>
+        {(decision) => <span data-testid="layout-width">{decision.effectiveLayout}:{decision.width}</span>}
+      </KeydexDiffLayoutBridge>,
+    );
+
+    expect(screen.getByTestId("layout-width").textContent).toBe("split:1200");
+    expect(bridge.getAttribute("data-auto-downgraded")).toBe("false");
   });
 
   it("contains horizontal overflow at the Diff host instead of the page", () => {

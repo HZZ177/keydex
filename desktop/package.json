@@ -8,6 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "audit:diff-build": "vite build --manifest --sourcemap --logLevel error && node tools/measure-diff-build-baseline.mjs --require-sourcemaps",
     "audit:diff-final": "node tools/diff-final-audit.mjs",
+    "audit:aligned-diff-plan": "node tools/aligned-diff-plan-audit.mjs",
     "audit:diff-plan": "node tools/diff-plan-audit.mjs",
     "icons": "node tools/generate-keydex-icons.mjs",
     "measure:diff-build": "node tools/measure-diff-build-baseline.mjs",

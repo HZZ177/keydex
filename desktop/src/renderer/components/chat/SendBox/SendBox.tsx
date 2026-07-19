@@ -141,6 +141,7 @@ export interface SendBoxProps {
   allowBypassConversationSlashCommand?: boolean;
   allowGoalSlashCommand?: boolean;
   allowContextCompressionSlashCommand?: boolean;
+  contextWindowProgress?: number | null;
   skills?: SkillSummary[];
   skillDiagnostics?: KeydexDiagnostic[];
   selectedSkill?: SkillSummary | null;
@@ -226,6 +227,7 @@ export function SendBox({
   allowBypassConversationSlashCommand = true,
   allowGoalSlashCommand = true,
   allowContextCompressionSlashCommand = true,
+  contextWindowProgress = null,
   skills = [],
   skillDiagnostics = [],
   selectedSkill: controlledSelectedSkill,
@@ -1547,6 +1549,7 @@ export function SendBox({
           commands={slashCommands}
           skills={slashSkills}
           diagnostics={skillDiagnostics}
+          contextWindowProgress={contextWindowProgress}
           activeIndex={visibleSlashActiveIndex}
           onBack={navigateSlashRoot}
           onSelectCommand={selectSlashCommand}

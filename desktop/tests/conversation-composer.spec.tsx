@@ -260,6 +260,56 @@ describe("ConversationComposer", () => {
     expect(tooltip.querySelector('[data-progress-kind="blocking"]')).toBeNull();
   });
 
+  it("mirrors context window progress in the compression slash icon and keeps it empty without data", () => {
+    const props = {
+      value: "/",
+      runtimeState: "idle" as const,
+      canSend: false,
+      canStop: false,
+      connectionReady: true,
+      modelSelection: modelSelection(),
+      skills: [],
+      selectedSkill: null,
+      externalFileRequest: null,
+      externalQuoteRequest: null,
+      onChange: vi.fn(),
+      onSkillChange: vi.fn(),
+      onSend: vi.fn(),
+      onStop: vi.fn(),
+    };
+    const circumference = 2 * Math.PI * 6;
+    const { rerender } = render(<ConversationComposer {...props} />);
+
+    const emptyRing = screen.getByTestId("context-compression-progress-ring");
+    expect(emptyRing.getAttribute("data-level")).toBe("idle");
+    expect(Number.parseFloat(slashProgressCircle().style.strokeDashoffset)).toBeCloseTo(circumference);
+
+    rerender(
+      <ConversationComposer
+        {...props}
+        contextWindowUsage={{
+          sessionId: "ses-1",
+          activeSessionId: "ses-1",
+          tokenCount: 400,
+          contextWindow: 1000,
+          windowFraction: 0.4,
+          thresholdFraction: 0.8,
+          thresholdTokenCount: 800,
+          thresholdUsageFraction: 0.5,
+          remainingToThresholdTokens: 400,
+          callPhase: "after",
+          callStatus: "completed",
+          tokenSource: "usage_metadata",
+          updatedAtMs: 1000,
+        }}
+      />,
+    );
+
+    const populatedRing = screen.getByTestId("context-compression-progress-ring");
+    expect(populatedRing.getAttribute("data-level")).toBe("normal");
+    expect(Number.parseFloat(slashProgressCircle().style.strokeDashoffset)).toBeCloseTo(circumference * 0.5);
+  });
+
   it("shows the disabled context compression tooltip when the setting is off", () => {
     render(
       <ConversationComposer
@@ -393,6 +443,15 @@ function contextWindowProgressCircle(): SVGElement {
   const progress = indicator.querySelector("circle[class*='contextWindowProgress']");
   if (!progress) {
     throw new Error("context window progress circle not found");
+  }
+  return progress as SVGElement;
+}
+
+function slashProgressCircle(): SVGElement {
+  const ring = screen.getByTestId("context-compression-progress-ring");
+  const progress = ring.querySelector('[data-context-window-ring-progress="true"]');
+  if (!progress) {
+    throw new Error("context compression slash progress circle not found");
   }
   return progress as SVGElement;
 }

@@ -49,6 +49,23 @@ describe("Diff surface inventory", () => {
       expect(entry.producerPaths.length).toBeGreaterThan(0);
       expect(entry.testPaths.length).toBeGreaterThan(0);
       expect(entry.notes.trim()).not.toBe("");
+      expect(["default", "responsive", "disabled", "retain"]).toContain(
+        entry.alignedDecision,
+      );
+      expect(["full", "embedded", "overlay", "adjacent"]).toContain(entry.container);
+      expect(["contain", "parent_at_edge", "host", "retain"]).toContain(
+        entry.scrollChaining,
+      );
+      expect(entry.testOwner).toMatch(/^ASD-\d{3}$/);
+
+      if (entry.kind === "viewer") {
+        expect(["compact", "review", "git", "preview"]).toContain(entry.profile);
+        expect(["stacked", "split"]).toContain(entry.defaultLayout);
+      } else {
+        expect(entry.profile).toBeNull();
+        expect(entry.defaultLayout).toBeNull();
+        expect(entry.alignedDecision).toBe("retain");
+      }
 
       for (const path of [
         ...entry.rendererPaths,
@@ -63,5 +80,22 @@ describe("Diff surface inventory", () => {
 
   it("closes every temporary audit decision", () => {
     expect(DIFF_SURFACE_INVENTORY.every((entry) => entry.decision === "migrate" || entry.decision === "retain")).toBe(true);
+  });
+
+  it("freezes aligned split enablement without expanding retained surfaces", () => {
+    const byId = new Map(DIFF_SURFACE_INVENTORY.map((entry) => [entry.id, entry]));
+
+    expect(byId.get("git-worktree-unstaged")?.alignedDecision).toBe("default");
+    expect(byId.get("git-index-staged")?.alignedDecision).toBe("default");
+    expect(byId.get("conversation-file-change")?.alignedDecision).toBe("disabled");
+    expect(byId.get("agent-review-panel")?.alignedDecision).toBe("disabled");
+    expect(byId.get("workbench-review-drawer")?.alignedDecision).toBe("responsive");
+    expect(byId.get("explicit-diff-preview")?.alignedDecision).toBe("responsive");
+
+    expect(
+      DIFF_SURFACE_INVENTORY.filter((entry) => entry.decision === "retain").every(
+        (entry) => entry.alignedDecision === "retain",
+      ),
+    ).toBe(true);
   });
 });

@@ -68,6 +68,7 @@ import type { SelectedQuote } from "@/renderer/components/chat/SendBox";
 import type { FileReviewChange } from "@/renderer/utils/fileReview";
 import {
   gitPath,
+  parseWorkbenchPath,
   workbenchGitPath,
   type AppMode,
 } from "@/renderer/components/layout/appMode";
@@ -267,6 +268,22 @@ function rightSidebarGeometryForShellWidth(
   };
 }
 
+function sameNavigationPath(left: string | undefined, right: string | undefined): boolean {
+  return navigationPathname(left) === navigationPathname(right);
+}
+
+function navigationPathname(path: string | undefined): string {
+  return path?.split(/[?#]/u, 1)[0]?.replace(/\/+$/u, "") ?? "";
+}
+
+function isSessionNavigationPath(path: string): boolean {
+  const pathname = navigationPathname(path);
+  if (/^\/conversation\/[^/]+$/u.test(pathname)) {
+    return true;
+  }
+  return Boolean(parseWorkbenchPath(pathname)?.sessionId);
+}
+
 export interface LayoutProps extends PropsWithChildren {
   runtime?: RuntimeBridge;
   title?: string;
@@ -287,6 +304,11 @@ export interface LayoutProps extends PropsWithChildren {
   routeGitNavigation?: boolean;
   resetRightSidebarKey?: string;
   onNavigate?: (path: string) => void;
+}
+
+interface PendingSessionNavigation {
+  sourcePath: string;
+  targetPath: string;
 }
 
 export function Layout({
@@ -336,7 +358,15 @@ export function Layout({
   const [sidebarResizeActive, setSidebarResizeActive] = useState(false);
   const [rightSidebarResizeActive, setRightSidebarResizeActive] = useState(false);
   const [localPrimarySurface, setLocalPrimarySurface] = useState<"content" | "git">("content");
-  const primarySurface = routePrimarySurface ?? localPrimarySurface;
+  const [pendingSessionNavigation, setPendingSessionNavigation] = useState<PendingSessionNavigation | null>(null);
+  const sessionNavigationPending = Boolean(
+    pendingSessionNavigation
+      && sameNavigationPath(activePath, pendingSessionNavigation.sourcePath)
+      && !sameNavigationPath(activePath, pendingSessionNavigation.targetPath),
+  );
+  const pendingSessionPath = sessionNavigationPending ? pendingSessionNavigation?.targetPath : undefined;
+  const shellActivePath = pendingSessionPath ?? activePath;
+  const primarySurface = sessionNavigationPending ? "content" : (routePrimarySurface ?? localPrimarySurface);
   const [gitSurfaceRetained, setGitSurfaceRetained] = useState(primarySurface === "git");
   const gitSurfaceMounted = gitSurfaceRetained || primarySurface === "git";
   const [agentGitWorkspaces, setAgentGitWorkspaces] = useState<Workspace[]>([]);
@@ -354,6 +384,14 @@ export function Layout({
   useEffect(() => {
     if (primarySurface === "git") setGitSurfaceRetained(true);
   }, [primarySurface]);
+  useEffect(() => {
+    setPendingSessionNavigation((current) => {
+      if (!current || sameNavigationPath(activePath, current.sourcePath)) {
+        return current;
+      }
+      return null;
+    });
+  }, [activePath]);
   const agentGitOverrideDiscovery = useMemo(
     () => activeProjectDiscoveryFromWorkspace(agentGitOverrideWorkspace, false),
     [agentGitOverrideWorkspace],
@@ -981,13 +1019,18 @@ export function Layout({
 
   const navigateFromShell = useCallback(
     (path: string) => {
+      setPendingSessionNavigation(
+        isSessionNavigationPath(path) && !sameNavigationPath(activePath, path)
+          ? { sourcePath: activePath ?? "", targetPath: path }
+          : null,
+      );
       setLocalPrimarySurface("content");
       if (path === "/guid" || path.startsWith("/guid?")) {
         closeRightSidebar();
       }
       onNavigate?.(path);
     },
-    [closeRightSidebar, onNavigate],
+    [activePath, closeRightSidebar, onNavigate],
   );
 
   const clearAppModeNavigationTimer = useCallback(() => {
@@ -1065,6 +1108,7 @@ export function Layout({
         className={styles.shell}
         data-testid="app-shell"
         data-primary-surface={primarySurface}
+        data-session-navigation-pending={sessionNavigationPending ? "true" : "false"}
         data-sidebar={collapsed ? "collapsed" : "expanded"}
         data-sidebar-motion={sidebarMotion ? "true" : "false"}
         data-right-sidebar={rightSidebarOpen ? "open" : "closed"}
@@ -1112,7 +1156,7 @@ export function Layout({
                 <Sider
                   appMode={appMode}
                   runtime={runtime}
-                  activePath={activePath}
+                  activePath={shellActivePath}
                   collapsed={collapsed}
                   projects={projects}
                   conversations={conversations}
@@ -1148,8 +1192,16 @@ export function Layout({
                 data-content={contentMode}
                 data-primary-content="conversation"
                 hidden={primarySurface === "git"}
+                aria-busy={sessionNavigationPending || undefined}
               >
-                {children}
+                {sessionNavigationPending ? (
+                  <LoadingSkeleton
+                    aria-label="正在加载会话"
+                    className={styles.sessionNavigationLoading}
+                    lineCount={4}
+                    testId="session-navigation-loading"
+                  />
+                ) : children}
               </div>
               {gitSurfaceMounted ? (
                 <div className={styles.gitPrimarySurface} hidden={primarySurface !== "git"}>

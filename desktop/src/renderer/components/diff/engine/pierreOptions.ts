@@ -12,7 +12,6 @@ import {
 } from "../profiles";
 import { keydexDiffTypography } from "../diffTypography";
 import { KEYDEX_DIFF_THEME_NAMES } from "./pierreThemes";
-import { KEYDEX_PIERRE_UNSAFE_CSS } from "./pierreStyleBridge";
 
 export type KeydexDiffTheme = "light" | "dark";
 export type PierreViewKind = "single" | "multi";
@@ -139,7 +138,6 @@ export function createPierreRenderOptions<LAnnotation = undefined>(
     enableGutterUtility: false,
     useTokenTransformer: false,
     disableErrorHandling: false,
-    unsafeCSS: KEYDEX_PIERRE_UNSAFE_CSS,
   };
 
   if (config.kind === "single") return Object.freeze(common);

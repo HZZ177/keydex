@@ -1,0 +1,100 @@
+.canvas {
+  position: relative;
+  width: 100%;
+  min-height: 100%;
+  background: var(--diff-gutter-bg);
+}
+
+.row {
+  position: absolute;
+  top: var(--keydex-diff-gutter-row-offset, 0);
+  left: 0;
+  display: grid;
+  grid-template-columns: var(--keydex-diff-gutter-line-number-width) 16px;
+  width: 100%;
+  height: var(--keydex-diff-gutter-row-height, var(--diff-code-line-height, 20px));
+  min-height: var(--diff-code-line-height, 20px);
+  overflow: visible;
+  color: var(--diff-line-number);
+  background-color: var(--diff-gutter-bg);
+  font-family: var(--font-mono);
+  font-size: var(--diff-code-font-size, 13px);
+  line-height: var(--diff-code-line-height, 20px);
+  user-select: none;
+}
+
+.row[data-side="old"] {
+  grid-template-columns: 16px var(--keydex-diff-gutter-line-number-width);
+}
+
+.row[data-change-kind="added"] {
+  --diff-change-edge: var(--diff-aligned-added-edge);
+
+  background-image: linear-gradient(var(--diff-added-bg), var(--diff-added-bg));
+}
+
+.row[data-change-kind="removed"] {
+  --diff-change-edge: var(--diff-aligned-removed-edge);
+
+  background-image: linear-gradient(var(--diff-removed-bg), var(--diff-removed-bg));
+}
+
+.row[data-change-kind="modified"] {
+  --diff-change-edge: var(--diff-aligned-change-edge);
+
+  background-image: linear-gradient(var(--diff-modified-bg), var(--diff-modified-bg));
+}
+
+.row[data-change-start="true"]::before,
+.row[data-change-end="true"]::after {
+  position: absolute;
+  z-index: 1;
+  right: 0;
+  left: 0;
+  height: var(--keydex-diff-edge-width, 1px);
+  background: var(--diff-change-edge);
+  content: "";
+  pointer-events: none;
+}
+
+.row[data-change-start="true"]::before {
+  top: 0;
+}
+
+.row[data-change-end="true"]::after {
+  bottom: 0;
+}
+
+.lineNumber {
+  box-sizing: border-box;
+  overflow: hidden;
+  padding-inline: 6px 8px;
+  text-align: end;
+}
+
+.indicator {
+  overflow: hidden;
+  text-align: center;
+}
+
+.row[data-side="old"] .indicator {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.row[data-side="old"] .lineNumber {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.row[data-kind="added"] .indicator {
+  color: var(--diff-added-text);
+}
+
+.row[data-kind="removed"] .indicator {
+  color: var(--diff-removed-text);
+}
+
+.row[data-kind="modified"] .indicator {
+  color: var(--diff-modified-text);
+}

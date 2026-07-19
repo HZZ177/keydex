@@ -216,6 +216,31 @@ describe("AppRouter", () => {
     expect(screen.getByRole("button", { name: "Git" }).getAttribute("data-active")).toBe("true");
   });
 
+  it("acknowledges a session click from Agent Git before the lazy route commits", async () => {
+    renderRouter([gitPath("workspace A")], {
+      routeExtra: <RouterLocationProbe />,
+      sessions: [agentSession({ id: "thread-a", title: "Session A" })],
+    });
+
+    const sessionButton = await screen.findByRole("button", { name: "Session A" }, { timeout: 10000 });
+    const shell = screen.getByTestId("app-shell");
+    await waitFor(() => {
+      expect(shell.dataset.primarySurface).toBe("git");
+    });
+
+    fireEvent.click(sessionButton);
+
+    expect(shell.dataset.primarySurface).toBe("content");
+    expect(shell.dataset.sessionNavigationPending).toBe("true");
+    expect(sessionButton.getAttribute("aria-current")).toBe("page");
+    expect(screen.getByTestId("session-navigation-loading")).not.toBeNull();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("router-location").textContent).toBe("/conversation/thread-a");
+      expect(shell.dataset.sessionNavigationPending).toBe("false");
+    }, { timeout: 10000 });
+  });
+
   it("keeps the workbench Git route while switching its synchronized project selector", async () => {
     renderRouter([workbenchGitPath("workspace A")], {
       routeExtra: <RouterLocationProbe />,

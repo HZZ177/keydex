@@ -22,7 +22,7 @@ afterEach(() => {
 describe("KeydexDiffProductToolbar", () => {
   it.each([
     ["compact", ["复制选中代码", "复制原始补丁", "打开文件"]],
-    ["review", ["复制选中代码", "复制原始补丁", "打开文件", "关闭自动换行"]],
+    ["review", ["复制选中代码", "复制原始补丁", "打开文件", "切换为并排视图", "关闭自动换行"]],
     ["preview", ["复制选中代码", "复制原始补丁", "打开文件", "切换为并排视图", "关闭自动换行"]],
     ["git", ["复制选中代码", "复制原始补丁", "打开文件", "切换为并排视图", "开启自动换行", "暂存选择"]],
   ] as const)("uses the stable %s capability order", (profile, labels) => {
@@ -82,6 +82,72 @@ describe("KeydexDiffProductToolbar", () => {
     expect(onLayoutChange).toHaveBeenCalledWith("split");
     expect(onWrapChange).toHaveBeenCalledWith(true);
     expect(screen.queryByRole("button", { name: /成功/u })).toBeNull();
+  });
+
+  it("shows synchronized change navigation only for an effective split layout", () => {
+    const onPreviousChange = vi.fn();
+    const onNextChange = vi.fn();
+    const onSyncScrollChange = vi.fn();
+    const { rerender } = render(
+      <KeydexDiffProductToolbar
+        profile="git"
+        files={[file]}
+        activeFile={file}
+        layout="split"
+        wrap={false}
+        syncScroll
+        changeCount={3}
+        onPreviousChange={onPreviousChange}
+        onNextChange={onNextChange}
+        onSyncScrollChange={onSyncScrollChange}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "上一个差异" }));
+    fireEvent.click(screen.getByRole("button", { name: "下一个差异" }));
+    fireEvent.click(screen.getByRole("button", { name: "关闭同步滚动" }));
+    expect(onPreviousChange).toHaveBeenCalledOnce();
+    expect(onNextChange).toHaveBeenCalledOnce();
+    expect(onSyncScrollChange).toHaveBeenCalledWith(false);
+    expect(screen.getByRole("button", { name: "上一个差异" }).getAttribute("data-tooltip-label"))
+      .toContain("Alt+↑");
+
+    rerender(
+      <KeydexDiffProductToolbar
+        profile="git"
+        files={[file]}
+        activeFile={file}
+        layout="stacked"
+        wrap={false}
+        syncScroll
+        changeCount={3}
+        onPreviousChange={onPreviousChange}
+        onNextChange={onNextChange}
+        onSyncScrollChange={onSyncScrollChange}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "上一个差异" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "关闭同步滚动" })).toBeNull();
+  });
+
+  it("hides change navigation when there are no changes and never uses inline busy text", () => {
+    const { container } = render(
+      <KeydexDiffProductToolbar
+        profile="preview"
+        files={[file]}
+        activeFile={file}
+        layout="split"
+        wrap
+        changeCount={0}
+        syncScroll={false}
+        onPreviousChange={vi.fn()}
+        onNextChange={vi.fn()}
+        onSyncScrollChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "上一个差异" })).toBeNull();
+    expect(screen.getByRole("button", { name: "开启同步滚动" })).toBeTruthy();
+    expect(container.textContent).not.toContain("处理中");
+    expect(container.querySelector('[title]')).toBeNull();
   });
 
   it("scopes hover feedback to one toolbar when multiple Diff surfaces are mounted", () => {

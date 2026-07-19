@@ -18,7 +18,13 @@ function document(version = "v1", patch = `${firstPatch}\n${secondPatch}`) {
 describe("Keydex Diff controlled view state", () => {
   it("creates profile defaults and contains only serializable domain values", () => {
     const state = createKeydexDiffViewControllerState(document(), "git");
-    expect(state).toMatchObject({ layout: "split", wrap: false, loadingAction: null });
+    expect(state).toMatchObject({
+      layout: "split",
+      wrap: false,
+      syncScroll: true,
+      activeChangeId: null,
+      loadingAction: null,
+    });
     expect(state.activeFileId).toBe(document().files[0]!.id);
     expect(() => JSON.stringify(state)).not.toThrow();
     expect(JSON.stringify(state)).not.toMatch(/HTMLElement|Pierre|WorkerPool/u);
@@ -34,6 +40,8 @@ describe("Keydex Diff controlled view state", () => {
     state = reduceKeydexDiffViewController(state, { type: "toggle_file", fileId: second.id });
     state = reduceKeydexDiffViewController(state, { type: "set_layout", layout: "split" });
     state = reduceKeydexDiffViewController(state, { type: "set_wrap", wrap: true });
+    state = reduceKeydexDiffViewController(state, { type: "set_sync_scroll", syncScroll: false });
+    state = reduceKeydexDiffViewController(state, { type: "set_active_change", changeId: " change:2 " });
     state = reduceKeydexDiffViewController(state, {
       type: "set_selection",
       selection: {
@@ -50,6 +58,8 @@ describe("Keydex Diff controlled view state", () => {
       activeFileId: second.id,
       layout: "split",
       wrap: true,
+      syncScroll: false,
+      activeChangeId: "change:2",
       loadingAction: "copy_patch",
       scrollTarget: { fileId: second.id, line: 1 },
     });
@@ -69,6 +79,7 @@ describe("Keydex Diff controlled view state", () => {
         focus: { fileId: file.id, fileCacheKey: file.cacheKey, side: "new", line: 1 },
       },
     });
+    state = reduceKeydexDiffViewController(state, { type: "set_active_change", changeId: "change:old" });
     state = reduceKeydexDiffViewController(state, {
       type: "set_scroll_target",
       target: { fileId: file.id, line: 1 },
@@ -82,6 +93,7 @@ describe("Keydex Diff controlled view state", () => {
     expect(state.selection).toBeNull();
     expect(state.scrollTarget).toBeNull();
     expect(state.loadingAction).toBeNull();
+    expect(state.activeChangeId).toBeNull();
   });
 
   it("keeps display state and the active file only while that file still exists", () => {
@@ -111,12 +123,13 @@ describe("Keydex Diff controlled view state", () => {
     let git = createKeydexDiffViewControllerState(document(), "git");
     git = reduceKeydexDiffViewController(git, { type: "set_layout", layout: "split" });
     git = reduceKeydexDiffViewController(git, { type: "set_wrap", wrap: true });
+    git = reduceKeydexDiffViewController(git, { type: "set_sync_scroll", syncScroll: false });
     git = reduceKeydexDiffViewController(git, {
       type: "sync_document",
       document: document("v2", firstPatch),
       profile: "git",
     });
-    expect(git).toMatchObject({ layout: "split", wrap: true });
+    expect(git).toMatchObject({ layout: "split", wrap: true, syncScroll: false });
 
     let review = createKeydexDiffViewControllerState(document(), "review", { wrap: false });
     review = reduceKeydexDiffViewController(review, {
@@ -124,12 +137,34 @@ describe("Keydex Diff controlled view state", () => {
       document: document("v2", firstPatch),
       profile: "review",
     });
-    expect(review).toMatchObject({ layout: "stacked", wrap: true });
+    expect(review).toMatchObject({ layout: "stacked", wrap: true, syncScroll: true });
   });
 
-  it("ignores unsupported layouts and unknown file targets", () => {
-    const state = createKeydexDiffViewControllerState(document(), "review");
+  it("toggles sync without changing file, layout, wrap or navigation state", () => {
+    const doc = document();
+    const second = doc.files[1]!;
+    let state = createKeydexDiffViewControllerState(doc, "git", {
+      activeFileId: second.id,
+      layout: "split",
+      wrap: true,
+      activeChangeId: "change:1",
+    });
+    const before = state;
+    state = reduceKeydexDiffViewController(state, { type: "set_sync_scroll", syncScroll: false });
+    expect(state).toMatchObject({
+      activeFileId: before.activeFileId,
+      layout: before.layout,
+      wrap: before.wrap,
+      activeChangeId: before.activeChangeId,
+      syncScroll: false,
+    });
+    expect(state.expandedFileIds).toEqual(before.expandedFileIds);
+  });
+
+  it("ignores unsupported capabilities and unknown file targets", () => {
+    const state = createKeydexDiffViewControllerState(document(), "compact");
     expect(reduceKeydexDiffViewController(state, { type: "set_layout", layout: "split" })).toBe(state);
+    expect(reduceKeydexDiffViewController(state, { type: "set_sync_scroll", syncScroll: true })).toBe(state);
     expect(reduceKeydexDiffViewController(state, { type: "set_active_file", fileId: "missing" })).toBe(state);
   });
 

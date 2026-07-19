@@ -884,7 +884,7 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
               onClick={() => void initializeRepository()}
             >
               <GitCommitHorizontal size={14} />
-              <span>{busyAction === "init" ? "正在初始化…" : "初始化 Git 仓库…"}</span>
+              <span>{busyAction === "init" ? "正在初始化…" : "初始化 Git 仓库"}</span>
             </button>
           ) : null}
           <div className={styles.actions} role="group" aria-label="Git 快捷操作">
@@ -1118,11 +1118,11 @@ export function projectGitQuickActions(
 ): readonly GitQuickAction[] {
   const repositoryReady = model.enabled && !model.loading && !model.nonRepository && !model.error;
   return [
-    { id: "update", label: "更新项目…", shortcut: shortcuts.update.label, risk: "remote", enabled: repositoryReady, icon: ArrowDownLeft },
-    { id: "commit", label: "提交…", shortcut: shortcuts.commit.label, risk: "write", enabled: repositoryReady && model.dirtyCount > 0, icon: GitCommitHorizontal },
-    { id: "push", label: "推送…", shortcut: shortcuts.push.label, risk: "remote", enabled: repositoryReady, icon: ArrowUpRight },
-    { id: "create_branch", label: "新建分支…", shortcut: shortcuts.create_branch.label, risk: "write", enabled: repositoryReady, icon: Plus },
-    { id: "checkout", label: "签出标记或修订…", shortcut: null, risk: "write", enabled: repositoryReady, icon: GitBranch },
+    { id: "update", label: "更新项目", shortcut: shortcuts.update.label, risk: "remote", enabled: repositoryReady, icon: ArrowDownLeft },
+    { id: "commit", label: "提交", shortcut: shortcuts.commit.label, risk: "write", enabled: repositoryReady && model.dirtyCount > 0, icon: GitCommitHorizontal },
+    { id: "push", label: "推送", shortcut: shortcuts.push.label, risk: "remote", enabled: repositoryReady, icon: ArrowUpRight },
+    { id: "create_branch", label: "新建分支", shortcut: shortcuts.create_branch.label, risk: "write", enabled: repositoryReady, icon: Plus },
+    { id: "checkout", label: "签出标记或修订", shortcut: null, risk: "write", enabled: repositoryReady, icon: GitBranch },
     { id: "open", label: "打开 Git 面板", shortcut: null, risk: "read", enabled: model.enabled, icon: Wrench },
     { id: "help", label: "Git 帮助与风险说明", shortcut: null, risk: "read", enabled: model.enabled, icon: CircleHelp },
   ];
@@ -1289,7 +1289,7 @@ function GitRefActionsMenu({
       {!isCurrent ? (
         <RefSubmenuItem label="签出" action="checkout" refValue={refValue} onAction={onAction} />
       ) : null}
-      <RefSubmenuItem label={`从 '${name}' 新建分支…`} action="create_branch" refValue={refValue} onAction={onAction} />
+      <RefSubmenuItem label={`从 '${name}' 新建分支`} action="create_branch" refValue={refValue} onAction={onAction} />
       {!isCurrent && isLocal ? (
         <RefSubmenuItem label={`签出并变基到 '${currentBranch ?? "当前分支"}'`} action="checkout_rebase" refValue={refValue} onAction={onAction} />
       ) : null}
@@ -1309,15 +1309,15 @@ function GitRefActionsMenu({
         <>
           <div className={styles.submenuSeparator} role="separator" />
           <RefSubmenuItem label="更新" action="update" refValue={refValue} onAction={onAction} />
-          <RefSubmenuItem label="推送…" action="push" refValue={refValue} onAction={onAction} />
+          <RefSubmenuItem label="推送" action="push" refValue={refValue} onAction={onAction} />
           <div className={styles.submenuSeparator} role="separator" />
-          <RefSubmenuItem label="重命名…" action="rename" refValue={refValue} onAction={onAction} />
+          <RefSubmenuItem label="重命名" action="rename" refValue={refValue} onAction={onAction} />
         </>
       ) : refValue.kind === "tag" ? (
         <>
           <div className={styles.submenuSeparator} role="separator" />
           <RefSubmenuItem
-            label="在 Git 面板中管理标签…"
+            label="在 Git 面板中管理标签"
             action="manage"
             refValue={refValue}
             onAction={onAction}

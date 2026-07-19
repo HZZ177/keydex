@@ -68,29 +68,20 @@ test("file mutation tool filename opens the right sidebar unified review diff", 
   const review = page.getByTestId("right-sidebar-review-panel");
   const diff = review.locator("[data-keydex-diff-view='true']");
   await expectDiffLines(review, "new", "added");
-  const wrapButton = page.getByRole("button", { name: "关闭自动换行" });
-  await expect(wrapButton).toHaveAttribute("aria-pressed", "true");
-  await expect(wrapButton).toHaveAttribute("data-tooltip-label", "关闭自动换行");
-  await expect(diff).toHaveAttribute("data-wrap", "true");
-  await wrapButton.hover();
-  await expect(page.locator("[role='tooltip']").filter({ hasText: "关闭自动换行" })).toBeVisible();
-  await wrapButton.click();
+  const wrapButton = page.getByRole("button", { name: "开启自动换行" });
+  await expect(wrapButton).toHaveAttribute("aria-pressed", "false");
+  await expect(wrapButton).toHaveAttribute("data-tooltip-label", "开启自动换行");
   await expect(diff).toHaveAttribute("data-wrap", "false");
-  await page.getByRole("button", { name: "开启自动换行" }).click();
+  await wrapButton.hover();
+  await expect(page.locator("[role='tooltip']").filter({ hasText: "开启自动换行" })).toBeVisible();
+  await wrapButton.click();
   await expect(diff).toHaveAttribute("data-wrap", "true");
+  await page.getByRole("button", { name: "关闭自动换行" }).click();
+  await expect(diff).toHaveAttribute("data-wrap", "false");
   await expect(page.getByRole("tab", { name: "文件" })).toHaveCount(0);
 
-  const openFileButton = review.getByRole("button", { name: "打开文件" });
-  await expect(openFileButton).toHaveAttribute("data-tooltip-label", "打开文件 · Ctrl+Enter");
-  expect(await openFileButton.getAttribute("title")).toBeNull();
-  await openFileButton.hover();
-  await expect(page.getByRole("tooltip", { name: "打开文件 · Ctrl+Enter" })).toBeVisible();
-  await openFileButton.click();
-
-  await expect(page.getByRole("tab", { name: "文件" })).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByTestId("workspace-file-browser-preview")).toBeVisible();
-  await expect.poll(() => backend.workspaceReadRequests.length).toBe(1);
-  expect(backend.workspaceReadRequests.at(-1)).toMatchObject({ workspaceId: WORKSPACE_A, path: "README.md" });
+  await expect(review.getByRole("button", { name: "打开文件" })).toHaveCount(0);
+  expect(backend.workspaceReadRequests).toHaveLength(0);
 });
 
 test("multi-file final review replaces streaming content and works in Agent and Workbench", async ({ page }, testInfo) => {

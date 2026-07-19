@@ -81,8 +81,8 @@ export function CompactDiffView({
                 <button
                   className={styles.headerAction}
                   type="button"
-                  aria-label="在侧边栏打开文件"
-                  data-tooltip-label="在侧边栏打开文件"
+                  aria-label="在侧边栏审阅"
+                  data-tooltip-label="在侧边栏审阅"
                   disabled={!keydexDiffOpenPath(firstFile)}
                   onClick={() => {
                     const path = keydexDiffOpenPath(firstFile);

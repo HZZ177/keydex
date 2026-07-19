@@ -2526,6 +2526,20 @@ describe("WorkbenchAssistantSurface", () => {
     expect((latestWorkbenchReviewProps as { document: unknown }).document).toBe(workbenchReviewDocument);
     expect((latestWorkbenchReviewProps as { scrollScopeKey: string }).scrollScopeKey).toBe("workbench-review:ws-1:ses-1");
     expect((latestWorkbenchReviewProps as { wrap: boolean }).wrap).toBe(true);
+    expect(latestWorkbenchReviewProps).toMatchObject({
+      allowSplit: true,
+      layout: "stacked",
+      syncScroll: true,
+    });
+    act(() => (latestWorkbenchReviewProps as {
+      onLayoutChange: (layout: "split") => void;
+    }).onLayoutChange("split"));
+    act(() => (latestWorkbenchReviewProps as {
+      onSyncScrollChange: (syncScroll: boolean) => void;
+    }).onSyncScrollChange(false));
+    await waitFor(() => {
+      expect(latestWorkbenchReviewProps).toMatchObject({ layout: "split", syncScroll: false });
+    });
     act(() => (latestWorkbenchReviewProps as { onWrapChange: (wrap: boolean) => void }).onWrapChange(false));
     await waitFor(() => {
       expect((latestWorkbenchReviewProps as { wrap: boolean }).wrap).toBe(false);

@@ -289,6 +289,8 @@ export function WorkbenchAssistantSurface({
   const handledReviewPanelRequestIdRef = useRef(previewContext.reviewPanelRequest?.requestId ?? 0);
   const [workbenchReviewPanel, setWorkbenchReviewPanel] = useState<ReviewPanelRequest | null>(null);
   const [workbenchReviewWrap, setWorkbenchReviewWrap] = useState(true);
+  const [workbenchReviewLayout, setWorkbenchReviewLayout] = useState<"stacked" | "split">("stacked");
+  const [workbenchReviewSyncScroll, setWorkbenchReviewSyncScroll] = useState(true);
   const pendingApproval = controller.pendingApproval;
   const panelSessionId = controller.session?.id ?? "";
   const subagentRuns = useMemo(
@@ -1422,6 +1424,8 @@ export function WorkbenchAssistantSurface({
     handledReviewPanelRequestIdRef.current = request.requestId;
     setWorkbenchReviewPanel(request);
     setWorkbenchReviewWrap(true);
+    setWorkbenchReviewLayout("stacked");
+    setWorkbenchReviewSyncScroll(true);
     if (surfaceMode !== "drawer") {
       dockToDrawer();
     }
@@ -1691,6 +1695,11 @@ export function WorkbenchAssistantSurface({
           scrollScopeKey={`workbench-review:${workspaceId}:${panelSessionId}`}
           wrap={workbenchReviewWrap}
           onWrapChange={setWorkbenchReviewWrap}
+          layout={workbenchReviewLayout}
+          onLayoutChange={setWorkbenchReviewLayout}
+          syncScroll={workbenchReviewSyncScroll}
+          onSyncScrollChange={setWorkbenchReviewSyncScroll}
+          allowSplit
           actions={{
             copyPatch: async (patch) => {
               if (!navigator.clipboard?.writeText) throw new Error("剪贴板不可用");
@@ -1776,6 +1785,12 @@ export function WorkbenchAssistantSurface({
           scrollScopeKey={`workbench-review:${workspaceId}:${panelSessionId}`}
           wrap={workbenchReviewWrap}
           onWrapChange={setWorkbenchReviewWrap}
+          layout={workbenchReviewLayout}
+          onLayoutChange={setWorkbenchReviewLayout}
+          syncScroll={workbenchReviewSyncScroll}
+          onSyncScrollChange={setWorkbenchReviewSyncScroll}
+          allowSplit
+          embedded={false}
           actions={{
             copyPatch: async (patch) => {
               if (!navigator.clipboard?.writeText) throw new Error("剪贴板不可用");

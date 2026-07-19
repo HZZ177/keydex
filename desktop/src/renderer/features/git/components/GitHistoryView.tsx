@@ -303,14 +303,14 @@ export function buildGitHistoryContextMenuItems(
     && commit.decorations.some((decoration) => /(^|\s)HEAD(?:\s|$|->|→)/.test(decoration));
   return [
     item("copy_revision", "复制修订号", Copy),
-    item("create_patch", "创建补丁…", FileArchive),
+    item("create_patch", "创建补丁", FileArchive),
     item("cherry_pick", "优选", Cherry),
     item("checkout_revision", "签出修订", GitCommit, { separatorBefore: true }),
     item("show_repository", "在修订版中显示仓库", Archive),
     item("compare_worktree", "与本地比较", GitCompareArrows),
-    item("reset_branch", "将当前分支重置到此处…", RotateCcw, { separatorBefore: true }),
+    item("reset_branch", "将当前分支重置到此处", RotateCcw, { separatorBefore: true }),
     item("revert_commit", "还原提交", Undo2),
-    item("undo_commit", "撤销提交…", Code2, { disabled: !isHead }),
+    item("undo_commit", "撤销提交", Code2, { disabled: !isHead }),
   ];
 }
 

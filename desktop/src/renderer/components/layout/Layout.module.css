@@ -230,6 +230,13 @@
   min-height: 0;
 }
 
+.sessionNavigationLoading {
+  width: 100%;
+  min-height: 100%;
+  --loading-skeleton-padding: 24px 0;
+  --loading-skeleton-stack-width: min(300px, 76%);
+}
+
 .contentRightSidebarToggle {
   position: absolute;
   z-index: 35;

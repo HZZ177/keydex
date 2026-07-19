@@ -24,6 +24,19 @@ describe("Keydex Diff loading and recovery boundary", () => {
     render(<KeydexDiffLoadingState profile="review" label="正在加载审阅差异" />);
     expect(screen.getByRole("status", { name: "正在加载审阅差异" })
       .getAttribute("data-keydex-diff-state")).toBe("loading");
+    expect(screen.getByRole("status").querySelectorAll('[aria-hidden="true"] > span'))
+      .toHaveLength(4);
+  });
+
+  it("centers the shared loading skeleton across the available diff region", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const source = readFileSync(resolve(process.cwd(), "src/renderer/components/diff/DiffBoundary.tsx"), "utf8");
+    const css = readFileSync(resolve(process.cwd(), "src/renderer/components/diff/DiffBoundary.module.css"), "utf8");
+    expect(source).toContain("LoadingSkeletonStack");
+    expect(source).not.toContain("loadingLine");
+    expect(css).toMatch(/\.loading\s*{[^}]*height:\s*100%[^}]*place-items:\s*center/s);
+    expect(css).not.toContain("diff-loading");
   });
 
   it("keeps diagnostics collapsed and removes third-party stack and messages", () => {

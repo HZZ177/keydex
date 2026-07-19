@@ -15,6 +15,7 @@ export interface SlashCommandMenuProps {
   commands: SlashCommand[];
   skills: SkillSummary[];
   diagnostics?: KeydexDiagnostic[];
+  contextWindowProgress?: number | null;
   activeIndex: number;
   onBack?: () => void;
   onSelectCommand: (command: SlashCommand) => void;
@@ -27,6 +28,7 @@ export function SlashCommandMenu({
   commands,
   skills,
   diagnostics = [],
+  contextWindowProgress = null,
   activeIndex,
   onBack,
   onSelectCommand,
@@ -110,6 +112,7 @@ export function SlashCommandMenu({
                 <CommandItem
                   key={command.id}
                   command={command}
+                  contextWindowProgress={contextWindowProgress}
                   active={activeIndex === index}
                   onSelect={onSelectCommand}
                 />
@@ -151,10 +154,12 @@ function SkillSectionDivider() {
 
 function CommandItem({
   command,
+  contextWindowProgress,
   active,
   onSelect,
 }: {
   command: SlashCommand;
+  contextWindowProgress: number | null;
   active: boolean;
   onSelect: (command: SlashCommand) => void;
 }) {
@@ -174,7 +179,11 @@ function CommandItem({
       }}
     >
       <span className={styles.icon} aria-hidden="true">
-        <Icon size={14} />
+        {isContextCompressionSlashCommand(command) ? (
+          <ContextWindowProgressIcon progress={contextWindowProgress} />
+        ) : (
+          <Icon size={14} />
+        )}
       </span>
       <span className={styles.text}>
         <strong>{command.label}</strong>
@@ -195,32 +204,42 @@ function slashCommandIcon(command: SlashCommand) {
   if (command.kind === "builtin" && command.id === "bypass-conversation") {
     return MessagesSquare;
   }
-  if (isContextCompressionSlashCommand(command)) {
-    return StaticProgressRingIcon;
-  }
   return Command;
 }
 
-function StaticProgressRingIcon({ size = 14 }: { size?: number }) {
+function ContextWindowProgressIcon({ progress }: { progress: number | null }) {
+  const hasProgress = typeof progress === "number" && Number.isFinite(progress);
+  const progressBasis = hasProgress ? Math.max(0, progress) : 0;
+  const displayedProgress = Math.min(1, progressBasis);
+  const radius = 6;
+  const circumference = 2 * Math.PI * radius;
+  const level = !hasProgress
+    ? "idle"
+    : progressBasis > 1
+      ? "danger"
+      : progressBasis > 0.9
+        ? "warning"
+        : "normal";
+
   return (
     <svg
       aria-hidden="true"
+      className={styles.contextWindowRing}
+      data-level={level}
+      data-testid="context-compression-progress-ring"
       fill="none"
-      height={size}
       viewBox="0 0 16 16"
-      width={size}
       xmlns="http://www.w3.org/2000/svg"
     >
-      <circle cx="8" cy="8" opacity="0.22" r="5.5" stroke="currentColor" strokeWidth="2" />
+      <circle className={styles.contextWindowTrack} cx="8" cy="8" r={radius} />
       <circle
+        className={styles.contextWindowProgress}
         cx="8"
         cy="8"
-        r="5.5"
-        stroke="currentColor"
-        strokeDasharray="8.64 25.92"
-        strokeLinecap="round"
-        strokeWidth="2"
-        transform="rotate(-90 8 8)"
+        data-context-window-ring-progress="true"
+        r={radius}
+        strokeDasharray={circumference}
+        style={{ strokeDashoffset: circumference * (1 - displayedProgress) }}
       />
     </svg>
   );

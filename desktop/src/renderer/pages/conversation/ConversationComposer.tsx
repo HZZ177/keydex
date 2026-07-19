@@ -176,6 +176,11 @@ export function ConversationComposer({
       allowBypassConversationSlashCommand={allowBypassConversationSlashCommand}
       allowGoalSlashCommand={allowGoalSlashCommand}
       allowContextCompressionSlashCommand={allowContextCompressionSlashCommand}
+      contextWindowProgress={
+        contextCompressionEnabled && contextWindowUsage
+          ? contextWindowUsage.thresholdUsageFraction
+          : null
+      }
       selectedFiles={selectedFiles}
       selectedQuotes={selectedQuotes}
       selectedImageAttachments={selectedImageAttachments}

@@ -53,6 +53,8 @@ export class PierreWorkerPoolLifecycle {
   private theme: KeydexDiffTheme = "light";
   private cacheEpoch = 0;
   private generation = 0;
+  private themeRefreshGeneration = 0;
+  private themeRefreshPending = false;
   private runtime: PierreWorkerPoolRuntime | null = null;
   private pending: Promise<void> | null = null;
   private releaseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -101,13 +103,27 @@ export class PierreWorkerPoolLifecycle {
   updateTheme(theme: KeydexDiffTheme): void {
     if (this.theme === theme) return;
     this.theme = theme;
-    this.cacheEpoch += 1;
     const manager = this.runtime?.manager;
     if (manager) {
+      const refreshGeneration = ++this.themeRefreshGeneration;
+      this.themeRefreshPending = true;
       evictWorkerPoolCaches(manager);
-      void manager.setRenderOptions(createPierreWorkerThemeRefresh(theme)).catch((reason: unknown) => {
+      this.publish("loading", null);
+      void manager.setRenderOptions(createPierreWorkerThemeRefresh(theme)).then(() => {
+        if (
+          refreshGeneration !== this.themeRefreshGeneration
+          || manager !== this.runtime?.manager
+          || theme !== this.theme
+        ) return;
+        this.themeRefreshPending = false;
+        this.cacheEpoch += 1;
+        this.publish("ready", null);
+      }).catch((reason: unknown) => {
+        if (refreshGeneration !== this.themeRefreshGeneration) return;
+        this.themeRefreshPending = false;
         this.publishError(reason);
       });
+      return;
     }
     this.publish();
   }
@@ -119,6 +135,8 @@ export class PierreWorkerPoolLifecycle {
   terminateImmediately(): void {
     this.cancelRelease();
     this.generation += 1;
+    this.themeRefreshGeneration += 1;
+    this.themeRefreshPending = false;
     this.pending = null;
     this.unsubscribeStats?.();
     this.unsubscribeStats = null;
@@ -187,7 +205,13 @@ export class PierreWorkerPoolLifecycle {
   }
 
   private publish(
-    status = this.runtime ? "ready" : this.pending ? "loading" : this.diagnostics.status,
+    status = this.themeRefreshPending
+      ? "loading"
+      : this.runtime
+        ? "ready"
+        : this.pending
+          ? "loading"
+          : this.diagnostics.status,
     lastError = this.diagnostics.lastError,
   ) {
     this.diagnostics = freezeDiagnostics({

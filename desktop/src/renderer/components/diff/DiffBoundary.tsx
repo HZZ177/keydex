@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { LoadingSkeletonStack } from "@/renderer/components/loading";
 import type { KeydexDiffProfileName } from "./profiles";
 import styles from "./DiffBoundary.module.css";
 
@@ -112,9 +113,7 @@ export function KeydexDiffLoadingState({
       aria-label={label}
       aria-busy="true"
     >
-      <span className={styles.loadingLine} />
-      <span className={styles.loadingLine} />
-      <span className={styles.loadingLine} />
+      <LoadingSkeletonStack className={styles.loadingStack} lineCount={4} />
     </div>
   );
 }

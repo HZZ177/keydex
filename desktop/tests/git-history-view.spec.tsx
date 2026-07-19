@@ -57,14 +57,14 @@ describe("GitHistoryView", () => {
 
     fireEvent.contextMenu(screen.getByRole("option", { name: /commit 7/ }), { clientX: 160, clientY: 120 });
     expect(screen.getByRole("menuitem", { name: "复制修订号" })).not.toBeNull();
-    expect(screen.getByRole("menuitem", { name: "创建补丁…" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "创建补丁" })).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: "优选" })).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: "签出修订" })).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: "在修订版中显示仓库" })).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: "与本地比较" })).not.toBeNull();
-    expect(screen.getByRole("menuitem", { name: "将当前分支重置到此处…" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "将当前分支重置到此处" })).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: "还原提交" })).not.toBeNull();
-    expect(screen.getByRole("menuitem", { name: "撤销提交…" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("menuitem", { name: "撤销提交" }).hasAttribute("disabled")).toBe(true);
     fireEvent.click(screen.getByRole("menuitem", { name: "与本地比较" }));
     await waitFor(() => expect(onContextAction).toHaveBeenCalledWith("compare_worktree", selected));
   });

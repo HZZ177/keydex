@@ -54,11 +54,14 @@ describe("SettingsShell", () => {
     expect(screen.getByRole("button", { name: "项目管理" }).getAttribute("aria-current")).toBeNull();
   });
 
-  it("uses the same MCP icon family as the runtime capsule instead of the extensions icon", () => {
+  it("uses the requested icons for the primary configuration sections", () => {
     renderShell("providers");
 
-    expect(screen.getByRole("button", { name: "扩展功能" }).getAttribute("data-icon")).toBe("puzzle");
+    expect(screen.getByRole("button", { name: "常规" }).getAttribute("data-icon")).toBe("settings");
+    expect(screen.getByRole("button", { name: "供应商配置" }).getAttribute("data-icon")).toBe("landmark");
+    expect(screen.getByRole("button", { name: "扩展功能" }).getAttribute("data-icon")).toBe("shield-ellipsis");
     expect(screen.getByRole("button", { name: "MCP服务器" }).getAttribute("data-icon")).toBe("plug-zap");
+    expect(screen.getByRole("button", { name: "策略配置" }).getAttribute("data-icon")).toBe("square-terminal");
   });
 
   it("marks the active settings section", () => {

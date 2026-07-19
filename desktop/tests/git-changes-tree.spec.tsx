@@ -1,8 +1,9 @@
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { commitSelectionFromEntries, groupGitChanges } from "@/renderer/features/git/changesTree";
+import { commitSelectionFromEntries, gitChangeRollbackPaths, groupGitChanges } from "@/renderer/features/git/changesTree";
 import { changesVirtualWindow, GitChangesView } from "@/renderer/features/git/components/GitChangesView";
+import { AppContextMenuProvider } from "@/renderer/providers/AppContextMenuProvider";
 import type { GitRepositoryId, GitRepositoryVersion, GitStatusSnapshot } from "@/runtime/gitTypes";
 
 afterEach(() => {
@@ -55,6 +56,16 @@ describe("Git changes tree", () => {
     expect(selection.untrackedPaths).toEqual(["new.txt"]);
     expect(selection.paths).not.toContain("both.ts");
     expect(selection.fileCount).toBe(5);
+  });
+
+  it("splits a mixed rollback selection into tracked rename paths and untracked cleanup paths", () => {
+    const entries = groupGitChanges(status().files).flatMap((group) => group.entries);
+    expect(gitChangeRollbackPaths(entries.filter((entry) =>
+      entry.path === "src/new.ts" || entry.path === "new.txt",
+    ))).toEqual({
+      trackedPaths: ["src/new.ts", "src/old.ts"],
+      untrackedPaths: ["new.txt"],
+    });
   });
 
   it("supports flat group selection and renders file name before its ghost path", () => {
@@ -167,6 +178,51 @@ describe("Git changes tree", () => {
       [expect.objectContaining({ path: "src/edit.ts" })],
     );
     expect(onPreviewChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the shared context menu and scopes multi-file actions to the current selection", async () => {
+    const onCommitFiles = vi.fn();
+    const onRollbackFiles = vi.fn();
+    const onShowDiff = vi.fn();
+    render(
+      <AppContextMenuProvider>
+        <GitChangesView
+          status={status()}
+          onCommitFiles={onCommitFiles}
+          onRollbackFiles={onRollbackFiles}
+          onShowDiff={onShowDiff}
+        />
+      </AppContextMenuProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /asset\.bin modified/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /src\/edit\.ts modified/ }));
+    const selectedRow = screen.getByRole("treeitem", { name: /src\/edit\.ts modified/ });
+    fireEvent.contextMenu(selectedRow, { clientX: 240, clientY: 160 });
+
+    expect(await screen.findByRole("menuitem", { name: "提交 2 个文件" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "回滚 2 个文件" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitem", { name: "提交 2 个文件" }));
+    expect(onCommitFiles).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ path: "asset.bin" }),
+      expect.objectContaining({ path: "src/edit.ts" }),
+    ]));
+    await waitFor(() => expect(screen.queryByRole("menuitem", { name: "提交 2 个文件" })).toBeNull());
+
+    fireEvent.contextMenu(selectedRow, { clientX: 240, clientY: 160 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "回滚 2 个文件" }));
+    expect(onRollbackFiles).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ path: "asset.bin" }),
+      expect.objectContaining({ path: "src/edit.ts" }),
+    ]));
+    await waitFor(() => expect(screen.queryByRole("menuitem", { name: "回滚 2 个文件" })).toBeNull());
+
+    const unselectedRow = screen.getByRole("treeitem", { name: /new\.txt untracked/ });
+    fireEvent.contextMenu(unselectedRow, { clientX: 260, clientY: 180 });
+    expect(await screen.findByRole("menuitem", { name: "提交 1 个文件" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitem", { name: "显示差异" }));
+    expect(onShowDiff).toHaveBeenCalledWith(expect.objectContaining({ path: "new.txt" }));
+    await waitFor(() => expect(screen.queryByRole("menuitem", { name: "显示差异" })).toBeNull());
   });
 
   it("clears the preview when the refreshed status no longer has changed files", () => {

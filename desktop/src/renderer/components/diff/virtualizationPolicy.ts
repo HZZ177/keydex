@@ -29,6 +29,47 @@ export const KEYDEX_DIFF_VIRTUALIZATION_THRESHOLDS = Object.freeze({
   preview: Object.freeze({ files: 20, lines: 1_500, bytes: 768 * 1024 }),
 } satisfies Record<KeydexDiffProfileName, { files: number; lines: number; bytes: number }>);
 
+export interface KeydexAlignedVirtualizationPolicy {
+  readonly enabled: boolean;
+  readonly level: KeydexDiffVirtualizationLevel;
+  readonly overscanPx: number;
+  readonly maxMountedRows: number;
+  readonly estimatedRowHeight: number;
+}
+
+export const KEYDEX_ALIGNED_VIRTUALIZATION_THRESHOLDS = Object.freeze({
+  standardRows: 600,
+  aggressiveRows: 20_000,
+  standardOverscanPx: 480,
+  aggressiveOverscanPx: 320,
+  standardMaxMountedRows: 1_000,
+  aggressiveMaxMountedRows: 800,
+});
+
+export function resolveKeydexAlignedVirtualizationPolicy(
+  rowCount: number,
+  profile: KeydexDiffProfileName,
+  wrap: boolean,
+): KeydexAlignedVirtualizationPolicy {
+  if (!Number.isInteger(rowCount) || rowCount < 0) {
+    throw new TypeError("rowCount must be a non-negative integer");
+  }
+  const typography = keydexDiffTypography(profile);
+  const enabled = rowCount >= KEYDEX_ALIGNED_VIRTUALIZATION_THRESHOLDS.standardRows;
+  const aggressive = rowCount >= KEYDEX_ALIGNED_VIRTUALIZATION_THRESHOLDS.aggressiveRows;
+  return Object.freeze({
+    enabled,
+    level: !enabled ? "none" : aggressive ? "aggressive" : "standard",
+    overscanPx: aggressive
+      ? KEYDEX_ALIGNED_VIRTUALIZATION_THRESHOLDS.aggressiveOverscanPx
+      : KEYDEX_ALIGNED_VIRTUALIZATION_THRESHOLDS.standardOverscanPx,
+    maxMountedRows: aggressive
+      ? KEYDEX_ALIGNED_VIRTUALIZATION_THRESHOLDS.aggressiveMaxMountedRows
+      : KEYDEX_ALIGNED_VIRTUALIZATION_THRESHOLDS.standardMaxMountedRows,
+    estimatedRowHeight: typography.lineHeight * (wrap ? 1.35 : 1),
+  });
+}
+
 export function resolveKeydexDiffVirtualizationPolicy(
   document: KeydexDiffDocument,
   profile: KeydexDiffProfileName,

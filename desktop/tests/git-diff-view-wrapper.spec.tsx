@@ -73,7 +73,6 @@ describe("GitDiffView wrapper", () => {
         "copy_selection",
         "copy_patch",
         "open_file",
-        "apply_git_patch",
       ],
     });
   });

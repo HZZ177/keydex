@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -12,10 +12,13 @@ import {
 } from "@/renderer/components/diff/DiffChrome";
 import { createKeydexDiffFile, type KeydexDiffFileInput } from "@/renderer/components/diff/model";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 describe("Keydex Diff 文件头与 hunk chrome", () => {
-  it("keeps the file name before the ghost directory and exposes the full path", () => {
+  it("keeps the file name before the ghost directory without attaching a tooltip to the whole row", () => {
     render(
       <KeydexDiffFileHeaderChrome
         presentation={{
@@ -30,9 +33,49 @@ describe("Keydex Diff 文件头与 hunk chrome", () => {
         }}
       />,
     );
-    const header = screen.getByTitle("desktop/src/renderer/a/very/long/path/AFileNameThatMustStayReadable.tsx");
+    const header = screen.getByRole("group");
+    const fileName = screen.getByText("AFileNameThatMustStayReadable.tsx");
     expect(header.textContent).toBe("AFileNameThatMustStayReadable.tsxdesktop/src/renderer/a/very/long/path修改+12-3");
+    expect(header.getAttribute("title")).toBeNull();
+    expect(header.getAttribute("data-tooltip-label")).toBeNull();
+    expect(fileName.getAttribute("data-tooltip-label")).toBeNull();
     expect(header.querySelector("[data-status='modified']")?.textContent).toBe("修改");
+  });
+
+  it("exposes the complete file name only when the file-name element is actually truncated", () => {
+    let resize: ResizeObserverCallback | null = null;
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: ResizeObserverCallback) {
+        resize = callback;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    render(
+      <KeydexDiffFileHeaderChrome
+        presentation={{
+          fileName: "AFileNameThatIsVisuallyTruncated.tsx",
+          directoryPath: "desktop/src/renderer",
+          fullPath: "desktop/src/renderer/AFileNameThatIsVisuallyTruncated.tsx",
+          status: "modified",
+          statusLabel: "修改",
+          additions: 1,
+          deletions: 1,
+          metadata: [],
+        }}
+        actions={<button type="button">审阅操作</button>}
+      />,
+    );
+    const fileName = screen.getByText("AFileNameThatIsVisuallyTruncated.tsx");
+    Object.defineProperty(fileName, "clientWidth", { configurable: true, value: 80 });
+    Object.defineProperty(fileName, "scrollWidth", { configurable: true, value: 240 });
+    act(() => {
+      resize?.([], {} as ResizeObserver);
+    });
+    expect(fileName.getAttribute("data-tooltip-label")).toBe("AFileNameThatIsVisuallyTruncated.tsx");
+    expect(screen.getByRole("button", { name: "审阅操作" }).getAttribute("data-tooltip-label")).toBeNull();
+    expect(screen.getByRole("group").getAttribute("data-tooltip-label")).toBeNull();
   });
 
   it.each([

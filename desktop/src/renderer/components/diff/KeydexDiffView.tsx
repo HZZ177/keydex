@@ -1,4 +1,4 @@
-import { useMemo, useRef, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type { KeydexDiffDocument } from "./model";
 import {
@@ -18,14 +18,20 @@ import {
   type KeydexDiffToolbarActionId,
 } from "./KeydexDiffProductToolbar";
 import { KeydexDiffErrorState, KeydexDiffLoadingState } from "./DiffBoundary";
+import { KeydexDiffAccessibilityBridge } from "./DiffAccessibility";
 import { PierrePatchDiff } from "./engine/PierrePatchDiff";
 import { PierreCodeView } from "./engine/PierreCodeView";
 import { PierreViewportHorizontalScrollbars } from "./engine/PierreViewportHorizontalScrollbars";
 import {
   PierreWorkerPoolBoundary,
   usePierreWorkerPoolLease,
-  usePierreWorkerPoolRetry,
+  usePierreWorkerPoolRuntime,
 } from "./engine/PierreWorkerPoolHost";
+import {
+  AlignedDiffFileView,
+  type AlignedDiffFileViewHandle,
+} from "./aligned/AlignedDiffFileView";
+import { resolveAlignedDiffCapability } from "./aligned/alignedDiffCapability";
 import { resolveKeydexDiffScrollOwner } from "./diffScroll";
 import { useKeydexDiffContextMenu } from "./DiffContextMenu";
 import { useKeydexDiffTheme } from "./diffTheme";
@@ -41,6 +47,8 @@ export type KeydexDiffEngineKind = "empty" | KeydexDiffRenderStrategy;
 export interface KeydexDiffViewState {
   readonly layout: KeydexDiffLayout;
   readonly wrap: boolean;
+  readonly syncScroll?: boolean;
+  readonly activeChangeId?: string | null;
   readonly activeFileId?: string | null;
   readonly selection?: KeydexDiffSelectionRange | null;
   readonly expandedFileIds?: readonly string[];
@@ -56,6 +64,8 @@ export interface KeydexDiffViewProps {
   readonly onActiveFileChange?: (fileId: string) => void;
   readonly onLayoutChange?: (layout: KeydexDiffLayout) => void;
   readonly onWrapChange?: (wrap: boolean) => void;
+  readonly onSyncScrollChange?: (syncScroll: boolean) => void;
+  readonly onActiveChangeChange?: (changeId: string | null) => void;
   readonly selectionText?: string;
   readonly loadingAction?: KeydexDiffToolbarActionId | null;
   readonly onLoadingActionChange?: (action: KeydexDiffToolbarActionId | null) => void;
@@ -80,6 +90,8 @@ export function KeydexDiffView({
   onActiveFileChange,
   onLayoutChange,
   onWrapChange,
+  onSyncScrollChange,
+  onActiveChangeChange,
   selectionText,
   loadingAction,
   onLoadingActionChange,
@@ -95,13 +107,21 @@ export function KeydexDiffView({
 }: KeydexDiffViewProps) {
   const theme = useKeydexDiffTheme();
   const worker = usePierreWorkerPoolLease();
-  const retryWorker = usePierreWorkerPoolRetry();
+  const workerRuntime = usePierreWorkerPoolRuntime();
   const resolvedProfile = useMemo(
     () => resolveKeydexDiffProfile(profile, actions),
     [actions, profile],
   );
   const layout = state.layout ?? resolvedProfile.profile.defaultLayout;
   const wrap = state.wrap ?? resolvedProfile.profile.defaultWrap;
+  const syncScroll = resolvedProfile.profile.syncScroll
+    && (state.syncScroll ?? resolvedProfile.profile.defaultSyncScroll);
+  const [effectiveLayout, setEffectiveLayout] = useState<KeydexDiffLayout>(layout);
+  const [alignedChangeCount, setAlignedChangeCount] = useState(0);
+  const alignedViewRef = useRef<AlignedDiffFileViewHandle | null>(null);
+  const navigateAlignedChange = useCallback((direction: "previous" | "next") => {
+    alignedViewRef.current?.navigateChange(direction);
+  }, []);
   const virtualizationPolicy = useMemo(
     () => resolveKeydexDiffVirtualizationPolicy(document, profile, wrap),
     [document, profile, wrap],
@@ -113,6 +133,14 @@ export function KeydexDiffView({
     document.files.findIndex((file) => file.id === state.activeFileId),
   );
   const activeFile = document.files[activeIndex] ?? document.files[0];
+  const workerUnavailable = worker.status === "error" || Boolean(worker.workers?.workersFailed);
+  const alignedCapability = useMemo(() => activeFile
+    ? resolveAlignedDiffCapability(
+        activeFile,
+        resolvedProfile.profile,
+        worker.status === "ready" && !workerUnavailable && Boolean(workerRuntime),
+      )
+    : null, [activeFile, resolvedProfile.profile, worker.status, workerUnavailable, workerRuntime]);
   const contextMenu = useKeydexDiffContextMenu({
     file: activeFile ?? null,
     actions,
@@ -138,18 +166,6 @@ export function KeydexDiffView({
   if (worker.status === "idle" || worker.status === "loading") {
     return <KeydexDiffLoadingState profile={profile} label="正在启动差异解析" />;
   }
-  if (worker.status === "error" || worker.workers?.workersFailed) {
-    return (
-      <KeydexDiffErrorState
-        phase="worker"
-        profile={profile}
-        documentId={document.id}
-        rawSource={document.files.map((file) => file.patch).join("\n")}
-        onRetry={retryWorker}
-      />
-    );
-  }
-
   return (
     <PierreWorkerPoolBoundary>
       <KeydexDiffSurface
@@ -160,6 +176,7 @@ export function KeydexDiffView({
         data-keydex-diff-view="true"
         data-diff-engine={engine}
         data-wrap={wrap ? "true" : "false"}
+        data-sync-scroll={syncScroll ? "true" : "false"}
         data-worker-status={worker.status}
         data-worker-total={worker.workers?.totalWorkers}
         data-worker-busy={worker.workers?.busyWorkers}
@@ -168,6 +185,7 @@ export function KeydexDiffView({
         data-worker-file-cache-size={worker.workers?.fileCacheSize}
         data-worker-diff-cache-size={worker.workers?.diffCacheSize}
         data-worker-cache-epoch={worker.cacheEpoch}
+        data-aligned-capability={alignedCapability?.reason}
         data-app-context-menu={contextMenu.enabled ? "local" : undefined}
         onContextMenu={contextMenu.onContextMenu}
       >
@@ -177,8 +195,10 @@ export function KeydexDiffView({
           files={document.files}
           activeFile={activeFile}
           actions={actions}
-          layout={layout}
+          layout={effectiveLayout}
           wrap={wrap}
+          syncScroll={syncScroll}
+          changeCount={effectiveLayout === "split" ? alignedChangeCount : 0}
           selectionText={selectionText}
           selection={state.selection}
           loadingAction={loadingAction}
@@ -193,6 +213,9 @@ export function KeydexDiffView({
           } : undefined}
           onLayoutChange={onLayoutChange}
           onWrapChange={onWrapChange}
+          onSyncScrollChange={onSyncScrollChange}
+          onPreviousChange={() => navigateAlignedChange("previous")}
+          onNextChange={() => navigateAlignedChange("next")}
           hiddenActions={hiddenToolbarActions}
           leading={toolbarLeading}
         />
@@ -216,18 +239,76 @@ export function KeydexDiffView({
             profile={profile}
             preferredLayout={layout}
             wrap={wrap}
+            embedded={embedded}
+            onDecisionChange={(decision) => setEffectiveLayout((current) => (
+              current === decision.effectiveLayout ? current : decision.effectiveLayout
+            ))}
           >
-            {(decision) => engine === "single" ? (
+            {(decision) => decision.effectiveLayout === "split"
+              && resolvedProfile.profile.alignedSplit
+              && alignedCapability?.renderer === "aligned"
+              && activeFile ? (
+              <div
+                className={styles.singleFile}
+                data-file-header={showFileHeader ? "true" : "false"}
+                data-keydex-diff-renderer="aligned_split"
+              >
+                {showFileHeader ? <KeydexDiffFileHeader file={activeFile} /> : null}
+                {workerRuntime ? (
+                  <KeydexDiffAccessibilityBridge
+                    profile={profile}
+                    file={activeFile}
+                    selection={state.selection}
+                    onClearSelection={onSelectionChange ? () => onSelectionChange(null) : undefined}
+                  >
+                    <AlignedDiffFileView
+                      ref={alignedViewRef}
+                      file={activeFile}
+                      sourceVersion={document.sourceVersion}
+                      profile={profile}
+                      theme={theme}
+                      wrap={decision.wrap}
+                      syncScroll={syncScroll}
+                      scrollChaining={resolvedProfile.profile.scrollChaining}
+                      runtime={workerRuntime}
+                      workerCacheEpoch={worker.cacheEpoch}
+                      activeChangeId={state.activeChangeId}
+                      onActiveChangeChange={onActiveChangeChange}
+                      onChangeCountChange={setAlignedChangeCount}
+                      fallback={(
+                        <SingleFileDiff
+                          documentId={document.id}
+                          file={activeFile}
+                          profile={profile}
+                          theme={theme}
+                          layout="stacked"
+                          wrap={decision.wrap}
+                          selection={state.selection}
+                          onSelectionChange={onSelectionChange}
+                          showFileHeader={false}
+                          density={singleFileDensity}
+                          disableWorkerPool
+                        />
+                      )}
+                    />
+                  </KeydexDiffAccessibilityBridge>
+                ) : <KeydexDiffLoadingState profile={profile} label="正在准备并排差异" />}
+              </div>
+            ) : engine === "single" ? (
               <SingleFileDiff
-                document={document}
+                documentId={document.id}
+                file={document.files[0]!}
                 profile={profile}
                 theme={theme}
-                layout={decision.effectiveLayout}
+                layout={decision.effectiveLayout === "split" && alignedCapability?.renderer === "stacked"
+                  ? "stacked"
+                  : decision.effectiveLayout}
                 wrap={decision.wrap}
                 selection={state.selection}
                 onSelectionChange={onSelectionChange}
                 showFileHeader={showFileHeader}
                 density={singleFileDensity}
+                disableWorkerPool={workerUnavailable}
               />
             ) : document.files.length === 1 && activeFile ? (
               <div className={styles.singleFile} data-file-header={showFileHeader ? "true" : "false"}>
@@ -236,12 +317,14 @@ export function KeydexDiffView({
                   document={document}
                   profile={profile}
                   theme={theme}
-                  layout={decision.effectiveLayout}
+                  layout={decision.effectiveLayout === "split" && alignedCapability?.renderer === "stacked"
+                    ? "stacked"
+                    : decision.effectiveLayout}
                   wrap={decision.wrap}
                   activeFileId={activeFile.id}
                   expandedFileIds={state.expandedFileIds}
                   scrollScopeKey={scrollScopeKey}
-                  disableWorkerPool={false}
+                  disableWorkerPool={workerUnavailable}
                   virtualizationPolicy={virtualizationPolicy}
                 />
               </div>
@@ -250,12 +333,14 @@ export function KeydexDiffView({
                 document={document}
                 profile={profile}
                 theme={theme}
-                layout={decision.effectiveLayout}
+                layout={decision.effectiveLayout === "split" && alignedCapability?.renderer === "stacked"
+                  ? "stacked"
+                  : decision.effectiveLayout}
                 wrap={decision.wrap}
                 activeFileId={activeFile?.id}
                 expandedFileIds={state.expandedFileIds}
                 scrollScopeKey={scrollScopeKey}
-                disableWorkerPool={false}
+                disableWorkerPool={workerUnavailable}
                 virtualizationPolicy={virtualizationPolicy}
               />
             )}
@@ -276,7 +361,8 @@ export function keydexDiffEngineKind(
 }
 
 function SingleFileDiff({
-  document,
+  documentId,
+  file,
   profile,
   theme,
   layout,
@@ -285,8 +371,10 @@ function SingleFileDiff({
   onSelectionChange,
   showFileHeader,
   density,
+  disableWorkerPool = false,
 }: {
-  readonly document: KeydexDiffDocument;
+  readonly documentId: string;
+  readonly file: KeydexDiffDocument["files"][number];
   readonly profile: KeydexDiffProfileName;
   readonly theme: "light" | "dark";
   readonly layout: KeydexDiffLayout;
@@ -295,8 +383,8 @@ function SingleFileDiff({
   readonly onSelectionChange?: (selection: KeydexDiffSelectionRange | null) => void;
   readonly showFileHeader: boolean;
   readonly density?: KeydexDiffDensity;
+  readonly disableWorkerPool?: boolean;
 }) {
-  const file = document.files[0]!;
   const patchViewportRef = useRef<HTMLDivElement | null>(null);
   if (file.binary) {
     return <KeydexDiffQuietState title="二进制文件" detail="此文件不提供文本差异。" />;
@@ -306,7 +394,7 @@ function SingleFileDiff({
       <KeydexDiffErrorState
         phase="parse"
         profile={profile}
-        documentId={document.id}
+        documentId={documentId}
         fileId={file.id}
         rawSource={file.patch}
       />
@@ -331,7 +419,7 @@ function SingleFileDiff({
             wrap={wrap}
             selectedRange={selection}
             onSelectedRangeChange={onSelectionChange}
-            disableWorkerPool={false}
+            disableWorkerPool={disableWorkerPool}
             density={density}
           />
         </div>

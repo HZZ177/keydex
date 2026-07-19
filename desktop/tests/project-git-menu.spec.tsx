@@ -112,17 +112,17 @@ describe("ProjectGitMenu", () => {
 
     fireEvent.click(currentBranch);
     expect(screen.getByRole("menu", { name: "main 引用操作" })).not.toBeNull();
-    expect(screen.getByRole("menuitem", { name: "从 'main' 新建分支…" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "从 'main' 新建分支" })).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: "更新" })).not.toBeNull();
-    expect(screen.getByRole("menuitem", { name: "推送…" })).not.toBeNull();
-    expect(screen.getByRole("menuitem", { name: "重命名…" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "推送" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "重命名" })).not.toBeNull();
     expect(screen.queryByRole("menuitem", { name: "签出" })).toBeNull();
     fireEvent.click(currentBranch);
 
     fireEvent.click(upstreamBranch);
     expect(screen.getByRole("menu", { name: "origin/main 引用操作" })).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: "签出" })).not.toBeNull();
-    expect(screen.getByRole("menuitem", { name: "从 'origin/main' 新建分支…" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "从 'origin/main' 新建分支" })).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: "删除" })).not.toBeNull();
     fireEvent.click(upstreamBranch);
 
@@ -134,7 +134,7 @@ describe("ProjectGitMenu", () => {
     expect(tag.querySelector('[data-tone="tag"]')).not.toBeNull();
     fireEvent.click(tag);
     expect(screen.getByRole("menuitem", { name: "签出" })).not.toBeNull();
-    expect(screen.getByRole("menuitem", { name: "在 Git 面板中管理标签…" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "在 Git 面板中管理标签" })).not.toBeNull();
     fireEvent.click(tag);
 
     fireEvent.change(search, { target: { value: "feature" } });
@@ -143,34 +143,34 @@ describe("ProjectGitMenu", () => {
     const featureMenu = screen.getByRole("menu", { name: "feature/git-menu 引用操作" });
     expect(within(featureMenu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
       "签出",
-      "从 'feature/git-menu' 新建分支…",
+      "从 'feature/git-menu' 新建分支",
       "签出并变基到 'main'",
       "与 'main' 比较",
       "显示与工作树的差异",
       "将 'main' 变基到 'feature/git-menu'",
       "将 'feature/git-menu' 合并到 'main' 中",
       "更新",
-      "推送…",
-      "重命名…",
+      "推送",
+      "重命名",
       "删除",
     ]);
     expect(screen.getByRole("menuitem", { name: "签出" })).not.toBeNull();
-    expect(screen.getByRole("menuitem", { name: "从 'feature/git-menu' 新建分支…" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "从 'feature/git-menu' 新建分支" })).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: "签出并变基到 'main'" })).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: "与 'main' 比较" })).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: "显示与工作树的差异" })).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: "将 'main' 变基到 'feature/git-menu'" })).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: "将 'feature/git-menu' 合并到 'main' 中" })).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: "更新" })).not.toBeNull();
-    expect(screen.getByRole("menuitem", { name: "推送…" })).not.toBeNull();
-    expect(screen.getByRole("menuitem", { name: "重命名…" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "推送" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "重命名" })).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: "删除" })).not.toBeNull();
     fireEvent.click(featureBranch);
     expect(screen.queryByRole("treeitem", { name: "main（本地）" })).toBeNull();
 
     fireEvent.change(search, { target: { value: "" } });
     const updateAction = screen.getByRole("menuitem", { name: /更新项目/ });
-    const pushAction = screen.getByRole("menuitem", { name: /推送…/ });
+    const pushAction = screen.getByRole("menuitem", { name: /推送/ });
     expect(updateAction.querySelector("svg.lucide-arrow-down-left")).not.toBeNull();
     expect(pushAction.querySelector("svg.lucide-arrow-up-right")).not.toBeNull();
 
@@ -307,7 +307,7 @@ describe("ProjectGitMenu", () => {
     })));
 
     await openFeatureMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: "推送…" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "推送" }));
     expect(await screen.findByRole("dialog", { name: "将提交推送到 repo" })).toBeTruthy();
     await waitFor(() => expect(runtime.history).toHaveBeenCalledWith(
       expect.objectContaining({ repositoryId: "repo-1" }),
@@ -397,7 +397,7 @@ describe("ProjectGitMenu", () => {
     })));
 
     fireEvent.contextMenu(branch, { clientX: 260, clientY: 190 });
-    fireEvent.click(screen.getByRole("menuitem", { name: "推送…" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "推送" }));
     expect(await screen.findByRole("dialog", { name: "将提交推送到 repo" })).toBeTruthy();
     await waitFor(() => expect(runtime.history).toHaveBeenCalledWith(
       expect.objectContaining({ repositoryId: "repo-1" }),
@@ -432,7 +432,7 @@ describe("ProjectGitMenu", () => {
 
     fireEvent.click(trigger);
     fireEvent.click(screen.getByRole("treeitem", { name: "feature/git-menu（本地）" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "重命名…" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "重命名" }));
     expect(screen.getByRole("dialog", { name: "重命名分支 feature/git-menu" })).not.toBeNull();
     fireEvent.change(screen.getByLabelText("重命名分支"), { target: { value: "feature/renamed" } });
     fireEvent.click(screen.getByRole("button", { name: "重命名" }));
@@ -472,7 +472,7 @@ describe("ProjectGitMenu", () => {
 
     const trigger = await screen.findByRole("button", { name: "Git：feature/demo" });
     fireEvent.click(trigger);
-    fireEvent.click(screen.getByRole("menuitem", { name: /推送…/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /推送/ }));
     const dialog = await screen.findByRole("dialog", { name: "将提交推送到 repo" });
     await within(dialog).findByRole("option", { name: /Feature commit/ });
     await waitFor(() => expect(within(dialog).getByRole("tree", { name: "待推送提交改动文件树" })).not.toBeNull());

@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useCallback, useLayoutEffect, useRef, useState } from "react";
 
 import type { KeydexDiffFile, KeydexDiffStatus } from "./model";
 import styles from "./DiffChrome.module.css";
@@ -50,7 +50,6 @@ export function KeydexDiffFileHeaderChrome({
       data-density={density}
       data-selected={selected ? "true" : "false"}
       data-status={presentation.status}
-      title={presentation.fullPath}
       role={interactive ? "button" : "group"}
       tabIndex={interactive ? 0 : undefined}
       aria-expanded={interactive ? expanded : undefined}
@@ -69,7 +68,7 @@ export function KeydexDiffFileHeaderChrome({
     >
       <span className={styles.identity}>
         {icon ? <span className={styles.fileIcon} aria-hidden="true">{icon}</span> : null}
-        <span className={styles.fileName}>{presentation.fileName}</span>
+        <TruncatedDiffFileName fileName={presentation.fileName} />
         {compact ? (
           <KeydexDiffLineStats additions={presentation.additions} deletions={presentation.deletions} />
         ) : null}
@@ -91,6 +90,35 @@ export function KeydexDiffFileHeaderChrome({
       ) : null}
       {actions ? <span className={styles.actions}>{actions}</span> : null}
     </header>
+  );
+}
+
+function TruncatedDiffFileName({ fileName }: { readonly fileName: string }) {
+  const elementRef = useRef<HTMLSpanElement | null>(null);
+  const [truncated, setTruncated] = useState(false);
+  const measure = useCallback(() => {
+    const element = elementRef.current;
+    const next = Boolean(element && element.scrollWidth > element.clientWidth + 1);
+    setTruncated((current) => current === next ? current : next);
+  }, []);
+
+  useLayoutEffect(() => {
+    const element = elementRef.current;
+    measure();
+    if (!element || typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [fileName, measure]);
+
+  return (
+    <span
+      ref={elementRef}
+      className={styles.fileName}
+      data-tooltip-label={truncated ? fileName : undefined}
+    >
+      {fileName}
+    </span>
   );
 }
 

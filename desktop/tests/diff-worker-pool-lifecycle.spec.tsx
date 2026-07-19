@@ -80,6 +80,8 @@ describe("Pierre Worker Pool lifecycle", () => {
     const before = pierreWorkerCacheKey("document-a", lifecycle.snapshot());
 
     lifecycle.updateTheme("dark");
+    expect(lifecycle.snapshot()).toMatchObject({ status: "loading", theme: "dark" });
+    await vi.waitFor(() => expect(lifecycle.snapshot().status).toBe("ready"));
     const after = pierreWorkerCacheKey("document-a", lifecycle.snapshot());
 
     expect(fake.fileCache.size).toBe(0);
@@ -89,6 +91,67 @@ describe("Pierre Worker Pool lifecycle", () => {
     });
     expect(after).not.toBe(before);
     expect(after).toContain(":pierre-dark-");
+    release();
+    lifecycle.terminateImmediately();
+  });
+
+  it("keeps the first theme switch behind a readiness barrier until the worker refresh resolves", async () => {
+    const fake = fakePool();
+    let resolveTheme!: () => void;
+    fake.setRenderOptions.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveTheme = resolve;
+    }));
+    const lifecycle = lifecycleFor(fake);
+    const release = lifecycle.acquire("light");
+    await vi.waitFor(() => expect(lifecycle.snapshot().status).toBe("ready"));
+    const beforeEpoch = lifecycle.snapshot().cacheEpoch;
+
+    lifecycle.updateTheme("dark");
+    expect(lifecycle.snapshot()).toMatchObject({
+      status: "loading",
+      theme: "dark",
+      cacheEpoch: beforeEpoch,
+    });
+
+    resolveTheme();
+    await vi.waitFor(() => expect(lifecycle.snapshot()).toMatchObject({
+      status: "ready",
+      theme: "dark",
+      cacheEpoch: beforeEpoch + 1,
+    }));
+    release();
+    lifecycle.terminateImmediately();
+  });
+
+  it("ignores an older theme refresh that resolves after a newer switch", async () => {
+    const fake = fakePool();
+    const resolvers: Array<() => void> = [];
+    fake.setRenderOptions.mockImplementation(() => new Promise<void>((resolve) => {
+      resolvers.push(resolve);
+    }));
+    const lifecycle = lifecycleFor(fake);
+    const release = lifecycle.acquire("light");
+    await vi.waitFor(() => expect(lifecycle.snapshot().status).toBe("ready"));
+    const beforeEpoch = lifecycle.snapshot().cacheEpoch;
+
+    lifecycle.updateTheme("dark");
+    lifecycle.updateTheme("light");
+    expect(lifecycle.snapshot()).toMatchObject({ status: "loading", theme: "light" });
+
+    resolvers[0]!();
+    await Promise.resolve();
+    expect(lifecycle.snapshot()).toMatchObject({
+      status: "loading",
+      theme: "light",
+      cacheEpoch: beforeEpoch,
+    });
+
+    resolvers[1]!();
+    await vi.waitFor(() => expect(lifecycle.snapshot()).toMatchObject({
+      status: "ready",
+      theme: "light",
+      cacheEpoch: beforeEpoch + 1,
+    }));
     release();
     lifecycle.terminateImmediately();
   });

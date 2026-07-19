@@ -1,0 +1,52 @@
+.metadata,
+.hunkHeader,
+.gap,
+.eof {
+  box-sizing: border-box;
+  min-width: 100%;
+  color: var(--diff-hunk-text);
+  font-family: var(--font-mono);
+  font-size: var(--diff-code-font-size, 13px);
+  line-height: var(--diff-code-line-height, 20px);
+}
+
+.metadata {
+  display: grid;
+  gap: 2px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--diff-border-subtle);
+  background: var(--diff-surface-muted);
+}
+
+.hunkHeader {
+  padding: 4px 12px;
+  border-block: 1px solid var(--diff-hunk-border);
+  background: var(--diff-hunk-bg);
+}
+
+.gap {
+  display: grid;
+  min-height: 30px;
+  place-items: center;
+  border-block: 1px solid var(--diff-hunk-border);
+  background: var(--diff-hunk-bg);
+}
+
+.gap button {
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.gap button:focus-visible {
+  outline: 1px solid var(--diff-focus-ring);
+  outline-offset: 2px;
+}
+
+.eof {
+  padding: 2px 12px;
+  border-top: 1px dashed var(--diff-hunk-border);
+  background: var(--diff-hunk-bg);
+}

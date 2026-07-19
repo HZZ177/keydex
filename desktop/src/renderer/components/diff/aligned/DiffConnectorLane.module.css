@@ -1,0 +1,47 @@
+.lane {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  user-select: none;
+  shape-rendering: geometricPrecision;
+}
+
+.change {
+  opacity: 1;
+}
+
+.fill {
+  fill: var(--diff-modified-bg);
+  stroke: none;
+  transition: none;
+}
+
+.edge {
+  fill: none;
+  stroke: var(--diff-aligned-change-edge);
+  stroke-width: var(--keydex-diff-edge-width, 1px);
+  stroke-linecap: butt;
+  transition: none;
+}
+
+.zeroEdge {
+  fill: none;
+}
+
+.change[data-kind="added"] .fill {
+  fill: var(--diff-added-bg);
+}
+
+.change[data-kind="added"] .edge {
+  stroke: var(--diff-aligned-added-edge);
+}
+
+.change[data-kind="removed"] .fill {
+  fill: var(--diff-removed-bg);
+}
+
+.change[data-kind="removed"] .edge {
+  stroke: var(--diff-aligned-removed-edge);
+}

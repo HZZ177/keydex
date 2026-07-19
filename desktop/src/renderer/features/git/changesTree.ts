@@ -98,6 +98,26 @@ export function commitSelectionFromEntries(entries: readonly GitChangeEntry[]): 
   };
 }
 
+export function gitChangeRollbackPaths(entries: readonly GitChangeEntry[]): {
+  readonly trackedPaths: readonly string[];
+  readonly untrackedPaths: readonly string[];
+} {
+  const trackedPaths = new Set<string>();
+  const untrackedPaths = new Set<string>();
+  entries.forEach((entry) => {
+    if (entry.group === "untracked") {
+      untrackedPaths.add(entry.path);
+      return;
+    }
+    trackedPaths.add(entry.path);
+    if (entry.originalPath && entry.originalPath !== entry.path) trackedPaths.add(entry.originalPath);
+  });
+  return {
+    trackedPaths: Array.from(trackedPaths).sort(),
+    untrackedPaths: Array.from(untrackedPaths).sort(),
+  };
+}
+
 function displayStatus(file: GitChangedFile): GitFileStatusCode {
   if (file.conflicted || file.indexStatus === "conflicted" || file.worktreeStatus === "conflicted") {
     return "conflicted";

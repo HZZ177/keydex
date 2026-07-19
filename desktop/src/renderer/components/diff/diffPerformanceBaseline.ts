@@ -54,6 +54,39 @@ export const DIFF_PERFORMANCE_BASELINE = {
   ],
 } as const;
 
+export const ALIGNED_DIFF_PERFORMANCE_BASELINE = Object.freeze({
+  schemaVersion: 1,
+  capturedAt: "2026-07-19",
+  environment: Object.freeze({
+    operatingSystem: "Windows x64",
+    browser: "Playwright Chromium",
+    buildMode: "Vite development",
+    sampleCount: 3,
+    command: "pnpm exec playwright test e2e/aligned-diff-performance.spec.ts",
+  }),
+  fixture: Object.freeze({
+    ordinaryChangedLines: 20_000,
+    stressIndexedRowsPerPane: 100_000,
+    scrollDurationSeconds: 5,
+  }),
+  policy: Object.freeze({
+    scrollStatistic: "p95",
+    connectorStatistic: "p95",
+    productionInstrumentation: "none",
+  }),
+  referenceRun: Object.freeze({
+    modelPreparationMedianMs: 311.27,
+    firstRenderMedianMs: 311.27,
+    scrollInputToPaintP95Ms: 17.3,
+    resizeInteractionP95Ms: 66.3,
+    wrapInteractionP95Ms: 165.19,
+    syncInteractionP95Ms: 192.67,
+    maxLongTaskMs: 0,
+    maxMountedRows: 178,
+    heapGrowthBytes: 189_837_542,
+  }),
+});
+
 // These ceilings are derived from the recorded measurements. Bundle ceilings allow a five
 // percent migration margin; build time allows twenty percent; renderer ceilings include the
 // observed jsdom run-to-run variance, while the 20k view must still virtualize to a bounded DOM.

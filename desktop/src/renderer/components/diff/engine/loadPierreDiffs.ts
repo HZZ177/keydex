@@ -5,7 +5,12 @@ import {
 
 type PierreDiffsCoreModule = Pick<
   typeof import("@pierre/diffs"),
-  "parsePatchFiles" | "registerCustomCSSVariableTheme"
+  | "parsePatchFiles"
+  | "parseDiffFromFile"
+  | "registerCustomCSSVariableTheme"
+  | "renderDiffWithHighlighter"
+  | "getSharedHighlighter"
+  | "getFiletypeFromFileName"
 >;
 
 export type PierreDiffsReactModule = typeof import("@pierre/diffs/react") &
@@ -40,7 +45,11 @@ const productionImporter: PierreImporter = async () => {
   return Object.freeze({
     ...react,
     parsePatchFiles: core.parsePatchFiles,
+    parseDiffFromFile: core.parseDiffFromFile,
     registerCustomCSSVariableTheme: core.registerCustomCSSVariableTheme,
+    renderDiffWithHighlighter: core.renderDiffWithHighlighter,
+    getSharedHighlighter: core.getSharedHighlighter,
+    getFiletypeFromFileName: core.getFiletypeFromFileName,
     pierreWorkerFactory: workerFactory.pierreWorkerFactoryController.create,
     getOrCreateWorkerPoolSingleton: worker.getOrCreateWorkerPoolSingleton,
     terminateWorkerPoolSingleton: worker.terminateWorkerPoolSingleton,

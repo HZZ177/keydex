@@ -14,6 +14,7 @@ import {
   PierreWorkerPoolLifecycle,
   pierreWorkerPoolLifecycle,
   type PierreWorkerPoolDiagnostics,
+  type PierreWorkerPoolRuntime,
 } from "./pierreWorkerPoolLifecycle";
 
 const LifecycleContext = createContext<PierreWorkerPoolLifecycle | null>(null);
@@ -84,6 +85,12 @@ export function usePierreWorkerPoolLease(): PierreWorkerPoolDiagnostics {
 export function usePierreWorkerPoolDiagnostics(): PierreWorkerPoolDiagnostics {
   const lifecycle = usePierreWorkerPoolLifecycle();
   return useSyncExternalStore(lifecycle.subscribe, lifecycle.snapshot, lifecycle.snapshot);
+}
+
+export function usePierreWorkerPoolRuntime(): PierreWorkerPoolRuntime | null {
+  const lifecycle = usePierreWorkerPoolLifecycle();
+  useSyncExternalStore(lifecycle.subscribe, lifecycle.snapshot, lifecycle.snapshot);
+  return lifecycle.runtimeSnapshot();
 }
 
 export function usePierreWorkerPoolRetry(): () => Promise<void> {

@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "model_version": "aligned-v1",
+  "fixtures": [
+    {
+      "id": "aligned-equal-height",
+      "source": "Keydex curated fixture: equal replacement height",
+      "file": { "old_path": "src/equal.ts", "new_path": "src/equal.ts", "status": "modified", "language": "typescript", "content_mode": "partial" },
+      "patch": "diff --git a/src/equal.ts b/src/equal.ts\n--- a/src/equal.ts\n+++ b/src/equal.ts\n@@ -1,3 +1,3 @@\n const start = true;\n-const value = 'before';\n+const value = 'after';\n export { value };\n",
+      "expected": { "disposition": "ready", "old_lines": 3, "new_lines": 3, "hunks": 1, "segments": [{ "kind": "context", "left": 1, "right": 1 }, { "kind": "change", "left": 1, "right": 1 }, { "kind": "context", "left": 1, "right": 1 }], "anchors": [{ "id": "h0-change0", "old_line": 2, "new_line": 2 }], "stats": { "additions": 1, "deletions": 1, "changes": 1, "collapsed": 0 }, "snapshot": "equal:3:3:c1-1/x1-1/c1-1" }
+    },
+    {
+      "id": "aligned-left-long",
+      "source": "Keydex curated fixture: deletion side taller than addition side",
+      "file": { "old_path": "src/left-long.ts", "new_path": "src/left-long.ts", "status": "modified", "language": "typescript", "content_mode": "partial" },
+      "patch": "diff --git a/src/left-long.ts b/src/left-long.ts\n--- a/src/left-long.ts\n+++ b/src/left-long.ts\n@@ -1,5 +1,3 @@\n function value() {\n-  const first = 1;\n-  const second = 2;\n-  return first + second;\n+  return 3;\n }\n",
+      "expected": { "disposition": "ready", "old_lines": 5, "new_lines": 3, "hunks": 1, "segments": [{ "kind": "context", "left": 1, "right": 1 }, { "kind": "change", "left": 3, "right": 1 }, { "kind": "context", "left": 1, "right": 1 }], "anchors": [{ "id": "h0-change0", "old_line": 2, "new_line": 2 }], "stats": { "additions": 1, "deletions": 3, "changes": 1, "collapsed": 0 }, "snapshot": "left-long:5:3:c1-1/x3-1/c1-1" }
+    },
+    {
+      "id": "aligned-right-long",
+      "source": "Keydex curated fixture: addition side taller than deletion side",
+      "file": { "old_path": "src/right-long.ts", "new_path": "src/right-long.ts", "status": "modified", "language": "typescript", "content_mode": "partial" },
+      "patch": "diff --git a/src/right-long.ts b/src/right-long.ts\n--- a/src/right-long.ts\n+++ b/src/right-long.ts\n@@ -1,3 +1,5 @@\n function value() {\n-  return 3;\n+  const first = 1;\n+  const second = 2;\n+  return first + second;\n }\n",
+      "expected": { "disposition": "ready", "old_lines": 3, "new_lines": 5, "hunks": 1, "segments": [{ "kind": "context", "left": 1, "right": 1 }, { "kind": "change", "left": 1, "right": 3 }, { "kind": "context", "left": 1, "right": 1 }], "anchors": [{ "id": "h0-change0", "old_line": 2, "new_line": 2 }], "stats": { "additions": 3, "deletions": 1, "changes": 1, "collapsed": 0 }, "snapshot": "right-long:3:5:c1-1/x1-3/c1-1" }
+    },
+    {
+      "id": "aligned-pure-add",
+      "source": "Keydex curated fixture: file creation with zero deletion rows",
+      "file": { "old_path": null, "new_path": "src/created.ts", "status": "added", "language": "typescript", "content_mode": "full" },
+      "patch": "diff --git a/src/created.ts b/src/created.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/created.ts\n@@ -0,0 +1,2 @@\n+export const created = true;\n+export default created;\n",
+      "expected": { "disposition": "ready", "old_lines": 0, "new_lines": 2, "hunks": 1, "segments": [{ "kind": "change", "left": 0, "right": 2 }], "anchors": [{ "id": "h0-change0", "old_line": null, "new_line": 1 }], "stats": { "additions": 2, "deletions": 0, "changes": 1, "collapsed": 0 }, "snapshot": "pure-add:0:2:x0-2" }
+    },
+    {
+      "id": "aligned-pure-delete",
+      "source": "Keydex curated fixture: file deletion with zero addition rows",
+      "file": { "old_path": "src/removed.ts", "new_path": null, "status": "deleted", "language": "typescript", "content_mode": "full" },
+      "patch": "diff --git a/src/removed.ts b/src/removed.ts\ndeleted file mode 100644\n--- a/src/removed.ts\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-export const removed = true;\n-export default removed;\n",
+      "expected": { "disposition": "ready", "old_lines": 2, "new_lines": 0, "hunks": 1, "segments": [{ "kind": "change", "left": 2, "right": 0 }], "anchors": [{ "id": "h0-change0", "old_line": 1, "new_line": null }], "stats": { "additions": 0, "deletions": 2, "changes": 1, "collapsed": 0 }, "snapshot": "pure-delete:2:0:x2-0" }
+    },
+    {
+      "id": "aligned-multi-change-one-hunk",
+      "source": "Keydex curated fixture: two ChangeContent blocks inside one hunk",
+      "file": { "old_path": "src/multi-change.ts", "new_path": "src/multi-change.ts", "status": "modified", "language": "typescript", "content_mode": "partial" },
+      "patch": "diff --git a/src/multi-change.ts b/src/multi-change.ts\n--- a/src/multi-change.ts\n+++ b/src/multi-change.ts\n@@ -1,5 +1,5 @@\n-const first = 'old';\n+const first = 'new';\n const bridge = true;\n const bridgeTwo = true;\n-const second = 'old';\n+const second = 'new';\n export { first, second };\n",
+      "expected": { "disposition": "ready", "old_lines": 5, "new_lines": 5, "hunks": 1, "segments": [{ "kind": "change", "left": 1, "right": 1 }, { "kind": "context", "left": 2, "right": 2 }, { "kind": "change", "left": 1, "right": 1 }, { "kind": "context", "left": 1, "right": 1 }], "anchors": [{ "id": "h0-change0", "old_line": 1, "new_line": 1 }, { "id": "h0-change1", "old_line": 4, "new_line": 4 }], "stats": { "additions": 2, "deletions": 2, "changes": 2, "collapsed": 0 }, "snapshot": "multi-change:5:5:x1-1/c2-2/x1-1/c1-1" }
+    },
+    {
+      "id": "aligned-multi-hunk-collapsed",
+      "source": "Keydex curated fixture: two hunks separated by collapsed context",
+      "file": { "old_path": "src/multi-hunk.ts", "new_path": "src/multi-hunk.ts", "status": "modified", "language": "typescript", "content_mode": "partial" },
+      "patch": "diff --git a/src/multi-hunk.ts b/src/multi-hunk.ts\n--- a/src/multi-hunk.ts\n+++ b/src/multi-hunk.ts\n@@ -2,3 +2,3 @@ first\n context two\n-old first\n+new first\n context four\n@@ -20,3 +20,4 @@ second\n context twenty\n-old second\n+new second\n+new extra\n context twenty-two\n",
+      "expected": { "disposition": "ready", "old_lines": 6, "new_lines": 7, "hunks": 2, "segments": [{ "kind": "collapsed", "left": 1, "right": 1 }, { "kind": "context", "left": 1, "right": 1 }, { "kind": "change", "left": 1, "right": 1 }, { "kind": "context", "left": 1, "right": 1 }, { "kind": "collapsed", "left": 15, "right": 15 }, { "kind": "context", "left": 1, "right": 1 }, { "kind": "change", "left": 1, "right": 2 }, { "kind": "context", "left": 1, "right": 1 }], "anchors": [{ "id": "h0-change0", "old_line": 3, "new_line": 3 }, { "id": "h1-change0", "old_line": 21, "new_line": 21 }], "stats": { "additions": 3, "deletions": 2, "changes": 2, "collapsed": 16 }, "snapshot": "multi-hunk:6:7:h2:g16" }
+    },
+    {
+      "id": "aligned-crlf",
+      "source": "Keydex curated fixture: CRLF patch transport",
+      "file": { "old_path": "src/windows.txt", "new_path": "src/windows.txt", "status": "modified", "language": "text", "content_mode": "full" },
+      "patch": "diff --git a/src/windows.txt b/src/windows.txt\r\n--- a/src/windows.txt\r\n+++ b/src/windows.txt\r\n@@ -1 +1 @@\r\n-old\r\n+new\r\n",
+      "expected": { "disposition": "ready", "old_lines": 1, "new_lines": 1, "hunks": 1, "segments": [{ "kind": "change", "left": 1, "right": 1 }], "anchors": [{ "id": "h0-change0", "old_line": 1, "new_line": 1 }], "stats": { "additions": 1, "deletions": 1, "changes": 1, "collapsed": 0 }, "snapshot": "crlf:1:1:x1-1" }
+    },
+    {
+      "id": "aligned-unicode",
+      "source": "Keydex curated fixture: Unicode path and content",
+      "file": { "old_path": "文档/说明.md", "new_path": "文档/说明.md", "status": "modified", "language": "markdown", "content_mode": "full" },
+      "patch": "diff --git a/文档/说明.md b/文档/说明.md\n--- a/文档/说明.md\n+++ b/文档/说明.md\n@@ -1 +1 @@\n-旧内容：你好\n+新内容：你好，Keydex\n",
+      "expected": { "disposition": "ready", "old_lines": 1, "new_lines": 1, "hunks": 1, "segments": [{ "kind": "change", "left": 1, "right": 1 }], "anchors": [{ "id": "h0-change0", "old_line": 1, "new_line": 1 }], "stats": { "additions": 1, "deletions": 1, "changes": 1, "collapsed": 0 }, "snapshot": "unicode:1:1:x1-1" }
+    },
+    {
+      "id": "aligned-no-trailing-newline",
+      "source": "Keydex curated fixture: both sides omit trailing newline",
+      "file": { "old_path": "src/eof.txt", "new_path": "src/eof.txt", "status": "modified", "language": "text", "content_mode": "full" },
+      "patch": "diff --git a/src/eof.txt b/src/eof.txt\n--- a/src/eof.txt\n+++ b/src/eof.txt\n@@ -1 +1 @@\n-old eof\n\\ No newline at end of file\n+new eof\n\\ No newline at end of file\n",
+      "expected": { "disposition": "ready", "old_lines": 1, "new_lines": 1, "hunks": 1, "segments": [{ "kind": "change", "left": 1, "right": 1 }], "anchors": [{ "id": "h0-change0", "old_line": 1, "new_line": 1 }], "stats": { "additions": 1, "deletions": 1, "changes": 1, "collapsed": 0 }, "snapshot": "no-eof:1:1:x1-1:eof-both" }
+    },
+    {
+      "id": "aligned-long-line",
+      "source": "Keydex curated fixture: long single line for horizontal scrolling",
+      "file": { "old_path": "src/long.ts", "new_path": "src/long.ts", "status": "modified", "language": "typescript", "content_mode": "full" },
+      "patch": "diff --git a/src/long.ts b/src/long.ts\n--- a/src/long.ts\n+++ b/src/long.ts\n@@ -1 +1 @@\n-export const message = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';\n+export const message = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';\n",
+      "expected": { "disposition": "ready", "old_lines": 1, "new_lines": 1, "hunks": 1, "segments": [{ "kind": "change", "left": 1, "right": 1 }], "anchors": [{ "id": "h0-change0", "old_line": 1, "new_line": 1 }], "stats": { "additions": 1, "deletions": 1, "changes": 1, "collapsed": 0 }, "snapshot": "long:1:1:x1-1:len152" }
+    },
+    {
+      "id": "aligned-partial-context",
+      "source": "Keydex curated fixture: partial source around line 50",
+      "file": { "old_path": "src/partial.ts", "new_path": "src/partial.ts", "status": "modified", "language": "typescript", "content_mode": "partial" },
+      "patch": "diff --git a/src/partial.ts b/src/partial.ts\n--- a/src/partial.ts\n+++ b/src/partial.ts\n@@ -50,3 +50,3 @@\n before();\n-old();\n+newValue();\n after();\n",
+      "expected": { "disposition": "ready", "old_lines": 3, "new_lines": 3, "hunks": 1, "segments": [{ "kind": "collapsed", "left": 49, "right": 49 }, { "kind": "context", "left": 1, "right": 1 }, { "kind": "change", "left": 1, "right": 1 }, { "kind": "context", "left": 1, "right": 1 }], "anchors": [{ "id": "h0-change0", "old_line": 51, "new_line": 51 }], "stats": { "additions": 1, "deletions": 1, "changes": 1, "collapsed": 49 }, "snapshot": "partial:50:3:3:g49" }
+    },
+    {
+      "id": "aligned-full-content",
+      "source": "Keydex curated fixture: complete before and after contents accompany patch",
+      "file": { "old_path": "src/full.ts", "new_path": "src/full.ts", "status": "modified", "language": "typescript", "content_mode": "full", "old_content": "const value = 'old';\nexport default value;\n", "new_content": "const value = 'new';\nexport default value;\n" },
+      "patch": "diff --git a/src/full.ts b/src/full.ts\n--- a/src/full.ts\n+++ b/src/full.ts\n@@ -1,2 +1,2 @@\n-const value = 'old';\n+const value = 'new';\n export default value;\n",
+      "expected": { "disposition": "ready", "old_lines": 2, "new_lines": 2, "hunks": 1, "segments": [{ "kind": "change", "left": 1, "right": 1 }, { "kind": "context", "left": 1, "right": 1 }], "anchors": [{ "id": "h0-change0", "old_line": 1, "new_line": 1 }], "stats": { "additions": 1, "deletions": 1, "changes": 1, "collapsed": 0 }, "snapshot": "full:2:2:x1-1/c1-1" }
+    },
+    {
+      "id": "aligned-binary",
+      "source": "Keydex curated fixture: binary file is classified before aligned rendering",
+      "file": { "old_path": "assets/logo.png", "new_path": "assets/logo.png", "status": "modified", "language": "text", "content_mode": "partial", "binary": true },
+      "patch": "diff --git a/assets/logo.png b/assets/logo.png\nBinary files a/assets/logo.png and b/assets/logo.png differ\n",
+      "expected": { "disposition": "unsupported", "old_lines": 0, "new_lines": 0, "hunks": 0, "segments": [], "anchors": [], "stats": { "additions": 0, "deletions": 0, "changes": 0, "collapsed": 0 }, "snapshot": "binary:unsupported" }
+    },
+    {
+      "id": "aligned-truncated",
+      "source": "Keydex curated fixture: truncated patch remains explicit and non-selectable",
+      "file": { "old_path": "src/truncated.ts", "new_path": "src/truncated.ts", "status": "modified", "language": "typescript", "content_mode": "partial", "truncated": true },
+      "patch": "diff --git a/src/truncated.ts b/src/truncated.ts\n--- a/src/truncated.ts\n+++ b/src/truncated.ts\n@@ -1,2 +1,2 @@\n-old\n+new\n context\n",
+      "expected": { "disposition": "unsupported", "old_lines": 2, "new_lines": 2, "hunks": 1, "segments": [{ "kind": "change", "left": 1, "right": 1 }, { "kind": "context", "left": 1, "right": 1 }], "anchors": [{ "id": "h0-change0", "old_line": 1, "new_line": 1 }], "stats": { "additions": 1, "deletions": 1, "changes": 1, "collapsed": 0 }, "snapshot": "truncated:unsupported:x1-1/c1-1" }
+    },
+    {
+      "id": "aligned-malformed",
+      "source": "Keydex curated fixture: malformed hunk must fail classification",
+      "file": { "old_path": "src/malformed.ts", "new_path": "src/malformed.ts", "status": "modified", "language": "typescript", "content_mode": "partial" },
+      "patch": "diff --git a/src/malformed.ts b/src/malformed.ts\n--- a/src/malformed.ts\n+++ b/src/malformed.ts\n@@ not-a-hunk @@\n-old\n+new\n",
+      "expected": { "disposition": "malformed", "old_lines": 0, "new_lines": 0, "hunks": 0, "segments": [], "anchors": [], "stats": { "additions": 0, "deletions": 0, "changes": 0, "collapsed": 0 }, "snapshot": "malformed:parse-error" }
+    }
+  ]
+}

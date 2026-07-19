@@ -33,12 +33,17 @@ describe("Keydex Diff display preferences", () => {
   });
 
   it("persists only safe display fields and isolates scopes", () => {
-    writeKeydexDiffPreference("git", "repo-a", { layout: "split", wrap: true }, storage);
+    writeKeydexDiffPreference("git", "repo-a", {
+      layout: "split",
+      wrap: true,
+      syncScroll: false,
+    }, storage);
     expect(readKeydexDiffPreference("git", "repo-a", storage)).toEqual({
       version: 1,
       layout: "split",
       wrap: true,
       navigationOpen: false,
+      syncScroll: false,
     });
     expect(readKeydexDiffPreference("git", "repo-b", storage)).toEqual(defaultKeydexDiffPreference("git"));
     expect([...storage.values.values()].join(" ")).not.toMatch(/patch|selection|busy|repo-a/);
@@ -46,7 +51,12 @@ describe("Keydex Diff display preferences", () => {
 
   it("migrates legacy split and lineWrapping values and rejects unsupported layouts", () => {
     storage.setItem(createKeydexDiffPreferenceKey("preview", "tab"), JSON.stringify({ split: true, lineWrapping: false }));
-    expect(readKeydexDiffPreference("preview", "tab", storage)).toMatchObject({ layout: "split", wrap: false, version: 1 });
+    expect(readKeydexDiffPreference("preview", "tab", storage)).toMatchObject({
+      layout: "split",
+      wrap: false,
+      syncScroll: true,
+      version: 1,
+    });
     storage.setItem(createKeydexDiffPreferenceKey("git", "repo"), JSON.stringify({ layout: "other", wrap: true }));
     expect(readKeydexDiffPreference("git", "repo", storage).layout).toBe("split");
   });
@@ -59,10 +69,27 @@ describe("Keydex Diff display preferences", () => {
 
   it("restores Git preferences after a hook remount", () => {
     const first = renderHook(() => useKeydexDiffDisplayPreference("git", "repo-hook"));
-    act(() => first.result.current.update({ layout: "split", wrap: true }));
+    act(() => first.result.current.update({ layout: "split", wrap: true, syncScroll: false }));
     first.unmount();
     const second = renderHook(() => useKeydexDiffDisplayPreference("git", "repo-hook"));
-    expect(second.result.current.preference).toMatchObject({ layout: "split", wrap: true });
+    expect(second.result.current.preference).toMatchObject({
+      layout: "split",
+      wrap: true,
+      syncScroll: false,
+    });
+  });
+
+  it("restores Preview sync by scope but keeps Review sync mount-local", () => {
+    writeKeydexDiffPreference("preview", "preview-a", { syncScroll: false }, storage);
+    expect(readKeydexDiffPreference("preview", "preview-a", storage).syncScroll).toBe(false);
+    expect(readKeydexDiffPreference("preview", "preview-b", storage).syncScroll).toBe(true);
+
+    const review = renderHook(() => useKeydexDiffDisplayPreference("review", "review-a"));
+    act(() => review.result.current.update({ syncScroll: false }));
+    expect(review.result.current.preference.syncScroll).toBe(false);
+    review.unmount();
+    const remounted = renderHook(() => useKeydexDiffDisplayPreference("review", "review-a"));
+    expect(remounted.result.current.preference.syncScroll).toBe(true);
   });
 
   it("switches scope without leaking the previous project preference", () => {

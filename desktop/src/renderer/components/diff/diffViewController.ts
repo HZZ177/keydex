@@ -29,6 +29,8 @@ export interface KeydexDiffViewControllerState {
   readonly expandedFileIds: readonly string[];
   readonly layout: KeydexDiffLayout;
   readonly wrap: boolean;
+  readonly syncScroll: boolean;
+  readonly activeChangeId: string | null;
   readonly selection: KeydexDiffSelectionRange | null;
   readonly scrollTarget: KeydexDiffScrollTarget | null;
   readonly loadingAction: string | null;
@@ -41,6 +43,8 @@ export type KeydexDiffViewControllerEvent =
   | { readonly type: "set_expanded_files"; readonly fileIds: readonly string[] }
   | { readonly type: "set_layout"; readonly layout: KeydexDiffLayout }
   | { readonly type: "set_wrap"; readonly wrap: boolean }
+  | { readonly type: "set_sync_scroll"; readonly syncScroll: boolean }
+  | { readonly type: "set_active_change"; readonly changeId: string | null }
   | { readonly type: "set_selection"; readonly selection: KeydexDiffSelectionRange | null }
   | { readonly type: "set_scroll_target"; readonly target: KeydexDiffScrollTarget | null }
   | { readonly type: "set_loading_action"; readonly action: string | null }
@@ -53,6 +57,8 @@ export interface KeydexDiffViewController {
   readonly setExpandedFiles: (fileIds: readonly string[]) => void;
   readonly setLayout: (layout: KeydexDiffLayout) => void;
   readonly setWrap: (wrap: boolean) => void;
+  readonly setSyncScroll: (syncScroll: boolean) => void;
+  readonly setActiveChange: (changeId: string | null) => void;
   readonly setSelection: (selection: KeydexDiffSelectionRange | null) => void;
   readonly setScrollTarget: (target: KeydexDiffScrollTarget | null) => void;
   readonly setLoadingAction: (action: string | null) => void;
@@ -64,7 +70,7 @@ export function createKeydexDiffViewControllerState(
   profile: KeydexDiffProfileName,
   initial: Partial<Pick<
     KeydexDiffViewControllerState,
-    "activeFileId" | "expandedFileIds" | "layout" | "wrap"
+    "activeFileId" | "expandedFileIds" | "layout" | "wrap" | "syncScroll" | "activeChangeId"
   >> = {},
 ): KeydexDiffViewControllerState {
   const contract = KEYDEX_DIFF_PROFILES[profile];
@@ -85,6 +91,10 @@ export function createKeydexDiffViewControllerState(
     expandedFileIds: normalizeFileIds(initial.expandedFileIds ?? (activeFileId ? [activeFileId] : []), fileIds),
     layout,
     wrap: initial.wrap ?? contract.defaultWrap,
+    syncScroll: contract.syncScroll
+      ? initial.syncScroll ?? contract.defaultSyncScroll
+      : false,
+    activeChangeId: normalizeChangeId(initial.activeChangeId),
     selection: null,
     scrollTarget: null,
     loadingAction: null,
@@ -131,6 +141,18 @@ export function reduceKeydexDiffViewController(
   if (event.type === "set_wrap") {
     return event.wrap === state.wrap ? state : freezeState({ ...state, wrap: event.wrap });
   }
+  if (event.type === "set_sync_scroll") {
+    if (!KEYDEX_DIFF_PROFILES[state.profile].syncScroll) return state;
+    return event.syncScroll === state.syncScroll
+      ? state
+      : freezeState({ ...state, syncScroll: event.syncScroll });
+  }
+  if (event.type === "set_active_change") {
+    const activeChangeId = normalizeChangeId(event.changeId);
+    return activeChangeId === state.activeChangeId
+      ? state
+      : freezeState({ ...state, activeChangeId });
+  }
   if (event.type === "set_selection") {
     const selection = validSelection(event.selection, state) ? event.selection : null;
     return freezeState({ ...state, selection: freezeSelection(selection) });
@@ -167,6 +189,8 @@ export function useKeydexDiffViewController(
     setExpandedFiles: (fileIds: readonly string[]) => dispatch({ type: "set_expanded_files", fileIds }),
     setLayout: (layout: KeydexDiffLayout) => dispatch({ type: "set_layout", layout }),
     setWrap: (wrap: boolean) => dispatch({ type: "set_wrap", wrap }),
+    setSyncScroll: (syncScroll: boolean) => dispatch({ type: "set_sync_scroll", syncScroll }),
+    setActiveChange: (changeId: string | null) => dispatch({ type: "set_active_change", changeId }),
     setSelection: (selection: KeydexDiffSelectionRange | null) => dispatch({ type: "set_selection", selection }),
     setScrollTarget: (target: KeydexDiffScrollTarget | null) => dispatch({ type: "set_scroll_target", target }),
     setLoadingAction: (action: string | null) => dispatch({ type: "set_loading_action", action }),
@@ -205,6 +229,10 @@ function syncDocument(
       ? state.layout
       : contract.defaultLayout,
     wrap: preserveDisplay ? state.wrap : contract.defaultWrap,
+    syncScroll: contract.syncScroll
+      ? preserveDisplay ? state.syncScroll : contract.defaultSyncScroll
+      : false,
+    activeChangeId: contentChanged ? null : state.activeChangeId,
     selection: contentChanged ? null : selectionFile ? state.selection : null,
     scrollTarget: contentChanged ? null : validScrollTarget(state.scrollTarget, nextFileIds),
     loadingAction: null,
@@ -271,4 +299,9 @@ function normalizeFileIds(fileIds: readonly string[], available: ReadonlySet<str
 
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function normalizeChangeId(changeId: string | null | undefined): string | null {
+  const normalized = changeId?.trim();
+  return normalized || null;
 }

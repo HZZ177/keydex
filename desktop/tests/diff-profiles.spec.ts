@@ -30,11 +30,28 @@ describe("Keydex Diff profile contracts", () => {
     expect(KEYDEX_DIFF_PROFILES.compact).toEqual(
       expect.objectContaining({ defaultLayout: "stacked", defaultWrap: true, density: "compact" }),
     );
-    expect(KEYDEX_DIFF_PROFILES.review.allowedLayouts).toEqual(["stacked"]);
+    expect(KEYDEX_DIFF_PROFILES.review.allowedLayouts).toEqual(["stacked", "split"]);
     expect(KEYDEX_DIFF_PROFILES.git).toEqual(
       expect.objectContaining({ selection: "git_patch", defaultLayout: "split", defaultWrap: false }),
     );
     expect(KEYDEX_DIFF_PROFILES.preview.allowedLayouts).toEqual(["stacked", "split"]);
+    expect(KEYDEX_DIFF_PROFILES.compact).toEqual(expect.objectContaining({
+      alignedSplit: false,
+      connector: false,
+      syncScroll: false,
+      hunkNavigation: false,
+      scrollChaining: "parent_at_edge",
+      hunkActions: [],
+    }));
+    for (const profile of ["review", "git", "preview"] as const) {
+      expect(KEYDEX_DIFF_PROFILES[profile]).toEqual(expect.objectContaining({
+        alignedSplit: true,
+        connector: true,
+        syncScroll: true,
+        hunkNavigation: true,
+        hunkActions: ["navigate", "copy"],
+      }));
+    }
   });
 
   it("changes only shell capabilities when every profile receives the same document", () => {
@@ -58,6 +75,10 @@ describe("Keydex Diff profile contracts", () => {
     expect(readOnlyGit.enabledActions).not.toContain("apply_git_patch");
     expect(readOnlyGit.readOnly).toBe(true);
     expect(writableGit.enabledActions).toContain("apply_git_patch");
+    expect(writableGit.enabledActions).toEqual(expect.arrayContaining([
+      "toggle_sync_scroll",
+      "navigate_changes",
+    ]));
     expect(writableGit.readOnly).toBe(false);
     expect(writableGit.actions.git?.applyPatches).toBe(applyPatches);
   });

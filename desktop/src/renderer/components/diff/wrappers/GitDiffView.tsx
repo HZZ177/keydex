@@ -84,6 +84,7 @@ export function GitDiffView({
     activeFileId,
     layout: documentDefaultLayout,
     wrap: wrap ?? displayPreference.preference.wrap,
+    syncScroll: displayPreference.preference.syncScroll,
   });
   const actions: KeydexDiffActions = {
     ...(copyPatch ? { copyPatch } : {}),
@@ -131,6 +132,10 @@ export function GitDiffView({
     controller.setWrap(nextWrap);
     displayPreference.update({ wrap: nextWrap });
   };
+  const setSyncScroll = (syncScroll: boolean) => {
+    controller.setSyncScroll(syncScroll);
+    displayPreference.update({ syncScroll });
+  };
   const activeDocumentFile = document.files.find((file) => file.id === controller.state.activeFileId)
     ?? document.files[0];
   const resolvedSelectionText = selectionText ?? (
@@ -153,6 +158,8 @@ export function GitDiffView({
         state={{
           layout: controller.state.layout,
           wrap: controller.state.wrap,
+          syncScroll: controller.state.syncScroll,
+          activeChangeId: controller.state.activeChangeId,
           activeFileId: controller.state.activeFileId,
           expandedFileIds: controller.state.expandedFileIds,
           selection: controller.state.selection,
@@ -166,6 +173,8 @@ export function GitDiffView({
         onExpandedFilesChange={controller.setExpandedFiles}
         onLayoutChange={setLayout}
         onWrapChange={setWrap}
+        onSyncScrollChange={setSyncScroll}
+        onActiveChangeChange={controller.setActiveChange}
         showFileNavigator={false}
         hiddenToolbarActions={[
           "previous_file",
@@ -173,7 +182,6 @@ export function GitDiffView({
           "copy_selection",
           "copy_patch",
           "open_file",
-          "apply_git_patch",
         ]}
         toolbarLeading={toolbarLeading}
       />

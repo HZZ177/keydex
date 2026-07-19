@@ -1,0 +1,97 @@
+.root {
+  --keydex-diff-gutter-line-number-width: calc(var(--keydex-diff-line-number-digits, 3) * 1ch + 16px);
+  --keydex-diff-gutter-lane-width: calc(var(--keydex-diff-gutter-line-number-width) + 16px);
+
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--diff-aligned-connector-width) minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: var(--keydex-aligned-min-height, 240px);
+  overflow: hidden;
+  background: var(--diff-surface-bg);
+}
+
+.leftPane,
+.rightPane,
+.connector,
+.gutterViewport {
+  grid-row: 1;
+}
+
+.leftPane {
+  grid-column: 1;
+}
+
+.rightPane {
+  grid-column: 3;
+}
+
+.connector {
+  position: relative;
+  z-index: 3;
+  min-width: 0;
+  overflow: visible;
+  background: var(--diff-surface-bg);
+  pointer-events: none;
+  grid-column: 2;
+}
+
+.gutterViewport {
+  position: relative;
+  z-index: 2;
+  align-self: start;
+  width: var(--keydex-diff-gutter-lane-width);
+  height: min(100%, var(--keydex-aligned-connector-viewport-height, 100%));
+  overflow: hidden;
+  background: var(--diff-gutter-bg);
+  pointer-events: none;
+}
+
+.leftGutter {
+  grid-column: 1;
+  justify-self: end;
+}
+
+.rightGutter {
+  grid-column: 3;
+  justify-self: start;
+}
+
+.gutterCanvas {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  will-change: transform;
+}
+
+.connectorVisual,
+.connectorActions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: min(100%, var(--keydex-aligned-connector-viewport-height, 100%));
+}
+
+.connectorActions {
+  z-index: 1;
+}
+
+.connector[data-keydex-aligned-viewport-sync="pending"] .connectorVisual,
+.connector[data-keydex-aligned-viewport-sync="pending"] .connectorActions {
+  visibility: hidden;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

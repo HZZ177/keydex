@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ReviewDiffView,
   isReviewToolbarRowClick,
+  reviewDiffFileGroupAccessibleName,
   resolveReviewFocusedFile,
 } from "@/renderer/components/diff/wrappers/ReviewDiffView";
 import { normalizeUnifiedPatch } from "@/renderer/components/diff/normalizers/unifiedPatch";
@@ -83,6 +84,8 @@ describe("ReviewDiffView", () => {
 
   it("merges the compact file identity into the toolbar and removes duplicate review chrome", () => {
     render(<ReviewDiffView document={document} focusedPath="src/new.ts" />);
+    expect(screen.getByRole("group", { name: "src/new.ts，重命名文件" })).not.toBeNull();
+    expect(reviewDiffFileGroupAccessibleName(document.files[1]!)).toBe("src/new.ts，重命名文件");
     const props = lastProps as {
       showFileHeader: boolean;
       hiddenToolbarActions: readonly string[];
@@ -162,5 +165,34 @@ describe("ReviewDiffView", () => {
     rerender(<ReviewDiffView document={document} wrap onWrapChange={onWrapChange} />);
     props = lastProps as typeof props;
     expect(props.state.wrap).toBe(true);
+  });
+
+  it("keeps split and sync state host-controlled only for wide review containers", () => {
+    const onLayoutChange = vi.fn();
+    const onSyncScrollChange = vi.fn();
+    render(
+      <ReviewDiffView
+        document={document}
+        allowSplit
+        embedded={false}
+        layout="split"
+        syncScroll={false}
+        onLayoutChange={onLayoutChange}
+        onSyncScrollChange={onSyncScrollChange}
+      />,
+    );
+    let props = lastProps as {
+      embedded: boolean;
+      state: { layout: string; syncScroll: boolean };
+      onLayoutChange: (layout: "stacked") => void;
+      onSyncScrollChange: (syncScroll: boolean) => void;
+    };
+    expect(props.embedded).toBe(false);
+    expect(props.state).toMatchObject({ layout: "split", syncScroll: false });
+    act(() => props.onLayoutChange("stacked"));
+    expect(onLayoutChange).toHaveBeenCalledWith("stacked");
+    props = lastProps as typeof props;
+    act(() => props.onSyncScrollChange(true));
+    expect(onSyncScrollChange).toHaveBeenCalledWith(true);
   });
 });

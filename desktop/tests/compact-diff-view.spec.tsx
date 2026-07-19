@@ -47,6 +47,15 @@ describe("CompactDiffView", () => {
     expect(container.querySelector('[data-keydex-diff-wrapper="compact"]')?.getAttribute("data-expanded")).toBe("false");
   });
 
+  it("labels the file action as reviewing in the sidebar", () => {
+    const openFile = vi.fn();
+    render(<CompactDiffView document={single} defaultExpanded actions={{ openFile }} />);
+    const review = screen.getByRole("button", { name: "在侧边栏审阅" });
+    expect(review.getAttribute("data-tooltip-label")).toBe("在侧边栏审阅");
+    fireEvent.click(review);
+    expect(openFile).toHaveBeenCalledWith("src/a.ts");
+  });
+
   it("uses compact stacked and wrapped defaults without Git capabilities", () => {
     render(<CompactDiffView document={single} defaultExpanded actions={{ copyPatch: vi.fn() }} />);
     const engine = screen.getByTestId("compact-engine");

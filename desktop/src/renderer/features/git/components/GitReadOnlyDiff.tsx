@@ -13,7 +13,7 @@ import styles from "./GitDiffSurface.module.css";
 export interface GitReadOnlyDiffProps {
   readonly repositoryId: GitRepositoryId | string;
   readonly repositoryVersion: GitRepositoryVersion | string;
-  readonly sourceKind: Exclude<GitDiffSourceKind, "working_tree" | "index">;
+  readonly sourceKind: GitDiffSourceKind;
   readonly files: readonly GitFileDiff[];
   readonly emptyMessage?: string;
   readonly scrollScopeKey: string;

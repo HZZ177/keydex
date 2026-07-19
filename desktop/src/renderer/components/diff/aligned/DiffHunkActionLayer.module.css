@@ -1,0 +1,67 @@
+.layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.target {
+  position: absolute;
+  top: var(--diff-change-y);
+  left: 50%;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--diff-aligned-hunk-action-text);
+  opacity: 0;
+  pointer-events: auto;
+  transform: translate(-50%, -50%);
+  transition:
+    opacity 140ms var(--motion-ease-standard),
+    background-color 140ms var(--motion-ease-standard),
+    border-color 140ms var(--motion-ease-standard);
+}
+
+.target::before {
+  position: absolute;
+  inset: -5px;
+  content: "";
+}
+
+.target > span {
+  display: block;
+  width: 5px;
+  height: 5px;
+  margin: auto;
+  border-radius: 50%;
+  background: var(--diff-aligned-change-edge);
+}
+
+.layer:hover .target,
+.layer:focus-within .target,
+.target[data-active="true"] {
+  opacity: 1;
+}
+
+.target:hover {
+  border-color: var(--diff-aligned-hunk-action-border);
+  background: var(--diff-aligned-hunk-action-hover);
+}
+
+.target[data-active="true"] {
+  border-color: var(--diff-aligned-pane-active-edge);
+  background: var(--diff-aligned-hunk-action-bg);
+}
+
+.target:focus-visible {
+  outline: 2px solid var(--diff-focus-ring);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .target {
+    transition: none;
+  }
+}
