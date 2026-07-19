@@ -24,3 +24,20 @@
 .alignedCanvas[data-wrap="true"] {
   width: 100%;
 }
+
+.collapsedGapRow {
+  position: absolute;
+  right: 0;
+  left: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.collapsedGapRow > [data-keydex-aligned-gap] {
+  height: 100%;
+  min-height: 0;
+}
+
+.collapsedGapRow[data-side="new"] > [data-keydex-aligned-gap] {
+  padding-inline-start: calc(var(--keydex-diff-gutter-lane-width) + 12px);
+}

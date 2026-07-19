@@ -59,6 +59,7 @@ export function DiffHunkActionLayer({
             type="button"
             className={styles.target}
             style={style}
+            data-keydex-diff-hunk-target="true"
             data-change-id={item.changeId}
             data-active={activeChangeId === item.changeId ? "true" : "false"}
             aria-pressed={activeChangeId === item.changeId}

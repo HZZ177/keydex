@@ -70,6 +70,15 @@
   scrollbar-width: auto;
 }
 
+.groups[data-empty="true"] {
+  display: grid;
+  padding: 0;
+}
+
+.groups[data-empty="true"] .state {
+  min-height: 0;
+}
+
 .groups[data-virtualized="true"] {
   overflow: hidden;
   padding: 0;

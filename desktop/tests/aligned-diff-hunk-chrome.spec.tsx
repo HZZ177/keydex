@@ -3,11 +3,14 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { buildKeydexAlignedDiffModel } from "@/renderer/components/diff/aligned/alignmentSegments";
+import { AlignedDiffVirtualRows } from "@/renderer/components/diff/aligned/AlignedDiffFileView";
 import {
   AlignedDiffPaneItemView,
   alignedFileMetadata,
   buildAlignedDiffPaneItems,
 } from "@/renderer/components/diff/aligned/AlignedDiffHunkChrome";
+import { buildScrollMappingMetrics } from "@/renderer/components/diff/aligned/hunkScrollMapping";
+import { DiffRowHeightIndex } from "@/renderer/components/diff/aligned/rowHeightIndex";
 import {
   preparePierreAlignedFile,
   type PierreAlignedPreparedFile,
@@ -56,6 +59,43 @@ describe("aligned Hunk and metadata chrome", () => {
     expect(right.filter(({ type }) => type === "collapsed_gap").map((item) => (
       item.type === "collapsed_gap" ? item.hiddenLineCount : 0
     ))).toEqual([1, 15]);
+  });
+
+  it("mounts collapsed unchanged rows at their reserved aligned-canvas offsets", async () => {
+    const current = await prepared("aligned-multi-hunk-collapsed");
+    const model = buildKeydexAlignedDiffModel(current);
+    const metrics = buildScrollMappingMetrics(
+      model,
+      new DiffRowHeightIndex(model.leftRows.length, 20),
+      new DiffRowHeightIndex(model.rightRows.length, 20),
+    );
+    const { container } = render(
+      <AlignedDiffVirtualRows
+        rows={model.leftRows}
+        rowIndexes={[]}
+        rowOffsets={metrics.leftRowOffsets}
+        segmentMappings={metrics.segments}
+        side="old"
+        totalHeight={metrics.leftTotalHeight}
+        contentColumns={0}
+        wrap={false}
+        activeChangeId={null}
+        lineNumberDigits={3}
+        observeRow={vi.fn()}
+        changeKindById={new Map()}
+      />,
+    );
+    const gaps = Array.from(container.querySelectorAll<HTMLElement>("[data-keydex-aligned-gap-overlay]"));
+    const expected = metrics.segments.filter(({ segment }) => segment.kind === "collapsed_gap");
+    expect(gaps).toHaveLength(2);
+    expect(gaps.map(({ textContent }) => textContent)).toEqual([
+      "已折叠 1 行未修改内容",
+      "已折叠 15 行未修改内容",
+    ]);
+    expect(gaps.map(({ style }) => [style.top, style.height])).toEqual(expected.map(({ left }) => [
+      `${left.start}px`,
+      `${left.end - left.start}px`,
+    ]));
   });
 
   it("does not expose expansion for partial patches but enables explicit full-content capability", async () => {

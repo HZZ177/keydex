@@ -41,12 +41,17 @@ describe("Git empty and recovery states", () => {
     expect(screen.getByText("未找到可用的 Git 命令行程序。")).not.toBeNull();
   });
 
-  it("keeps the history branch selector, left ref selection, and history request synchronized", async () => {
+  it("opens a clean repository on the current branch history and keeps later ref selection synchronized", async () => {
     const runtime = stateRuntime({ readyOnDiscover: true });
-    renderTool(runtime, "history");
+    renderTool(runtime);
 
     const featureBranch = await screen.findByRole("treeitem", { name: "feature/demo" });
-    expect(screen.getByRole("button", { name: "分支筛选：全部分支" })).not.toBeNull();
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Git 日志" }).getAttribute("aria-selected")).toBe("true"));
+    expect(screen.getByRole("button", { name: "分支筛选：main" })).not.toBeNull();
+    await waitFor(() => expect(runtime.history).toHaveBeenCalledWith(
+      expect.objectContaining({ repositoryId: "repo-1" }),
+      expect.objectContaining({ revision: "refs/heads/main" }),
+    ));
     fireEvent.click(featureBranch);
 
     await waitFor(() => expect(screen.getByRole("button", { name: "分支筛选：feature/demo" })).not.toBeNull());
@@ -66,6 +71,7 @@ describe("Git empty and recovery states", () => {
     renderTool(runtime);
 
     await screen.findByRole("treeitem", { name: "src/a.ts modified" });
+    expect(screen.getByRole("tab", { name: "提交" }).getAttribute("aria-selected")).toBe("true");
 
     await waitFor(() => expect(runtime.diff).toHaveBeenCalledWith(
       expect.objectContaining({ repositoryId: "repo-1" }),

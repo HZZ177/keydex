@@ -69,6 +69,7 @@ import {
   recordFileMarkdownRuntimeEntrySnapshot,
   registerFileMarkdownRuntimeEntry,
 } from "./fileMarkdownRuntime";
+import { FilePreviewBottomScrollSpace } from "./FilePreviewBottomScrollSpace";
 import type { SourceLineScrollAnchor } from "./splitViewScrollSync";
 
 export interface FileMarkdownRuntimeHostHandle {
@@ -663,6 +664,7 @@ export const FileMarkdownRuntimeHost = forwardRef<FileMarkdownRuntimeHostHandle,
             </button>
           </div>
         ) : null}
+        <FilePreviewBottomScrollSpace scrollElement={props.scrollElement} />
       </div>
     );
   },

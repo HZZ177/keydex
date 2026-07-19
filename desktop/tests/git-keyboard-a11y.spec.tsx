@@ -14,9 +14,9 @@ afterEach(cleanup);
 describe("Git keyboard and accessibility contracts", () => {
   it("provides wrapping arrow, Home and End navigation for the tool-window tabs", () => {
     expect(adjacentGitToolView("changes", "ArrowRight")).toBe("history");
-    expect(adjacentGitToolView("changes", "ArrowLeft")).toBe("branches");
+    expect(adjacentGitToolView("changes", "ArrowLeft")).toBe("history");
     expect(adjacentGitToolView("history", "Home")).toBe("changes");
-    expect(adjacentGitToolView("history", "End")).toBe("branches");
+    expect(adjacentGitToolView("history", "End")).toBe("history");
     expect(adjacentGitToolView("blame", "ArrowLeft")).toBeNull();
     expect(adjacentGitToolView("history", "Enter")).toBeNull();
   });

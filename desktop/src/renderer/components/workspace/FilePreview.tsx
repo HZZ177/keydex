@@ -153,6 +153,7 @@ import {
   type FileMarkdownRuntimeHostHandle,
   type FileMarkdownRuntimeSnapshotLoader,
 } from "./FileMarkdownRuntimeHost";
+import { FilePreviewBottomScrollSpace } from "./FilePreviewBottomScrollSpace";
 import {
   codeMirrorViewportSourceAnchor,
   syncCodeMirrorViewportToSourceAnchor,
@@ -2126,6 +2127,7 @@ export function FilePreview({
                 data-split-scroll-pane="source"
               >
                 {renderSourcePane()}
+                <FilePreviewBottomScrollSpace scrollElement={splitSourceViewport} />
               </div>
             </div>
           </section>
@@ -2401,6 +2403,9 @@ export function FilePreview({
           >
             <div className={styles.documentColumn} ref={bodyRef}>
               {renderBodyContent()}
+              {!splitViewActive && !primaryHtmlFrameOwnsScroll && !(kind === "markdown" && viewMode === "preview") ? (
+                <FilePreviewBottomScrollSpace scrollElement={documentViewport} />
+              ) : null}
               {quoteSelectionAvailable || annotationAvailable ? (
                 <FilePreviewSelectionLayer
                   bodyRef={bodyRef}

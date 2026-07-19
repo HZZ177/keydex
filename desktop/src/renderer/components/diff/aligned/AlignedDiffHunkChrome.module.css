@@ -27,9 +27,11 @@
 .gap {
   display: grid;
   min-height: 30px;
-  place-items: center;
-  border-block: 1px solid var(--diff-hunk-border);
-  background: var(--diff-hunk-bg);
+  padding-inline: 12px;
+  place-items: center start;
+  border-block: 1px solid var(--diff-border-subtle);
+  color: var(--diff-gutter-text-active);
+  background: var(--diff-surface-muted);
 }
 
 .gap button {
@@ -43,6 +45,16 @@
 .gap button:focus-visible {
   outline: 1px solid var(--diff-focus-ring);
   outline-offset: 2px;
+}
+
+.gapContent {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gapIcon {
+  flex: 0 0 auto;
 }
 
 .eof {

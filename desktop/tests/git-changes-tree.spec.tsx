@@ -126,6 +126,16 @@ describe("Git changes tree", () => {
     expect(refreshing.hasAttribute("disabled")).toBe(true);
   });
 
+  it("fills the changes region with the empty state and uses commit-oriented copy", () => {
+    const emptyStatus = status();
+    emptyStatus.files = [];
+    render(<GitChangesView status={emptyStatus} />);
+
+    const emptyState = screen.getByRole("status");
+    expect(emptyState.textContent).toBe("暂无可提交内容");
+    expect(emptyState.parentElement?.getAttribute("data-empty")).toBe("true");
+  });
+
   it("reflects child selection as a mixed group and promotes mixed selection to select all", () => {
     render(<GitChangesView status={status()} />);
 

@@ -1,3 +1,5 @@
+import { FoldVertical } from "lucide-react";
+
 import type { PierreAlignedPreparedFile } from "../engine/pierreAlignedAdapter";
 import type { DiffPaneRow, DiffPaneSide, KeydexAlignedDiffModel } from "./alignedDiffModel";
 import { alignedHunkId } from "./buildAlignedDiffModel";
@@ -95,13 +97,19 @@ export function AlignedDiffPaneItemView({
     return <div className={styles.eof} data-keydex-aligned-eof={item.side}>文件末尾没有换行符</div>;
   }
   const label = `已折叠 ${item.hiddenLineCount} 行未修改内容`;
+  const content = (
+    <span className={styles.gapContent}>
+      <FoldVertical className={styles.gapIcon} size={14} strokeWidth={1.8} aria-hidden="true" />
+      <span>{label}</span>
+    </span>
+  );
   return (
     <div className={styles.gap} data-keydex-aligned-gap={item.segmentId}>
       {item.canExpand && onExpandGap ? (
         <button type="button" onClick={() => onExpandGap(item.segmentId)} aria-label={`展开${item.hiddenLineCount}行上下文`}>
-          {label}
+          {content}
         </button>
-      ) : <span>{label}</span>}
+      ) : content}
     </div>
   );
 }

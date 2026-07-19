@@ -368,7 +368,6 @@ describe("MessageText", () => {
       <PreviewProvider>
         <PreviewHostContextSetter
           context={{
-            panelScopeKey: "sidebar:parent-session",
             sessionId: "parent-session",
             workspaceAvailable: true,
             runtime,
@@ -398,7 +397,7 @@ describe("MessageText", () => {
     fireEvent.click(screen.getByRole("button", { name: "打开文件引用 README.md" }));
 
     const request = screen.getByTestId("file-panel-request");
-    expect(request.dataset.scopeKey).toBe("sidebar:parent-session");
+    expect(request.dataset.scopeKey).toBe("session:parent-session");
     expect(request.dataset.sessionId).toBe("child-session");
   });
 
@@ -408,7 +407,6 @@ describe("MessageText", () => {
       <PreviewProvider>
         <PreviewHostContextSetter
           context={{
-            panelScopeKey: "sidebar:parent-session",
             sessionId: "parent-session",
             workspaceAvailable: true,
             runtime,
@@ -441,7 +439,7 @@ describe("MessageText", () => {
     const request = screen.getByTestId("file-panel-request");
     expect(request.dataset.filePath).toBe("");
     expect(request.dataset.directoryRevealPath).toBe("src");
-    expect(request.dataset.scopeKey).toBe("sidebar:parent-session");
+    expect(request.dataset.scopeKey).toBe("session:parent-session");
     expect(request.dataset.sessionId).toBe("child-session");
   });
 
@@ -571,7 +569,6 @@ describe("MessageText", () => {
       <PreviewProvider>
         <PreviewHostContextSetter
           context={{
-            panelScopeKey: "sidebar:parent-session",
             sessionId: "parent-session",
             workspaceAvailable: true,
             runtime,
@@ -591,8 +588,8 @@ describe("MessageText", () => {
     expect(previewEntryPayload()).toMatchObject({
       request: { type: "file", path: "README.md" },
       revealTarget: { lineStart: 12, lineEnd: 12 },
-      scopeKey: "sidebar:parent-session",
-      renderContext: { sessionId: "child-session", panelScopeKey: "sidebar:parent-session" },
+      scopeKey: "session:parent-session",
+      renderContext: { sessionId: "child-session", panelScopeKey: "session:parent-session" },
     });
   });
 
@@ -1504,7 +1501,6 @@ describe("MessageText", () => {
       <PreviewProvider>
         <PreviewHostContextSetter
           context={{
-            panelScopeKey: "sidebar:parent-session",
             sessionId: "parent-session",
             workspaceAvailable: true,
           }}
@@ -1520,7 +1516,7 @@ describe("MessageText", () => {
 
     expect(previewEntryPayload()).toMatchObject({
       request: { type: "content", contentType: "mermaid" },
-      scopeKey: "sidebar:parent-session",
+      scopeKey: "session:parent-session",
     });
   });
 

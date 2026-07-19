@@ -47,6 +47,11 @@ export interface DiffScrollMappingOptions {
   readonly collapsedGapHeight?: number;
 }
 
+export interface DiffViewportScrollMappingOptions {
+  readonly sourceBottomScrollSpace?: number;
+  readonly targetBottomScrollSpace?: number;
+}
+
 export function buildScrollMappingMetrics(
   model: KeydexAlignedDiffModel,
   leftHeights: DiffRowHeightIndex,
@@ -259,6 +264,62 @@ export function mapDiffPaneOffset(
 ): number | null {
   if (!Number.isFinite(offset)) return null;
   return mapOffsetAlongPath(metrics, sourceSide, offset);
+}
+
+/**
+ * Maps the semantic position at the viewport centre instead of its top edge.
+ * Unequal change runs therefore hold the shorter side in the middle of the
+ * screen while the longer side consumes its extra rows. Once the source enters
+ * the reserved bottom-scroll space, both panes advance through their respective
+ * tail spaces at the same progress instead of clamping the follower to content.
+ */
+export function mapDiffPaneViewportOffset(
+  model: KeydexAlignedDiffModel,
+  metrics: DiffScrollMappingMetrics,
+  leftHeights: DiffRowHeightIndex,
+  rightHeights: DiffRowHeightIndex,
+  sourceSide: DiffPaneSide,
+  scrollTop: number,
+  sourceViewportHeight: number,
+  targetViewportHeight: number,
+  options: DiffViewportScrollMappingOptions = {},
+): number | null {
+  if (
+    !Number.isFinite(scrollTop)
+    || !Number.isFinite(sourceViewportHeight)
+    || !Number.isFinite(targetViewportHeight)
+  ) return null;
+  const safeSourceHeight = Math.max(0, sourceViewportHeight);
+  const safeTargetHeight = Math.max(0, targetViewportHeight);
+  const sourceTotal = sourceSide === "old" ? metrics.leftTotalHeight : metrics.rightTotalHeight;
+  const targetTotal = sourceSide === "old" ? metrics.rightTotalHeight : metrics.leftTotalHeight;
+  const sourceContentEndScrollTop = Math.max(0, sourceTotal - safeSourceHeight);
+  const targetContentEndScrollTop = Math.max(0, targetTotal - safeTargetHeight);
+  const sourceBottomScrollSpace = finiteNonNegative(options.sourceBottomScrollSpace);
+  const targetBottomScrollSpace = finiteNonNegative(options.targetBottomScrollSpace);
+  const maximumSourceScrollTop = sourceContentEndScrollTop + sourceBottomScrollSpace;
+  const clampedScrollTop = Math.min(maximumSourceScrollTop, Math.max(0, scrollTop));
+  if (sourceBottomScrollSpace > 0 && clampedScrollTop > sourceContentEndScrollTop) {
+    const tailProgress = (clampedScrollTop - sourceContentEndScrollTop) / sourceBottomScrollSpace;
+    return targetContentEndScrollTop + targetBottomScrollSpace * tailProgress;
+  }
+  const mappedCentre = mapDiffPaneOffset(
+    model,
+    metrics,
+    leftHeights,
+    rightHeights,
+    sourceSide,
+    clampedScrollTop + safeSourceHeight / 2,
+  );
+  if (mappedCentre === null) return null;
+  return Math.min(
+    targetContentEndScrollTop,
+    Math.max(0, mappedCentre - safeTargetHeight / 2),
+  );
+}
+
+function finiteNonNegative(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
 }
 
 function findPixelSegment(

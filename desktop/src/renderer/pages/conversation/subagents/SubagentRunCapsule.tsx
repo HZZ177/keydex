@@ -16,7 +16,7 @@ export function SubagentRunCapsule({ run }: { run: SubagentRunSnapshot }) {
   const durationMs = useSubagentRunDuration(run);
   const visibleState = durationMs === null
     ? stateLabel
-    : `${stateLabel} · 已处理 ${formatConversationDuration(durationMs)}`;
+    : `${stateLabel} · 运行 ${formatConversationDuration(durationMs)}`;
   const label = `${subagentRoleLabel(run.role)}，${visibleState}，任务：${run.task}`;
 
   return (

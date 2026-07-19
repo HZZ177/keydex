@@ -266,6 +266,32 @@
 
 .repositorySection { min-width: 0; }
 .repositorySection > * + * { margin-top: 8px; }
+.repositoryToggle {
+  display: flex;
+  width: 100%;
+  min-height: 22px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-3);
+  cursor: pointer;
+  text-align: left;
+}
+.repositoryToggle:hover,
+.repositoryToggle:focus-visible {
+  background: var(--surface-hover);
+  color: var(--color-text-1);
+  outline: none;
+}
+.repositoryToggle .paneTitle { margin: 0; }
+.repositoryChevron {
+  flex: 0 0 auto;
+  transition: transform 160ms var(--motion-ease-standard);
+}
+.repositoryChevron[data-expanded="true"] { transform: rotate(90deg); }
 .refsPane {
   min-height: 0;
   padding-top: 10px;
@@ -496,7 +522,7 @@
   font-family: var(--font-sans);
 }
 
-.root :global(button) {
+.root :global(button:not([data-keydex-diff-hunk-target])) {
   min-height: var(--git-control-height);
   border-radius: var(--radius-md);
   font-size: var(--git-ui-font-size);
@@ -509,11 +535,11 @@
     transform var(--motion-fast) var(--motion-ease-out);
 }
 
-.root :global(button[aria-label]) {
+.root :global(button[aria-label]:not([data-keydex-diff-hunk-target])) {
   min-width: var(--git-control-height);
 }
 
-.root :global(button:not(:disabled):active) {
+.root :global(button:not([data-keydex-diff-hunk-target]):not(:disabled):active) {
   transform: scale(0.98);
 }
 

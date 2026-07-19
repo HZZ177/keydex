@@ -335,6 +335,14 @@ export function Layout({
 }: LayoutProps) {
   const shellRef = useRef<HTMLDivElement>(null);
   const previewContext = useOptionalPreview();
+  // Conversation timeline units live in retained React roots, so their sidebar
+  // callbacks can outlive the render that supplied them. Resolve the host scope
+  // when an action runs instead of pinning it inside that retained callback.
+  const activeRightSidebarScopeKeyRef = useRef(
+    previewContext?.activeScopeKey ?? GLOBAL_RIGHT_SIDEBAR_SCOPE,
+  );
+  activeRightSidebarScopeKeyRef.current =
+    previewContext?.activeScopeKey ?? GLOBAL_RIGHT_SIDEBAR_SCOPE;
   const lastPreviewOpenStampRef = useRef<string | null>(
     previewContext?.open ? previewOpenStamp(previewContext.activeEntry) : null,
   );
@@ -419,9 +427,11 @@ export function Layout({
   const activeSidebarWidth = collapsed ? SIDEBAR_COLLAPSED_WIDTH : state.sidebarWidth;
   const guardContentMinWidth = contentMode === "full";
   const activeSidebarWidthRef = useRef(activeSidebarWidth);
+  const rightSidebarOpenRef = useRef(state.rightSidebarOpen);
   const rightSidebarRatioRef = useRef(state.rightSidebarRatio);
   const guardContentMinWidthRef = useRef(guardContentMinWidth);
   activeSidebarWidthRef.current = activeSidebarWidth;
+  rightSidebarOpenRef.current = state.rightSidebarOpen;
   rightSidebarRatioRef.current = state.rightSidebarRatio;
   guardContentMinWidthRef.current = guardContentMinWidth;
   const getRightSidebarAvailableWidth = useCallback(() => {
@@ -696,11 +706,11 @@ export function Layout({
       return;
     }
     setRightSidebarMode("split");
-    if (!state.rightSidebarOpen) {
+    if (!rightSidebarOpenRef.current) {
       startRightSidebarMotion();
     }
     actions.setRightSidebarOpen(true);
-  }, [actions, globalRightSidebarEnabled, startRightSidebarMotion, state.rightSidebarOpen]);
+  }, [actions, globalRightSidebarEnabled, startRightSidebarMotion]);
 
   const gitEnabled = Boolean(activeProjectState && activeProjectState.status !== "none");
   const openGitToolWindow = useCallback(() => {
@@ -815,7 +825,7 @@ export function Layout({
       if (!session?.id) {
         return;
       }
-      const scopeKey = previewContext?.activeScopeKey ?? GLOBAL_RIGHT_SIDEBAR_SCOPE;
+      const scopeKey = activeRightSidebarScopeKeyRef.current;
       setRightSidebarPanelStateByScope((current) => {
         const previous = normalizeRightSidebarScopePanelState(current[scopeKey]);
         const next = activateOrCreateConversationPanel(previous, {
@@ -832,12 +842,12 @@ export function Layout({
       });
       openRightSidebar();
     },
-    [openRightSidebar, previewContext?.activeScopeKey],
+    [openRightSidebar],
   );
 
   const openSubagentPanel = useCallback(
     (run: SubagentRunSnapshot) => {
-      const scopeKey = previewContext?.activeScopeKey ?? GLOBAL_RIGHT_SIDEBAR_SCOPE;
+      const scopeKey = activeRightSidebarScopeKeyRef.current;
       setRightSidebarPanelStateByScope((current) => {
         const previous = normalizeRightSidebarScopePanelState(current[scopeKey]);
         const next = activateOrCreateSubagentPanel(previous, run);
@@ -846,14 +856,14 @@ export function Layout({
       });
       openRightSidebar();
     },
-    [openRightSidebar, previewContext?.activeScopeKey],
+    [openRightSidebar],
   );
 
   const openSubagentList = useCallback(
     (parentSessionId: string) => {
       const cleanedParentId = parentSessionId.trim();
       if (!cleanedParentId) return;
-      const scopeKey = previewContext?.activeScopeKey ?? GLOBAL_RIGHT_SIDEBAR_SCOPE;
+      const scopeKey = activeRightSidebarScopeKeyRef.current;
       setRightSidebarPanelStateByScope((current) => {
         const previous = normalizeRightSidebarScopePanelState(current[scopeKey]);
         const next = activateOrCreateSubagentList(previous, cleanedParentId);
@@ -862,13 +872,13 @@ export function Layout({
       });
       openRightSidebar();
     },
-    [openRightSidebar, previewContext?.activeScopeKey],
+    [openRightSidebar],
   );
 
   const openSubagentInvocationPanel = useCallback(
     (details: SubagentInvocationPanelDetails) => {
       if (!details.parentSessionId.trim() || !details.invocationId.trim()) return;
-      const scopeKey = previewContext?.activeScopeKey ?? GLOBAL_RIGHT_SIDEBAR_SCOPE;
+      const scopeKey = activeRightSidebarScopeKeyRef.current;
       setRightSidebarPanelStateByScope((current) => {
         const previous = normalizeRightSidebarScopePanelState(current[scopeKey]);
         const next = activateOrCreateSubagentInvocationPanel(previous, details);
@@ -877,7 +887,7 @@ export function Layout({
       });
       openRightSidebar();
     },
-    [openRightSidebar, previewContext?.activeScopeKey],
+    [openRightSidebar],
   );
 
   const removeConversationPanel = useCallback((scopeKey: string, panelId: string) => {
@@ -898,7 +908,7 @@ export function Layout({
         notifications.warning("当前会话无法开启旁路对话");
         return null;
       }
-      const scopeKey = previewContext?.activeScopeKey ?? GLOBAL_RIGHT_SIDEBAR_SCOPE;
+      const scopeKey = activeRightSidebarScopeKeyRef.current;
       let openingPanelId: string | null = null;
       flushSync(() => {
         setRightSidebarPanelStateByScope((current) => {
@@ -954,7 +964,7 @@ export function Layout({
         return null;
       }
     },
-    [notifications, openRightSidebar, previewContext?.activeScopeKey, removeConversationPanel],
+    [notifications, openRightSidebar, removeConversationPanel],
   );
 
   const rightSidebarConversationValue = useMemo(

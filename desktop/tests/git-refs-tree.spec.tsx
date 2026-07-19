@@ -60,6 +60,7 @@ describe("GitRefsTree", () => {
     fireEvent.contextMenu(remoteBranch, { clientX: 120, clientY: 96 });
     const menu = screen.getByRole("menu", { name: "页面右键菜单" });
     expect(menu.dataset.contextKind).toBe("custom");
+    expect(menu.dataset.width).toBe("content");
     expect(screen.getAllByRole("menu")).toHaveLength(1);
     expect(screen.queryByRole("menuitem", { name: "刷新" })).toBeNull();
     fireEvent.click(screen.getByRole("menuitem", { name: "签出" }));

@@ -109,7 +109,9 @@ describe("KeydexDiffProductToolbar", () => {
     expect(onNextChange).toHaveBeenCalledOnce();
     expect(onSyncScrollChange).toHaveBeenCalledWith(false);
     expect(screen.getByRole("button", { name: "上一个差异" }).getAttribute("data-tooltip-label"))
-      .toContain("Alt+↑");
+      .toBe("上一个差异");
+    expect(screen.getByRole("button", { name: "下一个差异" }).getAttribute("data-tooltip-label"))
+      .toBe("下一个差异");
 
     rerender(
       <KeydexDiffProductToolbar

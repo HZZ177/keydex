@@ -490,6 +490,7 @@ describe("FilePreview", () => {
     await waitFor(() => expect(scrollRail.getAttribute("data-visible")).toBe("true"));
 
     expect(canvas.contains(screen.getByText("Preview"))).toBe(true);
+    expect(viewport.querySelectorAll("[data-file-preview-bottom-scroll-space='true']")).toHaveLength(1);
     expect(annotationRail).not.toBeNull();
     expect(canvas.contains(annotationRail)).toBe(true);
     expect(viewport.getAttribute("data-custom-scrollbar")).toBe("true");
@@ -1111,6 +1112,7 @@ describe("FilePreview", () => {
     });
 
     expect(viewport.contains(scroller)).toBe(true);
+    expect(viewport.querySelectorAll("[data-file-preview-bottom-scroll-space='true']")).toHaveLength(1);
     expect(viewport.querySelector("[data-annotation-rail='true']")).not.toBeNull();
     expect(screen.queryByTestId("source-scroll-rail")).toBeNull();
     expect(screen.getByTestId("preview-scroll-rail")).not.toBeNull();
@@ -1438,6 +1440,8 @@ describe("FilePreview", () => {
     expect(sourceViewport).not.toBeNull();
     expect(previewViewport).not.toBeNull();
     expect(sourceViewport).not.toBe(previewViewport);
+    expect(sourceViewport?.querySelectorAll("[data-file-preview-bottom-scroll-space='true']")).toHaveLength(1);
+    expect(previewViewport?.querySelectorAll("[data-file-preview-bottom-scroll-space='true']")).toHaveLength(1);
     expect(screen.queryByTestId("preview-scroll-rail")).toBeNull();
   });
 
@@ -1737,6 +1741,8 @@ describe("FilePreview", () => {
     expect(pane).not.toBeNull();
     expect(frame.srcdoc).toContain("data-keydex-preview-viewport-bridge");
     expect(pane?.querySelector("[data-file-preview-bottom-safe-area='true']")).toBeNull();
+    expect(pane?.querySelector("[data-file-preview-bottom-scroll-space='true']")).toBeNull();
+    expect(frame.srcdoc).not.toContain("data-keydex-preview-bottom-scroll-space");
     expect(screen.queryByTestId("preview-scroll-rail")).toBeNull();
 
     window.dispatchEvent(new MessageEvent("message", {
@@ -1751,6 +1757,7 @@ describe("FilePreview", () => {
     fireEvent.click(screen.getByRole("button", { name: "源码" }));
 
     expect(viewport.getAttribute("data-scroll-owner")).toBeNull();
+    expect(viewport.querySelectorAll("[data-file-preview-bottom-scroll-space='true']")).toHaveLength(1);
     expect(screen.getByTestId("preview-scroll-rail")).not.toBeNull();
   });
 

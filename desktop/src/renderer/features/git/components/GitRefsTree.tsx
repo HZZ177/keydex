@@ -85,6 +85,7 @@ export function GitRefsTree({ refs, selectedRef, onSelect, onAction }: GitRefsTr
     appContextMenu?.openContextMenu({
       items: buildGitRefContextMenuItems(ref, currentRef, onAction),
       target,
+      width: "content",
       x,
       y,
     });

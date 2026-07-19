@@ -58,24 +58,24 @@ describe("SubagentRunCapsule", () => {
     expect(screen.getByRole("button").textContent).not.toContain("diagnostic worker failure");
   });
 
-  it("mirrors the standard live and frozen processing duration beside the capsule", () => {
+  it("shows the live and frozen Run duration beside the capsule", () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date("2026-07-18T13:00:06.000Z"));
       const running = renderCapsule(snapshotForState("running", {
         started_at: "2026-07-18T13:00:00.000Z",
       }));
-      expect(screen.getByRole("status").textContent).toBe("正在工作 · 已处理 6秒");
+      expect(screen.getByRole("status").textContent).toBe("正在工作 · 运行 6秒");
 
       act(() => vi.advanceTimersByTime(2_000));
-      expect(screen.getByRole("status").textContent).toBe("正在工作 · 已处理 8秒");
+      expect(screen.getByRole("status").textContent).toBe("正在工作 · 运行 8秒");
       running.unmount();
 
       renderCapsule(snapshotForState("completed", {
         started_at: "2026-07-18T13:00:00.000Z",
         finished_at: "2026-07-18T13:00:12.000Z",
       }));
-      expect(screen.getByRole("status").textContent).toBe("已完成 · 已处理 12秒");
+      expect(screen.getByRole("status").textContent).toBe("已完成 · 运行 12秒");
     } finally {
       vi.useRealTimers();
     }

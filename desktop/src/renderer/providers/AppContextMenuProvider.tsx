@@ -67,6 +67,7 @@ interface MenuState {
   top: number;
   x: number;
   y: number;
+  width: "default" | "content";
 }
 
 export interface AppContextMenuItem {
@@ -82,6 +83,7 @@ export interface AppContextMenuItem {
 export interface OpenAppContextMenuRequest {
   items: AppContextMenuItem[];
   target: EventTarget | null;
+  width?: "default" | "content";
   x: number;
   y: number;
 }
@@ -139,6 +141,7 @@ export function AppContextMenuProvider({ children }: PropsWithChildren) {
       left: x,
       ready: false,
       top: y,
+      width: "default",
       x,
       y,
     });
@@ -156,6 +159,7 @@ export function AppContextMenuProvider({ children }: PropsWithChildren) {
       left: request.x,
       ready: false,
       top: request.y,
+      width: request.width ?? "default",
       x: request.x,
       y: request.y,
     });
@@ -321,6 +325,7 @@ function AppContextMenu({ menu, menuRef, onClose }: AppContextMenuProps) {
       data-context-mutable={menu.context.mutable ? "true" : "false"}
       data-context-selection={menu.context.selectionText ? "true" : "false"}
       data-ready={menu.ready ? "true" : "false"}
+      data-width={menu.width}
       role="menu"
       style={
         {

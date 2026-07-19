@@ -6,6 +6,7 @@ import {
   buildScrollMappingMetrics,
   captureDiffScrollAnchor,
   mapDiffPaneOffset,
+  mapDiffPaneViewportOffset,
   resolveDiffScrollAnchor,
 } from "@/renderer/components/diff/aligned/hunkScrollMapping";
 import { DiffRowHeightIndex } from "@/renderer/components/diff/aligned/rowHeightIndex";
@@ -117,6 +118,65 @@ describe("semantic hunk scroll mapping", () => {
       "new",
       reverseChange.right.start + 45,
     )).toBe(reverseChange.left.start + 5);
+  });
+
+  it("pins the shorter pane at the viewport centre while the longer change run advances", async () => {
+    const setupResult = await setup("aligned-left-long");
+    const change = setupResult.metrics.segments.find(({ segment }) => segment.kind === "change")!;
+    const viewportHeight = 20;
+    const sourceScrollTop = change.left.start + 40 - viewportHeight / 2;
+    const mappedScrollTop = mapDiffPaneViewportOffset(
+      setupResult.model,
+      setupResult.metrics,
+      setupResult.left,
+      setupResult.right,
+      "old",
+      sourceScrollTop,
+      viewportHeight,
+      viewportHeight,
+    );
+
+    expect(mappedScrollTop).toBe(change.right.start - viewportHeight / 2);
+    expect(change.right.start - mappedScrollTop!).toBe(viewportHeight / 2);
+  });
+
+  it("keeps both panes at the same progress through reserved bottom scroll space", async () => {
+    const setupResult = await setup("aligned-left-long");
+    const viewportHeight = 20;
+    const bottomScrollSpace = 6;
+    const leftContentEnd = setupResult.metrics.leftTotalHeight - viewportHeight;
+    const rightContentEnd = setupResult.metrics.rightTotalHeight - viewportHeight;
+    const leftHalfTail = mapDiffPaneViewportOffset(
+      setupResult.model,
+      setupResult.metrics,
+      setupResult.left,
+      setupResult.right,
+      "old",
+      leftContentEnd + bottomScrollSpace / 2,
+      viewportHeight,
+      viewportHeight,
+      {
+        sourceBottomScrollSpace: bottomScrollSpace,
+        targetBottomScrollSpace: bottomScrollSpace,
+      },
+    );
+    expect(leftHalfTail).toBe(rightContentEnd + bottomScrollSpace / 2);
+
+    const rightEnd = mapDiffPaneViewportOffset(
+      setupResult.model,
+      setupResult.metrics,
+      setupResult.left,
+      setupResult.right,
+      "new",
+      rightContentEnd + bottomScrollSpace,
+      viewportHeight,
+      viewportHeight,
+      {
+        sourceBottomScrollSpace: bottomScrollSpace,
+        targetBottomScrollSpace: bottomScrollSpace,
+      },
+    );
+    expect(rightEnd).toBe(leftContentEnd + bottomScrollSpace);
   });
 
   it("maps collapsed gaps proportionally and keeps exact pane end reachable", async () => {

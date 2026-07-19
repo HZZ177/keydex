@@ -16,8 +16,6 @@ use tauri::{
 };
 
 #[cfg(windows)]
-use std::ffi::OsString;
-#[cfg(windows)]
 use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 use std::path::Path;
@@ -255,17 +253,7 @@ fn open_path_in_file_manager(path: String) -> Result<(), String> {
     #[cfg(windows)]
     {
         let resolved = resolve_existing_filesystem_path(&path)?;
-        let mut command = Command::new("explorer.exe");
-        match windows_file_manager_target(&resolved) {
-            WindowsFileManagerTarget::OpenDirectory(directory) => {
-                command.arg(directory);
-            }
-            WindowsFileManagerTarget::SelectEntry(entry) => {
-                let mut argument = OsString::from("/select,");
-                argument.push(entry);
-                command.arg(argument);
-            }
-        }
+        let mut command = windows_file_manager_command(&resolved);
         command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -388,6 +376,24 @@ fn windows_file_manager_target(path: &Path) -> WindowsFileManagerTarget {
     } else {
         WindowsFileManagerTarget::SelectEntry(shell_path)
     }
+}
+
+#[cfg(windows)]
+fn windows_file_manager_command(path: &Path) -> Command {
+    let mut command = Command::new("explorer.exe");
+    match windows_file_manager_target(path) {
+        WindowsFileManagerTarget::OpenDirectory(directory) => {
+            command.arg(directory);
+        }
+        WindowsFileManagerTarget::SelectEntry(entry) => {
+            // Explorer parses `/select,` itself instead of using the standard
+            // Windows argv rules. Keep the switch separate so paths containing
+            // spaces or commas are quoted as the target path, not with the
+            // switch inside the same quoted argument.
+            command.arg("/select,").arg(entry);
+        }
+    }
+    command
 }
 
 #[cfg(windows)]
@@ -581,7 +587,8 @@ mod tests {
     use super::collect_startup_associated_markdown_paths;
     #[cfg(windows)]
     use super::{
-        windows_file_manager_target, windows_shell_compatible_path, WindowsFileManagerTarget,
+        windows_file_manager_command, windows_file_manager_target, windows_shell_compatible_path,
+        WindowsFileManagerTarget,
     };
     use std::fs;
     #[cfg(windows)]
@@ -595,7 +602,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system time should be after the Unix epoch")
             .as_nanos();
-        let directory = std::env::temp_dir().join(format!("keydex-file-manager-{unique}"));
+        let directory = std::env::temp_dir().join(format!("keydex file-manager,{unique}"));
         let file = directory.join("README.md");
         fs::create_dir(&directory).expect("temporary directory should be created");
         fs::write(&file, "# file manager regression").expect("temporary file should be created");
@@ -616,6 +623,20 @@ mod tests {
         assert_eq!(
             windows_file_manager_target(&resolved_file),
             WindowsFileManagerTarget::SelectEntry(windows_shell_compatible_path(&resolved_file)),
+        );
+        let shell_directory = windows_shell_compatible_path(&resolved_directory);
+        let shell_file = windows_shell_compatible_path(&resolved_file);
+        assert_eq!(
+            windows_file_manager_command(&resolved_directory)
+                .get_args()
+                .collect::<Vec<_>>(),
+            vec![shell_directory.as_os_str()],
+        );
+        assert_eq!(
+            windows_file_manager_command(&resolved_file)
+                .get_args()
+                .collect::<Vec<_>>(),
+            vec![std::ffi::OsStr::new("/select,"), shell_file.as_os_str()],
         );
 
         fs::remove_file(file).expect("temporary file should be removed");

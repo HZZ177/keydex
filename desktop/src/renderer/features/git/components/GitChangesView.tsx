@@ -134,9 +134,15 @@ export function GitChangesView({
           </button>
         ) : null}
       </div>
-      <div className={styles.groups} role="tree" aria-label="本地改动" data-virtualized={virtualized ? "true" : "false"}>
+      <div
+        className={styles.groups}
+        role="tree"
+        aria-label="本地改动"
+        data-empty={groups.length === 0 ? "true" : "false"}
+        data-virtualized={virtualized ? "true" : "false"}
+      >
         {groups.length === 0 ? (
-          <div className={styles.state} role="status">工作区干净</div>
+          <div className={styles.state} role="status">暂无可提交内容</div>
         ) : virtualized ? (
           <VirtualizedChangesTree
             groups={groups}

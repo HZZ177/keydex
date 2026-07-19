@@ -141,7 +141,6 @@ export function KeydexDiffProductToolbar({
       <KeydexDiffToolbarAction
         key="previous_change"
         label="上一个差异"
-        shortcut="Alt+↑"
         icon={<ArrowUp size={16} />}
         data-priority="primary"
         onClick={onPreviousChange}
@@ -149,7 +148,6 @@ export function KeydexDiffProductToolbar({
       <KeydexDiffToolbarAction
         key="next_change"
         label="下一个差异"
-        shortcut="Alt+↓"
         icon={<ArrowDown size={16} />}
         data-priority="primary"
         onClick={onNextChange}

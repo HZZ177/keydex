@@ -170,6 +170,112 @@ describe("PreviewProvider Markdown Runtime continuity", () => {
     await waitFor(() => expect(previewRef.current!.activeEntry?.id).toBe(workspaceA.id));
   });
 
+  it("keeps the registered parent host while nested Session actions use the child runtime context", async () => {
+    const previewRef = { current: null } as MutableRefObject<PreviewContextValue | null>;
+    render(
+      <PreviewProvider>
+        <PreviewProbe previewRef={previewRef} />
+      </PreviewProvider>,
+    );
+
+    act(() => previewRef.current!.setPreviewHostContext({ sessionId: "parent-session", workspaceAvailable: true }));
+    const childContext = {
+      panelScopeKey: "session:parent-session",
+      sessionId: "child-session",
+      workspaceAvailable: true,
+    };
+
+    act(() => previewRef.current!.openPreview(
+      { type: "file", path: "missing.md" },
+      childContext,
+    ));
+    await waitFor(() => expect(previewRef.current!.activeEntry?.request).toMatchObject({ path: "missing.md" }));
+    expect(previewRef.current!.activeScopeKey).toBe("session:parent-session");
+    expect(previewRef.current!.hostContext?.sessionId).toBe("parent-session");
+    expect(previewRef.current!.activeEntry?.renderContext).toMatchObject({
+      panelScopeKey: "session:parent-session",
+      sessionId: "child-session",
+    });
+
+    act(() => previewRef.current!.openFilePanel("missing.md", childContext));
+    expect(previewRef.current!.hostContext?.sessionId).toBe("parent-session");
+    expect(previewRef.current!.filePanelRequest).toMatchObject({
+      scopeKey: "session:parent-session",
+      renderContext: { sessionId: "child-session" },
+    });
+
+    act(() => previewRef.current!.openDirectoryPanel("docs", childContext));
+    expect(previewRef.current!.hostContext?.sessionId).toBe("parent-session");
+    expect(previewRef.current!.filePanelRequest).toMatchObject({
+      scopeKey: "session:parent-session",
+      directoryRevealPath: "docs",
+      renderContext: { sessionId: "child-session" },
+    });
+
+    act(() => previewRef.current!.openReviewPanel({ title: "Nested review" }, childContext));
+    expect(previewRef.current!.hostContext?.sessionId).toBe("parent-session");
+    expect(previewRef.current!.reviewPanelRequest).toMatchObject({
+      scopeKey: "session:parent-session",
+      renderContext: { sessionId: "child-session" },
+    });
+
+    act(() => previewRef.current!.togglePreview(
+      { type: "file", path: "another-missing.md" },
+      childContext,
+    ));
+    expect(previewRef.current!.hostContext?.sessionId).toBe("parent-session");
+    expect(previewRef.current!.activeEntry).toMatchObject({
+      scopeKey: "session:parent-session",
+      request: { path: "another-missing.md" },
+      renderContext: { sessionId: "child-session" },
+    });
+  });
+
+  it("anchors an unscoped nested Session preview to the registered parent sidebar", async () => {
+    const previewRef = { current: null } as MutableRefObject<PreviewContextValue | null>;
+    render(
+      <PreviewProvider>
+        <PreviewProbe previewRef={previewRef} />
+      </PreviewProvider>,
+    );
+
+    act(() => previewRef.current!.setPreviewHostContext({ sessionId: "parent-session", workspaceAvailable: true }));
+    act(() => previewRef.current!.openPreview(
+      { type: "file", path: "missing.md" },
+      { sessionId: "child-session", workspaceAvailable: true },
+    ));
+
+    await waitFor(() => expect(previewRef.current!.activeEntry?.request).toMatchObject({ path: "missing.md" }));
+    expect(previewRef.current!.activeScopeKey).toBe("session:parent-session");
+    expect(previewRef.current!.hostContext?.sessionId).toBe("parent-session");
+    expect(previewRef.current!.activeEntry?.renderContext).toMatchObject({
+      panelScopeKey: "session:parent-session",
+      sessionId: "child-session",
+    });
+  });
+
+  it("still allows an explicitly different panel scope to become the active host", async () => {
+    const previewRef = { current: null } as MutableRefObject<PreviewContextValue | null>;
+    render(
+      <PreviewProvider>
+        <PreviewProbe previewRef={previewRef} />
+      </PreviewProvider>,
+    );
+
+    act(() => previewRef.current!.setPreviewHostContext({ sessionId: "parent-session", workspaceAvailable: true }));
+    act(() => previewRef.current!.openFilePanel("src/main.ts", {
+      panelScopeKey: "git:workspace-1",
+      workspaceId: "workspace-1",
+      workspaceAvailable: true,
+    }));
+
+    await waitFor(() => expect(previewRef.current!.activeScopeKey).toBe("git:workspace-1"));
+    expect(previewRef.current!.hostContext).toMatchObject({
+      panelScopeKey: "git:workspace-1",
+      workspaceId: "workspace-1",
+    });
+  });
+
   it("keeps workspace file reveal state isolated while a system Skill resource is opened and closed", async () => {
     const previewRef = { current: null } as MutableRefObject<PreviewContextValue | null>;
     render(

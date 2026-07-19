@@ -118,7 +118,7 @@ describe("GitToolWindow", () => {
     expect(commitEditorSplitter.getAttribute("aria-valuenow")).toBe("36");
     expect(screen.queryByText("Git 数据加载后显示在这里")).toBeNull();
     expect(screen.queryByRole("button", { name: "查看逐行历史" })).toBeNull();
-    expect(screen.getAllByRole("tab")).toHaveLength(3);
+    expect(screen.getAllByRole("tab")).toHaveLength(2);
     expect(screen.queryByRole("tab", { name: "Blame" })).toBeNull();
     expect(screen.queryByRole("tab", { name: "Reflog" })).toBeNull();
     expect(screen.queryByRole("tab", { name: "操作" })).toBeNull();
@@ -132,6 +132,12 @@ describe("GitToolWindow", () => {
     expect(screen.getByRole("separator", { name: "调整 Git 详情宽度" }).getAttribute("aria-valuenow")).toBe("28");
     expect(screen.getByRole("complementary", { name: "Git 仓库导航" })).not.toBeNull();
     expect(screen.getByRole("separator", { name: "调整 Git 仓库导航宽度" })).not.toBeNull();
+    const repositoryToggle = screen.getByRole("button", { name: "仓库" });
+    expect(repositoryToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("listbox", { name: "Git 仓库根目录" })).toBeNull();
+    fireEvent.click(repositoryToggle);
+    expect(repositoryToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("listbox", { name: "Git 仓库根目录" })).not.toBeNull();
     expect(historyTab.getAttribute("tabindex")).toBe("0");
     expect(document.activeElement).toBe(historyTab);
     const panel = screen.getByRole("tabpanel", { name: "Git 日志" });
@@ -139,6 +145,7 @@ describe("GitToolWindow", () => {
     expect(screen.queryByTestId("git-pane-header")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "更多 Git 视图" }));
+    expect(screen.getByRole("menuitem", { name: /分支/ })).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: /暂存的改动/ })).not.toBeNull();
     expect(screen.getByRole("menuitem", { name: /恢复提交/ })).not.toBeNull();
     const advanced = screen.getByRole("menuitem", { name: /高级 Git 工具/ });

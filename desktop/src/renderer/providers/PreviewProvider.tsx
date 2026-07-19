@@ -196,17 +196,17 @@ export function PreviewProvider({ children }: PropsWithChildren) {
     revealTarget: PreviewFileRevealTarget | null = null,
   ) => {
     setState((current) => {
-      const context = renderContext ?? current.hostContext;
+      const actionContext = resolvePreviewActionContext(current.hostContext, renderContext);
       return {
         ...current,
-        hostContext: context ?? current.hostContext,
+        hostContext: actionContext.hostContext,
         filePanelRequest: {
           requestId: (current.filePanelRequest?.requestId ?? 0) + 1,
-          scopeKey: previewScopeKey(context),
+          scopeKey: actionContext.scopeKey,
           path: path || null,
           directoryRevealPath: null,
           revealTarget,
-          renderContext: context,
+          renderContext: actionContext.renderContext,
         },
       };
     });
@@ -218,17 +218,17 @@ export function PreviewProvider({ children }: PropsWithChildren) {
       return;
     }
     setState((current) => {
-      const context = renderContext ?? current.hostContext;
+      const actionContext = resolvePreviewActionContext(current.hostContext, renderContext);
       return {
         ...current,
-        hostContext: context ?? current.hostContext,
+        hostContext: actionContext.hostContext,
         filePanelRequest: {
           requestId: (current.filePanelRequest?.requestId ?? 0) + 1,
-          scopeKey: previewScopeKey(context),
+          scopeKey: actionContext.scopeKey,
           path: null,
           directoryRevealPath: normalizedPath,
           revealTarget: null,
-          renderContext: context,
+          renderContext: actionContext.renderContext,
         },
       };
     });
@@ -236,16 +236,16 @@ export function PreviewProvider({ children }: PropsWithChildren) {
 
   const openReviewPanel = useCallback((request: OpenReviewPanelRequest = {}, renderContext?: PreviewRenderContext) => {
     setState((current) => {
-      const context = renderContext ?? current.hostContext;
+      const actionContext = resolvePreviewActionContext(current.hostContext, renderContext);
       const files = request.files ?? [];
       const focusedPath = request.focusedPath ?? files[0]?.path ?? null;
       const panelKey = reviewPanelKey(request, files, focusedPath);
       return {
         ...current,
-        hostContext: context ?? current.hostContext,
+        hostContext: actionContext.hostContext,
         reviewPanelRequest: {
           requestId: (current.reviewPanelRequest?.requestId ?? 0) + 1,
-          scopeKey: previewScopeKey(context),
+          scopeKey: actionContext.scopeKey,
           files,
           document: request.document ?? null,
           focusedPath,
@@ -253,7 +253,7 @@ export function PreviewProvider({ children }: PropsWithChildren) {
           sourceMessageId: request.sourceMessageId ?? null,
           title: request.title?.trim() || "审阅",
           toolCallId: request.toolCallId ?? null,
-          renderContext: context,
+          renderContext: actionContext.renderContext,
         },
       };
     });
@@ -266,10 +266,14 @@ export function PreviewProvider({ children }: PropsWithChildren) {
   ) => {
     setState((current) => {
       const normalizedRequest = normalizePreviewRequest(request);
-      const context = renderContext ?? current.hostContext;
-      const scopeKey = previewScopeKey(context);
-      const entry = createPreviewEntry(normalizedRequest, context, scopeKey, revealTarget);
-      const scopeState = current.scopes[scopeKey] ?? { open: false, activeEntryId: null };
+      const actionContext = resolvePreviewActionContext(current.hostContext, renderContext);
+      const entry = createPreviewEntry(
+        normalizedRequest,
+        actionContext.renderContext,
+        actionContext.scopeKey,
+        revealTarget,
+      );
+      const scopeState = current.scopes[actionContext.scopeKey] ?? { open: false, activeEntryId: null };
 
       if (current.panelOpen && scopeState.open && current.panelActiveEntryId === entry.id) {
         return {
@@ -278,7 +282,7 @@ export function PreviewProvider({ children }: PropsWithChildren) {
         };
       }
 
-      return openPreviewInStore(current, normalizedRequest, context, revealTarget);
+      return openPreviewInStore(current, normalizedRequest, actionContext.renderContext, revealTarget);
     });
   }, []);
 
@@ -457,9 +461,9 @@ function openPreviewInStore(
   revealTarget: PreviewFileRevealTarget | null = null,
 ): PreviewStoreState {
   const normalizedRequest = normalizePreviewRequest(request);
-  const context = renderContext ?? current.hostContext;
-  const scopeKey = previewScopeKey(context);
-  const entry = createPreviewEntry(normalizedRequest, context, scopeKey, revealTarget);
+  const actionContext = resolvePreviewActionContext(current.hostContext, renderContext);
+  const scopeKey = actionContext.scopeKey;
+  const entry = createPreviewEntry(normalizedRequest, actionContext.renderContext, scopeKey, revealTarget);
   const existingEntry = current.entries.find((item) => item.id === entry.id);
 
   if (existingEntry) {
@@ -471,7 +475,7 @@ function openPreviewInStore(
     };
     return {
       ...current,
-      hostContext: context ?? current.hostContext,
+      hostContext: actionContext.hostContext,
       entries: current.entries.map((item) => (item.id === entry.id ? reusedEntry : item)),
       scopes: {
         ...current.scopes,
@@ -491,7 +495,7 @@ function openPreviewInStore(
 
   return {
     ...current,
-    hostContext: context ?? current.hostContext,
+    hostContext: actionContext.hostContext,
     entries,
     scopes: {
       ...current.scopes,
@@ -500,6 +504,49 @@ function openPreviewInStore(
         activeEntryId: entry.id,
       },
     },
+  };
+}
+
+interface ResolvedPreviewActionContext {
+  renderContext: PreviewRenderContext | null;
+  hostContext: PreviewRenderContext | null;
+  scopeKey: string;
+}
+
+function resolvePreviewActionContext(
+  hostContext: PreviewRenderContext | null,
+  requestedContext: PreviewRenderContext | null | undefined,
+): ResolvedPreviewActionContext {
+  let renderContext = requestedContext ?? hostContext;
+  if (!renderContext) {
+    return {
+      renderContext: null,
+      hostContext: null,
+      scopeKey: GLOBAL_PREVIEW_SCOPE,
+    };
+  }
+
+  const hostScopeKey = previewScopeKey(hostContext);
+  let actionScopeKey = previewScopeKey(renderContext);
+  if (
+    hostContext
+    && hostScopeKey !== GLOBAL_PREVIEW_SCOPE
+    && requestedContext
+    && !requestedContext.panelScopeKey?.trim()
+    && actionScopeKey !== hostScopeKey
+  ) {
+    // Nested conversations use their child Session to read files, but an
+    // unscoped action must stay in the currently registered host sidebar.
+    renderContext = { ...requestedContext, panelScopeKey: hostScopeKey };
+    actionScopeKey = hostScopeKey;
+  }
+
+  return {
+    renderContext,
+    // Resource actions may carry a child Session. Do not let that replace the
+    // registered parent host when both contexts target the same sidebar scope.
+    hostContext: !hostContext || actionScopeKey !== hostScopeKey ? renderContext : hostContext,
+    scopeKey: actionScopeKey,
   };
 }
 

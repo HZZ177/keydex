@@ -25,6 +25,7 @@ import {
 } from "../engine/pierreAlignedWorkerPipeline";
 import type { PierreAlignedPublicApi } from "../engine/pierreAlignedAdapter";
 import { resolveKeydexAlignedVirtualizationPolicy } from "../virtualizationPolicy";
+import { AlignedDiffPaneItemView } from "./AlignedDiffHunkChrome";
 import { AlignedDiffRow, diffChangeRowBoundary } from "./AlignedDiffRow";
 import { AlignedDiffGutterRows } from "./AlignedDiffGutterRows";
 import {
@@ -48,12 +49,14 @@ import { alignedDiffBottomScrollSpace } from "./alignedPaneScroll";
 import { computeVisibleDiffConnectorGeometry } from "./connectorGeometry";
 import {
   buildScrollMappingMetrics,
-  mapDiffPaneOffset,
+  mapDiffPaneViewportOffset,
+  type DiffSegmentPixelMapping,
 } from "./hunkScrollMapping";
 import { useVirtualDiffRows } from "./useVirtualDiffRows";
 import type {
   DiffChangeKind,
   DiffPaneRow,
+  DiffPaneSide,
   KeydexAlignedDiffModel,
 } from "./alignedDiffModel";
 import styles from "./AlignedDiffFileView.module.css";
@@ -237,14 +240,37 @@ const PreparedAlignedDiff = forwardRef<AlignedDiffFileViewHandle, {
       right,
       enabled: syncScroll,
       synchronizationMode: "animation_frame",
-      mapOffset: (sourceSide, sourceOffset) => mapDiffPaneOffset(
-        model,
-        metricsRef.current,
-        leftVirtual.heightIndex,
-        rightVirtual.heightIndex,
-        sourceSide,
-        sourceOffset,
-      ),
+      mapOffset: (sourceSide, sourceOffset) => {
+        const currentMetrics = metricsRef.current;
+        const sourceViewportHeight = sourceSide === "old" ? left.clientHeight : right.clientHeight;
+        const targetViewportHeight = sourceSide === "old" ? right.clientHeight : left.clientHeight;
+        const sourceContentHeight = sourceSide === "old"
+          ? currentMetrics.leftTotalHeight
+          : currentMetrics.rightTotalHeight;
+        const targetContentHeight = sourceSide === "old"
+          ? currentMetrics.rightTotalHeight
+          : currentMetrics.leftTotalHeight;
+        return mapDiffPaneViewportOffset(
+          model,
+          currentMetrics,
+          leftVirtual.heightIndex,
+          rightVirtual.heightIndex,
+          sourceSide,
+          sourceOffset,
+          sourceViewportHeight,
+          targetViewportHeight,
+          {
+            sourceBottomScrollSpace: alignedDiffBottomScrollSpace(
+              sourceContentHeight,
+              sourceViewportHeight,
+            ),
+            targetBottomScrollSpace: alignedDiffBottomScrollSpace(
+              targetContentHeight,
+              targetViewportHeight,
+            ),
+          },
+        );
+      },
       onScrollFrame: (frame) => setScrollFrame((current) => (
         diffScrollFrameEqual(current, frame) ? current : frame
       )),
@@ -441,10 +467,12 @@ const PreparedAlignedDiff = forwardRef<AlignedDiffFileViewHandle, {
         />
       )}
       left={(
-        <VirtualRows
+        <AlignedDiffVirtualRows
           rows={model.leftRows}
           rowIndexes={leftAlignedWindow.rowIndexes}
           rowOffsets={metrics.leftRowOffsets}
+          segmentMappings={metrics.segments}
+          side="old"
           totalHeight={leftAlignedWindow.totalHeight}
           contentColumns={leftContentColumns}
           wrap={wrap}
@@ -455,10 +483,12 @@ const PreparedAlignedDiff = forwardRef<AlignedDiffFileViewHandle, {
         />
       )}
       right={(
-        <VirtualRows
+        <AlignedDiffVirtualRows
           rows={model.rightRows}
           rowIndexes={rightAlignedWindow.rowIndexes}
           rowOffsets={metrics.rightRowOffsets}
+          segmentMappings={metrics.segments}
+          side="new"
           totalHeight={rightAlignedWindow.totalHeight}
           contentColumns={rightContentColumns}
           wrap={wrap}
@@ -490,10 +520,12 @@ const PreparedAlignedDiff = forwardRef<AlignedDiffFileViewHandle, {
   );
 });
 
-function VirtualRows({
+export function AlignedDiffVirtualRows({
   rows,
   rowIndexes,
   rowOffsets,
+  segmentMappings,
+  side,
   totalHeight,
   contentColumns,
   wrap,
@@ -505,6 +537,8 @@ function VirtualRows({
   readonly rows: readonly DiffPaneRow[];
   readonly rowIndexes: readonly number[];
   readonly rowOffsets: readonly number[] | undefined;
+  readonly segmentMappings: readonly DiffSegmentPixelMapping[];
+  readonly side: DiffPaneSide;
   readonly totalHeight: number;
   readonly contentColumns: number;
   readonly wrap: boolean;
@@ -525,6 +559,35 @@ function VirtualRows({
       data-wrap={wrap ? "true" : "false"}
       role="rowgroup"
     >
+      {segmentMappings.map((mapping) => {
+        if (mapping.segment.kind !== "collapsed_gap") return null;
+        const range = side === "old" ? mapping.left : mapping.right;
+        const lineRange = side === "old" ? mapping.segment.left : mapping.segment.right;
+        const hiddenLineCount = lineRange.startLine !== null && lineRange.endLine !== null
+          ? lineRange.endLine - lineRange.startLine + 1
+          : 0;
+        if (hiddenLineCount <= 0 || range.end <= range.start) return null;
+        return (
+          <div
+            key={`${side}:${mapping.segment.id}:gap-overlay`}
+            className={styles.collapsedGapRow}
+            style={{ top: range.start, height: range.end - range.start }}
+            data-keydex-aligned-gap-overlay={mapping.segment.id}
+            data-side={side}
+          >
+            <AlignedDiffPaneItemView
+              item={{
+                type: "collapsed_gap",
+                id: `${side}:${mapping.segment.id}:gap`,
+                segmentId: mapping.segment.id,
+                hiddenLineCount,
+                canExpand: false,
+              }}
+              wrap={wrap}
+            />
+          </div>
+        );
+      })}
       {rowIndexes.map((rowIndex) => {
         const row = rows[rowIndex];
         const boundary = diffChangeRowBoundary(rows, rowIndex);

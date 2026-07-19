@@ -1,4 +1,4 @@
-import { AlertTriangle, ChevronDown, FileClock, GitBranch, GitCommitHorizontal, GitPullRequest, History, ListChecks, MoreHorizontal } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, FileClock, GitBranch, GitCommitHorizontal, GitPullRequest, History, ListChecks, MoreHorizontal } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import type { ActiveProjectState, GitRepositoryRoot } from "@/renderer/features/git/activeProject";
@@ -96,10 +96,10 @@ const COMMIT_PANE_MAX_PERCENT = 80;
 const PRIMARY_VIEWS: readonly { id: GitToolWindowView; label: string; icon: typeof GitBranch }[] = [
   { id: "changes", label: "提交", icon: GitPullRequest },
   { id: "history", label: "Git 日志", icon: History },
-  { id: "branches", label: "分支", icon: GitBranch },
 ];
 
 const MORE_VIEWS: readonly { id: GitToolWindowView; label: string; description: string; icon: typeof GitBranch }[] = [
+  { id: "branches", label: "分支", description: "管理分支、标签与远程仓库", icon: GitBranch },
   { id: "stash", label: "暂存的改动", description: "保存、应用或清理储藏", icon: GitCommitHorizontal },
   { id: "reflog", label: "恢复提交", description: "通过本地引用记录找回历史", icon: FileClock },
   { id: "operations", label: "高级 Git 工具", description: "仓库维护、历史修改与诊断", icon: ListChecks },
@@ -145,7 +145,7 @@ export function GitToolWindow({
   project,
   maximized,
   active = true,
-  initialView = "changes",
+  initialView,
   projectSelector,
 }: GitToolWindowProps) {
   const toolWindowSnapshotSelector = useMemo(createToolWindowSnapshotSelector, []);
@@ -158,7 +158,10 @@ export function GitToolWindow({
   const gitStore = useOptionalGitStore();
   const previewContext = useOptionalPreview();
   const projectKey = resolvedProject && resolvedProject.status !== "none" ? resolvedProject.workspaceId : "none";
-  const [view, setView] = useState<GitToolWindowView>(() => storeSnapshot?.ui?.activeTab ?? initialView);
+  const [view, setView] = useState<GitToolWindowView>(() => initialView ?? storeSnapshot?.ui?.activeTab ?? "changes");
+  const [entryViewReady, setEntryViewReady] = useState(initialView !== undefined);
+  const [historyDefaultsReady, setHistoryDefaultsReady] = useState(false);
+  const [repositoryExpanded, setRepositoryExpanded] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [projectAction, setProjectAction] = useState<"init" | "grant" | "retry" | null>(null);
   const [actionError, setActionError] = useGitErrorNotificationState();
@@ -345,11 +348,15 @@ export function GitToolWindow({
   const selectRepositoryRef = (ref: GitRefsSnapshotRef) => {
     if (!storeSnapshot?.project) return;
     const update = gitUiUpdateForRefSelection(view, historyFilters, ref);
-    if (update.historyFilters) setHistoryFilters(update.historyFilters);
+    if (update.historyFilters) {
+      setHistoryDefaultsReady(true);
+      setHistoryFilters(update.historyFilters);
+    }
     gitStore?.getState().updateProjectUi(storeSnapshot.project.workspaceId, update);
   };
 
   const applyHistoryFilters = (next: GitHistoryFilters) => {
+    setHistoryDefaultsReady(true);
     setHistoryFilters(next);
     if (!storeSnapshot?.project) return;
     const selectedRef = selectedRefForHistoryRevision(next.revision, storeSnapshot.refs ?? []);
@@ -505,7 +512,10 @@ export function GitToolWindow({
   useEffect(() => {
     if (initializedProjectKeyRef.current === projectKey) return;
     initializedProjectKeyRef.current = projectKey;
-    setView(storeSnapshot?.ui?.activeTab ?? initialView);
+    setView(initialView ?? storeSnapshot?.ui?.activeTab ?? "changes");
+    setEntryViewReady(initialView !== undefined);
+    setHistoryDefaultsReady(false);
+    setRepositoryExpanded(false);
     setHistoryFilters(storeSnapshot?.ui?.historyFilters ?? { ...EMPTY_GIT_HISTORY_FILTERS });
     setHistoryAuthors([]);
     setSelectedHistoryObjectId((storeSnapshot?.ui?.selectedHistoryObjectId as GitObjectId | null | undefined) ?? null);
@@ -513,6 +523,51 @@ export function GitToolWindow({
     setDetailPanePercent(storeSnapshot?.ui?.detailPanePercent ?? 28);
     setCommitPanePercent(28);
   }, [initialView, projectKey]);
+
+  useEffect(() => {
+    if (active) return;
+    if (initialView === undefined) setEntryViewReady(false);
+    setHistoryDefaultsReady(false);
+  }, [active, initialView]);
+
+  useEffect(() => {
+    const status = storeSnapshot?.status;
+    if (!active || initialView !== undefined || entryViewReady || !status) return;
+    const nextView = defaultGitToolWindowView(status);
+    setMergeEditorDirty(false);
+    setView(nextView);
+    if (storeSnapshot?.project) {
+      gitStore?.getState().updateProjectUi(storeSnapshot.project.workspaceId, { activeTab: nextView });
+    }
+    setEntryViewReady(true);
+  }, [active, entryViewReady, gitStore, initialView, storeSnapshot?.project, storeSnapshot?.status]);
+
+  useEffect(() => {
+    const status = storeSnapshot?.status;
+    if (!active || view !== "history" || historyDefaultsReady || !status) return;
+    const currentRevision = currentGitBranchRevision(status, storeSnapshot?.refs ?? []);
+    const shouldSelectCurrent = historyFilters.revision.length === 0 && currentRevision !== null;
+    const nextFilters = shouldSelectCurrent
+      ? { ...historyFilters, revision: currentRevision }
+      : historyFilters;
+    if (shouldSelectCurrent) setHistoryFilters(nextFilters);
+    if (storeSnapshot?.project) {
+      gitStore?.getState().updateProjectUi(storeSnapshot.project.workspaceId, {
+        historyFilters: nextFilters,
+        ...(shouldSelectCurrent ? { selectedRef: currentRevision } : {}),
+      });
+    }
+    setHistoryDefaultsReady(true);
+  }, [
+    active,
+    gitStore,
+    historyDefaultsReady,
+    historyFilters,
+    storeSnapshot?.project,
+    storeSnapshot?.refs,
+    storeSnapshot?.status,
+    view,
+  ]);
 
   useEffect(() => {
     changeDiffAbortRef.current?.abort();
@@ -539,6 +594,7 @@ export function GitToolWindow({
     setSelectedChangeDiff(null);
     setSelectedChangeDiffLoading(false);
     setPendingHistoryAction(null);
+    setHistoryDefaultsReady(false);
     setRevisionTreeOpen(false);
     setRevisionTree(null);
     setRevisionTreeError(null);
@@ -937,7 +993,7 @@ export function GitToolWindow({
 
   useEffect(() => {
     const project = storeSnapshot?.project;
-    if (view !== "history" || !runtime || !project?.selectedRepositoryId) return;
+    if (view !== "history" || !historyDefaultsReady || !runtime || !project?.selectedRepositoryId) return;
     const abortController = new AbortController();
     setHistoryLoading(true);
     void runtime.history({
@@ -961,7 +1017,7 @@ export function GitToolWindow({
       if (!abortController.signal.aborted) setHistoryLoading(false);
     });
     return () => abortController.abort();
-  }, [gitStore, historyFilters, runtime, storeSnapshot?.project?.projectRoot, storeSnapshot?.project?.selectedRepositoryId, storeSnapshot?.project?.workspaceId, view]);
+  }, [gitStore, historyDefaultsReady, historyFilters, runtime, storeSnapshot?.project?.projectRoot, storeSnapshot?.project?.selectedRepositoryId, storeSnapshot?.project?.workspaceId, view]);
 
   useEffect(() => {
     if (view !== "stash" || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
@@ -3513,13 +3569,28 @@ export function GitToolWindow({
         {!comparisonNavigationHidden ? (
           <>
             <aside className={styles.navigation} aria-label="Git 仓库导航">
-              <div className={styles.repositorySection}>
-                <span className={styles.paneTitle}>仓库</span>
-                <GitRepositoryList
-                  items={storeSnapshot?.repositoryItems ?? []}
-                  selectedRepositoryId={storeSnapshot?.project?.selectedRepositoryId ?? null}
-                  onSelect={selectRepository}
-                />
+              <div className={styles.repositorySection} data-expanded={repositoryExpanded ? "true" : "false"}>
+                <button
+                  type="button"
+                  className={styles.repositoryToggle}
+                  aria-expanded={repositoryExpanded}
+                  onClick={() => setRepositoryExpanded((current) => !current)}
+                >
+                  <ChevronRight
+                    className={styles.repositoryChevron}
+                    data-expanded={repositoryExpanded ? "true" : "false"}
+                    size={12}
+                    aria-hidden="true"
+                  />
+                  <span className={styles.paneTitle}>仓库</span>
+                </button>
+                {repositoryExpanded ? (
+                  <GitRepositoryList
+                    items={storeSnapshot?.repositoryItems ?? []}
+                    selectedRepositoryId={storeSnapshot?.project?.selectedRepositoryId ?? null}
+                    onSelect={selectRepository}
+                  />
+                ) : null}
               </div>
               <div className={styles.refsPane}>
                 <GitRefsTree
@@ -4348,6 +4419,19 @@ export function adjacentGitToolView(
 }
 
 type GitRefsSnapshotRef = NonNullable<GitToolWindowStoreSnapshot["refs"]>[number];
+
+export function defaultGitToolWindowView(status: Pick<GitStatusSnapshot, "files">): "changes" | "history" {
+  return status.files.length > 0 ? "changes" : "history";
+}
+
+export function currentGitBranchRevision(
+  status: Pick<GitStatusSnapshot, "branch">,
+  refs: readonly Pick<GitRefsSnapshotRef, "current" | "fullName" | "kind">[],
+): string | null {
+  const currentRef = refs.find((ref) => ref.current && ref.kind === "local");
+  if (currentRef) return currentRef.fullName;
+  return status.branch.head ? `refs/heads/${status.branch.head}` : null;
+}
 
 export function gitUiUpdateForRefSelection(
   view: GitToolWindowView,

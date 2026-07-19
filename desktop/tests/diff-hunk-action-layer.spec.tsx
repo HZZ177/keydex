@@ -1,5 +1,7 @@
 import * as pierre from "@pierre/diffs";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { buildKeydexAlignedDiffModel } from "@/renderer/components/diff/aligned/alignmentSegments";
@@ -52,8 +54,28 @@ describe("aligned diff change focus and navigation", () => {
     fireEvent.click(target);
     expect(onActiveChange).toHaveBeenCalledWith("b");
     expect(onNavigate).toHaveBeenCalledWith("b");
+    expect(target.getAttribute("data-keydex-diff-hunk-target")).toBe("true");
     expect(container.querySelector('[data-change-id="a"]')?.getAttribute("aria-pressed")).toBe("true");
     expect(connectorGeometryMidpoint(geometry[0]!)).toBe(25);
+  });
+
+  it("keeps the change navigation marker compact and position-stable while pressed", () => {
+    const actionCss = readFileSync(
+      resolve(process.cwd(), "src/renderer/components/diff/aligned/DiffHunkActionLayer.module.css"),
+      "utf8",
+    );
+    expect(actionCss).toMatch(/width:\s*12px/u);
+    expect(actionCss).toMatch(/height:\s*12px/u);
+    expect(actionCss).toContain("inset: -6px");
+    expect(actionCss).toMatch(
+      /\.target:active:not\(:disabled\)\s*\{[^}]*transform:\s*translate3d\(-50%, -50%, 0\)/su,
+    );
+    const gitHostCss = readFileSync(
+      resolve(process.cwd(), "src/renderer/features/git/components/GitToolWindow.module.css"),
+      "utf8",
+    );
+    expect(gitHostCss).toContain("button:not([data-keydex-diff-hunk-target])");
+    expect(gitHostCss).toContain("button[aria-label]:not([data-keydex-diff-hunk-target])");
   });
 
   it("handles Alt+Up/Down only inside a non-editable Diff focus scope", () => {

@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactElement } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Layout, resetLayoutUiStateCacheForTests } from "@/renderer/components/layout/Layout";
@@ -12,6 +12,7 @@ import { useA2UIRenderSuspension } from "@/renderer/pages/conversation/messages/
 import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import { ThemeProvider } from "@/renderer/providers/ThemeProvider";
+import type { SubagentRunSnapshot } from "@/types/subagents";
 
 afterEach(() => {
   cleanup();
@@ -850,11 +851,20 @@ describe("Layout", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Open Sub-Agent workspace" }));
     await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(1));
-    const subagentTab = screen.getAllByRole("tab")[0];
+    let subagentTab = screen.getAllByRole("tab")[0];
 
     fireEvent.click(screen.getByRole("button", { name: "打开文件引用 README.md" }));
     await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(2));
     expect(screen.getAllByRole("tab")[0]).toBe(subagentTab);
+    expect(screen.getByTestId("nested-host-session").textContent).toBe("parent-session");
+
+    closeRightSidebarByIcon();
+    await waitFor(() => expect(screen.getByTestId("app-shell").dataset.rightSidebar).toBe("closed"));
+    fireEvent.click(screen.getByRole("button", { name: "Open Sub-Agent workspace" }));
+    await waitFor(() => expect(screen.getByTestId("app-shell").dataset.rightSidebar).toBe("open"));
+    expect(screen.getByTestId("nested-host-session").textContent).toBe("parent-session");
+    subagentTab = screen.getAllByRole("tab")[0];
+    expect(subagentTab.textContent).toContain("子智能体");
 
     fireEvent.click(subagentTab);
     expect(subagentTab.getAttribute("aria-selected")).toBe("true");
@@ -868,7 +878,87 @@ describe("Layout", () => {
     expect(screen.getAllByRole("tab")[0]).toBe(subagentTab);
     expect(document.querySelector('[data-content="review"]')).not.toBeNull();
   });
+
+  it("routes a retained Sub-Agent capsule through the current scope with the sidebar expansion motion", async () => {
+    renderLayoutWithPreview(<RetainedSubagentScopeHarness />);
+
+    await screen.findByText("parent-session-a");
+    const shell = screen.getByTestId("app-shell");
+    fireEvent.click(screen.getByRole("button", { name: "展开右侧栏" }));
+    await waitFor(() => expect(shell.dataset.rightSidebar).toBe("open"));
+    fireEvent.click(screen.getByRole("button", { name: "Retain current Sub-Agent capsule callback" }));
+    closeRightSidebarByIcon();
+    await waitFor(() => {
+      expect(shell.dataset.rightSidebar).toBe("closed");
+      expect(shell.dataset.rightSidebarMotion).toBe("false");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch to parent session B" }));
+    await screen.findByText("parent-session-b");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open retained Sub-Agent capsule" }));
+    expect(shell.dataset.rightSidebarMotion).toBe("true");
+
+    await waitFor(() => {
+      expect(shell.dataset.rightSidebar).toBe("open");
+      expect(document.querySelector('[data-content="subagent"]')).not.toBeNull();
+    });
+    expect(screen.getByRole("tab", { name: /子智能体/ }).getAttribute("aria-selected")).toBe("true");
+  });
 });
+
+function RetainedSubagentScopeHarness() {
+  const preview = usePreview();
+  const { setPreviewHostContext } = preview;
+  const activeParentSessionId = preview.hostContext?.sessionId ?? "";
+
+  useEffect(() => {
+    setPreviewHostContext(retainedSubagentPreviewContext("parent-session-a"));
+    return () => setPreviewHostContext(null);
+  }, [setPreviewHostContext]);
+
+  if (activeParentSessionId !== "parent-session-a" && activeParentSessionId !== "parent-session-b") {
+    return null;
+  }
+
+  return (
+    <Layout contentMode="full">
+      <RetainedSubagentCapsuleActionHarness />
+    </Layout>
+  );
+}
+
+function RetainedSubagentCapsuleActionHarness() {
+  const preview = usePreview();
+  const sidebar = useOptionalRightSidebarConversation();
+  const retainedOpenSubagentPanelRef = useRef(sidebar?.openSubagentPanel);
+
+  return (
+    <div>
+      <output>{preview.hostContext?.sessionId ?? ""}</output>
+      <button
+        type="button"
+        onClick={() => preview.setPreviewHostContext(retainedSubagentPreviewContext("parent-session-b"))}
+      >
+        Switch to parent session B
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          retainedOpenSubagentPanelRef.current = sidebar?.openSubagentPanel;
+        }}
+      >
+        Retain current Sub-Agent capsule callback
+      </button>
+      <button
+        type="button"
+        onClick={() => retainedOpenSubagentPanelRef.current?.(retainedSubagentRun())}
+      >
+        Open retained Sub-Agent capsule
+      </button>
+    </div>
+  );
+}
 
 function NestedSidebarActionHarness() {
   const preview = usePreview();
@@ -876,15 +966,16 @@ function NestedSidebarActionHarness() {
   const { setPreviewHostContext } = preview;
 
   useEffect(() => {
-    setPreviewHostContext(nestedSidebarPreviewContext("parent-session"));
+    setPreviewHostContext(parentSidebarPreviewContext());
     return () => setPreviewHostContext(null);
   }, [setPreviewHostContext]);
 
   return (
     <div>
-      <button type="button" onClick={() => sidebar?.openSubagentList("parent-session")}>
+      <button type="button" onClick={() => sidebar?.openSubagentList(preview.hostContext?.sessionId ?? "")}>
         Open Sub-Agent workspace
       </button>
+      <output data-testid="nested-host-session">{preview.hostContext?.sessionId ?? ""}</output>
       <button
         type="button"
         onClick={() => preview.openPreview(
@@ -1095,9 +1186,52 @@ function sessionPreviewContext() {
 
 function nestedSidebarPreviewContext(sessionId: string) {
   return {
-    ...sessionPreviewContext(),
-    panelScopeKey: "sidebar:parent-session",
+    ...parentSidebarPreviewContext(),
+    panelScopeKey: "session:parent-session",
     sessionId,
+  };
+}
+
+function parentSidebarPreviewContext() {
+  return {
+    ...sessionPreviewContext(),
+    sessionId: "parent-session",
+  };
+}
+
+function retainedSubagentPreviewContext(sessionId: string) {
+  return {
+    ...sessionPreviewContext(),
+    sessionId,
+  };
+}
+
+function retainedSubagentRun(): SubagentRunSnapshot {
+  return {
+    schema_version: 1,
+    run_id: "retained-run-b",
+    subagent_id: "retained-subagent-b",
+    child_session_id: "child-session-b",
+    parent_session_id: "parent-session-b",
+    parent_trace_id: null,
+    parent_tool_call_id: "delegate-call-b",
+    parent_timeline_sequence: 1,
+    initiated_by: "main_agent",
+    role: "worker",
+    task: "Verify retained Sub-Agent capsule routing",
+    state: "completed",
+    blocked_on: null,
+    version: 1,
+    final_report: "completed",
+    report_truncated: false,
+    error_code: null,
+    error_message: null,
+    created_at: "2026-07-19T00:00:00.000Z",
+    queued_at: "2026-07-19T00:00:00.000Z",
+    started_at: "2026-07-19T00:00:01.000Z",
+    finished_at: "2026-07-19T00:00:02.000Z",
+    updated_at: "2026-07-19T00:00:02.000Z",
+    cancel_requested_at: null,
   };
 }
 

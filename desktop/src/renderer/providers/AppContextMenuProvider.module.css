@@ -24,6 +24,11 @@
   visibility: hidden;
 }
 
+.menu[data-width="content"] {
+  width: max-content;
+  max-width: calc(100vw - 16px);
+}
+
 .item {
   display: grid;
   width: 100%;
