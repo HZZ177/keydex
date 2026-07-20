@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { SendBox } from "@/renderer/components/chat/SendBox";
@@ -22,6 +22,32 @@ const skills: SkillSummary[] = [
 ];
 
 describe("SendBox skill capsule", () => {
+  it("allows sending a selected skill without message text", async () => {
+    const onSend = vi.fn();
+    render(
+      <SendBox
+        value=""
+        runtimeState="idle"
+        canSend={false}
+        canStop={false}
+        selectedSkill={skills[0]}
+        onChange={vi.fn()}
+        onSend={onSend}
+        onStop={vi.fn()}
+      />,
+    );
+
+    const sendButton = screen.getByRole("button", { name: "发送" }) as HTMLButtonElement;
+    expect(sendButton.disabled).toBe(false);
+
+    await act(async () => {
+      fireEvent.click(sendButton);
+      await Promise.resolve();
+    });
+
+    expect(onSend).toHaveBeenCalledWith([], [], [], {});
+  });
+
   it("selects a workspace skill command as a removable capsule", () => {
     const onChange = vi.fn();
     const onSkillChange = vi.fn();

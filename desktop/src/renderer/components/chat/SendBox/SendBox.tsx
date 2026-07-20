@@ -445,7 +445,11 @@ export function SendBox({
   const canSubmit =
     runtimeState !== "cancelling" &&
     !attachmentLoading &&
-    (canSend || fileSelection.files.length > 0 || quoteSelection.quotes.length > 0 || imageAttachments.length > 0);
+    (canSend ||
+      Boolean(selectedSkill) ||
+      fileSelection.files.length > 0 ||
+      quoteSelection.quotes.length > 0 ||
+      imageAttachments.length > 0);
   const showSendLoading = sendLoading && !busy;
   const requestSend = useCallback((options: SendBoxSubmitOptions = {}) => {
     const result = onSend(fileSelection.files, quoteSelection.quotes, imageAttachments, options);
