@@ -4,8 +4,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    mpsc,
-    Mutex,
+    mpsc, Mutex,
 };
 use std::time::{Duration, Instant};
 
@@ -408,9 +407,10 @@ async fn relaunch_after_app_update(
     terminals: State<'_, TerminalManager>,
 ) -> Result<(), String> {
     let manager = terminals.inner().clone();
-    let cleanup = tauri::async_runtime::spawn_blocking(move || close_terminals_with_deadline(manager))
-        .await
-        .map_err(|error| error.to_string())?;
+    let cleanup =
+        tauri::async_runtime::spawn_blocking(move || close_terminals_with_deadline(manager))
+            .await
+            .map_err(|error| error.to_string())?;
     if let Err(error) = cleanup {
         eprintln!("failed to close embedded terminals before update relaunch: {error}");
     }
@@ -561,7 +561,12 @@ fn close_terminals_with_deadline(terminals: TerminalManager) -> Result<(), Strin
     std::thread::Builder::new()
         .name("terminal-shutdown".to_string())
         .spawn(move || {
-            let _ = sender.send(terminals.close_all().map(|_| ()).map_err(|error| error.to_string()));
+            let _ = sender.send(
+                terminals
+                    .close_all()
+                    .map(|_| ())
+                    .map_err(|error| error.to_string()),
+            );
         })
         .map_err(|error| error.to_string())?;
     receiver

@@ -230,7 +230,11 @@ impl TerminalManager {
         kill_entry(&entry)
     }
 
-    pub fn rename(&self, terminal_id: &str, title: &str) -> Result<TerminalSnapshot, TerminalError> {
+    pub fn rename(
+        &self,
+        terminal_id: &str,
+        title: &str,
+    ) -> Result<TerminalSnapshot, TerminalError> {
         let title = title.trim();
         if title.is_empty() || title.chars().count() > 80 {
             return Err(TerminalError::new(
@@ -866,9 +870,14 @@ mod tests {
                 },
             )
             .expect("CMD should start inside a real ConPTY");
-        let renamed = manager.rename(&snapshot.terminal_id, "  构建终端  ").unwrap();
+        let renamed = manager
+            .rename(&snapshot.terminal_id, "  构建终端  ")
+            .unwrap();
         assert_eq!(renamed.title, "构建终端");
-        assert_eq!(manager.list("native-smoke-session").unwrap()[0].title, "构建终端");
+        assert_eq!(
+            manager.list("native-smoke-session").unwrap()[0].title,
+            "构建终端"
+        );
         assert_eq!(
             manager.rename(&snapshot.terminal_id, " ").unwrap_err().code,
             error_codes::TITLE_INVALID
@@ -959,7 +968,9 @@ mod tests {
                 11,
             );
         } else {
-            eprintln!("Git Bash is unavailable; optional real PTY case skipped with environment evidence");
+            eprintln!(
+                "Git Bash is unavailable; optional real PTY case skipped with environment evidence"
+            );
         }
     }
 
@@ -1003,12 +1014,20 @@ mod tests {
                 },
             )
             .unwrap();
-        wait_for_replay(&manager, &snapshot.terminal_id, "\x1b[6n", Duration::from_secs(5));
+        wait_for_replay(
+            &manager,
+            &snapshot.terminal_id,
+            "\x1b[6n",
+            Duration::from_secs(5),
+        );
         manager
             .write(&snapshot.terminal_id, &STANDARD.encode(b"\x1b[1;1R"))
             .unwrap();
         manager
-            .write(&snapshot.terminal_id, &STANDARD.encode(b"vim -Nu NONE -n\r\n"))
+            .write(
+                &snapshot.terminal_id,
+                &STANDARD.encode(b"vim -Nu NONE -n\r\n"),
+            )
             .unwrap();
         wait_for_replay(
             &manager,
@@ -1037,7 +1056,10 @@ mod tests {
             if current.status.is_terminal() {
                 break current;
             }
-            assert!(Instant::now() < deadline, "Git Bash did not exit after Vim closed");
+            assert!(
+                Instant::now() < deadline,
+                "Git Bash did not exit after Vim closed"
+            );
             thread::sleep(Duration::from_millis(25));
         };
         assert_eq!(final_snapshot.exit_code, Some(0));
@@ -1046,7 +1068,12 @@ mod tests {
     }
 
     #[cfg(windows)]
-    fn wait_for_replay(manager: &TerminalManager, terminal_id: &str, marker: &str, timeout: Duration) {
+    fn wait_for_replay(
+        manager: &TerminalManager,
+        terminal_id: &str,
+        marker: &str,
+        timeout: Duration,
+    ) {
         let deadline = Instant::now() + timeout;
         loop {
             let output = replay_text(manager, terminal_id);
@@ -1109,7 +1136,12 @@ mod tests {
                 },
             )
             .unwrap();
-        assert_eq!(lock(&manager.entry(&snapshot.terminal_id).unwrap().last_size).unwrap().cols, 110);
+        assert_eq!(
+            lock(&manager.entry(&snapshot.terminal_id).unwrap().last_size)
+                .unwrap()
+                .cols,
+            110
+        );
         let cursor_query_deadline = Instant::now() + Duration::from_secs(3);
         loop {
             let entry = manager.entry(&snapshot.terminal_id).unwrap();
@@ -1154,7 +1186,9 @@ mod tests {
                 let output = events
                     .into_iter()
                     .filter_map(|event| match event {
-                        TerminalEvent::Output { data_base64, .. } => STANDARD.decode(data_base64).ok(),
+                        TerminalEvent::Output { data_base64, .. } => {
+                            STANDARD.decode(data_base64).ok()
+                        }
                         _ => None,
                     })
                     .flatten()

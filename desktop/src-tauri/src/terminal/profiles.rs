@@ -89,7 +89,10 @@ fn resolve_git_bash() -> Result<ResolvedProfile, TerminalError> {
 }
 
 fn is_git_for_windows_bash(candidate: &std::path::Path) -> bool {
-    let normalized = candidate.to_string_lossy().replace('/', "\\").to_ascii_lowercase();
+    let normalized = candidate
+        .to_string_lossy()
+        .replace('/', "\\")
+        .to_ascii_lowercase();
     normalized.ends_with("\\git\\bin\\bash.exe")
         || normalized.ends_with("\\git\\usr\\bin\\bash.exe")
 }
