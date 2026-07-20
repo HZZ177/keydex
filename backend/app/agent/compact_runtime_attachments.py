@@ -152,6 +152,7 @@ def build_recent_read_attachments(
             f"{json.dumps(manifest_payload, ensure_ascii=False, indent=2)}"
         ),
         source_tool_call_ids=[item["tool_call_id"] for item in unique],
+        metadata_payload={"recent_reads": [dict(item) for item in unique]},
     )
     manifest_tokens = approximate_message_tokens(manifest_message)
     remaining = max(int(available_tokens), 0)
@@ -223,16 +224,23 @@ def is_compact_runtime_attachment_message(message: BaseMessage) -> bool:
 
 
 def _runtime_attachment_message(
-    *, kind: str, content: str, source_tool_call_ids: list[str]
+    *,
+    kind: str,
+    content: str,
+    source_tool_call_ids: list[str],
+    metadata_payload: dict[str, Any] | None = None,
 ) -> HumanMessage:
+    metadata = {
+        "kind": kind,
+        "hidden_for_transcript": True,
+        "source_tool_call_ids": source_tool_call_ids,
+    }
+    if metadata_payload:
+        metadata.update(metadata_payload)
     return HumanMessage(
         content=content,
         additional_kwargs={
-            COMPACT_RUNTIME_ATTACHMENT_METADATA_KEY: {
-                "kind": kind,
-                "hidden_for_transcript": True,
-                "source_tool_call_ids": source_tool_call_ids,
-            }
+            COMPACT_RUNTIME_ATTACHMENT_METADATA_KEY: metadata
         },
     )
 
@@ -241,6 +249,11 @@ def _collect_recent_reads(messages: list[BaseMessage]) -> list[dict[str, str]]:
     calls: dict[str, dict[str, str]] = {}
     completed: list[dict[str, str]] = []
     for message in messages:
+        carried_reads = _carried_recent_reads(message)
+        if carried_reads:
+            # Manifest entries are stored newest first. Keep the collector chronological so
+            # the caller's final reverse continues to produce newest-first ordering.
+            completed.extend(reversed(carried_reads))
         if isinstance(message, AIMessage):
             for call in message.tool_calls:
                 if call.get("name") != "read_file" or not isinstance(call.get("args"), dict):
@@ -264,6 +277,34 @@ def _collect_recent_reads(messages: list[BaseMessage]) -> list[dict[str, str]]:
             if call_id in calls:
                 completed.append(calls[call_id])
     return completed
+
+
+def _carried_recent_reads(message: BaseMessage) -> list[dict[str, str]]:
+    metadata = getattr(message, "additional_kwargs", {}).get(
+        COMPACT_RUNTIME_ATTACHMENT_METADATA_KEY
+    )
+    if not isinstance(metadata, dict) or metadata.get("kind") != "recent_read_manifest":
+        return []
+    raw_reads = metadata.get("recent_reads")
+    if not isinstance(raw_reads, list):
+        return []
+    result: list[dict[str, str]] = []
+    for item in raw_reads:
+        if not isinstance(item, dict):
+            continue
+        tool_call_id = str(item.get("tool_call_id") or "").strip()
+        path = str(item.get("path") or "").strip()
+        if not tool_call_id or not path:
+            continue
+        result.append(
+            {
+                "tool_call_id": tool_call_id,
+                "path": path,
+                "range": str(item.get("range") or "start..end"),
+                "time": str(item.get("time") or ""),
+            }
+        )
+    return result
 
 
 def _is_instruction_path(path: str) -> bool:

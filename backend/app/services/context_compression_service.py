@@ -13,6 +13,10 @@ from backend.app.agent.context_compression_selection import (
     SUMMARY_ABSOLUTE_MAX_OUTPUT_TOKENS,
     SUMMARY_PREFERRED_CAPACITY_TOKENS,
 )
+from backend.app.agent.context_compression_turns import (
+    build_compression_turn_manifest,
+    build_fallback_turn_summary,
+)
 from backend.app.agent.context_compression_utils import (
     CompressionReplacementResult,
     build_context_compression_replacement_messages,
@@ -28,8 +32,11 @@ from backend.app.model import (
     resolve_model_selection,
 )
 from backend.app.services.context_compression_prompt_builder import (
+    assemble_turn_ledger_summary,
     build_compaction_prompt,
+    build_missing_record_repair_prompt,
     extract_summary_text,
+    parse_compaction_summary,
 )
 from backend.app.storage import MODEL_DEFAULT_CHAT, SessionRecord, StorageRepositories
 
@@ -53,6 +60,9 @@ class CompressionGenerationResult:
     requested_max_output_tokens: int | None = None
     actual_output_tokens: int = 0
     actual_output_chars: int = 0
+    summary_protocol_metadata: dict[str, Any] | None = None
+    expected_record_count: int = 0
+    fallback_record_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -102,6 +112,15 @@ class ContextCompressionService:
                 failure_reason="no_compressible_messages",
             )
         compression_boundary_id = str(boundary_id or new_id())
+        turn_manifest = build_compression_turn_manifest(message_list)
+        if not turn_manifest.segments:
+            return CompressionGenerationResult(
+                success=False,
+                reason=reason,
+                failure_reason="no_compressible_turn_segments",
+                total_message_count=len(message_list),
+                boundary_id=compression_boundary_id,
+            )
         dynamic_max_tokens = min(
             max(int(max_output_tokens or SUMMARY_PREFERRED_CAPACITY_TOKENS), 1),
             SUMMARY_ABSOLUTE_MAX_OUTPUT_TOKENS,
@@ -146,12 +165,16 @@ class ContextCompressionService:
                 requested_max_output_tokens=dynamic_max_tokens,
             )
 
-        prompt = build_compaction_prompt(additional_instructions)
-        prompt_messages = [*message_list, prompt.human_message]
+        prompt = build_compaction_prompt(
+            additional_instructions,
+            turn_segments=turn_manifest.segments,
+        )
+        prompt_messages = [prompt.human_message]
         response: Any = None
-        summary: str | None = None
+        raw_summary: str | None = None
         final_failure_reason: str | None = None
         attempt_count = 0
+        accumulated_usage = _empty_token_usage()
         operation_started_at_ms = int(time.time() * 1000)
         for attempt in range(1, CONTEXT_COMPRESSION_MAX_ATTEMPTS + 1):
             attempt_count = attempt
@@ -213,9 +236,13 @@ class ContextCompressionService:
             if getattr(response, "tool_calls", None):
                 final_failure_reason = "tool_call_returned"
             else:
-                summary = extract_summary_text(getattr(response, "content", response))
-                final_failure_reason = None if summary else "empty_summary_output"
-            if summary:
+                raw_summary = extract_summary_text(getattr(response, "content", response))
+                final_failure_reason = None if raw_summary else "empty_summary_output"
+            if raw_summary:
+                accumulated_usage = _merge_token_usage(
+                    accumulated_usage,
+                    _extract_token_usage(response),
+                )
                 break
             if trace_id and trace_record_id:
                 self._append_side_event(
@@ -237,7 +264,7 @@ class ContextCompressionService:
                     requested_max_output_tokens=dynamic_max_tokens,
                 )
 
-        if not summary:
+        if not raw_summary:
             return CompressionGenerationResult(
                 success=False,
                 reason=reason,
@@ -250,6 +277,74 @@ class ContextCompressionService:
                 requested_max_output_tokens=dynamic_max_tokens,
             )
 
+        parsed = parse_compaction_summary(
+            raw_summary,
+            expected_record_ids=turn_manifest.expected_record_ids,
+        )
+        records_by_id = {
+            str(item["id"]): {"id": str(item["id"]), "text": str(item["text"])}
+            for item in parsed.records
+        }
+        missing_ids = list(parsed.missing_record_ids)
+        if missing_ids and attempt_count < CONTEXT_COMPRESSION_MAX_ATTEMPTS:
+            missing_set = set(missing_ids)
+            repair_segments = tuple(
+                segment
+                for segment in turn_manifest.segments
+                if segment.record_id in missing_set
+            )
+            attempt_count += 1
+            try:
+                repair_response = await llm.ainvoke(
+                    [build_missing_record_repair_prompt(repair_segments).human_message],
+                    config=context_compression_llm_config(),
+                )
+                accumulated_usage = _merge_token_usage(
+                    accumulated_usage,
+                    _extract_token_usage(repair_response),
+                )
+                repair_summary = extract_summary_text(
+                    getattr(repair_response, "content", repair_response)
+                )
+                if repair_summary:
+                    repaired = parse_compaction_summary(
+                        repair_summary,
+                        expected_record_ids=missing_ids,
+                    )
+                    for item in repaired.records:
+                        records_by_id[str(item["id"])] = {
+                            "id": str(item["id"]),
+                            "text": str(item["text"]),
+                        }
+            except Exception as exc:
+                logger.warning(
+                    "[ContextCompressionService] 逐轮摘要缺失项补写失败，改用宿主保底 | "
+                    f"session_id={session.id} | missing={len(missing_ids)} | error={exc}"
+                )
+
+        fallback_count = 0
+        segments_by_id = {segment.record_id: segment for segment in turn_manifest.segments}
+        for record_id in turn_manifest.expected_record_ids:
+            if record_id in records_by_id:
+                continue
+            segment = segments_by_id[record_id]
+            records_by_id[record_id] = {
+                "id": record_id,
+                "text": build_fallback_turn_summary(segment),
+            }
+            fallback_count += 1
+
+        new_records = [records_by_id[item] for item in turn_manifest.expected_record_ids]
+        all_records = [*turn_manifest.previous_records, *new_records]
+        current_state = parsed.current_state or turn_manifest.previous_current_state
+        summary = assemble_turn_ledger_summary(
+            previous_records=turn_manifest.previous_records,
+            new_records=new_records,
+            legacy_summary=turn_manifest.legacy_summary,
+            current_state=current_state,
+        )
+        protocol_metadata = turn_manifest.protocol_metadata(all_records, current_state)
+
         selected_ids = tuple(str(item) for item in selected_group_ids)
         replacement = self._build_replacement(
             summary=summary,
@@ -257,8 +352,9 @@ class ContextCompressionService:
             boundary_id=compression_boundary_id,
             tail_message_count=tail_message_count,
             selected_group_ids=selected_ids,
+            summary_protocol_metadata=protocol_metadata,
         )
-        usage = _extract_token_usage(response)
+        usage = accumulated_usage
         if trace_id and trace_record_id:
             self._append_side_event(
                 trace_id=trace_id,
@@ -289,6 +385,9 @@ class ContextCompressionService:
             requested_max_output_tokens=dynamic_max_tokens,
             actual_output_tokens=usage["output_tokens"],
             actual_output_chars=len(summary),
+            summary_protocol_metadata=protocol_metadata,
+            expected_record_count=len(turn_manifest.expected_record_ids),
+            fallback_record_count=fallback_count,
         )
 
     def _resolve_session_model(self, session: SessionRecord) -> ResolvedModelSelection:
@@ -313,6 +412,7 @@ class ContextCompressionService:
         boundary_id: str = "legacy-boundary",
         tail_message_count: int = 0,
         selected_group_ids: Iterable[str] = (),
+        summary_protocol_metadata: dict[str, Any] | None = None,
     ) -> CompressionReplacementResult:
         return build_context_compression_replacement_messages(
             summary=summary,
@@ -321,6 +421,7 @@ class ContextCompressionService:
             prefix_message_count=len(messages),
             tail_message_count=tail_message_count,
             selected_group_ids=selected_group_ids,
+            protocol_metadata=summary_protocol_metadata,
         )
 
     def _append_side_event(
@@ -410,11 +511,22 @@ def _extract_token_usage(response: Any, fallback: dict[str, int] | None = None) 
     usage = _response_usage(response)
     if usage:
         return _extract_token_usage_from_metadata(usage)
-    return fallback or {
+    return fallback or _empty_token_usage()
+
+
+def _empty_token_usage() -> dict[str, int]:
+    return {
         "input_tokens": 0,
         "output_tokens": 0,
         "total_tokens": 0,
         "cache_read_tokens": 0,
+    }
+
+
+def _merge_token_usage(left: dict[str, int], right: dict[str, int]) -> dict[str, int]:
+    return {
+        key: max(int(left.get(key, 0)), 0) + max(int(right.get(key, 0)), 0)
+        for key in ("input_tokens", "output_tokens", "total_tokens", "cache_read_tokens")
     }
 
 

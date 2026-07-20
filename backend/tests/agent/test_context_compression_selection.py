@@ -6,6 +6,7 @@ from backend.app.agent.context_compression_input import build_compression_prefix
 from backend.app.agent.context_compression_segments import build_protocol_safe_units
 from backend.app.agent.context_compression_selection import (
     POST_COMPACTION_NORMAL_CEILING_TOKENS,
+    align_recent_execution_with_structured_groups,
     select_recent_execution_segment,
     select_structured_user_message_groups,
 )
@@ -47,11 +48,20 @@ def _group(
 
 def test_group_selection_makes_latest_complete_group_mandatory() -> None:
     selection = select_structured_user_message_groups(
-        [_group("g8", "资料"), _group("g9", "skill", skill="plan"), _group("g10", "@file")]
+        [_group("g8", "资料"), _group("g9", "skill", skill="plan"), _group("g10", "@file")],
+        preserved_message_ids=["m-g8", "m-g9", "m-g10"],
     )
     assert selection.mandatory_group_ids == ("g10",)
     assert [item.group.group_id for item in selection.candidates_newest_first] == ["g9", "g8"]
     assert selection.candidates_newest_first[0].deferred_replay_reserve == 4_000
+
+
+def test_historical_group_is_not_replayed_without_a_preserved_complete_turn() -> None:
+    selection = select_structured_user_message_groups(
+        [_group("g8", "资料"), _group("g9", "skill"), _group("g10", "@file")]
+    )
+    assert selection.mandatory_group_ids == ("g10",)
+    assert selection.candidates_newest_first == ()
 
 
 def test_incomplete_group_never_authorizes_structured_replay() -> None:
@@ -133,3 +143,45 @@ def test_large_tool_result_is_truncated_only_in_replacement_copy() -> None:
     assert "已截断" in str(segment.messages[1].content)
     assert source.content == "z" * 20_000
     assert segment.protocol_unit_overflow is True
+
+
+def test_recent_selection_preserves_latest_complete_turns_atomically_within_budget() -> None:
+    messages = [
+        HumanMessage(id="u1", content="第一轮"),
+        AIMessage(id="a1", content="第一轮结果"),
+        HumanMessage(id="u2", content="第二轮"),
+        AIMessage(id="a2", content="第二轮结果"),
+        HumanMessage(id="u3", content="第三轮"),
+    ]
+    segment = select_recent_execution_segment(messages, target_tokens=100)
+    assert segment.cut_index == 2
+    assert segment.source_message_ids == ("u2", "a2", "u3")
+    assert segment.reason == "latest_complete_turns_and_active_execution"
+
+
+def test_recent_selection_drops_oldest_whole_turn_when_group_reserves_exceed_budget() -> None:
+    messages = [
+        HumanMessage(id="m-g1", content="第一轮"),
+        AIMessage(id="a1", content="第一轮结果"),
+        HumanMessage(id="m-g2", content="第二轮"),
+        AIMessage(id="a2", content="第二轮结果"),
+        HumanMessage(id="m-g3", content="第三轮"),
+        AIMessage(id="a3", content="第三轮结果"),
+        HumanMessage(id="m-g4", content="第四轮"),
+    ]
+    groups = [
+        _group("g1", "第一轮", skill="plan"),
+        _group("g2", "第二轮", skill="plan"),
+        _group("g3", "第三轮", skill="plan"),
+        _group("g4", "第四轮"),
+    ]
+
+    recent, selection = align_recent_execution_with_structured_groups(
+        messages,
+        groups,
+        target_tokens=6_000,
+    )
+
+    assert recent.source_message_ids == ("m-g3", "a3", "m-g4")
+    assert [item.group.group_id for item in selection.selected_costs] == ["g3", "g4"]
+    assert recent.reason == "latest_complete_turns_fitted_with_structured_groups"

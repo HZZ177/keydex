@@ -111,15 +111,13 @@ async def test_manual_context_compression_replaces_active_checkpoint_in_place(tm
     target_messages = _checkpoint_messages(checkpoint)
     assert [type(message) for message in target_messages] == [
         HumanMessage,
-        AIMessage,
         HumanMessage,
     ]
     assert is_context_compression_summary_message(target_messages[0]) is True
     summary_content = str(target_messages[0].content)
     assert "手动摘要" in summary_content
     assert "最近问题" not in summary_content
-    assert target_messages[1].content == "旧回答"
-    assert target_messages[2].content == "最近问题"
+    assert target_messages[1].content == "最近问题"
 
 
 @pytest.mark.asyncio

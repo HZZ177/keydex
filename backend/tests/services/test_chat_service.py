@@ -1069,6 +1069,8 @@ async def test_chat_service_injects_follow_messages_and_restores_context_items(t
         "用户添加了以下引用片段作为上下文：\n关键片段",
         "总结一下",
     ]
+    groups = checkpoint.checkpoint["channel_values"]["structured_user_message_groups"]
+    assert messages[2].id == groups[0]["root_user_message"]["source_id"]
 
 
 @pytest.mark.asyncio

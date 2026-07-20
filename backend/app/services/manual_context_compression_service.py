@@ -20,6 +20,7 @@ from backend.app.agent.context_compression_replacement import (
 )
 from backend.app.agent.context_compression_selection import (
     POST_COMPACTION_NORMAL_CEILING_TOKENS,
+    align_recent_execution_with_structured_groups,
     select_recent_execution_segment,
     select_structured_user_message_groups,
 )
@@ -205,7 +206,17 @@ class ManualContextCompressionService:
                 messages,
                 session_id=session.id,
             )
-        group_selection = select_structured_user_message_groups(groups)
+        group_selection = select_structured_user_message_groups(
+            groups,
+            preserved_message_ids=recent_execution.source_message_ids,
+        )
+        recent_execution, group_selection = align_recent_execution_with_structured_groups(
+            messages,
+            groups,
+            recent_execution=recent_execution,
+        )
+        prefix_input = build_compression_prefix_input(messages, recent_execution)
+        compression_messages = list(prefix_input.messages)
         tail_tool_call_ids = _tool_call_ids(recent_execution.messages)
         plan_attachment = build_latest_plan_attachment(
             messages,
@@ -270,6 +281,7 @@ class ManualContextCompressionService:
             summary=generation_result.summary,
             boundary_id=notice_id,
             prefix_messages=compression_messages,
+            summary_protocol_metadata=generation_result.summary_protocol_metadata,
             all_groups=groups,
             group_selection=group_selection,
             recent_execution=recent_execution,

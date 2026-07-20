@@ -115,11 +115,9 @@ def plan_compression_budget(
     recent_execution: RecentExecutionSegment,
     plan_attachment: CompactRuntimeAttachment | None,
 ) -> CompressionBudgetPlan:
-    group_visible = group_selection.mandatory.visible_tokens if group_selection.mandatory else 0
-    reserve = (
-        group_selection.mandatory.deferred_replay_reserve
-        if group_selection.mandatory
-        else 0
+    group_visible = sum(item.visible_tokens for item in group_selection.selected_costs)
+    reserve = sum(
+        item.deferred_replay_reserve for item in group_selection.selected_costs
     )
     plan_tokens = plan_attachment.approximate_tokens if plan_attachment else 0
     mandatory_visible = group_visible + recent_execution.approximate_tokens + plan_tokens
@@ -147,6 +145,7 @@ def build_compression_replacement(
     summary: str,
     boundary_id: str,
     prefix_messages: list[BaseMessage],
+    summary_protocol_metadata: dict[str, Any] | None = None,
     all_groups: Iterable[StructuredUserMessageGroup | dict[str, Any]],
     group_selection: StructuredUserGroupSelection,
     recent_execution: RecentExecutionSegment,
@@ -168,9 +167,7 @@ def build_compression_replacement(
         )
         for item in all_groups
     ]
-    selected_costs = []
-    if group_selection.mandatory is not None:
-        selected_costs.append(group_selection.mandatory)
+    selected_costs = list(group_selection.selected_costs)
 
     summary_result = build_context_compression_replacement_messages(
         summary=summary,
@@ -179,19 +176,18 @@ def build_compression_replacement(
         prefix_message_count=len(prefix_messages),
         tail_message_count=len(recent_execution.messages),
         selected_group_ids=[cost.group.group_id for cost in selected_costs],
+        protocol_metadata=summary_protocol_metadata,
     )
     summary_message = summary_result.replaced_messages[0]
     summary_tokens = token_estimator(summary_message)
     mandatory_visible = (
         summary_tokens
         + recent_execution.approximate_tokens
-        + (group_selection.mandatory.visible_tokens if group_selection.mandatory else 0)
+        + sum(item.visible_tokens for item in selected_costs)
         + (plan_attachment.approximate_tokens if plan_attachment else 0)
     )
     reserve = (
-        group_selection.mandatory.deferred_replay_reserve
-        if group_selection.mandatory
-        else 0
+        sum(item.deferred_replay_reserve for item in selected_costs)
     )
     envelope = (
         POST_COMPACTION_TARGET_TOKENS
@@ -205,14 +201,6 @@ def build_compression_replacement(
         }
         for item in pre_dropped_components
     ]
-    for candidate in group_selection.candidates_newest_first:
-        if mandatory_visible + reserve + candidate.atomic_tokens > envelope:
-            dropped.append({"kind": "structured_user_group", "reason": "shared_budget_exhausted"})
-            break
-        selected_costs.append(candidate)
-        mandatory_visible += candidate.visible_tokens
-        reserve += candidate.deferred_replay_reserve
-
     selected_group_id_set = {cost.group.group_id for cost in selected_costs}
     selected_group_ids = [
         group.group_id
@@ -225,6 +213,7 @@ def build_compression_replacement(
             selected_group_ids=selected_group_ids,
             boundary_id=boundary_id,
             tail_message_ids=recent_execution.source_message_ids,
+            tail_messages=recent_execution.messages,
             skill_validator=skill_validator,
             attachment_resolver=attachment_resolver,
         )
@@ -258,6 +247,7 @@ def build_compression_replacement(
         prefix_message_count=len(prefix_messages),
         tail_message_count=len(recent_execution.messages),
         selected_group_ids=selected_group_ids,
+        protocol_metadata=summary_protocol_metadata,
     )
     replacement_before_tail: list[BaseMessage] = [
         *summary_result.replaced_messages,

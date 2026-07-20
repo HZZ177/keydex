@@ -219,10 +219,18 @@ async def test_chat_service_rejects_missing_workspace_skill(tmp_path: Path) -> N
     )
 
     assert result.status == "failed"
-    assert result.error == "Skill does not exist or has been deleted"
+    assert result.error is not None
+    assert result.error.code == "skill_not_found"
+    assert result.error.message == "Skill does not exist or has been deleted"
+    assert result.error.details == {"skill_name": "dev-plan"}
+    assert result.error.retryable is False
     events = repositories.message_events.list_by_session(session.id)
-    assert events[-1].data["code"] == "skill_not_found"
-    assert events[-1].data["details"] == {"skill_name": "dev-plan"}
+    assert events[-1].data["error"]["code"] == "skill_not_found"
+    assert events[-1].data["error"]["message"] == (
+        "Skill does not exist or has been deleted"
+    )
+    assert events[-1].data["error"]["details"] == {"skill_name": "dev-plan"}
+    assert events[-1].data["error"]["retryable"] is False
 
 
 def test_chat_service_accepts_existing_workspace_skill(tmp_path: Path) -> None:

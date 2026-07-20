@@ -84,7 +84,11 @@ def test_budget_plan_counts_latest_group_plan_tail_and_deferred_reserve() -> Non
 
 def test_replacement_has_one_summary_then_groups_attachments_and_tail() -> None:
     groups = [_group("g8", "资料"), _group("g9", "skill"), _group("g10", "@file")]
-    selection = select_structured_user_message_groups(groups, reserve_estimator=lambda _group: 0)
+    selection = select_structured_user_message_groups(
+        groups,
+        reserve_estimator=lambda _group: 0,
+        preserved_message_ids=["m-g8", "m-g9", "m-g10"],
+    )
     recent = _recent_segment()
     runtime_attachment = CompactRuntimeAttachment(
         kind="recent_read_manifest",
@@ -135,13 +139,17 @@ def test_replacement_accepts_normal_soft_overflow_between_target_and_ceiling() -
     assert 20_000 < total <= 24_000
 
 
-def test_newer_candidate_that_does_not_fit_stops_selection_without_skipping() -> None:
+def test_complete_groups_from_preserved_turns_are_not_dropped_after_selection() -> None:
     groups = [
         _group("old-small", "old"),
         _group("new-huge", "x" * 50_000),
         _group("mandatory", "now"),
     ]
-    selection = select_structured_user_message_groups(groups, reserve_estimator=lambda _group: 0)
+    selection = select_structured_user_message_groups(
+        groups,
+        reserve_estimator=lambda _group: 0,
+        preserved_message_ids=["m-old-small", "m-new-huge", "m-mandatory"],
+    )
     result = build_compression_replacement(
         summary="summary",
         boundary_id="b1",
@@ -151,8 +159,7 @@ def test_newer_candidate_that_does_not_fit_stops_selection_without_skipping() ->
         recent_execution=select_recent_execution_segment([], target_tokens=10),
     )
     assert result.success is True
-    assert result.report.selected_group_ids == ("mandatory",)
-    assert "old-small" not in result.report.selected_group_ids
+    assert result.report.selected_group_ids == ("old-small", "new-huge", "mandatory")
 
 
 def test_provider_hard_window_failure_returns_no_partial_state() -> None:
@@ -201,7 +208,9 @@ def test_mixed_rounds_keep_only_fitting_groups_in_original_chronology() -> None:
         prefix_messages=[HumanMessage(content="prefix")],
         all_groups=groups,
         group_selection=select_structured_user_message_groups(
-            groups, reserve_estimator=lambda _group: 0
+            groups,
+            reserve_estimator=lambda _group: 0,
+            preserved_message_ids=["m-g9", "m-g10"],
         ),
         recent_execution=select_recent_execution_segment([], target_tokens=10),
     )
@@ -210,9 +219,7 @@ def test_mixed_rounds_keep_only_fitting_groups_in_original_chronology() -> None:
     visible = [str(message.content) for message in result.messages]
     assert "资料" * 30_000 not in visible
     assert visible.index("skill") < visible.index("@file")
-    assert result.report.dropped_components == (
-        {"kind": "structured_user_group", "reason": "shared_budget_exhausted"},
-    )
+    assert result.report.dropped_components == ()
 
 
 def test_pre_dropped_recent_file_reason_is_preserved_without_sensitive_body() -> None:

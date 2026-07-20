@@ -3,95 +3,140 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
 from langchain_core.messages import HumanMessage
 
-COMPACTION_PROMPT = """重要：你正在为当前会话生成早期历史前缀的上下文压缩摘要。
+from backend.app.agent.context_compression_turns import (
+    CompressionTurnSegment,
+    render_turn_segments,
+)
 
-你现在只能看到会话中将被替换的较早历史前缀。摘要之后，系统会接入你当前看不到的更新用户消息、结构化伴随输入、当前计划和近期执行现场。因此只总结当前可见前缀，不要声称总结了完整会话，也不要猜测不可见的近期状态。
+COMPACTION_PROMPT = """重要：你正在为当前会话生成早期历史前缀的高保真上下文压缩摘要。
 
-请只回复纯文本，且必须严格由一个 <分析> 块和一个 <摘要> 块组成。不要输出 Markdown 代码块、JSON、额外寒暄或结构外说明。
+宿主程序已经把待压缩历史确定性地划分为 TURN（真实用户轮次）和 EXECUTION_SEGMENT（同一长任务中较早的执行片段）。轮次和片段 ID 是事实边界，不由你重新判断。
 
-请使用简体中文撰写所有自然语言内容。原对话中的文件路径、函数名、类名、命令、错误码、配置键、协议字段和必要代码片段保持原文，不要翻译或改写这些标识。
+你的首要任务是逐条记录“用户说了什么、Agent 做了什么、得到了什么结果”。必须遵守：
 
-你的任务是把当前可见的早期前缀整理为高保真工作交接，使后续模型在接上更新消息和近期现场后可以继续推进。优先保留第一条真实用户请求与最初目标，再按时间线关联后续有效用户请求、约束、反馈和方向变化，以及 Agent 针对它们采用的方案、工具或文件动作、结果、错误、修复与测试。重复确认、寒暄和不改变任务的消息可以合并。
+1. 为输入中的每个 ID 输出且只输出一条 <记录>，顺序必须与输入一致。
+2. 不得把两个 TURN 或 EXECUTION_SEGMENT 合并，不得跳过简短确认、纠正、否决或方向变化。
+3. 每条记录分别写清：用户请求/反馈；Agent 的方案与具体动作；关键工具、命令、文件和代码位置；结果、错误、修复与测试；本轮结束状态和未完成事项。
+4. EXECUTION_SEGMENT 没有新的真实用户消息时，明确写“延续同一用户目标”，重点记录这个执行片段新增的动作、证据和状态。
+5. 文件路径、函数名、类名、命令、错误码、配置键、协议字段和必要代码片段保持原文。不要把试过但失败的方案写成最终结论，也不要丢掉用户明确否决的方向。
+6. 结构化伴随输入属于同一用户轮次，只记录它对该轮意图的作用；不要把它误写成另一轮用户消息。
+7. 最后输出一个 <当前状态>，只汇总当前目标、已确认决策、精确工作状态、风险和待办。它不能代替前面的逐条记录。
 
-在最终摘要之前，请在 <分析> 块中做简洁覆盖检查，确认已经覆盖：
-
-1. 确认第一条真实用户请求和最初目标已被优先识别。
-2. 按时间顺序梳理后续用户的主要请求、约束、反馈、方向变化和真实意图。
-3. 将每一阶段的用户意图与 Agent 的方案、工具/文件动作、结果、错误、修复和测试关联起来。
-4. 关键技术概念、架构决策、运行时边界和代码模式。
-5. 已检查、修改或创建的具体文件和代码位置。
-6. 已解决的问题、仍在进行的排查和当前可见前缀结束时的工作状态。
-7. 会影响任务意图、约束或偏好的用户消息。
-8. 涉及安全、凭证、敏感数据或禁止操作的指令；这些内容必须在摘要中准确保留。
-9. 明确待办任务；可选下一步只有在它直接承接当前可见工作时才写入。
-
-<摘要> 块必须足够详细，使后续模型在看不到这段早期原文时仍能理解任务来路。需要包含关键文件名、函数名、接口形态、测试命令、重要决策、已知风险和用户偏好。不要把摘要写成新的用户命令，不要编造不可见的近期消息，也不要把未验证的推测写成结论。
-
-输出结构：
-
-<分析>
-[简洁列出覆盖检查，不展开冗长推理。]
-</分析>
+只回复以下纯文本结构，不要输出 Markdown 代码块、JSON、分析过程、寒暄或结构外说明：
 
 <摘要>
-1. 最初目标与请求时间线：
-   [先写第一条真实用户请求与最初目标，再关联后续有效请求、反馈和方向变化]
+<记录 id="输入中的 ID">
+用户说了什么：
+- ...
 
-2. 关键技术概念：
-   - [概念]
+Agent 做了什么：
+- ...
 
-3. 文件与代码位置：
-   - [文件路径]
-     - [重要原因]
-     - [相关修改或观察到的行为]
+结果、错误与验证：
+- ...
 
-4. Agent 行为、错误与修复：
-   - [对应的用户阶段]：[方案、工具/文件动作、结果、错误、修复和测试]
+用户反馈或方向变化：
+- ...
 
-5. 问题解决与当前排查：
-   [已解决问题和仍在进行的排查]
+本轮结束状态与未完成事项：
+- ...
+</记录>
 
-6. 用户消息与约束：
-   - [会影响任务的用户消息、偏好和约束]
+[按照输入顺序继续输出其余 <记录>]
 
-7. 待办任务：
-   - [任务]
-
-8. 当前工作状态：
-   [压缩发生前的精确状态]
-
-9. 可选下一步：
-   [仅在直接承接用户最新请求时填写]
+<当前状态>
+- 当前目标：...
+- 已确认决策：...
+- 精确工作状态：...
+- 风险与待办：...
+</当前状态>
 </摘要>
 
-提醒：只输出上述纯文本结构；你的范围只是当前可见的早期历史前缀。"""
+请使用简体中文。你的范围只是下面宿主提供的当前可见早期历史前缀；摘要之后还会接入近期完整轮次、当前结构化输入、计划和执行现场，不要猜测不可见内容。"""
 
 SUMMARY_BLOCK_PATTERN = re.compile(r"<摘要>\s*(.*?)\s*</摘要>", re.DOTALL)
 ANALYSIS_BLOCK_PATTERN = re.compile(r"<分析>\s*.*?\s*</分析>", re.DOTALL)
+SUMMARY_RECORD_PATTERN = re.compile(
+    r'<记录\s+id=["\']([^"\']+)["\']\s*>\s*(.*?)\s*</记录>',
+    re.DOTALL,
+)
+CURRENT_STATE_PATTERN = re.compile(r"<当前状态>\s*(.*?)\s*</当前状态>", re.DOTALL)
 
 
 @dataclass(frozen=True, slots=True)
 class CompactionPromptBundle:
     human_message: HumanMessage
+    expected_record_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedCompactionSummary:
+    records: tuple[dict[str, str], ...]
+    current_state: str
+    missing_record_ids: tuple[str, ...]
+    unexpected_record_ids: tuple[str, ...]
 
 
 def build_compaction_prompt(
     additional_instructions: str | None = None,
+    *,
+    turn_segments: Iterable[CompressionTurnSegment] = (),
 ) -> CompactionPromptBundle:
     if additional_instructions is not None and not isinstance(additional_instructions, str):
         raise TypeError("additional_instructions 必须是字符串或 None")
+    segments = tuple(turn_segments)
     extra = (additional_instructions or "").strip()
     content = COMPACTION_PROMPT
     if extra:
         content = (
-            f"{content}\n\n附加压缩说明（仅补充摘要重点，不改变输出协议）：\n{extra}"
+            f"{content}\n\n附加压缩说明（仅补充每条记录的保留重点，不改变逐条输出协议）：\n{extra}"
         )
-    return CompactionPromptBundle(human_message=HumanMessage(content=content))
+    if segments:
+        ids = ", ".join(segment.record_id for segment in segments)
+        content = (
+            f"{content}\n\n宿主要求覆盖的 ID（必须逐一输出）：{ids}\n\n"
+            "下面是已完成确定性切分的待压缩消息：\n\n"
+            f"{render_turn_segments(segments)}"
+        )
+    return CompactionPromptBundle(
+        human_message=HumanMessage(content=content),
+        expected_record_ids=tuple(segment.record_id for segment in segments),
+    )
+
+
+def build_missing_record_repair_prompt(
+    segments: Iterable[CompressionTurnSegment],
+) -> CompactionPromptBundle:
+    missing = tuple(segments)
+    ids = ", ".join(segment.record_id for segment in missing)
+    content = f"""你正在补齐一次上下文压缩中缺失的逐轮记录。
+
+只为下面这些缺失 ID 输出 <记录>，每个 ID 恰好一条，保持输入顺序，不要输出 <当前状态>，也不要重写其他轮次。每条仍需分别说明用户说了什么、Agent 做了什么、结果/错误/验证、方向变化以及结束状态。
+
+输出协议：
+<摘要>
+<记录 id="输入中的 ID">
+用户说了什么：...
+Agent 做了什么：...
+结果、错误与验证：...
+用户反馈或方向变化：...
+本轮结束状态与未完成事项：...
+</记录>
+</摘要>
+
+必须覆盖的缺失 ID：{ids}
+
+{render_turn_segments(missing)}"""
+    return CompactionPromptBundle(
+        human_message=HumanMessage(content=content),
+        expected_record_ids=tuple(segment.record_id for segment in missing),
+    )
 
 
 def extract_summary_text(content: Any) -> str | None:
@@ -104,6 +149,72 @@ def extract_summary_text(content: Any) -> str | None:
     if "<分析" in text or "<analysis" in text.lower():
         return None
     return _strip_code_fence(text.strip()) or None
+
+
+def parse_compaction_summary(
+    summary: str,
+    *,
+    expected_record_ids: Iterable[str],
+) -> ParsedCompactionSummary:
+    expected = tuple(dict.fromkeys(str(item) for item in expected_record_ids if str(item)))
+    by_id: dict[str, str] = {}
+    unexpected: list[str] = []
+    expected_set = set(expected)
+    for match in SUMMARY_RECORD_PATTERN.finditer(str(summary or "")):
+        record_id = match.group(1).strip()
+        text = _strip_code_fence(match.group(2).strip())
+        if not record_id or not text or record_id in by_id:
+            continue
+        if record_id not in expected_set:
+            unexpected.append(record_id)
+            continue
+        by_id[record_id] = text
+    state_match = CURRENT_STATE_PATTERN.search(str(summary or ""))
+    current_state = _strip_code_fence(state_match.group(1).strip()) if state_match else ""
+    records = tuple({"id": item, "text": by_id[item]} for item in expected if item in by_id)
+    return ParsedCompactionSummary(
+        records=records,
+        current_state=current_state,
+        missing_record_ids=tuple(item for item in expected if item not in by_id),
+        unexpected_record_ids=tuple(dict.fromkeys(unexpected)),
+    )
+
+
+def assemble_turn_ledger_summary(
+    *,
+    previous_records: Iterable[dict[str, str]],
+    new_records: Iterable[dict[str, str]],
+    legacy_summary: str = "",
+    current_state: str = "",
+) -> str:
+    ordered: list[dict[str, str]] = []
+    positions: dict[str, int] = {}
+    for raw in [*previous_records, *new_records]:
+        record_id = str(raw.get("id") or "").strip()
+        text = str(raw.get("text") or "").strip()
+        if not record_id or not text:
+            continue
+        if record_id in positions:
+            ordered[positions[record_id]] = {"id": record_id, "text": text}
+        else:
+            positions[record_id] = len(ordered)
+            ordered.append({"id": record_id, "text": text})
+
+    sections: list[str] = []
+    legacy = str(legacy_summary or "").strip()
+    if legacy:
+        sections.append(f"## 既有历史交接（旧格式原样保留）\n\n{legacy}")
+    if ordered:
+        ledger_lines = ["## 逐轮对话与执行记录"]
+        for item in ordered:
+            ledger_lines.append(f"### {item['id']}\n\n{item['text']}")
+        sections.append("\n\n".join(ledger_lines))
+    state = str(current_state or "").strip()
+    if not state and ordered:
+        state = "以最后一条逐轮记录的结束状态为准，并结合后续保留的近期原文继续执行。"
+    if state:
+        sections.append(f"## 当前工作状态\n\n{state}")
+    return "\n\n".join(sections).strip()
 
 
 def _clean_text_content(content: Any) -> str:

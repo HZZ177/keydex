@@ -6,6 +6,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
+from backend.app.agent.context_compression_utils import stringify_message_content
 from backend.app.agent.state import (
     build_pending_tool_call_preset_update,
     build_structured_user_group_replay_marker_update,
@@ -50,6 +51,7 @@ class StructuredUserGroupMaterializer:
         selected_group_ids: Iterable[str],
         boundary_id: str,
         tail_message_ids: Iterable[str] = (),
+        tail_messages: Iterable[BaseMessage] = (),
         consumed_marker_keys: Iterable[str] = (),
         skill_validator: SkillValidator | None = None,
         attachment_resolver: AttachmentResolver | None = None,
@@ -96,6 +98,11 @@ class StructuredUserGroupMaterializer:
             selected.append(group)
 
         tail_ids = {str(item) for item in tail_message_ids}
+        tail_semantic_keys = {
+            key
+            for message in tail_messages
+            if (key := _message_semantic_key(message))[1]
+        }
         consumed = {str(item) for item in consumed_marker_keys}
         skill_members: list[tuple[str, StructuredUserMessageMember]] = []
         attachment_members: list[tuple[str, StructuredUserMessageMember]] = []
@@ -147,11 +154,13 @@ class StructuredUserGroupMaterializer:
                     "root_user_message",
                     "message_injection_follow",
                     "message_injection_slot",
-                    "message_context_item",
                 }:
                     continue
                 source_id = str(member.source_id or member.payload.get("message_id") or "")
                 if source_id and source_id in tail_ids:
+                    continue
+                member_semantic_key = _member_semantic_key(member)
+                if member_semantic_key[1] and member_semantic_key in tail_semantic_keys:
                     continue
                 message = _materialize_visible_member(
                     member,
@@ -276,3 +285,26 @@ def _materialize_visible_member(
     if role in {"assistant", "ai", "aimessage"}:
         return AIMessage(id=message_id, content=content, additional_kwargs=additional_kwargs)
     return HumanMessage(id=message_id, content=content, additional_kwargs=additional_kwargs)
+
+
+def _member_semantic_key(member: StructuredUserMessageMember) -> tuple[str, str]:
+    role = str(member.payload.get("role") or "HumanMessage").casefold()
+    return _normalized_role(role), str(member.payload.get("content") or "").strip()
+
+
+def _message_semantic_key(message: BaseMessage) -> tuple[str, str]:
+    if isinstance(message, SystemMessage):
+        role = "system"
+    elif isinstance(message, AIMessage):
+        role = "assistant"
+    else:
+        role = "user"
+    return role, stringify_message_content(getattr(message, "content", "")).strip()
+
+
+def _normalized_role(role: str) -> str:
+    if role in {"system", "systemmessage"}:
+        return "system"
+    if role in {"assistant", "ai", "aimessage"}:
+        return "assistant"
+    return "user"

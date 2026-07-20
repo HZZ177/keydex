@@ -112,6 +112,19 @@ def _keydex_e2e_transport(
                         json={"error": {"message": "controlled compression retry"}},
                     )
             summary_markers = ",".join(scenario_markers) or "ordinary-history"
+            record_ids = re.findall(
+                r'<(?:TURN|EXECUTION_SEGMENT)\s+id="([^"]+)"',
+                user_message,
+            )
+            record_body = "".join(
+                f'<记录 id="{record_id}">Keydex E2E compacted {summary_markers}</记录>'
+                for record_id in record_ids
+            )
+            if not record_body:
+                record_body = (
+                    '<记录 id="TURN-0001">'
+                    f"Keydex E2E compacted {summary_markers}</记录>"
+                )
             return httpx.Response(
                 200,
                 json={
@@ -119,7 +132,11 @@ def _keydex_e2e_transport(
                         {
                             "message": {
                                 "role": "assistant",
-                                "content": f"<摘要>Keydex E2E compacted {summary_markers}</摘要>",
+                                "content": (
+                                    f"<摘要>{record_body}<当前状态>"
+                                    f"Keydex E2E current {summary_markers}"
+                                    "</当前状态></摘要>"
+                                ),
                             }
                         }
                     ],

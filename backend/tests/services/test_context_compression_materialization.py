@@ -104,13 +104,10 @@ def test_materializer_restores_all_members_in_original_order_and_builds_skill_pr
     assert [type(message) for message in result.messages] == [
         SystemMessage,
         HumanMessage,
-        HumanMessage,
     ]
-    assert [str(message.content) for message in result.messages[:2]] == [
-        "项目注入",
-        "这里要修",
-    ]
-    assert isinstance(result.messages[2].content, list)
+    assert str(result.messages[0].content) == "项目注入"
+    assert isinstance(result.messages[1].content, list)
+    assert all("这里要修" not in str(message.content) for message in result.messages)
     assert result.context_items[0]["id"] == "ctx-1"
     assert result.thread_task_contexts[0]["task_id"] == "task-1"
     preset = result.state_update["pending_tool_call_preset"]
@@ -131,12 +128,44 @@ def test_tail_dedupes_visible_message_but_keeps_full_structured_authorization() 
         tail_message_ids=["user-1", "slot-1"],
         attachment_resolver=lambda _descriptor: [],
     )
-    assert [message.id for message in result.messages] == ["ctx-1"]
+    assert result.messages == ()
     assert result.selected_group_ids == ("g1",)
     assert result.state_update["structured_user_message_groups"]["groups"][0][
         "group_id"
     ] == "g1"
     assert result.state_update["pending_tool_call_preset"] is not None
+
+
+def test_tail_semantic_match_prevents_reinjection_without_a_stable_message_id() -> None:
+    group = StructuredUserMessageGroup.create(
+        group_id="g-semantic",
+        root_user_message=build_structured_user_message_member(
+            "root_user_message",
+            1,
+            {"content": "继续", "message_id": "root", "role": "HumanMessage"},
+            source_id="root",
+        ),
+        members=[
+            build_structured_user_message_member(
+                "message_injection_follow",
+                0,
+                {
+                    "type": "follow",
+                    "role": "HumanMessage",
+                    "content": "用户通过 @ 引用了文件：a.md",
+                    "hidden_for_transcript": True,
+                },
+            )
+        ],
+    )
+    result = StructuredUserGroupMaterializer().materialize(
+        groups=[group],
+        selected_group_ids=["g-semantic"],
+        boundary_id="b1",
+        tail_message_ids=["root"],
+        tail_messages=[HumanMessage(content="用户通过 @ 引用了文件：a.md")],
+    )
+    assert result.messages == ()
 
 
 @pytest.mark.parametrize("selected", [[], ["missing"]])

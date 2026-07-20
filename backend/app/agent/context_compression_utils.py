@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -63,6 +63,7 @@ def build_context_compression_replacement_messages(
     tail_message_count: int = 0,
     selected_group_ids: Iterable[str] = (),
     source_message_ids: Iterable[str] = (),
+    protocol_metadata: Mapping[str, Any] | None = None,
 ) -> CompressionReplacementResult:
     cleaned_summary = summary.strip()
     if not cleaned_summary:
@@ -75,6 +76,7 @@ def build_context_compression_replacement_messages(
             for index, message in enumerate(source_list)
         )
     metadata = {
+        **dict(protocol_metadata or {}),
         "kind": "summary",
         "is_compact_summary": True,
         "schema_version": CONTEXT_COMPRESSION_SCHEMA_VERSION,

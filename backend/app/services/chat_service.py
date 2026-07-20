@@ -1799,13 +1799,21 @@ class ChatService:
                 request.message,
                 image_attachments or [],
             )
+            root_user_message_id = str(
+                structured_user_message_group.root_user_message.source_id
+                or structured_user_message_group.root_user_message.payload.get("message_id")
+                or ""
+            )
             if user_message is not None:
+                if root_user_message_id:
+                    user_message["id"] = root_user_message_id
                 messages_to_send.append(user_message)
             if not messages_to_send:
                 messages_to_send.append(
                     {
                         "role": "user",
                         "content": "请根据已附加的上下文继续处理。",
+                        **({"id": root_user_message_id} if root_user_message_id else {}),
                         CURRENT_TURN_MESSAGE_MARKER: True,
                     }
                 )

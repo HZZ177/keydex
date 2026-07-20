@@ -408,13 +408,12 @@ async def test_context_compression_before_model_runs_blocking_compression(tmp_pa
     assert result is not None
     messages = result["messages"]
     assert isinstance(messages[1], HumanMessage)
-    assert messages[2].content == "最近回答"
-    assert messages[3].content == current_context.content
-    assert messages[4].content == current_user.content
+    assert messages[2].content == current_context.content
+    assert messages[3].content == current_user.content
     assert "阻塞式摘要" in str(messages[1].content)
     assert "当前问题" not in str(messages[1].content)
     assert service.calls == ["automatic"]
-    assert service.message_batches == [["旧问题"]]
+    assert service.message_batches == [["旧问题", "最近回答"]]
     stages = [event.payload["stage"] for event in events]
     assert "compression_started" in stages
     assert "compression_completed" in stages
@@ -590,7 +589,7 @@ async def test_context_compression_before_model_adds_pending_estimate_to_latest_
 
     assert result is not None
     assert service.calls == ["automatic"]
-    assert service.message_batches == [["旧问题"]]
+    assert service.message_batches == [["旧问题", "旧回答"]]
     snapshots = [
         event.payload for event in events if event.payload["stage"] == "context_window_snapshot"
     ]

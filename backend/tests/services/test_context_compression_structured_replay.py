@@ -172,7 +172,7 @@ async def test_automatic_compression_authorizes_first_request_skill_replay_once(
     assert isinstance(result["messages"][0], RemoveMessage)
     replacement_messages = result["messages"][1:]
     assert sum(is_context_compression_summary_message(item) for item in replacement_messages) == 1
-    assert compressor.calls == [["最初任务"]]
+    assert compressor.calls == [["最初任务", "已经完成一部分"]]
     preset = result["pending_tool_call_preset"]
     assert preset["calls"] == [
         {
@@ -391,7 +391,7 @@ async def test_three_automatic_compactions_replace_summary_and_advance_boundary_
                         *replacement,
                         AIMessage(
                             id=f"long-tail-{index}",
-                            content="x" * 8_000,
+                            content="x" * 20_000,
                             usage_metadata={
                                 "input_tokens": 44_000,
                                 "output_tokens": 1_000,

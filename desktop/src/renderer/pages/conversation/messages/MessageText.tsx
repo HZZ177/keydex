@@ -311,6 +311,10 @@ function MessageTextComponent({
         previewContext.openDirectoryPanel(path, renderContext);
         return;
       }
+      if (isAbsoluteFilePath(path)) {
+        previewContext.openPreview({ type: "local-file", path }, renderContext);
+        return;
+      }
       previewContext.openFilePanel(path, renderContext);
     },
     [notifications, onQuoteSelection, previewContext, workspaceRuntime, workspaceScope],

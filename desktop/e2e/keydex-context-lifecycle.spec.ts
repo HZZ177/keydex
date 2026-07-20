@@ -105,12 +105,12 @@ test("E30A mixed rounds restore all selected structured groups in chronology", a
   await manualCompress(page, input, "上下文压缩已完成", session.id);
   const compressed = await compressionState(session.id);
   expect(compressed.summary_count).toBe(1);
-  expect(compressed.structured_groups).toHaveLength(3);
+  expect(compressed.structured_groups).toHaveLength(2);
   expect(compressed.diagnostics.selected_group_ids).toEqual(
     compressed.structured_groups.map((group) => group.group_id),
   );
-  expect(compressed.structured_groups[1]?.member_kinds).toContain("skill_activation");
-  expect(compressed.structured_groups[2]?.member_kinds).toContain(
+  expect(compressed.structured_groups[0]?.member_kinds).toContain("skill_activation");
+  expect(compressed.structured_groups[1]?.member_kinds).toContain(
     "message_injection_follow",
   );
 
@@ -172,10 +172,9 @@ test("E30B budget keeps rounds nine and ten without authorizing round eight", as
   expect(compressed.structured_groups[1]?.member_kinds).toContain(
     "message_injection_follow",
   );
-  expect(compressed.diagnostics.dropped_components).toContainEqual({
-    kind: "structured_user_group",
-    reason: "shared_budget_exhausted",
-  });
+  expect(compressed.diagnostics.selected_group_ids).toEqual(
+    compressed.structured_groups.map((group) => group.group_id),
+  );
   expect(
     Number(compressed.diagnostics.replacement_actual_tokens) +
       Number(compressed.diagnostics.deferred_replay_reserve),

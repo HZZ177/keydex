@@ -80,6 +80,28 @@ def test_recent_read_snippets_use_current_reader_and_shared_budget() -> None:
     assert sum(item.approximate_tokens for item in selection.attachments) <= 500
 
 
+def test_recent_read_manifest_carries_read_identity_across_next_compression() -> None:
+    first = build_recent_read_attachments(
+        _tool_exchange("read_file", {"path": "a.py"}, "r1", "old"),
+        available_tokens=2_000,
+        read_current=lambda _path: "current-v1",
+    )
+    manifest = next(item for item in first.attachments if item.kind == "recent_read_manifest")
+
+    second = build_recent_read_attachments(
+        [manifest.message],
+        available_tokens=2_000,
+        read_current=lambda _path: "current-v2",
+    )
+
+    assert [item.kind for item in second.attachments] == [
+        "recent_read_manifest",
+        "recent_read_snippet",
+    ]
+    assert "a.py" in str(second.attachments[0].message.content)
+    assert "current-v2" in str(second.attachments[1].message.content)
+
+
 def test_recent_read_optional_content_drops_before_mandatory_components() -> None:
     messages = _tool_exchange("read_file", {"path": "a.py"}, "r1")
     selection = build_recent_read_attachments(messages, available_tokens=0)

@@ -15,8 +15,10 @@ from backend.app.core.time import to_iso_z, utc_now
 from backend.app.model import ModelSettings
 from backend.app.services.context_compression_prompt_builder import (
     COMPACTION_PROMPT,
+    assemble_turn_ledger_summary,
     build_compaction_prompt,
     extract_summary_text,
+    parse_compaction_summary,
 )
 from backend.app.services.context_compression_service import (
     CONTEXT_COMPRESSION_MAX_ATTEMPTS,
@@ -73,19 +75,19 @@ def test_compaction_prompt_is_chinese_plain_text_summary_contract() -> None:
     assert "Do NOT" not in content
     assert "tools" not in content.lower()
     assert "<摘要>" in content
-    assert "最初目标与请求时间线" in content
+    assert "每个 ID 输出且只输出一条" in content
     assert "请使用简体中文" in content
-    assert "当前可见的早期历史前缀" in content
-    assert "第一条真实用户请求" in content
-    assert "Agent 行为" in content
-    assert "不要声称总结了完整会话" in content
+    assert "当前可见早期历史前缀" in content
+    assert "用户说了什么" in content
+    assert "Agent 做了什么" in content
+    assert "不得把两个 TURN" in content
 
 
 def test_compaction_prompt_appends_safe_optional_instructions() -> None:
     assert build_compaction_prompt("").human_message.content == COMPACTION_PROMPT
     content = str(build_compaction_prompt("重点保留数据库迁移结论").human_message.content)
     assert content.startswith(COMPACTION_PROMPT)
-    assert "仅补充摘要重点，不改变输出协议" in content
+    assert "仅补充每条记录的保留重点，不改变逐条输出协议" in content
     assert content.endswith("重点保留数据库迁移结论")
     with pytest.raises(TypeError):
         build_compaction_prompt({"unsafe": True})  # type: ignore[arg-type]
@@ -103,6 +105,25 @@ def test_extract_summary_text_prefers_chinese_summary_block() -> None:
 """
 
     assert extract_summary_text(text) == "保留的摘要"
+
+
+def test_parse_and_assemble_summary_keeps_every_expected_turn_in_order() -> None:
+    parsed = parse_compaction_summary(
+        """
+<记录 id="TURN-0001">第一轮详情</记录>
+<记录 id="TURN-0002">第二轮详情</记录>
+<当前状态>继续第二轮目标</当前状态>
+""",
+        expected_record_ids=["TURN-0001", "TURN-0002"],
+    )
+    assert parsed.missing_record_ids == ()
+    summary = assemble_turn_ledger_summary(
+        previous_records=[],
+        new_records=parsed.records,
+        current_state=parsed.current_state,
+    )
+    assert summary.index("### TURN-0001") < summary.index("### TURN-0002")
+    assert "继续第二轮目标" in summary
 
 
 def test_internal_compression_disables_nested_factory_business_retries() -> None:
@@ -143,7 +164,8 @@ async def test_context_compression_service_uses_current_chat_model(tmp_path) -> 
     )
 
     assert result.success is True
-    assert result.summary == "新的上下文摘要"
+    assert "### TURN-0001" in result.summary
+    assert "继续实现" in result.summary
     assert result.replacement_messages is not None
     assert len(result.replacement_messages) == 1
     assert result.model_provider_id == "provider-chat"
@@ -242,7 +264,12 @@ async def test_empty_and_tool_call_results_retry_until_fourth_success(tmp_path) 
                 content="",
                 tool_calls=[{"id": "call-1", "name": "read_file", "args": {}}],
             ),
-            AIMessage(content="<分析>ok</分析><摘要>最终摘要</摘要>"),
+            AIMessage(
+                content=(
+                    '<摘要><记录 id="TURN-0001">最终摘要</记录>'
+                    '<当前状态>继续执行</当前状态></摘要>'
+                )
+            ),
         ]
     )
     result = await ContextCompressionService(
@@ -256,10 +283,11 @@ async def test_empty_and_tool_call_results_retry_until_fourth_success(tmp_path) 
         trace_record_id="trace-retry",
     )
     assert result.success is True
-    assert result.summary == "最终摘要"
+    assert "### TURN-0001" in result.summary
+    assert "最终摘要" in result.summary
     assert result.attempt_count == CONTEXT_COMPRESSION_MAX_ATTEMPTS
     assert result.requested_max_output_tokens == 20_000
-    assert result.actual_output_chars == len("最终摘要")
+    assert result.actual_output_chars == len(result.summary)
     assert len(llm.calls) == 4
     events = repositories.trace_event_logs.list_by_trace_record("trace-retry")
     assert [event.payload["status"] for event in events] == [
@@ -282,7 +310,7 @@ async def test_empty_and_tool_call_results_retry_until_fourth_success(tmp_path) 
         4,
         4,
     ]
-    assert events[-1].payload["metadata"]["actual_output_chars"] == len("最终摘要")
+    assert events[-1].payload["metadata"]["actual_output_chars"] == len(result.summary)
     assert "最终摘要" not in str([event.payload for event in events])
 
 
@@ -334,7 +362,7 @@ async def test_permission_error_is_not_retried(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_short_valid_summary_is_accepted_without_quality_retry(tmp_path) -> None:
+async def test_unstructured_summary_uses_local_repair_then_host_fallback(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     _prepare_chat_model(repositories)
     session = repositories.sessions.create(
@@ -343,7 +371,9 @@ async def test_short_valid_summary_is_accepted_without_quality_retry(tmp_path) -
         scene_id="desktop-agent",
         title="会话",
     )
-    llm = SequenceLLM([AIMessage(content="简短但合法")])
+    llm = SequenceLLM(
+        [AIMessage(content="简短但没有逐轮结构"), AIMessage(content="仍未按协议输出")]
+    )
     result = await ContextCompressionService(
         repositories, factory=FakeFactory(llm)
     ).generate_compression_result(
@@ -352,9 +382,105 @@ async def test_short_valid_summary_is_accepted_without_quality_retry(tmp_path) -
         reason="manual",
     )
     assert result.success is True
-    assert result.summary == "简短但合法"
-    assert result.attempt_count == 1
-    assert len(llm.calls) == 1
+    assert "### TURN-0001" in result.summary
+    assert "压缩" in result.summary
+    assert result.fallback_record_count == 1
+    assert result.attempt_count == 2
+    assert len(llm.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_missing_turn_is_repaired_without_rewriting_completed_records(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    _prepare_chat_model(repositories)
+    session = repositories.sessions.create(
+        session_id="ses-repair",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="repair",
+    )
+    llm = SequenceLLM(
+        [
+            AIMessage(
+                content=(
+                    '<摘要><记录 id="TURN-0001">第一轮完整详情</记录>'
+                    '<当前状态>正在处理第二轮</当前状态></摘要>'
+                )
+            ),
+            AIMessage(
+                content='<摘要><记录 id="TURN-0002">第二轮补写详情</记录></摘要>'
+            ),
+        ]
+    )
+    result = await ContextCompressionService(
+        repositories, factory=FakeFactory(llm)
+    ).generate_compression_result(
+        session=session,
+        messages=[
+            HumanMessage(id="u1", content="第一轮"),
+            AIMessage(id="a1", content="第一轮结果"),
+            HumanMessage(id="u2", content="第二轮"),
+            AIMessage(id="a2", content="第二轮结果"),
+        ],
+        reason="manual",
+    )
+    assert result.success is True
+    assert result.fallback_record_count == 0
+    assert result.attempt_count == 2
+    assert result.summary.index("第一轮完整详情") < result.summary.index("第二轮补写详情")
+
+
+@pytest.mark.asyncio
+async def test_second_compaction_preserves_prior_turn_record_and_only_appends_new_turn(
+    tmp_path,
+) -> None:
+    repositories = _repositories(tmp_path)
+    _prepare_chat_model(repositories)
+    session = repositories.sessions.create(
+        session_id="ses-incremental",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="incremental",
+    )
+    llm = SequenceLLM(
+        [
+            AIMessage(
+                content=(
+                    '<摘要><记录 id="TURN-0001">第一轮不可改写的细节</记录>'
+                    '<当前状态>第一轮完成</当前状态></摘要>'
+                )
+            ),
+            AIMessage(
+                content=(
+                    '<摘要><记录 id="TURN-0002">第二轮新增细节</记录>'
+                    '<当前状态>第二轮完成</当前状态></摘要>'
+                )
+            ),
+        ]
+    )
+    service = ContextCompressionService(repositories, factory=FakeFactory(llm))
+    first = await service.generate_compression_result(
+        session=session,
+        messages=[HumanMessage(id="u1", content="第一轮"), AIMessage(content="第一轮结果")],
+        reason="manual",
+        boundary_id="b1",
+    )
+    assert first.success is True and first.replacement_messages
+    second = await service.generate_compression_result(
+        session=session,
+        messages=[
+            *first.replacement_messages,
+            HumanMessage(id="u2", content="第二轮"),
+            AIMessage(content="第二轮结果"),
+        ],
+        reason="manual",
+        boundary_id="b2",
+    )
+    assert second.success is True
+    assert second.summary.count("第一轮不可改写的细节") == 1
+    assert second.summary.count("第二轮新增细节") == 1
+    assert "TURN-0002" in str(llm.calls[1][0].content)
+    assert "第一轮不可改写的细节" not in str(llm.calls[1][0].content)
 
 
 @pytest.mark.asyncio
@@ -384,7 +510,12 @@ class PromptAwareLLM:
         self.calls.append(messages)
         self.configs.append(config)
         return AIMessage(
-            content="<分析>\n检查\n</分析>\n<摘要>\n新的上下文摘要\n</摘要>",
+            content=(
+                '<摘要><记录 id="TURN-0001">'
+                '用户说了什么：继续实现\nAgent 做了什么：已完成一部分\n'
+                '结果、错误与验证：保留当前结果\n本轮结束状态：继续推进'
+                '</记录><当前状态>继续当前目标</当前状态></摘要>'
+            ),
             usage_metadata={"input_tokens": 4, "output_tokens": 2, "total_tokens": 6},
         )
 

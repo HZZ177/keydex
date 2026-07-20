@@ -362,6 +362,42 @@ describe("MessageText", () => {
     expect(screen.getByTestId("file-panel-request").textContent).toBe("session:ses-1:README.md");
   });
 
+  it("opens restored external file context chips through the local preview runtime", () => {
+    render(
+      <PreviewProvider>
+        <MessageText
+          message={message("user", "请看这个外部文件", "completed", {
+            contextItems: [
+              {
+                id: "ctx-external-file",
+                type: "file",
+                label: "notes.md",
+                content: "local file: D:/Documents/notes.md",
+                source: "follow",
+                path: "D:/Documents/notes.md",
+                fileType: "file",
+                metadata: { source: "picker" },
+              },
+            ],
+          })}
+          workspaceRuntime={{} as RuntimeBridge}
+          workspaceScope={{ sessionId: "ses-1" }}
+        />
+        <PreviewEntryProbe />
+      </PreviewProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "打开文件引用 D:/Documents/notes.md" }));
+
+    expect(previewEntryPayload()).toMatchObject({
+      request: {
+        type: "local-file",
+        path: "D:/Documents/notes.md",
+      },
+      scopeKey: "session:ses-1",
+    });
+  });
+
   it("keeps nested conversation file references in the hosting sidebar tab scope", () => {
     const runtime = {} as RuntimeBridge;
     render(
