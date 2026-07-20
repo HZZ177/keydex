@@ -155,7 +155,7 @@ def _keydex_e2e_transport(
                 return _stream_tool_call_response(
                     payload,
                     name="read_file",
-                    args={"path": "README.md"},
+                    args={"path": "README.md", "start_line": 201, "max_lines": 50},
                     call_id=f"call_e2e_long_read_{counts[long_stream_key]}",
                     delay_ms=delay_ms,
                 )
@@ -686,12 +686,36 @@ def main() -> None:
             if isinstance(group, dict)
         ]
         runtime_attachment_kinds = []
+        runtime_attachments = []
+        checkpoint_messages = []
         for message in messages:
+            dialogue_metadata = getattr(message, "additional_kwargs", {}).get(
+                "keydex_recent_dialogue"
+            )
+            checkpoint_messages.append(
+                {
+                    "id": str(getattr(message, "id", "") or ""),
+                    "role": str(getattr(message, "type", "") or ""),
+                    "content": str(getattr(message, "content", "") or "")[:12_000],
+                    "tool_call_count": len(getattr(message, "tool_calls", None) or []),
+                    "recent_dialogue_kind": (
+                        str(dialogue_metadata.get("kind") or "")
+                        if isinstance(dialogue_metadata, dict)
+                        else ""
+                    ),
+                }
+            )
             metadata = getattr(message, "additional_kwargs", {}).get(
                 COMPACT_RUNTIME_ATTACHMENT_METADATA_KEY
             )
             if isinstance(metadata, dict) and metadata.get("kind"):
                 runtime_attachment_kinds.append(str(metadata["kind"]))
+                runtime_attachments.append(
+                    {
+                        "kind": str(metadata["kind"]),
+                        "content": str(getattr(message, "content", "") or ""),
+                    }
+                )
         session = app.state.repositories.sessions.get(session_id)
         compression_events = [
             {
@@ -718,6 +742,8 @@ def main() -> None:
                 else {}
             ),
             "runtime_attachment_kinds": runtime_attachment_kinds,
+            "runtime_attachments": runtime_attachments,
+            "checkpoint_messages": checkpoint_messages,
             "context_compression_epoch": (
                 int(session.context_compression_epoch) if session is not None else 0
             ),

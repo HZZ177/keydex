@@ -763,12 +763,11 @@ async def test_context_compression_before_model_compresses_current_turn_after_to
 
     assert result is not None
     assert service.calls == ["automatic"]
-    assert service.message_batches == [["看下现在项目的情况"]]
+    assert service.message_batches == [["我先查看目录", "y" * 80]]
     messages = result["messages"]
     assert isinstance(messages[1], HumanMessage)
-    assert messages[2].content == "我先查看目录"
-    assert messages[3].content == tool_result.content
-    assert messages[3].tool_call_id == tool_result.tool_call_id
+    assert messages[2].content == "看下现在项目的情况"
+    assert all(not isinstance(message, ToolMessage) for message in messages[1:])
     assert "当前轮工具结果摘要" in str(messages[1].content)
 
 

@@ -79,7 +79,8 @@ def test_production_builtin_catalog_is_valid_and_contains_keydex_guide() -> None
     catalog = load_and_validate_builtin_skill_catalog()
 
     assert [(item.id, item.skill_name, item.version) for item in catalog.skills] == [
-        ("keydex-guide", "keydex-guide", 3)
+        ("keydex-guide", "keydex-guide", 3),
+        ("init-keydex", "init-keydex", 1),
     ]
     guide = catalog.skills[0]
     assert (guide.source_dir / "SKILL.md").is_file()

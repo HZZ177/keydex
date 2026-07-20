@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, RemoveMessage, ToolMessage
 
@@ -8,6 +10,8 @@ from backend.app.agent.context_compression_utils import (
     is_context_compression_protocol_message,
     stringify_message_content,
 )
+
+TRUNCATED_TOOL_RESULT_METADATA_KEY = "keydex_truncated_tool_result_metadata"
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,7 +120,45 @@ def truncate_completed_tool_result(
         f"{content[:half]}\n\n...[压缩后近期现场已截断，原始工具结果保持不变]...\n\n"
         f"{content[-half:]}"
     )
-    return message.model_copy(update={"content": shortened}, deep=True)
+    additional_kwargs = dict(getattr(message, "additional_kwargs", {}) or {})
+    recovery_metadata = _tool_result_recovery_metadata(message, content)
+    if recovery_metadata:
+        additional_kwargs[TRUNCATED_TOOL_RESULT_METADATA_KEY] = recovery_metadata
+    return message.model_copy(
+        update={"content": shortened, "additional_kwargs": additional_kwargs},
+        deep=True,
+    )
+
+
+def _tool_result_recovery_metadata(
+    message: ToolMessage,
+    content: str,
+) -> dict[str, Any] | None:
+    if str(getattr(message, "name", "") or "") != "read_file":
+        return None
+    if str(getattr(message, "status", "") or "").casefold() == "error":
+        return None
+    try:
+        payload = json.loads(content)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    nested = payload.get("result")
+    if isinstance(nested, dict):
+        payload = nested
+    if (
+        payload.get("ok") is False
+        or str(payload.get("status") or "").casefold() == "failed"
+        or isinstance(payload.get("error"), dict)
+    ):
+        return None
+    fields = {
+        key: payload.get(key)
+        for key in ("path", "start_line", "returned_lines", "mode")
+        if payload.get(key) is not None
+    }
+    return fields or None
 
 
 def _build_unit(

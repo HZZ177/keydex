@@ -270,7 +270,7 @@ class ContextCompressionMiddleware(AgentMiddleware):
         prefix_input = build_compression_prefix_input(messages, recent_execution)
         compression_messages = list(prefix_input.messages)
         continuation_messages = list(recent_execution.messages)
-        tail_tool_call_ids = _tool_call_ids(recent_execution.messages)
+        tail_tool_call_ids = _tool_call_ids(recent_execution.active_messages)
         plan_attachment = build_latest_plan_attachment(
             messages,
             tail_tool_call_ids=tail_tool_call_ids,

@@ -38,7 +38,7 @@ def _recent_segment():
         [
             HumanMessage(id="old", content="old request"),
             AIMessage(id="old-a", content="old answer"),
-            AIMessage(id="tail-a", content="current work"),
+            HumanMessage(id="tail-u", content="current work"),
         ],
         target_tokens=5,
     )
@@ -116,6 +116,12 @@ def test_replacement_has_one_summary_then_groups_attachments_and_tail() -> None:
     assert result.report.selected_group_ids == ("g8", "g9", "g10")
     assert visible.index("资料") < visible.index("skill") < visible.index("@file")
     assert result.report.replacement_actual_tokens + result.report.deferred_replay_reserve <= 20_000
+    assert result.report.recent_dialogue_turn_count == 1
+    assert result.report.recent_dialogue_message_count == 1
+    assert result.report.recent_dialogue_tokens > 0
+    assert result.report.active_execution_message_count == 1
+    assert result.report.active_execution_tokens > 0
+    assert result.report.to_safe_dict()["stripped_tool_result_count"] == 0
 
 
 def test_replacement_accepts_normal_soft_overflow_between_target_and_ceiling() -> None:
@@ -239,6 +245,46 @@ def test_pre_dropped_recent_file_reason_is_preserved_without_sensitive_body() ->
     assert result.report.dropped_components == (
         {"kind": "recent_read_snippet", "reason": "read_denied_or_missing"},
     )
+
+
+def test_oversized_recent_file_cannot_evict_retained_dialogue_or_active_state() -> None:
+    messages = [
+        HumanMessage(id="old-u", content="older request"),
+        AIMessage(id="old-a", content="older answer"),
+        HumanMessage(id="recent-u", content="recent request"),
+        AIMessage(id="recent-a", content="recent visible answer"),
+        HumanMessage(id="active-u", content="current request"),
+    ]
+    recent = select_recent_execution_segment(messages)
+    oversized_file = CompactRuntimeAttachment(
+        kind="recent_read_snippet",
+        message=HumanMessage(id="file", content="whole file body"),
+        approximate_tokens=30_000,
+        source_tool_call_ids=("read-1",),
+        optional=True,
+    )
+
+    result = build_compression_replacement(
+        summary="summary",
+        boundary_id="file-priority",
+        prefix_messages=[HumanMessage(content="older prefix")],
+        all_groups=[],
+        group_selection=select_structured_user_message_groups([]),
+        recent_execution=recent,
+        recent_attachments=[oversized_file],
+    )
+
+    assert result.success is True
+    contents = [str(message.content) for message in result.messages]
+    assert "recent request" in contents
+    assert "recent visible answer" in contents
+    assert contents[-1] == "current request"
+    assert "whole file body" not in contents
+    assert result.report.dropped_components == (
+        {"kind": "recent_read_snippet", "reason": "shared_budget_exhausted"},
+    )
+    assert result.report.recent_dialogue_turn_count == 1
+    assert result.report.active_execution_message_count == 1
 
 
 def test_oversized_mandatory_group_succeeds_only_when_final_hard_window_fits() -> None:

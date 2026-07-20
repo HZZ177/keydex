@@ -113,6 +113,20 @@ test("E30A mixed rounds restore all selected structured groups in chronology", a
   expect(compressed.structured_groups[1]?.member_kinds).toContain(
     "message_injection_follow",
   );
+  expect(Number(compressed.diagnostics.recent_dialogue_turn_count)).toBe(2);
+  expect(Number(compressed.diagnostics.recent_dialogue_message_count)).toBeGreaterThanOrEqual(4);
+  const retainedDialogue = compressed.checkpoint_messages.filter(
+    (message) => message.recent_dialogue_kind,
+  );
+  expect(retainedDialogue.map((message) => message.recent_dialogue_kind)).toEqual([
+    "user_text",
+    "assistant_text",
+    "user_text",
+    "assistant_text",
+  ]);
+  expect(retainedDialogue.some((message) => message.content.includes("ROUND9-SKILL"))).toBe(true);
+  expect(retainedDialogue.some((message) => message.content.includes("ROUND10-FILE"))).toBe(true);
+  expect(retainedDialogue.every((message) => message.tool_call_count === 0)).toBe(true);
 
   const answer = await sendAndWait(
     page,
@@ -196,7 +210,10 @@ test("E30C one user turn survives two automatic compactions and keeps recent rea
   test.setTimeout(120_000);
   await writeFile(
     path.join(fixture.workspaceRoot, "README.md"),
-    `# Keydex long task\n${"read-context\n".repeat(600)}`,
+    `# Keydex long task\n${Array.from(
+      { length: 600 },
+      (_, index) => `read-context-${index + 1}-${"x".repeat(160)}`,
+    ).join("\n")}\n`,
     "utf8",
   );
   await setCompressionSettings(10_000, 0.1);
@@ -243,7 +260,24 @@ test("E30C one user turn survives two automatic compactions and keeps recent rea
   });
   const recentState = await compressionState(session.id);
   expect(recentState.runtime_attachment_kinds).toContain("recent_read_manifest");
+  const readManifest = recentState.runtime_attachments.find(
+    (item) => item.kind === "recent_read_manifest",
+  );
+  expect(readManifest?.content).toContain("第 201-250 行");
   expect(recentState.runtime_attachment_kinds).toContain("recent_read_snippet");
+  const readSnippet = recentState.runtime_attachments.find(
+    (item) => item.kind === "recent_read_snippet",
+  );
+  expect(readSnippet?.content).toContain("恢复范围：第 201-250 行");
+  expect(readSnippet?.content).toContain("read-context-200");
+  expect(readSnippet?.content).toContain("read-context-210");
+  expect(readSnippet?.content).not.toContain("read-context-1\n");
+  expect(readSnippet?.content).not.toContain("read-context-250");
+  expect(Number(recentState.diagnostics.recent_dialogue_turn_count)).toBeGreaterThan(0);
+  expect(Number(recentState.diagnostics.recent_dialogue_tokens)).toBeGreaterThan(0);
+  expect(
+    recentState.checkpoint_messages.some((message) => message.recent_dialogue_kind === "user_text"),
+  ).toBe(true);
   expect(
     Number(recentState.diagnostics.replacement_actual_tokens) +
       Number(recentState.diagnostics.deferred_replay_reserve),
@@ -439,6 +473,14 @@ interface CompressionState {
   }>;
   diagnostics: Record<string, unknown>;
   runtime_attachment_kinds: string[];
+  runtime_attachments: Array<{ kind: string; content: string }>;
+  checkpoint_messages: Array<{
+    id: string;
+    role: string;
+    content: string;
+    tool_call_count: number;
+    recent_dialogue_kind: string;
+  }>;
   context_compression_epoch: number;
   compression_events: Array<{ action: string; data: Record<string, unknown> }>;
 }

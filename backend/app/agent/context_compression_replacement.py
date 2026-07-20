@@ -50,6 +50,13 @@ class CompressionSelectionReport:
     dropped_components: tuple[dict[str, str], ...]
     prefix_message_count: int
     tail_message_count: int
+    recent_dialogue_turn_count: int
+    recent_dialogue_message_count: int
+    recent_dialogue_tokens: int
+    active_execution_message_count: int
+    active_execution_tokens: int
+    stripped_tool_call_count: int
+    stripped_tool_result_count: int
     replacement_actual_tokens: int
     deferred_replay_reserve: int
     system_tool_estimate_tokens: int
@@ -69,6 +76,13 @@ class CompressionSelectionReport:
             "dropped_components": [dict(item) for item in self.dropped_components],
             "prefix_message_count": self.prefix_message_count,
             "tail_message_count": self.tail_message_count,
+            "recent_dialogue_turn_count": self.recent_dialogue_turn_count,
+            "recent_dialogue_message_count": self.recent_dialogue_message_count,
+            "recent_dialogue_tokens": self.recent_dialogue_tokens,
+            "active_execution_message_count": self.active_execution_message_count,
+            "active_execution_tokens": self.active_execution_tokens,
+            "stripped_tool_call_count": self.stripped_tool_call_count,
+            "stripped_tool_result_count": self.stripped_tool_result_count,
             "replacement_actual_tokens": self.replacement_actual_tokens,
             "deferred_replay_reserve": self.deferred_replay_reserve,
             "system_tool_estimate_tokens": self.system_tool_estimate_tokens,
@@ -212,7 +226,7 @@ def build_compression_replacement(
             groups=normalized_groups,
             selected_group_ids=selected_group_ids,
             boundary_id=boundary_id,
-            tail_message_ids=recent_execution.source_message_ids,
+            tail_message_ids=recent_execution.replacement_source_message_ids,
             tail_messages=recent_execution.messages,
             skill_validator=skill_validator,
             attachment_resolver=attachment_resolver,
@@ -249,16 +263,17 @@ def build_compression_replacement(
         selected_group_ids=selected_group_ids,
         protocol_metadata=summary_protocol_metadata,
     )
-    replacement_before_tail: list[BaseMessage] = [
+    replacement_before_active: list[BaseMessage] = [
         *summary_result.replaced_messages,
         *materialized.messages,
+        *recent_execution.dialogue_messages,
     ]
     if plan_attachment is not None:
-        replacement_before_tail.append(plan_attachment.message)
+        replacement_before_active.append(plan_attachment.message)
     replacement_tokens = sum(
         token_estimator(message)
         for message in _deduplicate_messages(
-            [*replacement_before_tail, *recent_execution.messages]
+            [*replacement_before_active, *recent_execution.active_messages]
         )
     )
 
@@ -266,11 +281,11 @@ def build_compression_replacement(
         if replacement_tokens + reserve + attachment.approximate_tokens > envelope:
             dropped.append({"kind": attachment.kind, "reason": "shared_budget_exhausted"})
             continue
-        replacement_before_tail.append(attachment.message)
+        replacement_before_active.append(attachment.message)
         replacement_tokens += attachment.approximate_tokens
 
     replacement = _deduplicate_messages(
-        [*replacement_before_tail, *recent_execution.messages]
+        [*replacement_before_active, *recent_execution.active_messages]
     )
     replacement = _ensure_single_summary_first(replacement)
     replacement_tokens = sum(token_estimator(message) for message in replacement)
@@ -367,6 +382,13 @@ def _report(
         dropped_components=tuple(dict(item) for item in dropped),
         prefix_message_count=prefix_count,
         tail_message_count=tail_count,
+        recent_dialogue_turn_count=len(recent_execution.dialogue_turns),
+        recent_dialogue_message_count=len(recent_execution.dialogue_messages),
+        recent_dialogue_tokens=recent_execution.dialogue_tokens,
+        active_execution_message_count=len(recent_execution.active_messages),
+        active_execution_tokens=recent_execution.active_tokens,
+        stripped_tool_call_count=recent_execution.stripped_tool_call_count,
+        stripped_tool_result_count=recent_execution.stripped_tool_result_count,
         replacement_actual_tokens=replacement_tokens,
         deferred_replay_reserve=reserve,
         system_tool_estimate_tokens=max(system_tool_estimate, 0),
