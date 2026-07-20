@@ -898,10 +898,35 @@
   display: grid;
   min-height: 0;
   gap: 2px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   margin: 0;
   padding: 0;
+  scrollbar-color: color-mix(in srgb, var(--color-text-tertiary) 42%, transparent) transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
   list-style: none;
+}
+
+.fileChangeCardList::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+.fileChangeCardList::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.fileChangeCardList::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-text-tertiary) 46%, transparent);
+  background-clip: padding-box;
+}
+
+.fileChangeCardList::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-text-tertiary) 62%, transparent);
+  background-clip: padding-box;
 }
 
 .fileChangeCardRow {

@@ -5,10 +5,11 @@
   height: 100%;
   min-width: var(--app-min-width);
   display: grid;
-  grid-template-rows: var(--titlebar-height) auto minmax(0, 1fr);
+  grid-template-rows: var(--titlebar-height) auto minmax(0, 1fr) var(--terminal-dock-size, 0px);
   overflow: hidden;
   background: var(--app-bg);
   color: var(--color-text-1);
+  transition: grid-template-rows 180ms var(--motion-ease-standard);
 }
 
 .titlebar {
@@ -237,11 +238,18 @@
   --loading-skeleton-stack-width: min(300px, 76%);
 }
 
-.contentRightSidebarToggle {
+.contentTopActions {
   position: absolute;
   z-index: 35;
   top: 9px;
   right: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.contentTopAction {
+  position: relative;
   display: inline-grid;
   width: 30px;
   height: 30px;
@@ -257,19 +265,54 @@
     transform var(--motion-fast) var(--motion-ease-standard);
 }
 
-.contentRightSidebarToggle:hover,
-.contentRightSidebarToggle:focus-visible {
+.contentTopAction:hover:not(:disabled),
+.contentTopAction:focus-visible,
+.contentTopAction[data-active="true"] {
   background: var(--surface-hover);
   color: var(--color-text-1);
 }
 
-.contentRightSidebarToggle:active {
+.contentTopAction:active:not(:disabled) {
   transform: scale(0.94);
 }
 
-.shell[data-right-sidebar-placement="left"] .contentRightSidebarToggle {
+.contentTopAction:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
+
+.terminalCountBadge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 15px;
+  height: 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0 3px;
+  border: 2px solid var(--surface-bg);
+  border-radius: var(--radius-pill);
+  background: var(--session-unread-color);
+  color: var(--color-on-accent, #fff);
+  font-size: 9px;
+  font-weight: 650;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.shell[data-right-sidebar-placement="left"] .contentTopActions {
   right: auto;
   left: calc(var(--active-sidebar-width) + 10px);
+}
+
+.shell[data-right-sidebar="open"][data-right-sidebar-placement="right"] .contentTopActions {
+  right: calc(var(--right-sidebar-width) + 10px);
+}
+
+.shell[data-right-sidebar="open"][data-right-sidebar-placement="left"] .contentTopActions {
+  left: calc(var(--active-sidebar-width) + var(--right-sidebar-width) + 10px);
 }
 
 .rightSidebar {
@@ -688,20 +731,21 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .shell,
   .shell[data-right-sidebar-motion="true"] .content,
   .shell[data-right-sidebar-motion="true"] .rightSidebar {
     transition: none;
     will-change: auto;
   }
 
-  .contentRightSidebarToggle,
+  .contentTopAction,
   .rightSidebarIconButton,
   .rightSidebarTab,
   .rightSidebarAddTab {
     transition: none;
   }
 
-  .contentRightSidebarToggle:active,
+  .contentTopAction:active,
   .rightSidebarIconButton:active,
   .rightSidebarAddTab:active {
     transform: none;

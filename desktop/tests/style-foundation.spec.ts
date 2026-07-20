@@ -362,6 +362,51 @@ describe("style foundation", () => {
     });
   });
 
+  it("keeps conversation local scroll owners visibly scrollable", () => {
+    const messageText = readSource("renderer/pages/conversation/messages/MessageText.module.css");
+    const jsonTree = readSource("renderer/components/json/JsonTreeViewer.module.css");
+    const composerAccessory = readSource("renderer/pages/conversation/ComposerAccessory.module.css");
+    const compactDiff = readSource("renderer/components/diff/wrappers/CompactDiffView.module.css");
+    const diffView = readSource("renderer/components/diff/KeydexDiffView.module.css");
+    const pierreCodeView = readSource("renderer/components/diff/engine/PierreCodeView.module.css");
+
+    expect(messageText).toMatch(/\.codeViewport\s*{[^}]*overflow-x:\s*auto;[^}]*overflow-y:\s*hidden/s);
+    expect(messageText).toMatch(
+      /\.codeViewport\[data-collapsed="true"\]\s*{[^}]*overflow-x:\s*auto;[^}]*overflow-y:\s*hidden/s,
+    );
+    expect(messageText).toMatch(
+      /\.codeViewport::-webkit-scrollbar,[\s\S]*?\.mermaidPreview\[data-size="fullscreen"\]::-webkit-scrollbar\s*{[^}]*width:\s*9px;[^}]*height:\s*9px/s,
+    );
+    expect(messageText).toMatch(/\.fullscreenMarkdown\s*{[^}]*overflow:\s*auto/s);
+    expect(jsonTree).toMatch(
+      /\.treeViewport::-webkit-scrollbar,[\s\S]*?\.primitiveValue::-webkit-scrollbar\s*{[^}]*width:\s*9px;[^}]*height:\s*9px/s,
+    );
+    expect(composerAccessory).toMatch(
+      /\.fileChangeCardList\s*{[^}]*overflow-y:\s*auto;[^}]*scrollbar-gutter:\s*stable;[^}]*scrollbar-width:\s*thin/s,
+    );
+    expect(composerAccessory).toMatch(
+      /\.fileChangeCardList::-webkit-scrollbar\s*{[^}]*width:\s*9px;[^}]*height:\s*9px/s,
+    );
+    expect(compactDiff).toMatch(
+      /\.viewer\s*\{[^}]*height:\s*clamp\(180px, 35vh, 420px\);[^}]*overflow:\s*hidden/s,
+    );
+    expect(compactDiff).toMatch(
+      /\.viewer\s+:global\(\[data-keydex-diff-surface\]\[data-profile="compact"\]\)\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*overflow:\s*hidden/s,
+    );
+    expect(diffView).toMatch(
+      /\.patchViewport\s*\{[^}]*overflow-y:\s*auto;[^}]*scrollbar-gutter:\s*stable;[^}]*scrollbar-width:\s*thin/s,
+    );
+    expect(diffView).toMatch(
+      /\.patchViewport::-webkit-scrollbar\s*\{[^}]*width:\s*9px;[^}]*height:\s*9px/s,
+    );
+    expect(pierreCodeView).toMatch(
+      /\.scrollViewport\s*\{[^}]*overflow:\s*auto;[^}]*scrollbar-gutter:\s*stable;[^}]*scrollbar-width:\s*thin/s,
+    );
+    expect(pierreCodeView).toMatch(
+      /\.scrollViewport::-webkit-scrollbar\s*\{[^}]*width:\s*9px;[^}]*height:\s*9px/s,
+    );
+  });
+
   it("keeps settings workspace on its own Keydex-like layout baseline", () => {
     const mainLayout = readSource("renderer/components/layout/Layout.module.css");
     const sider = readSource("renderer/components/layout/Sider/Sider.module.css");

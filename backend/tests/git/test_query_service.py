@@ -76,7 +76,7 @@ async def test_query_service_routes_real_status_refs_history_diff_and_blame(
     history = await service.history(request, limit=1)
     diff = await service.diff(request)
     scoped_diff = await service.diff(request, path="README.md")
-    untracked_diff = await service.diff(request, path="new file.txt")
+    untracked_diff = await service.diff(request, path="new file.txt", untracked=True)
     blame = await service.blame(request, "README.md")
     reflog = await service.reflog(request, limit=20)
 

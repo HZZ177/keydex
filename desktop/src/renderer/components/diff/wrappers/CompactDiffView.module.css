@@ -64,12 +64,31 @@
   min-height: 0;
   border-block-start: 1px solid var(--diff-border-subtle);
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--diff-scrollbar-thumb) var(--diff-scrollbar-track);
 }
 
-.viewer :global([data-keydex-diff-surface]) {
-  height: auto;
-  min-height: 100%;
-  overflow: visible;
+.viewer::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+.viewer::-webkit-scrollbar-track {
+  background: var(--diff-scrollbar-track);
+}
+
+.viewer::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--diff-scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+.viewer::-webkit-scrollbar-thumb:hover {
+  background: var(--diff-scrollbar-thumb-hover);
+  background-clip: padding-box;
 }
 
 @media (prefers-reduced-motion: reduce) {

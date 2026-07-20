@@ -1037,8 +1037,59 @@
     inset 0 1px 0 var(--message-code-content-highlight),
     inset 0 0 0 1px var(--message-code-inner-edge);
   overflow-x: auto;
-  overflow-y: visible;
+  overflow-y: hidden;
   contain: layout paint style;
+}
+
+.codeViewport,
+.mathPreview,
+.fullscreenSource,
+.fullscreenMarkdown,
+.mermaidPreview[data-size="inline"] .mermaidSvg,
+.mermaidPreview[data-size="fullscreen"] {
+  scrollbar-color: color-mix(in srgb, var(--color-text-tertiary) 42%, transparent) transparent;
+  scrollbar-width: thin;
+}
+
+.codeViewport::-webkit-scrollbar,
+.mathPreview::-webkit-scrollbar,
+.fullscreenSource::-webkit-scrollbar,
+.fullscreenMarkdown::-webkit-scrollbar,
+.mermaidPreview[data-size="inline"] .mermaidSvg::-webkit-scrollbar,
+.mermaidPreview[data-size="fullscreen"]::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+.codeViewport::-webkit-scrollbar-track,
+.mathPreview::-webkit-scrollbar-track,
+.fullscreenSource::-webkit-scrollbar-track,
+.fullscreenMarkdown::-webkit-scrollbar-track,
+.mermaidPreview[data-size="inline"] .mermaidSvg::-webkit-scrollbar-track,
+.mermaidPreview[data-size="fullscreen"]::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.codeViewport::-webkit-scrollbar-thumb,
+.mathPreview::-webkit-scrollbar-thumb,
+.fullscreenSource::-webkit-scrollbar-thumb,
+.fullscreenMarkdown::-webkit-scrollbar-thumb,
+.mermaidPreview[data-size="inline"] .mermaidSvg::-webkit-scrollbar-thumb,
+.mermaidPreview[data-size="fullscreen"]::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-text-tertiary) 46%, transparent);
+  background-clip: padding-box;
+}
+
+.codeViewport::-webkit-scrollbar-thumb:hover,
+.mathPreview::-webkit-scrollbar-thumb:hover,
+.fullscreenSource::-webkit-scrollbar-thumb:hover,
+.fullscreenMarkdown::-webkit-scrollbar-thumb:hover,
+.mermaidPreview[data-size="inline"] .mermaidSvg::-webkit-scrollbar-thumb:hover,
+.mermaidPreview[data-size="fullscreen"]::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-text-tertiary) 62%, transparent);
+  background-clip: padding-box;
 }
 
 .codeBlock[data-has-text-footer="true"] .codeViewport {
@@ -1050,7 +1101,8 @@
 
 .codeViewport[data-collapsed="true"] {
   max-height: var(--code-collapsed-height, 198px);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .codeViewport[data-animating="true"] {
@@ -1120,7 +1172,7 @@
   box-sizing: border-box;
   height: 100%;
   min-height: 0;
-  overflow: hidden;
+  overflow: auto;
   background: var(--surface-bg);
   padding: 24px 28px;
 }

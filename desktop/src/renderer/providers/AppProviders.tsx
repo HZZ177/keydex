@@ -16,6 +16,8 @@ import { AppTooltipLayer } from "@/renderer/components/tooltip";
 import { ComposerDraftProvider } from "@/renderer/features/composer";
 import { runtimeBridge, type RuntimeBridge } from "@/runtime";
 import { PierreWorkerPoolHost } from "@/renderer/components/diff/engine/PierreWorkerPoolHost";
+import { TerminalSessionScopeProvider } from "./TerminalSessionScopeProvider";
+import { TerminalProvider } from "@/renderer/features/terminal";
 
 export interface AppProvidersProps extends PropsWithChildren {
   runtime?: RuntimeBridge;
@@ -38,17 +40,21 @@ export function AppProviders({
               <RuntimeConnectionProvider runtime={runtime} {...runtimeConnection}>
                 <WindowClosePreferenceController runtime={runtime} />
                 <AppTooltipLayer scopeSelector="body" targetMode="native-interactive-title" />
-                <FontProvider>
-                  <ComposerDraftProvider>
-                    <AgentSessionProvider runtime={runtime}>
-                      <FileChangeProvider>
-                        <PreviewProvider>
-                          <HashRouter>{children}</HashRouter>
-                        </PreviewProvider>
-                      </FileChangeProvider>
-                    </AgentSessionProvider>
-                  </ComposerDraftProvider>
-                </FontProvider>
+                <TerminalSessionScopeProvider>
+                  <TerminalProvider>
+                    <FontProvider>
+                      <ComposerDraftProvider>
+                        <AgentSessionProvider runtime={runtime}>
+                          <FileChangeProvider>
+                            <PreviewProvider>
+                              <HashRouter>{children}</HashRouter>
+                            </PreviewProvider>
+                          </FileChangeProvider>
+                        </AgentSessionProvider>
+                      </ComposerDraftProvider>
+                    </FontProvider>
+                  </TerminalProvider>
+                </TerminalSessionScopeProvider>
               </RuntimeConnectionProvider>
             </AppContextMenuProvider>
           </AppUpdateController>

@@ -9,10 +9,11 @@ export interface OpenExternalUrlOptions {
   importShellApi?: () => Promise<ShellOpenApi>;
   openWindow?: BrowserOpen;
   isTauriRuntime?: () => boolean;
+  allowHttp?: boolean;
 }
 
 export async function openExternalUrl(rawUrl: string, options: OpenExternalUrlOptions = {}): Promise<void> {
-  const target = normalizeExternalUrl(rawUrl);
+  const target = normalizeExternalUrl(rawUrl, options.allowHttp ?? false);
   if (isLikelyTauriRuntime(options)) {
     const shellApi = options.shellApi ?? await loadShellApi(options);
     if (typeof shellApi.open !== "function") {
@@ -28,15 +29,15 @@ export async function openExternalUrl(rawUrl: string, options: OpenExternalUrlOp
   }
 }
 
-function normalizeExternalUrl(rawUrl: string): string {
+function normalizeExternalUrl(rawUrl: string, allowHttp: boolean): string {
   try {
     const target = new URL(rawUrl);
-    if (target.protocol !== "https:") {
-      throw new Error("只允许打开 HTTPS 链接");
+    if (target.protocol !== "https:" && !(allowHttp && target.protocol === "http:")) {
+      throw new Error(allowHttp ? "只允许打开 HTTP 或 HTTPS 链接" : "只允许打开 HTTPS 链接");
     }
     return target.toString();
   } catch (reason) {
-    if (reason instanceof Error && reason.message === "只允许打开 HTTPS 链接") {
+    if (reason instanceof Error && reason.message.startsWith("只允许打开")) {
       throw reason;
     }
     throw new Error("外部链接格式无效");

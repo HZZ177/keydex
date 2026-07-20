@@ -267,3 +267,22 @@ export type {
 } from "./mcp";
 export type { AppUpdateProgress, PendingAppUpdate } from "./appUpdate";
 export type { AppReleaseHistory, AppReleaseNote } from "./appReleaseNotes";
+export {
+  createTerminalRuntime,
+  decodeRuntimeEvent,
+  encodeTerminalInput,
+  isTerminalRuntimeAvailable,
+  terminalRuntime,
+  TerminalRuntimeError,
+} from "./terminal";
+export type {
+  TerminalAttachment,
+  TerminalAttachOptions,
+  TerminalChannel,
+  TerminalCreateOptions,
+  TerminalIpcAdapter,
+  TerminalResizeOptions,
+  TerminalRuntime,
+  TerminalRuntimeEvent,
+} from "./terminal";
+export type * from "./terminalTypes";

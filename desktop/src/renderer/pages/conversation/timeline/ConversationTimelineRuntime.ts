@@ -547,7 +547,16 @@ export class ConversationTimelineRuntime {
       )),
     );
     const result = update();
-    return this.publishPatch(result);
+    const patch = this.publishPatch(result);
+    if (
+      origin === "user"
+      && this.userScrollActive
+      && !this.controlledScrollActive
+      && Math.abs(this.root.scrollTop - result.viewport.scrollTop) > HEIGHT_EPSILON_PX
+    ) {
+      this.requestScroll(result.viewport.scrollTop, "preserve-top");
+    }
+    return patch;
   }
 
   private publishPatch(result: DocumentViewPatchResult): ConversationTimelinePatch {
@@ -597,14 +606,16 @@ export class ConversationTimelineRuntime {
         { origin: "user" },
       )));
     }
-    const result = this.withViewMutation(() => this.view.updateMeasuredHeights(effective, revision));
+    const allowAnchorCorrection = this.userScrollActive && !this.controlledScrollActive;
+    const result = this.withViewMutation(() => this.view.updateMeasuredHeights(effective, revision, {
+      allowDuringUserScroll: allowAnchorCorrection,
+    }));
     if (!result) return null;
     let patch = this.publishPatch(result);
     if (this.followBottom && (!this.userScrollActive || this.followBottomGestureActive)) {
       patch = this.commitFollowBottom("follow-bottom-geometry");
     } else if (
-      !this.userScrollActive
-      && !this.controlledScrollActive
+      !this.controlledScrollActive
       && Math.abs(this.root.scrollTop - result.viewport.scrollTop) > HEIGHT_EPSILON_PX
     ) {
       this.requestScroll(result.viewport.scrollTop, "preserve-top");
@@ -661,7 +672,11 @@ export class ConversationTimelineRuntime {
         }
       }
       if (!updates.length || !this.snapshot) break;
-      const measured = this.withViewMutation(() => this.view.updateMeasuredHeights(updates, this.snapshot!.revision));
+      const measured = this.withViewMutation(() => this.view.updateMeasuredHeights(
+        updates,
+        this.snapshot!.revision,
+        { allowDuringUserScroll: this.userScrollActive && !this.controlledScrollActive },
+      ));
       if (!measured) break;
       result = measured;
     }

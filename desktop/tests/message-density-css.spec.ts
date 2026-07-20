@@ -110,6 +110,25 @@ describe("conversation message density CSS contract", () => {
     expect(cssRule(fileChangeCss, ".header")).not.toContain("grid-template-columns");
     expect(cssRule(groupCss, ".title")).toContain("transform: translateY(var(--ghost-text-offset-y))");
   });
+
+  it("keeps tool file rows on one line and truncates only the file path", () => {
+    const toolCallCss = readCss("../src/renderer/pages/conversation/messages/ToolCallBlock.module.css");
+
+    expect(cssRule(toolCallCss, ".header")).toContain("width: fit-content");
+    expect(cssRule(toolCallCss, ".header")).toContain(
+      "max-width: var(--message-inline-tool-detail-width, min(760px, 100%))",
+    );
+    expect(cssRule(toolCallCss, ".titleGroup")).toContain("flex: 0 1 auto");
+    expect(cssRule(toolCallCss, ".titleGroup")).toContain("overflow: hidden");
+    expect(cssRule(toolCallCss, ".title")).toContain("flex: 0 1 auto");
+    expect(cssRule(toolCallCss, ".title")).toContain("flex-wrap: nowrap");
+    expect(cssRule(toolCallCss, ".title")).toContain("white-space: nowrap");
+    expect(cssRule(toolCallCss, ".fileTargetButton")).toContain("overflow: hidden");
+    expect(cssRule(toolCallCss, ".fileTargetButton")).toContain("white-space: nowrap");
+    expect(cssRule(toolCallCss, ".fileTargetLabel")).toContain("overflow: hidden");
+    expect(cssRule(toolCallCss, ".fileTargetLabel")).toContain("text-overflow: ellipsis");
+    expect(cssRule(toolCallCss, ".fileTargetLabel")).toContain("white-space: nowrap");
+  });
 });
 
 function readCss(relativePath: string): string {

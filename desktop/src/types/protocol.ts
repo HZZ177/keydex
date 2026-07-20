@@ -2079,6 +2079,8 @@ export interface AgentMiddlewareProgressData {
   error_type?: string;
   compression_mode?: "context" | "snapshot" | string;
   compression_reason?: "manual" | "automatic" | string;
+  compression_operation_id?: string;
+  boundary_id?: string;
   notice_id?: string;
   reason?: string | null;
   trace_id?: string | null;

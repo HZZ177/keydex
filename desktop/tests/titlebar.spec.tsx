@@ -19,6 +19,7 @@ describe("Titlebar", () => {
     expect(screen.queryByLabelText("折叠侧边栏")).toBeNull();
     expect(screen.queryByLabelText("展开侧边栏")).toBeNull();
     expect(screen.queryByLabelText("展开右侧栏")).toBeNull();
+    expect(screen.queryByLabelText("打开终端")).toBeNull();
   });
 
   it("keeps the left titlebar area for brand and future top-level actions", () => {

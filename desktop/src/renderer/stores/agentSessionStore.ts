@@ -859,6 +859,13 @@ function isEquivalentHydratedMessage(candidate: AgentChatMessage, localMessage: 
   if (candidate.role !== localMessage.role) {
     return false;
   }
+  const localCompressionNoticeId = compressionNoticeIdFromMessage(localMessage);
+  if (
+    localCompressionNoticeId &&
+    compressionNoticeIdFromMessage(candidate) === localCompressionNoticeId
+  ) {
+    return true;
+  }
   if (localMessage.role === "a2ui") {
     const localStreamId = a2UIStreamId(localMessage);
     return Boolean(localStreamId && a2UIStreamId(candidate) === localStreamId);
@@ -1439,7 +1446,7 @@ function handleMiddlewareProgress(
     return state;
   }
 
-  const noticeId = contextCompressionNoticeId(data, stage, sessionId);
+  const noticeId = contextCompressionNoticeId(data, sessionId);
   const metadata = {
     compression: {
       kind: "context_compression",
@@ -1461,12 +1468,14 @@ function handleMiddlewareProgress(
 
   const next = cloneState(state);
   const view = ensureSessionState(next, sessionId);
-  const existing = view.messages.find((message) => {
-    const compression = asRecord(message.metadata?.compression);
-    return stringValue(compression?.notice_id) === noticeId;
-  });
-  if (existing) {
-    Object.assign(existing, patch);
+  const existingIndex = view.messages.findIndex(
+    (message) => compressionNoticeIdFromMessage(message) === noticeId,
+  );
+  if (existingIndex >= 0) {
+    Object.assign(view.messages[existingIndex], patch);
+    view.messages = view.messages.filter(
+      (message, index) => index === existingIndex || compressionNoticeIdFromMessage(message) !== noticeId,
+    );
   } else {
     view.messages.push({
       id: `compression:${sessionId}:${noticeId}`,
@@ -4434,16 +4443,21 @@ function contextCompressionMode(data: AgentMiddlewareProgressData, stage: string
   return "context";
 }
 
-function contextCompressionNoticeId(
-  data: AgentMiddlewareProgressData,
-  stage: string,
-  sessionId: string,
-): string {
+function contextCompressionNoticeId(data: AgentMiddlewareProgressData, sessionId: string): string {
   const noticeId = stringValue(data.notice_id);
   if (noticeId) {
     return noticeId;
   }
-  return `context-compression:${stage}:${stringValue(data.trace_id) || sessionId}`;
+  const noticeKey = stringValue(data.trace_id) || sessionId;
+  const operationId = stringValue(data.compression_operation_id) || stringValue(data.boundary_id);
+  return operationId
+    ? `context-compression:${noticeKey}:${operationId}`
+    : `context-compression:${noticeKey}`;
+}
+
+function compressionNoticeIdFromMessage(message: AgentChatMessage): string {
+  const compression = asRecord(message.metadata?.compression);
+  return stringValue(compression?.notice_id);
 }
 
 function nextMessageId(state: AgentConversationState, prefix: string, sessionId: string): string {

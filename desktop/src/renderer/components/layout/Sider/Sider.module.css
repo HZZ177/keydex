@@ -732,7 +732,7 @@ button.sectionTitle[data-kind="pinned"]:focus-visible,
   width: 9px;
   height: 9px;
   border-radius: var(--radius-pill);
-  background: #f97316;
+  background: var(--session-unread-color);
   box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--sidebar-bg) 88%, transparent);
 }
 

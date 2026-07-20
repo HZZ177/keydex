@@ -356,8 +356,8 @@ describe("ConversationTimelineRuntime", () => {
     harness.scrollRequests.length = 0;
     const estimatedTotalHeight = harness.runtime.diagnostics().totalHeight;
     harness.runtime.updateMeasuredHeight("unit-0", 100);
-    expect(harness.root.scrollTop).toBe(200);
-    expect(harness.scrollRequests).toEqual([]);
+    expect(harness.root.scrollTop).toBe(260);
+    expect(harness.scrollRequests).toEqual([{ scrollTop: 260, reason: "preserve-top" }]);
     expect(harness.runtime.diagnostics()).toMatchObject({
       totalHeight: estimatedTotalHeight + 60,
       deferredMeasurements: 0,
@@ -500,8 +500,8 @@ describe("ConversationTimelineRuntime", () => {
     harness.scrollRequests.length = 0;
     harness.runtime.updateMeasuredHeight("unit-0", 500);
 
-    expect(harness.root.scrollTop).toBe(40);
-    expect(harness.scrollRequests).toEqual([]);
+    expect(harness.root.scrollTop).toBe(500);
+    expect(harness.scrollRequests).toEqual([{ scrollTop: 500, reason: "preserve-top" }]);
     expect(harness.runtime.diagnostics()).toMatchObject({
       followBottom: true,
       userScrollActive: true,
@@ -510,8 +510,8 @@ describe("ConversationTimelineRuntime", () => {
     });
 
     harness.runtime.setUserScrollInteraction(false);
-    expect(harness.root.scrollTop).toBe(40);
-    expect(harness.scrollRequests).toEqual([]);
+    expect(harness.root.scrollTop).toBe(500);
+    expect(harness.scrollRequests).toEqual([{ scrollTop: 500, reason: "preserve-top" }]);
   });
 
   it("enforces pin/identity contracts and destroys every local renderer", () => {

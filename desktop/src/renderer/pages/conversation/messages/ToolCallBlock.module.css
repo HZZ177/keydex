@@ -14,7 +14,7 @@
 
   display: inline-flex;
   width: fit-content;
-  max-width: 100%;
+  max-width: var(--message-inline-tool-detail-width, min(760px, 100%));
   align-items: center;
   gap: 6px;
   border: 0;
@@ -76,6 +76,7 @@
   flex: 0 1 auto;
   align-items: center;
   gap: 6px;
+  overflow: hidden;
 }
 
 .title {
@@ -85,23 +86,28 @@
   min-width: 0;
   max-width: 100%;
   flex: 0 1 auto;
-  flex-wrap: wrap;
-  overflow: visible;
+  flex-wrap: nowrap;
+  overflow: hidden;
   color: currentColor;
   font-size: 13px;
   line-height: var(--ui-line-height-compact);
   text-overflow: ellipsis;
   transform: translateY(var(--ghost-text-offset-y));
-  white-space: normal;
+  white-space: nowrap;
 }
 
 .fileTarget {
   display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
   align-items: center;
   gap: 4px;
   margin-left: 4px;
+  overflow: hidden;
   color: var(--color-accent);
   font: inherit;
+  white-space: nowrap;
 }
 
 .fileTargetButton {
@@ -111,7 +117,8 @@
   gap: 4px;
   min-width: 0;
   max-width: 100%;
-  overflow: visible;
+  flex: 0 1 auto;
+  overflow: hidden;
   border: 0;
   margin-left: 4px;
   background: transparent;
@@ -121,9 +128,7 @@
   padding: 0;
   text-align: left;
   text-overflow: ellipsis;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  white-space: nowrap;
 }
 
 .fileTargetButton:hover,
@@ -146,9 +151,12 @@
 }
 
 .fileTargetLabel {
+  display: block;
   min-width: 0;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .inlineTicker {

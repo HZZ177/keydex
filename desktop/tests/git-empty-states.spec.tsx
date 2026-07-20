@@ -80,6 +80,23 @@ describe("Git empty and recovery states", () => {
     expect(screen.getByTestId("selected-change-diff").textContent).toBe("src/a.ts");
   });
 
+  it("loads an untracked file through the explicit whole-file addition path", async () => {
+    const runtime = stateRuntime({ readyOnDiscover: true, untrackedFile: true });
+    renderTool(runtime);
+
+    await screen.findByRole("treeitem", { name: "new.txt untracked" });
+    await waitFor(() => expect(runtime.diff).toHaveBeenCalledWith(
+      expect.objectContaining({ repositoryId: "repo-1" }),
+      expect.objectContaining({
+        cached: false,
+        untracked: true,
+        path: "new.txt",
+        signal: expect.any(AbortSignal),
+      }),
+    ));
+    expect(screen.getByTestId("selected-change-diff").textContent).toBe("new.txt");
+  });
+
   it("keeps the selected-file preview when a later repository-wide diff refresh completes", async () => {
     const metadataListeners = new Set<GitMetadataListener>();
     const runtime = stateRuntime({ readyOnDiscover: true, changedFile: true, metadataListeners });
@@ -145,6 +162,7 @@ function stateRuntime(options: {
   gitUnavailable?: boolean;
   readyOnDiscover?: boolean;
   changedFile?: boolean;
+  untrackedFile?: boolean;
   metadataListeners?: Set<GitMetadataListener>;
 } = {}): GitRuntime {
   const repositoryId = "repo-1" as GitRepositoryId;
@@ -202,15 +220,25 @@ function stateRuntime(options: {
       repositoryId,
       repositoryVersion,
       branch: { head: "main", detachedAt: null, upstream: null, ahead: 0, behind: 0, unborn: false },
-      files: options.changedFile ? [{
-        path: "src/a.ts",
-        originalPath: null,
-        indexStatus: null,
-        worktreeStatus: "modified" as const,
-        conflicted: false,
-        binary: false,
-        submodule: false,
-      }] : [],
+      files: options.untrackedFile
+        ? [{
+            path: "new.txt",
+            originalPath: null,
+            indexStatus: null,
+            worktreeStatus: "untracked" as const,
+            conflicted: false,
+            binary: false,
+            submodule: false,
+          }]
+        : options.changedFile ? [{
+            path: "src/a.ts",
+            originalPath: null,
+            indexStatus: null,
+            worktreeStatus: "modified" as const,
+            conflicted: false,
+            binary: false,
+            submodule: false,
+          }] : [],
       operation: null,
     }),
     refs: vi.fn().mockResolvedValue({
@@ -247,6 +275,8 @@ function stateRuntime(options: {
       repositoryVersion,
       files: query?.path === "src/a.ts"
         ? [changedFileDiff("src/a.ts")]
+        : query?.path === "new.txt"
+          ? [untrackedFileDiff("new.txt")]
         : options.changedFile
           ? [changedFileDiff("src/a.ts"), changedFileDiff("src/b.ts")]
           : [],
@@ -291,6 +321,29 @@ function changedFileDiff(path: string): GitFileDiff {
       lines: ["-old", "+new"],
     }],
     rawPatch: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n`,
+    truncated: false,
+  };
+}
+
+function untrackedFileDiff(path: string): GitFileDiff {
+  return {
+    oldPath: null,
+    newPath: path,
+    status: "untracked",
+    binary: false,
+    oldMode: null,
+    newMode: "100644",
+    additions: 1,
+    deletions: 0,
+    hunks: [{
+      header: "@@ -0,0 +1 @@",
+      oldStart: 0,
+      oldLines: 0,
+      newStart: 1,
+      newLines: 1,
+      lines: ["+new"],
+    }],
+    rawPatch: `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1 @@\n+new\n`,
     truncated: false,
   };
 }

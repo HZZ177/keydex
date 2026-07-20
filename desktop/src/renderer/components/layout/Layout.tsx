@@ -11,6 +11,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Plus,
+  SquareTerminal,
   X,
 } from "lucide-react";
 import {
@@ -83,6 +84,12 @@ import {
   SubagentPanelHeader,
   SubagentRunList,
 } from "@/renderer/pages/conversation/subagents/SubagentSidebarPanel";
+import {
+  selectRunningTerminalCount,
+  TerminalDock,
+  useTerminal,
+  useTerminalStore,
+} from "@/renderer/features/terminal";
 
 import { RightSidebarResizeHandle } from "./RightSidebarResizeHandle";
 import { RightSidebarInitialPage } from "./RightSidebarInitialPage";
@@ -389,6 +396,12 @@ export function Layout({
   const runtimeConnection = useOptionalRuntimeConnection();
   const activeProjectState = useOptionalActiveProjectState();
   const notifications = useNotifications();
+  const { available: terminalAvailable, scope: terminalScope, store: terminalStore } = useTerminal();
+  const terminalDockOpen = useTerminalStore((terminalState) => terminalState.ui.dockOpen);
+  const terminalDockHeight = useTerminalStore((terminalState) => terminalState.ui.dockHeight);
+  const runningTerminalCount = useTerminalStore((terminalState) =>
+    selectRunningTerminalCount(terminalState, terminalScope.sessionId),
+  );
   useEffect(() => {
     if (primarySurface === "git") setGitSurfaceRetained(true);
   }, [primarySurface]);
@@ -1128,6 +1141,7 @@ export function Layout({
         data-right-sidebar-placement={state.rightSidebarPlacement}
         data-workspace={state.workspaceOpen ? "open" : "closed"}
         data-preview={state.previewOpen ? "open" : "closed"}
+        data-terminal-dock={terminalDockOpen ? "open" : "closed"}
         style={
           {
             "--sidebar-width": `${state.sidebarWidth}px`,
@@ -1136,6 +1150,7 @@ export function Layout({
             "--right-sidebar-width": `${rightSidebarWidth}px`,
             "--workspace-panel-width": `${state.workspaceWidth}px`,
             "--preview-panel-width": `${state.previewWidth}px`,
+            "--terminal-dock-size": terminalDockOpen ? `${terminalDockHeight}px` : "0px",
           } as CSSProperties
         }
       >
@@ -1224,18 +1239,47 @@ export function Layout({
                 </div>
               ) : null}
             </section>
-            {rightSidebarAvailable && !rightSidebarOpen ? (
+            <div className={styles.contentTopActions} data-testid="content-top-actions">
               <button
-                className={styles.contentRightSidebarToggle}
-                data-icon={rightSidebarOnLeft ? "panel-left-open" : "panel-right-open"}
+                id="terminal-content-action"
+                className={styles.contentTopAction}
                 type="button"
-                aria-label={openRightSidebarLabel}
-                title={openRightSidebarLabel}
-                onClick={openRightSidebar}
+                aria-label={terminalDockOpen ? "收起终端" : "打开终端"}
+                aria-pressed={terminalDockOpen}
+                title={
+                  !terminalAvailable
+                    ? "内置终端仅在 Keydex 桌面客户端中可用"
+                    : terminalScope.loading
+                      ? "会话正在加载，终端暂不可用"
+                      : !terminalScope.sessionId
+                        ? "打开会话后可使用终端"
+                        : "终端（Ctrl+`）"
+                }
+                disabled={!terminalAvailable || !terminalScope.sessionId || terminalScope.loading}
+                data-active={terminalDockOpen ? "true" : "false"}
+                data-running-count={runningTerminalCount}
+                onClick={() => terminalStore.getState().setDockOpen(!terminalStore.getState().ui.dockOpen)}
               >
-                <OpenRightSidebarIcon size={17} strokeWidth={2.1} />
+                <SquareTerminal size={17} strokeWidth={2.1} />
+                {runningTerminalCount > 0 ? (
+                  <span className={styles.terminalCountBadge} aria-hidden="true">
+                    {runningTerminalCount}
+                  </span>
+                ) : null}
               </button>
-            ) : null}
+              {rightSidebarAvailable && !rightSidebarOpen ? (
+                <button
+                  className={styles.contentTopAction}
+                  data-icon={rightSidebarOnLeft ? "panel-left-open" : "panel-right-open"}
+                  type="button"
+                  aria-label={openRightSidebarLabel}
+                  title={openRightSidebarLabel}
+                  onClick={openRightSidebar}
+                >
+                  <OpenRightSidebarIcon size={17} strokeWidth={2.1} />
+                </button>
+              ) : null}
+            </div>
 
             {rightSidebarAvailable ? (
               <>
@@ -1269,6 +1313,7 @@ export function Layout({
             ) : null}
           </div>
         </A2UIRenderSuspensionProvider>
+        <TerminalDock />
         {productShowcasePhase ? (
           <ProductShowcaseOverlay
             phase={productShowcasePhase}

@@ -30,6 +30,10 @@ import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { useWorkspaceFileWatchScope } from "@/renderer/providers/FileChangeProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
 import { useOptionalAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
+import {
+  terminalSessionScopeFromSession,
+  usePublishTerminalSessionScope,
+} from "@/renderer/providers/TerminalSessionScopeProvider";
 import { selectParentSubagentRuns, selectSubagentHistory } from "@/renderer/stores/subagentRunStore";
 import {
   activeProjectDiscoveryFromSession,
@@ -224,6 +228,11 @@ export function ConversationSessionSurface({
     [loading, session],
   );
   usePublishActiveProjectDiscovery(`conversation:${threadId}`, activeProjectDiscovery, !isSidecar);
+  const terminalSessionScope = useMemo(
+    () => terminalSessionScopeFromSession(session, loading),
+    [loading, session],
+  );
+  usePublishTerminalSessionScope(`conversation:${threadId}`, terminalSessionScope, !isSidecar);
   useWorkspaceFileWatchScope(session?.workspace_id);
   const pendingApproval = controller.pendingApproval;
   const agentMessages = controller.agentMessages;

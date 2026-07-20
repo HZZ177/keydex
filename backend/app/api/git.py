@@ -442,15 +442,24 @@ async def repository_diff(
     service: GitQueries,
     request: GitRepositoryRequestDep,
     cached: bool = False,
+    untracked: bool = False,
     path: str | None = Query(default=None, min_length=1, max_length=4096),
 ) -> GitDiffResponse:
     request.repository_id = repository_id
+    if untracked:
+        return await _await(
+            service.diff,
+            request,
+            cached=cached,
+            untracked=True,
+            path=path,
+        )
     return await _await(
         service.coalesced_query,
         request,
         "diff",
-        lambda: service.diff(request, cached=cached, path=path),
-        variant=(cached, path),
+        lambda: service.diff(request, cached=cached, untracked=untracked, path=path),
+        variant=(cached, untracked, path),
     )
 
 

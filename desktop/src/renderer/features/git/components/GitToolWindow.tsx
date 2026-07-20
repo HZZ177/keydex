@@ -1289,12 +1289,13 @@ export function GitToolWindow({
     try {
       const cached = Boolean(entry.indexStatus && !entry.worktreeStatus)
         || Boolean(file?.indexStatus && !file.worktreeStatus);
+      const untracked = entry.group === "untracked";
       setSelectedChangePatchAction(cached ? "unstage" : "stage");
       const diff = await runtime.diff({
         workspaceId,
         projectRoot,
         repositoryId,
-      }, { cached, path: selectedPath, signal: abortController.signal });
+      }, { cached, untracked, path: selectedPath, signal: abortController.signal });
       if (abortController.signal.aborted) return;
       const currentState = gitStore.getState();
       if (currentState.projects[workspaceId]?.selectedRepositoryId !== repositoryId

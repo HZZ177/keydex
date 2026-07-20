@@ -7,6 +7,30 @@ import { startGitE2EFixture } from "./git-e2e-fixtures";
 
 test.describe.configure({ mode: "serial" });
 
+test("an untracked text file renders as a whole-file addition", async ({ page }) => {
+  test.setTimeout(180_000);
+  const fixture = await startGitE2EFixture("untracked-file-diff");
+  try {
+    await fixture.write("new-file.txt", "first added line\nsecond added line\n");
+    await fixture.configurePage(page);
+    await page.goto(`${fixture.appBaseUrl}/#/workbench/${fixture.workspaceId}`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "Git", exact: true }).click();
+    await expect(page.getByRole("tablist", { name: "Git 面板视图" })).toBeVisible();
+
+    const row = page.getByRole("tree", { name: "本地改动" })
+      .getByRole("treeitem", { name: /new-file\.txt untracked/ });
+    await expect(row).toBeVisible({ timeout: 10_000 });
+    await row.click();
+
+    await expect(gitDiff(page)).toContainText("first added line", { timeout: 20_000 });
+    await expect(gitDiff(page).locator('[data-keydex-diff-file-header="true"]'))
+      .toHaveAttribute("data-status", "added");
+    await expect(gitDiff(page).getByLabel("新增 2 行，删除 0 行")).toBeVisible();
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("local changes, unified diff, stage, unstage, commit and commit-push close against a real repo", async ({ page }) => {
   test.setTimeout(180_000);
   const fixture = await startGitE2EFixture("local-changes-commit");

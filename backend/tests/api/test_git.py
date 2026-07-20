@@ -56,6 +56,7 @@ async def test_git_discovery_does_not_block_the_api_event_loop(tmp_path: Path) -
 def test_git_read_api_exposes_discovery_and_all_query_routes(tmp_path: Path) -> None:
     repo = GitRepoFactory(tmp_path).create("api-read")
     repo.write("README.md", "# api changed\n")
+    repo.write("new.txt", "whole file addition\n")
     client = client_for(tmp_path)
     discovery = client.post(
         "/api/git/repositories/discover",
@@ -80,6 +81,10 @@ def test_git_read_api_exposes_discovery_and_all_query_routes(tmp_path: Path) -> 
         params=params,
     )
     diff = client.get(f"/api/git/repositories/{repository_id}/diff", params=params)
+    untracked_diff = client.get(
+        f"/api/git/repositories/{repository_id}/diff",
+        params={**params, "path": "new.txt", "untracked": True},
+    )
     compare = client.get(
         f"/api/git/repositories/{repository_id}/compare",
         params={**params, "mode": "working_tree", "left": "HEAD"},
@@ -103,6 +108,10 @@ def test_git_read_api_exposes_discovery_and_all_query_routes(tmp_path: Path) -> 
     assert commit.json()["files"][0]["new_path"] == "README.md"
     assert revision_tree.json()["entries"][0]["path"] == "README.md"
     assert diff.json()["files"][0]["new_path"] == "README.md"
+    assert untracked_diff.status_code == 200
+    assert untracked_diff.json()["files"][0]["old_path"] is None
+    assert untracked_diff.json()["files"][0]["status"] == "untracked"
+    assert "+whole file addition" in untracked_diff.json()["files"][0]["raw_patch"]
     assert compare.json()["right_label"] == "Working tree"
     assert compare.json()["files"][0]["raw_patch"] == ""
     assert selected_compare.status_code == 200

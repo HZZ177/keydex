@@ -48,9 +48,56 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--diff-scrollbar-thumb) var(--diff-scrollbar-track);
 }
 
 .patchViewport > * {
   min-width: 0;
   min-height: 100%;
+}
+
+.patchViewport::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+.patchViewport::-webkit-scrollbar-track {
+  background: var(--diff-scrollbar-track);
+}
+
+.patchViewport::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--diff-scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+.patchViewport::-webkit-scrollbar-thumb:hover {
+  background: var(--diff-scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
+.surface[data-profile="compact"][data-scroll-owner="host"] {
+  height: auto;
+  min-height: 100%;
+  overflow: visible;
+}
+
+.surface[data-profile="compact"] .viewport {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.surface[data-profile="compact"] .singleFile,
+.surface[data-profile="compact"] .patchFrame {
+  height: auto;
+  overflow: visible;
+}
+
+.surface[data-profile="compact"] .patchViewport {
+  height: auto;
+  overflow-y: visible;
+  overscroll-behavior-y: auto;
+  scrollbar-gutter: auto;
 }

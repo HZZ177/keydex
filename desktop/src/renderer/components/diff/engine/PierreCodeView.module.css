@@ -17,6 +17,41 @@
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--diff-scrollbar-thumb) var(--diff-scrollbar-track);
+}
+
+.scrollViewport::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+.scrollViewport::-webkit-scrollbar-track {
+  background: var(--diff-scrollbar-track);
+}
+
+.scrollViewport::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--diff-scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+.scrollViewport::-webkit-scrollbar-thumb:hover {
+  background: var(--diff-scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
+.scrollHost[data-diff-scroll-owner="host"] {
+  height: auto;
+  overflow: visible;
+}
+
+.scrollHost[data-diff-scroll-owner="host"] .scrollViewport {
+  height: auto !important;
+  overflow: visible;
+  overscroll-behavior: auto;
+  scrollbar-gutter: auto;
 }
 
 .scrollHost > [data-keydex-diff-unavailable-files] {

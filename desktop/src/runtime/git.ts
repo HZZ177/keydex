@@ -476,7 +476,7 @@ export interface GitRuntime {
   ): Promise<GitPatchExport>;
   diff(
     scope: GitRepositoryScope,
-    options?: GitQueryOptions & { cached?: boolean; path?: string },
+    options?: GitQueryOptions & { cached?: boolean; untracked?: boolean; path?: string },
   ): Promise<GitDiffSnapshot>;
   identity(scope: GitRepositoryScope, options?: GitQueryOptions): Promise<GitIdentity>;
   updateIdentity(command: GitIdentityUpdate, options?: GitQueryOptions): Promise<GitIdentity>;
@@ -815,6 +815,7 @@ export function createGitRuntime(http: HttpClient): GitRuntime {
     async diff(scope, options = {}) {
       const params = query(scope);
       if (options.cached) params.set("cached", "true");
+      if (options.untracked) params.set("untracked", "true");
       if (options.path?.trim()) params.set("path", options.path.trim());
       return normalizeGitDiff(await http.request(`${repositoryPath(scope, "/diff")}?${params}`, { signal: options.signal }));
     },

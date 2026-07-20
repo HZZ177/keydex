@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5173",
     "build": "tsc --noEmit && vite build",
+    "tauri:dev": "tauri dev",
     "audit:diff-build": "vite build --manifest --sourcemap --logLevel error && node tools/measure-diff-build-baseline.mjs --require-sourcemaps",
     "audit:diff-final": "node tools/diff-final-audit.mjs",
     "audit:aligned-diff-plan": "node tools/aligned-diff-plan-audit.mjs",
@@ -42,6 +43,10 @@
     "@tauri-apps/plugin-shell": "^2.3.5",
     "@tauri-apps/plugin-updater": "^2.10.1",
     "@uiw/react-json-view": "2.0.0-alpha.43",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-search": "^0.16.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
     "ag-grid-community": "36.0.0",
     "ag-grid-react": "36.0.0",
     "classnames": "^2.5.1",

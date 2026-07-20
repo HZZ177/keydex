@@ -179,6 +179,42 @@
   padding: 10px 12px 16px;
 }
 
+.treeViewport,
+.invalidSource,
+.primitiveValue {
+  scrollbar-color: color-mix(in srgb, var(--color-text-tertiary) 42%, transparent) transparent;
+  scrollbar-width: thin;
+}
+
+.treeViewport::-webkit-scrollbar,
+.invalidSource::-webkit-scrollbar,
+.primitiveValue::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+.treeViewport::-webkit-scrollbar-track,
+.invalidSource::-webkit-scrollbar-track,
+.primitiveValue::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.treeViewport::-webkit-scrollbar-thumb,
+.invalidSource::-webkit-scrollbar-thumb,
+.primitiveValue::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-text-tertiary) 46%, transparent);
+  background-clip: padding-box;
+}
+
+.treeViewport::-webkit-scrollbar-thumb:hover,
+.invalidSource::-webkit-scrollbar-thumb:hover,
+.primitiveValue::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-text-tertiary) 62%, transparent);
+  background-clip: padding-box;
+}
+
 .jsonView {
   min-width: max-content;
   font-size: 12px !important;

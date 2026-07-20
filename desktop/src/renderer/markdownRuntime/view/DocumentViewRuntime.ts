@@ -53,6 +53,10 @@ export interface DocumentViewportUpdateOptions {
   readonly origin?: "user" | "programmatic" | "automatic";
 }
 
+export interface DocumentHeightMeasurementOptions {
+  readonly allowDuringUserScroll?: boolean;
+}
+
 export interface DocumentViewPublishOptions {
   readonly preserveRevisionGeometry?: boolean;
 }
@@ -303,6 +307,7 @@ export class DocumentViewRuntime {
   updateMeasuredHeights(
     updates: readonly MarkdownHeightUpdate[],
     revision: string,
+    options: DocumentHeightMeasurementOptions = {},
   ): DocumentViewPatchResult | null {
     this.assertActive();
     if (!this.heightIndex) throw new Error("Document View Runtime has no HeightIndex");
@@ -335,6 +340,7 @@ export class DocumentViewRuntime {
       revision,
       currentScrollTop: this.lastViewportInput.scrollTop,
       viewportHeight: this.lastViewportInput.viewportHeight,
+      allowDuringUserScroll: options.allowDuringUserScroll,
     });
     if (!correction.heightChanged) return null;
     return this.updateViewport({

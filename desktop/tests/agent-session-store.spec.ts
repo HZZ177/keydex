@@ -3182,6 +3182,109 @@ describe("agentSessionStore reducer", () => {
     expect(selectAgentMessages(state, "ses-1")).toHaveLength(1);
   });
 
+  it("merges a hydrated compression notice with its active realtime notice", () => {
+    const noticeId = "context-compression:trace-1:operation-1";
+    let state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "runtime/setState",
+      sessionId: "ses-1",
+      runtimeState: "running",
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "middleware_progress",
+      data: {
+        session_id: "ses-1",
+        middleware: "ContextCompressionMiddleware",
+        stage: "compression_started",
+        compression_mode: "context",
+        compression_reason: "automatic",
+        notice_id: noticeId,
+        trace_id: "trace-1",
+      },
+    });
+
+    state = agentConversationReducer(state, {
+      type: "history/loaded",
+      sessionId: "ses-1",
+      history: history([
+        {
+          role: "system",
+          content: "正在压缩上下文",
+          messageEventId: "evt-compression-start",
+          timestamp: 1_782_600_000_000,
+          status: "running",
+          metadata: {
+            compression: {
+              kind: "context_compression",
+              stage: "compression_started",
+              mode: "context",
+              notice_id: noticeId,
+              compression_reason: "automatic",
+            },
+          },
+        },
+      ]),
+    });
+
+    expect(selectAgentMessages(state, "ses-1")).toHaveLength(1);
+
+    state = reduceAgentWsEvent(state, {
+      action: "middleware_progress",
+      data: {
+        session_id: "ses-1",
+        middleware: "ContextCompressionMiddleware",
+        stage: "compression_completed",
+        compression_mode: "context",
+        compression_reason: "automatic",
+        notice_id: noticeId,
+        trace_id: "trace-1",
+      },
+    });
+
+    expect(selectAgentMessages(state, "ses-1")).toMatchObject([
+      {
+        messageEventId: "evt-compression-start",
+        status: "completed",
+        metadata: {
+          compression: {
+            stage: "compression_completed",
+            notice_id: noticeId,
+          },
+        },
+      },
+    ]);
+    expect(selectAgentMessages(state, "ses-1")).toHaveLength(1);
+  });
+
+  it("uses one fallback notice id when compression progress omits notice_id", () => {
+    let state = createInitialAgentConversationState();
+    for (const stage of ["compression_started", "compression_completed"] as const) {
+      state = reduceAgentWsEvent(state, {
+        action: "middleware_progress",
+        data: {
+          session_id: "ses-1",
+          middleware: "ContextCompressionMiddleware",
+          stage,
+          compression_mode: "context",
+          compression_reason: "automatic",
+          trace_id: "trace-without-notice-id",
+        },
+      });
+    }
+
+    expect(selectAgentMessages(state, "ses-1")).toMatchObject([
+      {
+        status: "completed",
+        metadata: {
+          compression: {
+            stage: "compression_completed",
+            notice_id: "context-compression:trace-without-notice-id",
+          },
+        },
+      },
+    ]);
+    expect(selectAgentMessages(state, "ses-1")).toHaveLength(1);
+  });
+
   it("updates one manual compression notice through running and terminal states", () => {
     let state = createInitialAgentConversationState();
     state = reduceAgentWsEvent(state, {

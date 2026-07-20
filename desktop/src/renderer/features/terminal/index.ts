@@ -1,0 +1,10 @@
+export { TERMINAL_FEATURE_MANIFEST } from "./terminalFeatureManifest";
+export type { TerminalProfileId } from "./terminalFeatureManifest";
+export { TerminalProvider, useTerminal, useTerminalStore } from "./TerminalProvider";
+export { TerminalDock } from "./TerminalDock";
+export { createTerminalStore } from "./terminalStore";
+export type * from "./terminalStore";
+export { selectRunningTerminalCount } from "./terminalSelectors";
+export { TerminalSurface } from "./TerminalSurface";
+export { TerminalSurfacePool } from "./TerminalSurfacePool";
+export { TerminalXtermRegistry, terminalXtermRegistry } from "./terminalXtermRegistry";

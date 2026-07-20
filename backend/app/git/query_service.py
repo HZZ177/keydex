@@ -871,6 +871,7 @@ class GitQueryService:
         request: GitRepositoryRequest,
         *,
         cached: bool = False,
+        untracked: bool = False,
         path: str | None = None,
         cancel_event: asyncio.Event | None = None,
     ) -> GitDiffResponse:
@@ -882,17 +883,36 @@ class GitQueryService:
                 repository_id=registered.response.id,
             )
         version = await self.version_async(registered.response)
-        base = ["diff", "--no-ext-diff", "--binary", "--find-renames"]
-        numstat_args = ["diff", "--no-ext-diff", "--find-renames", "--numstat", "-z"]
         normalized_path: str | None = None
-        if cached:
-            base.append("--cached")
-            numstat_args.append("--cached")
         if path is not None:
             try:
                 normalized_path = validate_repo_relative_path(path)
             except GitParameterError as exc:
                 raise GitApiError("git_validation_failed", str(exc)) from exc
+        if untracked:
+            if cached or normalized_path is None:
+                raise GitApiError(
+                    "git_validation_failed",
+                    "Untracked diff requires one working-tree path",
+                    repository_id=registered.response.id,
+                )
+            files = await self._untracked_path_diff(
+                registered,
+                normalized_path,
+                cancel_event=cancel_event,
+            )
+            return GitDiffResponse(
+                repository_id=registered.response.id,
+                repository_version=version,
+                files=files,
+            )
+
+        base = ["diff", "--no-ext-diff", "--binary", "--find-renames"]
+        numstat_args = ["diff", "--no-ext-diff", "--find-renames", "--numstat", "-z"]
+        if cached:
+            base.append("--cached")
+            numstat_args.append("--cached")
+        if normalized_path is not None:
             base.extend(["--", normalized_path])
             numstat_args.extend(["--", normalized_path])
         patch, numstat = await asyncio.gather(

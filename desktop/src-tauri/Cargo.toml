@@ -21,3 +21,10 @@ tauri-plugin-shell = "2"
 tauri-plugin-process = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
+portable-pty = "0.9.0"
+base64 = "0.22.1"
+uuid = { version = "1.24.0", features = ["v4"] }
+
+[target."cfg(windows)".dependencies]
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+winreg = "0.56.0"

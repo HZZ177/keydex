@@ -516,6 +516,34 @@ describe("MessageText", () => {
     });
   });
 
+  it("opens absolute markdown file links inside the workspace root in the sidebar Files panel", () => {
+    render(
+      <PreviewProvider>
+        <PreviewHostContextSetter
+          context={{
+            sessionId: "ses-1",
+            workspaceAvailable: true,
+            workspaceRootPath: "D:/Pycharm Projects/keydex",
+            runtime: {} as RuntimeBridge,
+          }}
+        />
+        <MessageText
+          message={message("assistant", "查看 [README.md](<D:/Pycharm Projects/keydex/README.md:5>)", "completed")}
+          workspaceRuntime={{} as RuntimeBridge}
+          workspaceScope={{ sessionId: "ses-1" }}
+        />
+        <FilePanelProbe />
+      </PreviewProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "README.md" }));
+
+    const request = screen.getByTestId("file-panel-request");
+    expect(request.dataset.filePath).toBe("README.md");
+    expect(request.dataset.scopeKey).toBe("session:ses-1");
+    expect(request.dataset.revealLineStart).toBe("5");
+  });
+
   it("loads the concrete file icon without rebuilding the conversation Runtime when the preview opens", async () => {
     const path = "backend/tests/test_health.py";
     const fallbackIcon = resolveMaterialFileIcon(path);
@@ -558,7 +586,7 @@ describe("MessageText", () => {
     expect(link.querySelector("[data-keydex-file-link-line-badge='true']")).toBeNull();
   });
 
-  it("opens relative markdown file links as workspace-scoped file previews", () => {
+  it("opens relative markdown file links in the sidebar Files panel with line reveal", () => {
     render(
       <PreviewProvider>
         <PreviewHostContextSetter context={{ sessionId: "ses-1", workspaceAvailable: true, runtime: {} as RuntimeBridge }} />
@@ -571,7 +599,7 @@ describe("MessageText", () => {
           workspaceRuntime={{} as RuntimeBridge}
           workspaceScope={{ sessionId: "ses-1" }}
         />
-        <PreviewEntryProbe />
+        <FilePanelProbe />
       </PreviewProvider>,
     );
 
@@ -585,21 +613,13 @@ describe("MessageText", () => {
     expect(screen.getByRole("link", { name: "MessageText.tsx" })).toBe(link);
     expect(link.closest("[data-markdown-block-id]")).toBe(block);
 
-    const payload = previewEntryPayload();
-    expect(payload).toMatchObject({
-      request: {
-        type: "file",
-        path: "desktop/src/renderer/pages/conversation/messages/MessageText.tsx",
-      },
-      revealTarget: {
-        lineStart: 120,
-        lineEnd: 120,
-      },
-      scopeKey: "session:ses-1",
-    });
+    const request = screen.getByTestId("file-panel-request");
+    expect(request.dataset.filePath).toBe("desktop/src/renderer/pages/conversation/messages/MessageText.tsx");
+    expect(request.dataset.scopeKey).toBe("session:ses-1");
+    expect(request.dataset.revealLineStart).toBe("120");
   });
 
-  it("opens nested conversation Markdown links as sibling previews in the hosting panel scope", () => {
+  it("opens nested conversation Markdown links in the hosting panel sidebar Files scope", () => {
     const runtime = {} as RuntimeBridge;
     render(
       <PreviewProvider>
@@ -615,18 +635,17 @@ describe("MessageText", () => {
           workspaceRuntime={runtime}
           workspaceScope={{ sessionId: "child-session" }}
         />
-        <PreviewEntryProbe />
+        <FilePanelProbe />
       </PreviewProvider>,
     );
 
     fireEvent.click(screen.getByRole("link", { name: "README.md" }));
 
-    expect(previewEntryPayload()).toMatchObject({
-      request: { type: "file", path: "README.md" },
-      revealTarget: { lineStart: 12, lineEnd: 12 },
-      scopeKey: "session:parent-session",
-      renderContext: { sessionId: "child-session", panelScopeKey: "session:parent-session" },
-    });
+    const request = screen.getByTestId("file-panel-request");
+    expect(request.dataset.filePath).toBe("README.md");
+    expect(request.dataset.scopeKey).toBe("session:parent-session");
+    expect(request.dataset.sessionId).toBe("child-session");
+    expect(request.dataset.revealLineStart).toBe("12");
   });
 
   it("recovers standard markdown file links wrapped as inline code", () => {
@@ -638,7 +657,7 @@ describe("MessageText", () => {
           workspaceRuntime={{} as RuntimeBridge}
           workspaceScope={{ sessionId: "ses-1" }}
         />
-        <PreviewEntryProbe />
+        <FilePanelProbe />
       </PreviewProvider>,
     );
 
@@ -646,17 +665,10 @@ describe("MessageText", () => {
     expect(link.closest("code")).toBeNull();
     fireEvent.click(link);
 
-    expect(previewEntryPayload()).toMatchObject({
-      request: {
-        type: "file",
-        path: "README.md",
-      },
-      revealTarget: {
-        lineStart: 162,
-        lineEnd: 162,
-      },
-      scopeKey: "session:ses-1",
-    });
+    const request = screen.getByTestId("file-panel-request");
+    expect(request.dataset.filePath).toBe("README.md");
+    expect(request.dataset.scopeKey).toBe("session:ses-1");
+    expect(request.dataset.revealLineStart).toBe("162");
   });
 
   it("keeps standard markdown file links clickable inside emphasis without auto-linking natural language", () => {
@@ -672,7 +684,7 @@ describe("MessageText", () => {
           workspaceRuntime={{} as RuntimeBridge}
           workspaceScope={{ sessionId: "ses-1" }}
         />
-        <PreviewEntryProbe />
+        <FilePanelProbe />
       </PreviewProvider>,
     );
 
@@ -681,17 +693,10 @@ describe("MessageText", () => {
     expect(screen.getByTestId("message-text").textContent).toContain("README.md 第 162 行");
     fireEvent.click(links[0]);
 
-    expect(previewEntryPayload()).toMatchObject({
-      request: {
-        type: "file",
-        path: "README.md",
-      },
-      revealTarget: {
-        lineStart: 162,
-        lineEnd: 162,
-      },
-      scopeKey: "session:ses-1",
-    });
+    const request = screen.getByTestId("file-panel-request");
+    expect(request.dataset.filePath).toBe("README.md");
+    expect(request.dataset.scopeKey).toBe("session:ses-1");
+    expect(request.dataset.revealLineStart).toBe("162");
   });
 
   it("shows restored file context paths in a body portal", async () => {
@@ -2213,6 +2218,7 @@ function FilePanelProbe() {
       data-directory-reveal-path={request?.directoryRevealPath ?? ""}
       data-scope-key={request?.scopeKey ?? ""}
       data-session-id={request?.renderContext?.sessionId ?? ""}
+      data-reveal-line-start={request?.revealTarget?.lineStart ?? ""}
     >
       {request ? `${request.scopeKey}:${request.path}` : ""}
     </output>

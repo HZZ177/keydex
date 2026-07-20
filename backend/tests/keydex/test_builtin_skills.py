@@ -32,6 +32,7 @@ EXPECTED_KEYDEX_GUIDE_REFERENCES = {
     "a2ui-table.md",
     "command-shell-approvals-and-trust.md",
     "composer-context-and-attachments.md",
+    "diff-review-and-file-history.md",
     "document-annotations-and-chat-handoff.md",
     "extension-settings.md",
     "external-files-and-readonly-resources.md",
@@ -51,10 +52,12 @@ EXPECTED_KEYDEX_GUIDE_REFERENCES = {
     "mcp-tools-exposure-and-policies.md",
     "messages-tools-approvals-and-errors.md",
     "outline-images-and-rich-previews.md",
+    "persistent-project-instructions-and-migration.md",
     "preview-formats-and-view-modes.md",
     "providers-models-and-runtime-selection.md",
     "running-turn-steer-and-queue.md",
     "session-history-and-lifecycle.md",
+    "settings-map-and-save-behavior.md",
     "shell-sidebars-and-state-continuity.md",
     "sidecar-and-right-sidebar.md",
     "skill-security-diagnostics-and-updates.md",
@@ -62,6 +65,7 @@ EXPECTED_KEYDEX_GUIDE_REFERENCES = {
     "skill-structure-resources-and-authoring.md",
     "source-editing-auto-save-and-conflicts.md",
     "start-navigation-and-modes.md",
+    "subagents-and-collaboration.md",
     "troubleshooting-and-version-boundaries.md",
     "usage-project-and-archive-management.md",
     "web-search-and-answer-sources.md",
@@ -75,7 +79,7 @@ def test_production_builtin_catalog_is_valid_and_contains_keydex_guide() -> None
     catalog = load_and_validate_builtin_skill_catalog()
 
     assert [(item.id, item.skill_name, item.version) for item in catalog.skills] == [
-        ("keydex-guide", "keydex-guide", 2)
+        ("keydex-guide", "keydex-guide", 3)
     ]
     guide = catalog.skills[0]
     assert (guide.source_dir / "SKILL.md").is_file()
@@ -98,6 +102,9 @@ def test_builtin_keydex_guide_entry_and_references_are_chinese() -> None:
     assert "当用户询问 Keydex 产品本身时必须使用" in entry_content
     assert "即使用户没有点名 keydex-guide" in entry_content
     assert "源码、内部架构、协议、数据库或开发实现时不使用" in entry_content
+    assert "Sub-Agent" in entry_content
+    assert "keydex.md" in entry_content
+    assert "CLAUDE.md 或 AGENTS.md" in entry_content
     assert {page.name for page in reference_pages} == EXPECTED_KEYDEX_GUIDE_REFERENCES
     for page in [skill_entry, *reference_pages]:
         content = page.read_text(encoding="utf-8")
@@ -105,6 +112,15 @@ def test_builtin_keydex_guide_entry_and_references_are_chinese() -> None:
         assert len(content) >= 400, page
     for reference_name in EXPECTED_KEYDEX_GUIDE_REFERENCES:
         assert f"(references/{reference_name})" in entry_content
+
+    persistent_guide = (
+        guide_root / "references" / "persistent-project-instructions-and-migration.md"
+    ).read_text(encoding="utf-8")
+    assert "%USERPROFILE%\\.keydex\\keydex.md" in persistent_guide
+    assert "<项目目录>\\.keydex\\keydex.md" in persistent_guide
+    assert "AGENTS.md" in persistent_guide
+    assert "CLAUDE.md" in persistent_guide
+    assert "设置 → 策略配置" in persistent_guide
 
 
 def test_builtin_catalog_accepts_release_content_changes_without_hash_contract(

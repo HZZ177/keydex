@@ -38,6 +38,7 @@
   --color-info-6: #1677ff;
   --color-accent: var(--color-primary-6);
   --color-skill: #b06dff;
+  --session-unread-color: #f97316;
   --color-warning: var(--color-warning-6);
   --color-danger: var(--color-danger-6);
   --diff-added-text: #1a9f50;

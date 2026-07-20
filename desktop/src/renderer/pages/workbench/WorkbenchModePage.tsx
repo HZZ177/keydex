@@ -41,6 +41,10 @@ import type { PreviewMarkdownViewDescriptor, PreviewRequest } from "@/renderer/p
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { useWorkspaceFileWatchScope } from "@/renderer/providers/FileChangeProvider";
 import { useOptionalRuntimeConnection } from "@/renderer/providers/RuntimeConnectionProvider";
+import {
+  terminalSessionScopeFromWorkbench,
+  usePublishTerminalSessionScope,
+} from "@/renderer/providers/TerminalSessionScopeProvider";
 import { isAbsoluteFilePath, workspaceRelativeFilePath } from "@/renderer/utils/fileLinks";
 import type { AgentSession, PendingInputMode, Workspace } from "@/types/protocol";
 
@@ -366,6 +370,22 @@ export function WorkbenchModePage({
     ensureSession: ensureWorkbenchSession,
     conversationSendDefaultMode,
   });
+  const terminalSessionScope = useMemo(
+    () =>
+      terminalSessionScopeFromWorkbench({
+        selectedSessionId,
+        session: assistantController.session,
+        workspace: selectedWorkspace,
+        loading: assistantController.loading,
+      }),
+    [
+      assistantController.loading,
+      assistantController.session,
+      selectedSessionId,
+      selectedWorkspace,
+    ],
+  );
+  usePublishTerminalSessionScope("workbench-main", terminalSessionScope, true, 1);
   const btwController = useAgentSessionController({
     runtime,
     sessionId: btwSession?.id ?? "",

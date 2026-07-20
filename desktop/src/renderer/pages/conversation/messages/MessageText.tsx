@@ -28,7 +28,7 @@ import { useCopyFeedback } from "@/renderer/hooks/useCopyFeedback";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import { ImageResourceRuntime } from "@/renderer/markdownRuntime/resources";
-import { isAbsoluteFilePath, parseFileLinkTarget } from "@/renderer/utils/fileLinks";
+import { isAbsoluteFilePath, parseFileLinkTarget, workspaceRelativeFilePath } from "@/renderer/utils/fileLinks";
 import { normalizeMessageContent } from "@/renderer/utils/messageContent";
 import { openSkillResourcePreview, skillResourcePreviewError } from "@/renderer/utils/skillResourcePreview";
 import type { AgentContextItem, AgentFileAttachment } from "@/types/protocol";
@@ -330,6 +330,23 @@ function MessageTextComponent({
         onQuoteSelection,
         currentPreviewContext.hostContext,
       );
+      // Project-internal files open in the sidebar Files tab (with the directory
+      // tree); only project-external files fall back to the standalone preview.
+      const hostContext = currentPreviewContext.hostContext;
+      const workspaceRootPath = renderContext?.workspaceRootPath ?? hostContext?.workspaceRootPath;
+      const workspaceAvailable = Boolean(renderContext?.workspaceAvailable || hostContext?.workspaceAvailable);
+      const inWorkspaceRelativePath =
+        isAbsoluteFilePath(path) && workspaceRootPath
+          ? workspaceRelativeFilePath(path, workspaceRootPath)
+          : null;
+      if (inWorkspaceRelativePath) {
+        currentPreviewContext.openFilePanel(inWorkspaceRelativePath, renderContext, revealTarget);
+        return;
+      }
+      if (!isAbsoluteFilePath(path) && workspaceAvailable) {
+        currentPreviewContext.openFilePanel(path, renderContext, revealTarget);
+        return;
+      }
       currentPreviewContext.openPreview(
         isAbsoluteFilePath(path) ? { type: "local-file", path } : { type: "file", path },
         renderContext,

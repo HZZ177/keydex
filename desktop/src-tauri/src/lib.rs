@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
+    mpsc,
     Mutex,
 };
 use std::time::{Duration, Instant};
@@ -13,6 +14,15 @@ use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
     Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, State,
+};
+
+mod terminal;
+
+use terminal::manager::TerminalManager;
+use terminal::{
+    terminal_attach, terminal_close, terminal_close_all, terminal_close_session, terminal_create,
+    terminal_kill, terminal_list, terminal_list_profiles, terminal_rename, terminal_resize,
+    terminal_write,
 };
 
 #[cfg(windows)]
@@ -34,6 +44,7 @@ const INITIAL_WINDOW_HEIGHT_RATIO: f64 = 0.85;
 // Preserve the previous resizing range while scaling both limits with the startup monitor.
 const MIN_WINDOW_WIDTH_TO_INITIAL_RATIO: f64 = 880.0 / 1445.0;
 const MIN_WINDOW_HEIGHT_TO_INITIAL_RATIO: f64 = 620.0 / 900.0;
+const TERMINAL_SHUTDOWN_DEADLINE: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct StartupWindowGeometry {
@@ -289,8 +300,12 @@ fn hide_main_window(window: tauri::Window) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn request_app_exit(app: tauri::AppHandle, state: State<'_, SidecarState>) -> Result<(), String> {
-    request_exit(&app, &state)
+fn request_app_exit(
+    app: tauri::AppHandle,
+    state: State<'_, SidecarState>,
+    terminals: State<'_, TerminalManager>,
+) -> Result<(), String> {
+    request_exit(&app, &state, &terminals)
 }
 
 #[tauri::command]
@@ -388,9 +403,20 @@ fn take_associated_file_open_paths(
 }
 
 #[tauri::command]
-fn relaunch_after_app_update(app: tauri::AppHandle) {
+async fn relaunch_after_app_update(
+    app: tauri::AppHandle,
+    terminals: State<'_, TerminalManager>,
+) -> Result<(), String> {
+    let manager = terminals.inner().clone();
+    let cleanup = tauri::async_runtime::spawn_blocking(move || close_terminals_with_deadline(manager))
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Err(error) = cleanup {
+        eprintln!("failed to close embedded terminals before update relaunch: {error}");
+    }
     std::env::set_var(UPDATE_RELAUNCH_ENV, "1");
     app.request_restart();
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -503,7 +529,11 @@ fn is_supported_markdown_path(path: &PathBuf) -> bool {
     matches!(ext.to_ascii_lowercase().as_str(), "md" | "markdown" | "mdx")
 }
 
-fn request_exit(app: &tauri::AppHandle, state: &SidecarState) -> Result<(), String> {
+fn request_exit(
+    app: &tauri::AppHandle,
+    state: &SidecarState,
+    terminals: &TerminalManager,
+) -> Result<(), String> {
     if state.closing.swap(true, Ordering::SeqCst) {
         return Ok(());
     }
@@ -513,7 +543,11 @@ fn request_exit(app: &tauri::AppHandle, state: &SidecarState) -> Result<(), Stri
         let _ = window.hide();
     }
     let app = app.clone();
+    let terminals = terminals.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        if let Err(error) = close_terminals_with_deadline(terminals) {
+            eprintln!("failed to close embedded terminals during exit: {error}");
+        }
         if let Some(mut child) = child {
             kill_child(&mut child);
         }
@@ -522,12 +556,46 @@ fn request_exit(app: &tauri::AppHandle, state: &SidecarState) -> Result<(), Stri
     Ok(())
 }
 
+fn close_terminals_with_deadline(terminals: TerminalManager) -> Result<(), String> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    std::thread::Builder::new()
+        .name("terminal-shutdown".to_string())
+        .spawn(move || {
+            let _ = sender.send(terminals.close_all().map(|_| ()).map_err(|error| error.to_string()));
+        })
+        .map_err(|error| error.to_string())?;
+    receiver
+        .recv_timeout(TERMINAL_SHUTDOWN_DEADLINE)
+        .map_err(|_| "终端清理超过 5 秒，继续退出".to_string())?
+}
+
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
     }
+}
+
+#[cfg(dev)]
+fn recover_blank_dev_window(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+    let Some(dev_url) = app.config().build.dev_url.as_ref() else {
+        return Ok(());
+    };
+
+    let current_url = window.url()?;
+    eprintln!(
+        "[keydex:dev] main window URL before recovery: {current_url}; configured devUrl: {dev_url}"
+    );
+    if current_url.as_str() == "about:blank" {
+        eprintln!("[keydex:dev] main window is about:blank; navigating to {dev_url}");
+        window.navigate(dev_url.clone())?;
+    }
+
+    Ok(())
 }
 
 fn initialize_main_window(app: &tauri::AppHandle) -> tauri::Result<()> {
@@ -592,7 +660,8 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             }
             if id == TRAY_EXIT_ID {
                 let state = app.state::<SidecarState>();
-                let _ = request_exit(app, &state);
+                let terminals = app.state::<TerminalManager>();
+                let _ = request_exit(app, &state, &terminals);
             }
         })
         .on_tray_icon_event(|tray, event| match event {
@@ -625,6 +694,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(SidecarState::default())
+        .manage(TerminalManager::default())
         .manage(AssociatedFileOpenState::with_paths(
             startup_associated_paths,
         ))
@@ -642,6 +712,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             initialize_main_window(app.handle())?;
+            #[cfg(dev)]
+            recover_blank_dev_window(app.handle())?;
             setup_tray(app.handle())?;
             Ok(())
         })
@@ -657,7 +729,18 @@ pub fn run() {
             write_text_file,
             copy_file_to_clipboard,
             take_associated_file_open_paths,
-            relaunch_after_app_update
+            relaunch_after_app_update,
+            terminal_list_profiles,
+            terminal_create,
+            terminal_list,
+            terminal_attach,
+            terminal_write,
+            terminal_resize,
+            terminal_kill,
+            terminal_rename,
+            terminal_close,
+            terminal_close_session,
+            terminal_close_all
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -676,7 +759,10 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{calculate_startup_window_geometry, collect_startup_associated_markdown_paths};
+    use super::{
+        calculate_startup_window_geometry, close_terminals_with_deadline,
+        collect_startup_associated_markdown_paths, TerminalManager,
+    };
     #[cfg(windows)]
     use super::{
         windows_file_manager_command, windows_file_manager_target, windows_shell_compatible_path,
@@ -687,6 +773,11 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
     use tauri::{PhysicalPosition, PhysicalSize};
+
+    #[test]
+    fn terminal_shutdown_deadline_path_completes_for_an_empty_registry() {
+        close_terminals_with_deadline(TerminalManager::default()).unwrap();
+    }
 
     #[test]
     fn startup_window_geometry_scales_from_the_monitor_work_area() {

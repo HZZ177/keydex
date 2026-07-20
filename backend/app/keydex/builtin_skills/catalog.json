@@ -4,7 +4,12 @@
     {
       "id": "keydex-guide",
       "skill_name": "keydex-guide",
-      "version": 2
+      "version": 3
+    },
+    {
+      "id": "init-keydex",
+      "skill_name": "init-keydex",
+      "version": 1
     }
   ]
 }

@@ -54,8 +54,8 @@ def test_builtin_guide_resource_is_readable_from_chat_scope(tmp_path: Path) -> N
     assert response.json()["locator"] == (
         "builtin/skills/keydex-guide/references/keydex-scope-priority-and-config.md"
     )
-    assert "# 内置、系统级、项目级 Skill" in response.json()["content"]
-    assert "项目级：`<项目目录>\\.keydex\\skills`" in response.json()["content"]
+    assert "# `.keydex` 的内置、系统级与项目级能力" in response.json()["content"]
+    assert "项目级 Skill：`<项目目录>\\.keydex\\skills`" in response.json()["content"]
 
 
 def test_system_override_rejects_stale_builtin_resource_source(tmp_path: Path) -> None:

@@ -52,7 +52,7 @@ describe("Git runtime", () => {
     });
   });
 
-  it("scopes a working-tree diff to the selected path", async () => {
+  it("marks a selected untracked path explicitly in the diff query", async () => {
     const fetcher = vi.fn().mockResolvedValue(jsonResponse({
       repository_id: repositoryId,
       repository_version: "v1",
@@ -62,13 +62,13 @@ describe("Git runtime", () => {
     const controller = new AbortController();
 
     await runtime.diff(scope, {
-      cached: true,
+      untracked: true,
       path: "src/selected file.ts",
       signal: controller.signal,
     });
 
     expect(fetcher).toHaveBeenCalledWith(
-      "http://127.0.0.1:8765/api/git/repositories/git-test/diff?workspace_id=workspace-a&project_root=C%3A%2Fproject&cached=true&path=src%2Fselected+file.ts",
+      "http://127.0.0.1:8765/api/git/repositories/git-test/diff?workspace_id=workspace-a&project_root=C%3A%2Fproject&untracked=true&path=src%2Fselected+file.ts",
       expect.objectContaining({ signal: controller.signal }),
     );
   });

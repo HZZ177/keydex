@@ -32,6 +32,23 @@ describe("openExternalUrl", () => {
     );
   });
 
+  it("allows an explicit terminal-style HTTP link without enabling arbitrary protocols", async () => {
+    const nativeOpen = vi.fn().mockResolvedValue(undefined);
+    await openExternalUrl("http://127.0.0.1:5173", {
+      allowHttp: true,
+      isTauriRuntime: () => true,
+      shellApi: { open: nativeOpen },
+    });
+    expect(nativeOpen).toHaveBeenCalledWith("http://127.0.0.1:5173/");
+    await expect(
+      openExternalUrl("javascript:alert(1)", {
+        allowHttp: true,
+        isTauriRuntime: () => true,
+        shellApi: { open: nativeOpen },
+      }),
+    ).rejects.toThrow();
+  });
+
   it.each(["http://example.test", "not a url"])("rejects unsafe or malformed targets: %s", async (target) => {
     const nativeOpen = vi.fn();
 
