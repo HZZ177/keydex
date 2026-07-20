@@ -12,7 +12,7 @@ use serde::Serialize;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager, State,
+    Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, State,
 };
 
 #[cfg(windows)]
@@ -29,6 +29,51 @@ const UPDATE_RELAUNCH_ENV: &str = "KEYDEX_UPDATE_RELAUNCH_WITHOUT_FILE_INTENT";
 const TRAY_ID: &str = "keydex-tray";
 const TRAY_SHOW_ID: &str = "show_main_window";
 const TRAY_EXIT_ID: &str = "exit_app";
+const INITIAL_WINDOW_WIDTH_RATIO: f64 = 0.75;
+const INITIAL_WINDOW_HEIGHT_RATIO: f64 = 0.85;
+// Preserve the previous resizing range while scaling both limits with the startup monitor.
+const MIN_WINDOW_WIDTH_TO_INITIAL_RATIO: f64 = 880.0 / 1445.0;
+const MIN_WINDOW_HEIGHT_TO_INITIAL_RATIO: f64 = 620.0 / 900.0;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct StartupWindowGeometry {
+    width: f64,
+    height: f64,
+    min_width: f64,
+    min_height: f64,
+    x: i32,
+    y: i32,
+}
+
+fn calculate_startup_window_geometry(
+    work_area_position: PhysicalPosition<i32>,
+    work_area_size: PhysicalSize<u32>,
+    scale_factor: f64,
+) -> Option<StartupWindowGeometry> {
+    if !scale_factor.is_finite()
+        || scale_factor <= 0.0
+        || work_area_size.width == 0
+        || work_area_size.height == 0
+    {
+        return None;
+    }
+
+    let work_area_width = f64::from(work_area_size.width) / scale_factor;
+    let work_area_height = f64::from(work_area_size.height) / scale_factor;
+    let width = work_area_width * INITIAL_WINDOW_WIDTH_RATIO;
+    let height = work_area_height * INITIAL_WINDOW_HEIGHT_RATIO;
+    let physical_width = (width * scale_factor).round() as i32;
+    let physical_height = (height * scale_factor).round() as i32;
+
+    Some(StartupWindowGeometry {
+        width,
+        height,
+        min_width: width * MIN_WINDOW_WIDTH_TO_INITIAL_RATIO,
+        min_height: height * MIN_WINDOW_HEIGHT_TO_INITIAL_RATIO,
+        x: work_area_position.x + (work_area_size.width as i32 - physical_width) / 2,
+        y: work_area_position.y + (work_area_size.height as i32 - physical_height) / 2,
+    })
+}
 
 #[derive(Default)]
 struct SidecarState {
@@ -485,6 +530,52 @@ fn show_main_window(app: &tauri::AppHandle) {
     }
 }
 
+fn initialize_main_window(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+
+    let startup_monitor = window
+        .cursor_position()
+        .ok()
+        .and_then(|position| {
+            window
+                .monitor_from_point(position.x, position.y)
+                .ok()
+                .flatten()
+        })
+        .or_else(|| window.current_monitor().ok().flatten())
+        .or_else(|| window.primary_monitor().ok().flatten());
+
+    if let Some(monitor) = startup_monitor {
+        let work_area = monitor.work_area();
+        if let Some(geometry) = calculate_startup_window_geometry(
+            work_area.position,
+            work_area.size,
+            monitor.scale_factor(),
+        ) {
+            let configure_result: tauri::Result<()> = (|| {
+                window.set_min_size(Some(LogicalSize::new(
+                    geometry.min_width,
+                    geometry.min_height,
+                )))?;
+                window.set_size(LogicalSize::new(geometry.width, geometry.height))?;
+                window.set_position(PhysicalPosition::new(geometry.x, geometry.y))?;
+                Ok(())
+            })();
+
+            if let Err(error) = configure_result {
+                eprintln!("failed to initialize main window geometry: {error}");
+                let _ = window.center();
+            }
+        }
+    }
+
+    window.show()?;
+    let _ = window.set_focus();
+    Ok(())
+}
+
 fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let show_item = MenuItem::with_id(app, TRAY_SHOW_ID, "显示主界面", true, None::<&str>)?;
     let exit_item = MenuItem::with_id(app, TRAY_EXIT_ID, "退出程序", true, None::<&str>)?;
@@ -550,6 +641,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
+            initialize_main_window(app.handle())?;
             setup_tray(app.handle())?;
             Ok(())
         })
@@ -584,7 +676,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::collect_startup_associated_markdown_paths;
+    use super::{calculate_startup_window_geometry, collect_startup_associated_markdown_paths};
     #[cfg(windows)]
     use super::{
         windows_file_manager_command, windows_file_manager_target, windows_shell_compatible_path,
@@ -594,6 +686,55 @@ mod tests {
     #[cfg(windows)]
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+    use tauri::{PhysicalPosition, PhysicalSize};
+
+    #[test]
+    fn startup_window_geometry_scales_from_the_monitor_work_area() {
+        let geometry = calculate_startup_window_geometry(
+            PhysicalPosition::new(0, 0),
+            PhysicalSize::new(1920, 1032),
+            1.0,
+        )
+        .expect("a valid monitor should produce startup geometry");
+
+        assert_eq!(geometry.width, 1440.0);
+        assert!((geometry.height - 877.2).abs() < 1e-9);
+        assert!((geometry.min_width - 876.955_017_301_038).abs() < 1e-9);
+        assert!((geometry.min_height - 604.293_333_333_333_3).abs() < 1e-9);
+        assert_eq!((geometry.x, geometry.y), (240, 77));
+    }
+
+    #[test]
+    fn startup_window_geometry_uses_logical_pixels_on_scaled_secondary_monitors() {
+        let geometry = calculate_startup_window_geometry(
+            PhysicalPosition::new(-2560, -352),
+            PhysicalSize::new(2560, 1368),
+            1.5,
+        )
+        .expect("a scaled monitor should produce startup geometry");
+
+        assert_eq!(geometry.width, 1280.0);
+        assert!((geometry.height - 775.2).abs() < 1e-9);
+        assert!((geometry.min_width - 779.515_570_934_256).abs() < 1e-9);
+        assert!((geometry.min_height - 534.026_666_666_666_6).abs() < 1e-9);
+        assert_eq!((geometry.x, geometry.y), (-2240, -250));
+    }
+
+    #[test]
+    fn startup_window_geometry_rejects_invalid_monitor_metrics() {
+        assert!(calculate_startup_window_geometry(
+            PhysicalPosition::new(0, 0),
+            PhysicalSize::new(1920, 1080),
+            0.0,
+        )
+        .is_none());
+        assert!(calculate_startup_window_geometry(
+            PhysicalPosition::new(0, 0),
+            PhysicalSize::new(0, 1080),
+            1.0,
+        )
+        .is_none());
+    }
 
     #[cfg(windows)]
     #[test]
