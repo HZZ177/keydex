@@ -157,6 +157,7 @@ import { FilePreviewBottomScrollSpace } from "./FilePreviewBottomScrollSpace";
 import {
   codeMirrorViewportSourceAnchor,
   syncCodeMirrorViewportToSourceAnchor,
+  type SourceLineScrollAnchor,
 } from "./splitViewScrollSync";
 import type {
   MarkdownSnapshot,
@@ -186,6 +187,12 @@ interface ResourceAnnotationVisualState {
   readonly active: boolean;
   readonly highlighted: boolean;
   readonly hovered: boolean;
+}
+
+interface PendingViewModeScrollRestore {
+  readonly requestIdentity: string;
+  readonly targetMode: "preview" | "source";
+  readonly anchor: SourceLineScrollAnchor;
 }
 
 type FileAutoSaveState = "idle" | "dirty" | "saving" | "saved" | "conflict" | "error";
@@ -283,6 +290,7 @@ export function FilePreview({
   const lastViewportNearBottomRef = useRef<boolean | null>(null);
   const splitScrollOwnerRef = useRef<"source" | "preview">("source");
   const pendingScrollRestoreRef = useRef<number | null>(null);
+  const pendingViewModeScrollRestoreRef = useRef<PendingViewModeScrollRestore | null>(null);
   const setDocumentViewportElement = useCallback((element: HTMLDivElement | null) => {
     documentViewportRef.current = element;
     setDocumentViewport(element);
@@ -403,6 +411,7 @@ export function FilePreview({
       : null;
   const [markdownRuntimeSnapshot, setMarkdownRuntimeSnapshot] = useState<MarkdownSnapshot | null>(null);
   const [markdownRuntimeSource, setMarkdownRuntimeSource] = useState<string | null>(null);
+  const [markdownRuntimePublishVersion, setMarkdownRuntimePublishVersion] = useState(0);
   const [markdownRuntimeError, setMarkdownRuntimeError] = useState<Error | null>(null);
   const [markdownRuntimeFindIndex, setMarkdownRuntimeFindIndex] = useState<RuntimeMarkdownFindIndex | null>(null);
   const [markdownRuntimeSelection, setMarkdownRuntimeSelection] = useState<MarkdownProjectedSelection | null>(null);
@@ -410,6 +419,7 @@ export function FilePreview({
   const publishMarkdownRuntimeSnapshot = useCallback((snapshot: MarkdownSnapshot, source: string) => {
     setMarkdownRuntimeSnapshot(snapshot);
     setMarkdownRuntimeSource(source);
+    setMarkdownRuntimePublishVersion((version) => version + 1);
     const scrollTop = pendingScrollRestoreRef.current;
     if (scrollTop === null) {
       return;
@@ -780,6 +790,7 @@ export function FilePreview({
     const identityChanged = requestIdentityRef.current !== requestIdentity;
     requestIdentityRef.current = requestIdentity;
     if (identityChanged) {
+      pendingViewModeScrollRestoreRef.current = null;
       setError(null);
       setReloadError(null);
       lastAutoSaveNotificationKeyRef.current = null;
@@ -1010,6 +1021,22 @@ export function FilePreview({
   const htmlFrameOwnsScroll = kind === "html" && (viewMode === "preview" || splitViewActive);
   const sourcePaneScrollElement = splitViewActive ? splitSourceViewport : documentViewport;
   const previewPaneScrollElement = splitViewActive ? splitPreviewViewport : documentViewport;
+  const switchViewMode = useCallback((targetMode: "preview" | "source") => {
+    if (targetMode === viewMode && !splitViewActive) return;
+    const anchor = kind === "markdown" && !splitViewActive && documentViewport
+      ? viewMode === "source"
+        ? sourceEditorView
+          ? codeMirrorViewportSourceAnchor(sourceEditorView, documentViewport)
+          : null
+        : markdownRuntimeHostRef.current?.viewportSourceAnchor() ?? null
+      : null;
+    pendingViewModeScrollRestoreRef.current = anchor
+      ? { requestIdentity, targetMode, anchor }
+      : null;
+    splitScrollOwnerRef.current = targetMode;
+    setViewMode(targetMode);
+    setSplitMode(false);
+  }, [documentViewport, kind, requestIdentity, sourceEditorView, splitViewActive, viewMode]);
   const publishViewportNearBottom = useCallback((nearBottom: boolean) => {
     if (lastViewportNearBottomRef.current === nearBottom) {
       return;
@@ -1085,6 +1112,40 @@ export function FilePreview({
     if (!splitViewActive || !documentViewport) return;
     documentViewport.scrollTop = 0;
   }, [documentViewport, splitViewActive]);
+
+  useEffect(() => {
+    const pending = pendingViewModeScrollRestoreRef.current;
+    if (
+      !pending
+      || pending.requestIdentity !== requestIdentity
+      || pending.targetMode !== viewMode
+      || splitViewActive
+      || kind !== "markdown"
+      || !documentViewport
+    ) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      const current = pendingViewModeScrollRestoreRef.current;
+      if (current !== pending) return;
+      const restored = pending.targetMode === "preview"
+        ? markdownRuntimeHostRef.current?.syncViewportToSourceAnchor(pending.anchor) === true
+        : Boolean(sourceEditorView
+          && syncCodeMirrorViewportToSourceAnchor(sourceEditorView, documentViewport, pending.anchor));
+      if (restored && pendingViewModeScrollRestoreRef.current === pending) {
+        pendingViewModeScrollRestoreRef.current = null;
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    documentViewport,
+    kind,
+    markdownRuntimePublishVersion,
+    requestIdentity,
+    sourceEditorView,
+    splitViewActive,
+    viewMode,
+  ]);
 
   useEffect(() => {
     if (!splitViewActive || !splitSourceViewport || !splitPreviewViewport || !sourceEditorView) return;
@@ -2165,11 +2226,7 @@ export function FilePreview({
           <button
             type="button"
             aria-pressed={viewMode === "preview" && !splitMode}
-            onClick={() => {
-              splitScrollOwnerRef.current = "preview";
-              setViewMode("preview");
-              setSplitMode(false);
-            }}
+            onClick={() => switchViewMode("preview")}
           >
             <Eye size={13} />
             <span>预览</span>
@@ -2177,11 +2234,7 @@ export function FilePreview({
           <button
             type="button"
             aria-pressed={viewMode === "source" && !splitMode}
-            onClick={() => {
-              splitScrollOwnerRef.current = "source";
-              setViewMode("source");
-              setSplitMode(false);
-            }}
+            onClick={() => switchViewMode("source")}
           >
             <Code2 size={13} />
             <span>源码</span>

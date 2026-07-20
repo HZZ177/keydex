@@ -1415,6 +1415,61 @@ describe("FilePreview", () => {
     expect(screen.getByLabelText("预览内容").textContent).toContain("# Guide");
   });
 
+  it("inherits the current markdown source line when switching between preview and source", async () => {
+    mockSourceScrollMetrics({ clientWidth: 720, clientHeight: 240, scrollHeight: 5_000 });
+    const source = Array.from(
+      { length: 120 },
+      (_, index) => `## Heading ${index}\n\nBody ${index}`,
+    ).join("\n\n");
+    const runtime = fakeRuntime({
+      readDocument: vi.fn().mockResolvedValue({
+        document_id: "workspace:session:ses-1:guide.md",
+        source: "workspace",
+        path: "guide.md",
+        content: source,
+        encoding: "utf-8",
+        revision: "sha256:scroll-anchor",
+        total_bytes: source.length,
+      }),
+    });
+
+    render(<FilePreview request={{ type: "file", path: "guide.md" }} sessionId="ses-1" runtime={runtime} />);
+
+    expect(await screen.findByRole("heading", { name: "Heading 0" })).not.toBeNull();
+    const viewport = screen.getByLabelText("预览内容");
+    const scrollTo = vi.spyOn(viewport, "scrollTo");
+    viewport.scrollTop = 900;
+    fireEvent.scroll(viewport);
+    scrollTo.mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: /源码/u }));
+
+    const sourceViewer = await screen.findByTestId("file-source-viewer");
+    await waitFor(() => {
+      const scrollOptions = scrollTo.mock.calls.at(-1)?.[0] as unknown as ScrollToOptions | undefined;
+      expect(scrollOptions?.top ?? 0).toBeGreaterThan(0);
+    });
+
+    const sourceView = EditorView.findFromDOM(sourceViewer)!;
+    const targetLineBlock = sourceView.lineBlockAt(sourceView.state.doc.line(80).from);
+    vi.spyOn(sourceView, "lineBlockAtHeight").mockReturnValue(targetLineBlock);
+    Object.defineProperty(sourceView, "documentTop", {
+      configurable: true,
+      get: () => -targetLineBlock.top,
+    });
+    viewport.scrollTop = 1_400;
+    fireEvent.scroll(viewport);
+    scrollTo.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: /^预览$/u }));
+
+    await waitFor(() => {
+      expect(document.querySelector("[data-file-markdown-runtime-canvas='true']")?.getAttribute("data-markdown-runtime-status"))
+        .toBe("ready");
+      const scrollOptions = scrollTo.mock.calls.at(-1)?.[0] as unknown as ScrollToOptions | undefined;
+      expect(scrollOptions?.top ?? 0).toBeGreaterThan(0);
+    });
+  });
+
   it("shows markdown source and rendered preview side by side", async () => {
     const runtime = fakeRuntime({
       readFile: vi.fn().mockResolvedValue({
