@@ -194,9 +194,17 @@
 }
 
 .keydex-markdown :where(table) {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  table-layout: auto;
+  border-collapse: collapse;
+}
+
+.keydex-markdown :where([data-markdown-table-layout="scroll"] > table) {
+  width: auto;
   min-width: max-content;
   max-width: none;
-  border-collapse: collapse;
 }
 
 .keydex-markdown-table-scroll {
@@ -426,6 +434,14 @@
 .keydex-markdown :where(th, td) {
   padding: 8px 10px;
   border: 1px solid var(--color-border-2);
+  vertical-align: top;
+}
+
+.keydex-markdown :where([data-markdown-table-layout="wrap"] th, [data-markdown-table-layout="wrap"] td) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .keydex-markdown :where(th) {

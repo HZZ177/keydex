@@ -39,6 +39,21 @@ describe("style foundation", () => {
     expect(markdown).toContain("overflow-y: visible");
   });
 
+  it("wraps ordinary Markdown tables while preserving wide-table scrolling", () => {
+    const markdown = readFileSync(resolve(stylesDir, "markdown.css"), "utf8");
+    const baseTable = markdown.match(/\.keydex-markdown :where\(table\)\s*{(?<body>[^}]*)}/s)?.groups?.body ?? "";
+    const scrollTable = markdown.match(/\[data-markdown-table-layout="scroll"\] > table\)\s*{(?<body>[^}]*)}/s)?.groups?.body ?? "";
+    const wrappedCells = markdown.match(/\[data-markdown-table-layout="wrap"\] th,[^}]*\)\s*{(?<body>[^}]*)}/s)?.groups?.body ?? "";
+
+    expect(baseTable).toContain("width: 100%");
+    expect(baseTable).toContain("min-width: 0");
+    expect(baseTable).toContain("table-layout: auto");
+    expect(scrollTable).toContain("min-width: max-content");
+    expect(wrappedCells).toContain("overflow-wrap: anywhere");
+    expect(wrappedCells).toContain("white-space: normal");
+    expect(wrappedCells).toContain("word-break: break-word");
+  });
+
   it("keeps the Git workbench aligned with the Keydex visual foundation", () => {
     const gitHost = readSource("renderer/features/git/components/GitToolWindow.module.css");
     const diffTheme = readSource("renderer/styles/themes/default-color-scheme.css");

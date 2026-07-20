@@ -30,6 +30,7 @@ import {
 import { createPortal } from "react-dom";
 
 import type { RuntimeBridge } from "@/runtime";
+import { FloatingLayer } from "@/renderer/components/floating";
 import { useRuntimeTypingMetrics } from "@/renderer/hooks/useRuntimeTypingSpeed";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type { FileReviewChange } from "@/renderer/utils/fileReview";
@@ -1322,13 +1323,51 @@ function TurnFileChangePill({
 }
 
 function SessionPlanPill({ summary }: { summary: SessionPlanSummary }) {
+  const anchorRef = useRef<HTMLDivElement | null>(null);
+  const hideTimerRef = useRef<number | null>(null);
+  const [cardOpen, setCardOpen] = useState(false);
   const activeStepNumber = Math.min(summary.activeIndex + 1, summary.totalCount);
   const activeStatus = summary.activeEntry?.status ?? "completed";
   const progress = summary.totalCount > 0 ? activeStepNumber / summary.totalCount : 0;
   const progressOffset = Math.max(0, 100 - progress * 100);
 
+  const clearHideTimer = () => {
+    if (hideTimerRef.current === null) {
+      return;
+    }
+    window.clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = null;
+  };
+
+  const openCard = () => {
+    clearHideTimer();
+    setCardOpen(true);
+  };
+
+  const scheduleCloseCard = () => {
+    clearHideTimer();
+    hideTimerRef.current = window.setTimeout(() => {
+      hideTimerRef.current = null;
+      setCardOpen(false);
+    }, 120);
+  };
+
+  useEffect(
+    () => () => {
+      if (hideTimerRef.current !== null) {
+        window.clearTimeout(hideTimerRef.current);
+      }
+    },
+    [],
+  );
+
   return (
-    <div className={styles.planPillWrap}>
+    <div
+      className={styles.planPillWrap}
+      ref={anchorRef}
+      onMouseEnter={openCard}
+      onMouseLeave={scheduleCloseCard}
+    >
       <span
         className={styles.planSummaryPill}
         data-testid="plan-summary-pill"
@@ -1356,13 +1395,26 @@ function SessionPlanPill({ summary }: { summary: SessionPlanSummary }) {
           {activeStepNumber}/{summary.totalCount} 步
         </span>
       </span>
-      <div className={styles.planHoverCard} role="tooltip" data-testid="plan-summary-card">
-        <ol className={styles.planList} aria-label="当前计划">
-          {summary.entries.map((entry, index) => (
-            <SessionPlanRow entry={entry} key={`${entry.status}-${index}-${entry.content}`} />
-          ))}
-        </ol>
-      </div>
+      {cardOpen ? (
+        <FloatingLayer
+          alignment="center"
+          anchorRef={anchorRef}
+          className={styles.planHoverLayer}
+          offset={9}
+          placement="top"
+          viewportPadding={12}
+          onMouseEnter={clearHideTimer}
+          onMouseLeave={scheduleCloseCard}
+        >
+          <div className={styles.planHoverCard} role="tooltip" data-testid="plan-summary-card">
+            <ol className={styles.planList} aria-label="当前计划">
+              {summary.entries.map((entry, index) => (
+                <SessionPlanRow entry={entry} key={`${entry.status}-${index}-${entry.content}`} />
+              ))}
+            </ol>
+          </div>
+        </FloatingLayer>
+      ) : null}
     </div>
   );
 }

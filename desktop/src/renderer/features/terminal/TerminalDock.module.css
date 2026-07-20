@@ -18,13 +18,13 @@
 }
 
 .dock[data-open="false"] {
+  border-top-width: 0;
   visibility: hidden;
   pointer-events: none;
   opacity: 0;
-  transform: translateY(8px);
+  transform: none;
   transition:
     opacity 120ms ease,
-    transform 160ms var(--motion-ease-standard),
     visibility 0s linear 180ms;
 }
 

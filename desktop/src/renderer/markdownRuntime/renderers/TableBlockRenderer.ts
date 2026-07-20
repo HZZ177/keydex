@@ -11,6 +11,7 @@ export interface MarkdownTableRendererOptions {
   readonly overscanRows?: number;
   readonly estimatedRowHeight?: number;
   readonly maxViewportHeight?: number;
+  readonly maxWrappedColumns?: number;
 }
 
 interface TableModel {
@@ -30,11 +31,18 @@ export function createTableBlockRenderer(options: MarkdownTableRendererOptions =
   const overscanRows = nonNegativeInteger(options.overscanRows ?? 12, "overscanRows");
   const estimatedRowHeight = positiveNumber(options.estimatedRowHeight ?? 28, "estimatedRowHeight");
   const maxViewportHeight = positiveNumber(options.maxViewportHeight ?? 560, "maxViewportHeight");
+  const maxWrappedColumns = positiveInteger(options.maxWrappedColumns ?? 6, "maxWrappedColumns");
   return {
     create(initial) {
       let context = initial;
       let model = tableModel(initial);
-      let wrapper = createWrapper(initial, model, model.bodyRows > maxVisibleRows, maxViewportHeight);
+      let wrapper = createWrapper(
+        initial,
+        model,
+        model.bodyRows > maxVisibleRows,
+        maxViewportHeight,
+        maxWrappedColumns,
+      );
       let body = wrapper.querySelector("tbody")!;
       let rows = new Map<number, HTMLTableRowElement>();
       let rowHeight = estimatedRowHeight;
@@ -103,7 +111,13 @@ export function createTableBlockRenderer(options: MarkdownTableRendererOptions =
           if (!rebuild) return "reused";
           detach();
           model = tableModel(next);
-          const replacement = createWrapper(next, model, model.bodyRows > maxVisibleRows, maxViewportHeight);
+          const replacement = createWrapper(
+            next,
+            model,
+            model.bodyRows > maxVisibleRows,
+            maxViewportHeight,
+            maxWrappedColumns,
+          );
           wrapper.replaceWith(replacement);
           wrapper = replacement;
           body = wrapper.querySelector("tbody")!;
@@ -135,11 +149,15 @@ function createWrapper(
   model: TableModel,
   virtual: boolean,
   maxHeight: number,
+  maxWrappedColumns: number,
 ): HTMLDivElement {
   const wrapper = context.ownerDocument.createElement("div");
+  const layout = virtual || model.columns > maxWrappedColumns ? "scroll" : "wrap";
   applyBlockAttributes(wrapper, context);
   wrapper.dataset.markdownTableScroll = "true";
   wrapper.dataset.markdownTableVirtual = virtual ? "true" : "false";
+  wrapper.dataset.markdownTableColumns = String(model.columns);
+  wrapper.dataset.markdownTableLayout = layout;
   wrapper.dataset.markdownTableCellCount = String(model.cellCount);
   wrapper.dataset.markdownTableIndexBytes = String(
     model.cellStarts.byteLength + model.cellEnds.byteLength

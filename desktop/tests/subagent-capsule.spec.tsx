@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -139,6 +142,17 @@ describe("SubagentRunCapsule", () => {
     expect(capsule.getAttribute("data-state")).toBe("running");
     expect(screen.getByRole("status").textContent).toBe("正在工作");
     expect(screen.queryByText("正在启动")).toBeNull();
+  });
+
+  it("spins the role SVG around the center of its own viewBox", () => {
+    const css = readFileSync(resolve(
+      process.cwd(),
+      "src/renderer/pages/conversation/subagents/SubagentRunCapsule.module.css",
+    ), "utf8");
+
+    expect(css).toMatch(/\.roleIcon > svg\s*{[^}]*transform-box:\s*view-box;[^}]*transform-origin:\s*50% 50%;/s);
+    expect(css).toMatch(/\.capsule\[data-state="running"\] \.roleIcon > svg\s*{[^}]*animation:/s);
+    expect(css).not.toMatch(/\.capsule\[data-state="running"\] \.roleIcon\s*{/s);
   });
 });
 

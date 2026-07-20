@@ -2,6 +2,7 @@ export { TERMINAL_FEATURE_MANIFEST } from "./terminalFeatureManifest";
 export type { TerminalProfileId } from "./terminalFeatureManifest";
 export { TerminalProvider, useTerminal, useTerminalStore } from "./TerminalProvider";
 export { TerminalDock } from "./TerminalDock";
+export { TerminalDockAction } from "./TerminalDockAction";
 export { createTerminalStore } from "./terminalStore";
 export type * from "./terminalStore";
 export { selectRunningTerminalCount } from "./terminalSelectors";

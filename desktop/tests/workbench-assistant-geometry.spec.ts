@@ -65,7 +65,8 @@ describe("workbench assistant geometry", () => {
     );
 
     expect(css).toContain("--workbench-assistant-dock-inline-size: min(clamp(320px, var(--workbench-assistant-dock-width), 1040px), 46vw)");
-    expect(css).toContain("--workbench-assistant-dock-out-target-width: min(420px, calc(100% - 56px))");
+    expect(css).toContain("--workbench-assistant-dock-out-target-width: min(560px, calc(100% - 56px))");
+    expect(css).toContain("max-width: min(340px, 52vw)");
     expect(css).toContain(".chrome[data-shell-mode=\"capsule\"]");
     expect(css).toMatch(/\.chrome\[data-shell-mode="capsule"\]\s*\{[\s\S]*width: var\(--workbench-assistant-dock-out-target-width\)/);
     expect(css).toContain(".overlayPanel");

@@ -1296,11 +1296,11 @@ export function GitToolWindow({
         projectRoot,
         repositoryId,
       }, { cached, untracked, path: selectedPath, signal: abortController.signal });
-      if (abortController.signal.aborted) return;
+      if (abortController.signal.aborted || changeDiffAbortRef.current !== abortController) return;
       const currentState = gitStore.getState();
-      if (currentState.projects[workspaceId]?.selectedRepositoryId !== repositoryId
-          || currentState.uiByProject[workspaceId]?.selectedPath !== selectedPath) return;
-      const selected = diff.files.find((candidate) => candidate.newPath === selectedPath || candidate.oldPath === selectedPath);
+      if (currentState.projects[workspaceId]?.selectedRepositoryId !== repositoryId) return;
+      const selected = diff.files.find((candidate) => candidate.newPath === selectedPath || candidate.oldPath === selectedPath)
+        ?? (diff.files.length === 1 ? diff.files[0] : undefined);
       const selectedDiff = selected ? { ...diff, files: [selected] } : { ...diff, files: [] };
       selectedChangeDiffRef.current = selectedDiff;
       setSelectedChangeDiff(selectedDiff);

@@ -186,7 +186,7 @@ export function FloatingLayer({
       ref={setLayerRef}
       style={{
         ...style,
-        "--floating-max-height": `${position.maxHeight}px`,
+        "--floating-max-height": position.maxHeight ? `${position.maxHeight}px` : undefined,
         bottom: "auto",
         left: position.left,
         maxHeight: position.maxHeight ? `${position.maxHeight}px` : undefined,

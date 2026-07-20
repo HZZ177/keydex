@@ -2,8 +2,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GitToolWindow } from "@/renderer/features/git/components/GitToolWindow";
+import type { GitStore } from "@/renderer/features/git/store/gitStore";
 import { ActiveProjectProvider, useActiveProjectState } from "@/renderer/providers/ActiveProjectProvider";
-import { GitProvider } from "@/renderer/providers/GitProvider";
+import { GitProvider, useOptionalGitStore } from "@/renderer/providers/GitProvider";
 import type { GitMetadataListener, GitRuntime } from "@/runtime/git";
 import type { GitDiffSnapshot, GitFileDiff, GitRepositoryId, GitRepositoryVersion } from "@/runtime/gitTypes";
 
@@ -97,6 +98,48 @@ describe("Git empty and recovery states", () => {
     expect(screen.getByTestId("selected-change-diff").textContent).toBe("new.txt");
   });
 
+  it("uses the only file from a path-scoped untracked response when Git returns a non-canonical path", async () => {
+    const runtime = stateRuntime({
+      readyOnDiscover: true,
+      untrackedFile: true,
+      untrackedDiffPath: "./new.txt",
+    });
+    renderTool(runtime);
+
+    await screen.findByRole("treeitem", { name: "new.txt untracked" });
+    await waitFor(() => expect(runtime.diff).toHaveBeenCalledWith(
+      expect.objectContaining({ repositoryId: "repo-1" }),
+      expect.objectContaining({ untracked: true, path: "new.txt" }),
+    ));
+    expect(screen.getByTestId("selected-change-diff").textContent).toBe("./new.txt");
+  });
+
+  it("keeps the current untracked response when persisted path state changes while it is loading", async () => {
+    let resolveDiff!: (snapshot: GitDiffSnapshot) => void;
+    const pendingDiff = new Promise<GitDiffSnapshot>((resolve) => {
+      resolveDiff = resolve;
+    });
+    const runtime = stateRuntime({ readyOnDiscover: true, untrackedFile: true, pendingUntrackedDiff: pendingDiff });
+    let store: GitStore | null = null;
+    renderTool(runtime, undefined, true, (value) => {
+      store = value;
+    });
+
+    await screen.findByRole("treeitem", { name: "new.txt untracked" });
+    await waitFor(() => expect(runtime.diff).toHaveBeenCalledWith(
+      expect.objectContaining({ repositoryId: "repo-1" }),
+      expect.objectContaining({ untracked: true, path: "new.txt" }),
+    ));
+    act(() => store!.getState().updateProjectUi("workspace-1", { selectedPath: null }));
+    act(() => resolveDiff({
+      repositoryId: "repo-1" as GitRepositoryId,
+      repositoryVersion: "version-1" as GitRepositoryVersion,
+      files: [untrackedFileDiff("new.txt")],
+    }));
+
+    await waitFor(() => expect(screen.getByTestId("selected-change-diff").textContent).toBe("new.txt"));
+  });
+
   it("keeps the selected-file preview when a later repository-wide diff refresh completes", async () => {
     const metadataListeners = new Set<GitMetadataListener>();
     const runtime = stateRuntime({ readyOnDiscover: true, changedFile: true, metadataListeners });
@@ -135,7 +178,17 @@ describe("Git empty and recovery states", () => {
   });
 });
 
-function Tool({ initialView, active = true }: { initialView?: "history"; active?: boolean }) {
+function Tool({
+  initialView,
+  active = true,
+  onStore,
+}: {
+  initialView?: "history";
+  active?: boolean;
+  onStore?: (store: GitStore) => void;
+}) {
+  const store = useOptionalGitStore();
+  if (store) onStore?.(store);
   return (
     <GitToolWindow
       project={useActiveProjectState()}
@@ -146,13 +199,18 @@ function Tool({ initialView, active = true }: { initialView?: "history"; active?
   );
 }
 
-function renderTool(runtime: GitRuntime, initialView?: "history", active = true) {
+function renderTool(
+  runtime: GitRuntime,
+  initialView?: "history",
+  active = true,
+  onStore?: (store: GitStore) => void,
+) {
   return render(
     <ActiveProjectProvider
       discovery={{ project: { workspaceId: "workspace-1", projectPath: "D:/repo", name: "repo" } }}
     >
       <GitProvider runtime={runtime}>
-        <Tool initialView={initialView} active={active} />
+        <Tool initialView={initialView} active={active} onStore={onStore} />
       </GitProvider>
     </ActiveProjectProvider>,
   );
@@ -163,6 +221,8 @@ function stateRuntime(options: {
   readyOnDiscover?: boolean;
   changedFile?: boolean;
   untrackedFile?: boolean;
+  untrackedDiffPath?: string;
+  pendingUntrackedDiff?: Promise<GitDiffSnapshot>;
   metadataListeners?: Set<GitMetadataListener>;
 } = {}): GitRuntime {
   const repositoryId = "repo-1" as GitRepositoryId;
@@ -270,17 +330,20 @@ function stateRuntime(options: {
       ] : [],
     }),
     history: vi.fn().mockResolvedValue({ repositoryId, repositoryVersion, commits: [], nextCursor: null }),
-    diff: vi.fn().mockImplementation((_scope, query?: { path?: string }) => Promise.resolve({
-      repositoryId,
-      repositoryVersion,
-      files: query?.path === "src/a.ts"
-        ? [changedFileDiff("src/a.ts")]
-        : query?.path === "new.txt"
-          ? [untrackedFileDiff("new.txt")]
-        : options.changedFile
-          ? [changedFileDiff("src/a.ts"), changedFileDiff("src/b.ts")]
-          : [],
-    })),
+    diff: vi.fn().mockImplementation((_scope, query?: { path?: string }) => {
+      if (query?.path === "new.txt" && options.pendingUntrackedDiff) return options.pendingUntrackedDiff;
+      return Promise.resolve({
+        repositoryId,
+        repositoryVersion,
+        files: query?.path === "src/a.ts"
+          ? [changedFileDiff("src/a.ts")]
+          : query?.path === "new.txt"
+            ? [untrackedFileDiff(options.untrackedDiffPath ?? "new.txt")]
+            : options.changedFile
+              ? [changedFileDiff("src/a.ts"), changedFileDiff("src/b.ts")]
+              : [],
+      });
+    }),
     commit: vi.fn(),
     stage: vi.fn(),
     unstage: vi.fn(),

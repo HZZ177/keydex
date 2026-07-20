@@ -11,7 +11,6 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Plus,
-  SquareTerminal,
   X,
 } from "lucide-react";
 import {
@@ -85,9 +84,8 @@ import {
   SubagentRunList,
 } from "@/renderer/pages/conversation/subagents/SubagentSidebarPanel";
 import {
-  selectRunningTerminalCount,
   TerminalDock,
-  useTerminal,
+  TerminalDockAction,
   useTerminalStore,
 } from "@/renderer/features/terminal";
 
@@ -396,12 +394,8 @@ export function Layout({
   const runtimeConnection = useOptionalRuntimeConnection();
   const activeProjectState = useOptionalActiveProjectState();
   const notifications = useNotifications();
-  const { available: terminalAvailable, scope: terminalScope, store: terminalStore } = useTerminal();
   const terminalDockOpen = useTerminalStore((terminalState) => terminalState.ui.dockOpen);
   const terminalDockHeight = useTerminalStore((terminalState) => terminalState.ui.dockHeight);
-  const runningTerminalCount = useTerminalStore((terminalState) =>
-    selectRunningTerminalCount(terminalState, terminalScope.sessionId),
-  );
   useEffect(() => {
     if (primarySurface === "git") setGitSurfaceRetained(true);
   }, [primarySurface]);
@@ -1239,47 +1233,26 @@ export function Layout({
                 </div>
               ) : null}
             </section>
-            <div className={styles.contentTopActions} data-testid="content-top-actions">
-              <button
-                id="terminal-content-action"
-                className={styles.contentTopAction}
-                type="button"
-                aria-label={terminalDockOpen ? "收起终端" : "打开终端"}
-                aria-pressed={terminalDockOpen}
-                title={
-                  !terminalAvailable
-                    ? "内置终端仅在 Keydex 桌面客户端中可用"
-                    : terminalScope.loading
-                      ? "会话正在加载，终端暂不可用"
-                      : !terminalScope.sessionId
-                        ? "打开会话后可使用终端"
-                        : "终端（Ctrl+`）"
-                }
-                disabled={!terminalAvailable || !terminalScope.sessionId || terminalScope.loading}
-                data-active={terminalDockOpen ? "true" : "false"}
-                data-running-count={runningTerminalCount}
-                onClick={() => terminalStore.getState().setDockOpen(!terminalStore.getState().ui.dockOpen)}
-              >
-                <SquareTerminal size={17} strokeWidth={2.1} />
-                {runningTerminalCount > 0 ? (
-                  <span className={styles.terminalCountBadge} aria-hidden="true">
-                    {runningTerminalCount}
-                  </span>
-                ) : null}
-              </button>
-              {rightSidebarAvailable && !rightSidebarOpen ? (
-                <button
+            {appMode !== "workbench" ? (
+              <div className={styles.contentTopActions} data-testid="content-top-actions">
+                <TerminalDockAction
+                  badgeClassName={styles.terminalCountBadge}
                   className={styles.contentTopAction}
-                  data-icon={rightSidebarOnLeft ? "panel-left-open" : "panel-right-open"}
-                  type="button"
-                  aria-label={openRightSidebarLabel}
-                  title={openRightSidebarLabel}
-                  onClick={openRightSidebar}
-                >
-                  <OpenRightSidebarIcon size={17} strokeWidth={2.1} />
-                </button>
-              ) : null}
-            </div>
+                />
+                {rightSidebarAvailable && !rightSidebarOpen ? (
+                  <button
+                    className={styles.contentTopAction}
+                    data-icon={rightSidebarOnLeft ? "panel-left-open" : "panel-right-open"}
+                    type="button"
+                    aria-label={openRightSidebarLabel}
+                    title={openRightSidebarLabel}
+                    onClick={openRightSidebar}
+                  >
+                    <OpenRightSidebarIcon size={17} strokeWidth={2.1} />
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
 
             {rightSidebarAvailable ? (
               <>

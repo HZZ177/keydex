@@ -22,7 +22,7 @@
   --workbench-assistant-input-closed-height: 34px;
   --workbench-assistant-bottom-left: 50%;
   --workbench-assistant-expanded-bottom-gap: 160px;
-  --workbench-assistant-dock-out-target-width: min(420px, calc(100% - 56px));
+  --workbench-assistant-dock-out-target-width: min(560px, calc(100% - 56px));
   --workbench-assistant-dock-out-target-height: calc(
     var(--workbench-assistant-title-height) + var(--workbench-assistant-accessory-height) +
       var(--workbench-assistant-input-closed-height) + 9px
@@ -689,7 +689,7 @@
 .composerFrameAccessory {
   grid-area: accessory;
   min-width: 0;
-  max-width: min(300px, 42vw);
+  max-width: min(340px, 52vw);
   flex: 0 1 auto;
   --composer-bg: color-mix(in srgb, var(--color-bg-elevated) 76%, transparent);
   transition:

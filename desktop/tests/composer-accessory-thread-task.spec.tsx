@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
 
@@ -191,6 +191,37 @@ describe("ConversationComposerAccessory thread task", () => {
     expect(screen.getByTestId("thread-task-pill").textContent).toContain("完成目标面板");
     expect(screen.getByTestId("thread-task-pill").textContent).toContain("1小时1分");
     expect(screen.getByTestId("plan-summary-pill").textContent).toBe("1/2 步");
+  });
+
+  it("keeps the portaled plan card open while the pointer crosses from the pill", async () => {
+    const view = render(
+      <ConversationComposerAccessory
+        messages={[planMessage()]}
+        showScrollToBottom={false}
+        onFilePreview={vi.fn()}
+        onScrollToBottom={vi.fn()}
+      />,
+    );
+
+    const pill = screen.getByTestId("plan-summary-pill");
+    const anchor = pill.parentElement;
+    expect(anchor).not.toBeNull();
+    fireEvent.mouseEnter(anchor!);
+
+    const card = await screen.findByTestId("plan-summary-card");
+    const layer = card.parentElement;
+    expect(layer).not.toBeNull();
+    expect(view.container.contains(card)).toBe(false);
+
+    fireEvent.mouseLeave(anchor!, { relatedTarget: layer });
+    fireEvent.mouseEnter(layer!, { relatedTarget: anchor });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 180));
+    });
+    expect(screen.getByTestId("plan-summary-card")).toBe(card);
+
+    fireEvent.mouseLeave(layer!);
+    await waitFor(() => expect(screen.queryByTestId("plan-summary-card")).toBeNull());
   });
 
   it("keeps the compact plan and falls back to typing when the active thread task disappears", () => {

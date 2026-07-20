@@ -233,6 +233,58 @@
   opacity: 0.42;
 }
 
+.previewTabTerminalAction {
+  position: relative;
+  display: inline-grid;
+  width: 36px;
+  height: 34px;
+  flex: 0 0 36px;
+  place-items: center;
+  border: 0;
+  border-left: 1px solid color-mix(in srgb, var(--color-border-subtle) 76%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 94%, var(--surface-bg));
+  color: var(--color-text-3);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-standard),
+    color var(--motion-fast) var(--motion-ease-standard);
+}
+
+.previewTabTerminalAction:hover:not(:disabled),
+.previewTabTerminalAction:focus-visible:not(:disabled),
+.previewTabTerminalAction[data-active="true"] {
+  outline: none;
+  background: var(--surface-hover);
+  color: var(--color-text-1);
+}
+
+.previewTabTerminalAction:disabled {
+  cursor: default;
+  color: var(--color-text-4);
+  opacity: 0.5;
+}
+
+.previewTabTerminalBadge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0 3px;
+  border: 2px solid var(--color-bg-elevated);
+  border-radius: var(--radius-pill);
+  background: var(--session-unread-color);
+  color: var(--color-on-accent, #fff);
+  font-size: 8px;
+  font-weight: 650;
+  line-height: 1;
+  pointer-events: none;
+}
+
 .previewTab {
   position: relative;
   display: inline-flex;

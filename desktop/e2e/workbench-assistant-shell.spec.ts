@@ -12,6 +12,32 @@ import {
   saveEvidence,
 } from "./workbench-e2e-fixtures";
 
+test("workbench capsule keeps plan and runtime status fully visible", async ({ page }) => {
+  const backend = createWorkbenchBackend();
+  await installWebSocketMock(page);
+  await mockWorkbenchBackend(page, backend);
+
+  await page.goto(`${APP_BASE}/#/workbench/${WORKSPACE_A}/session/${RICH_SESSION}`);
+
+  const capsule = page.getByTestId("workbench-assistant-capsule");
+  const accessory = capsule.getByLabel("输入框状态");
+  const accessoryContent = accessory.getByTestId("composer-accessory-content");
+  await expect(capsule.getByTestId("plan-summary-pill")).toBeVisible();
+  await expect(accessoryContent).toBeVisible();
+
+  const geometry = await accessoryContent.evaluate((element) => {
+    const frame = element.closest<HTMLElement>("[aria-label='输入框状态']")?.parentElement;
+    return {
+      clientWidth: element.clientWidth,
+      frameMaxWidth: frame ? getComputedStyle(frame).maxWidth : null,
+      scrollWidth: element.scrollWidth,
+    };
+  });
+
+  expect(geometry.frameMaxWidth).toBe("340px");
+  expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.clientWidth);
+});
+
 test("workbench assistant shell morphs from bottom composer to right drawer without replacing the shell", async ({ page }) => {
   const backend = createWorkbenchBackend();
   await page.emulateMedia({ reducedMotion: "no-preference" });

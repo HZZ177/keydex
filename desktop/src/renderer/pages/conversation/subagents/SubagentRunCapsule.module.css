@@ -81,10 +81,15 @@
   width: 20px;
 }
 
-.capsule[data-state="queued"] .roleIcon,
-.capsule[data-state="running"] .roleIcon {
+.roleIcon > svg {
+  display: block;
+  transform-box: view-box;
+  transform-origin: 50% 50%;
+}
+
+.capsule[data-state="queued"] .roleIcon > svg,
+.capsule[data-state="running"] .roleIcon > svg {
   animation: subagent-role-icon-spin 1.4s linear infinite;
-  transform-origin: center;
 }
 
 .roleIcon[data-role="explorer"] {
@@ -117,8 +122,8 @@
     transition: none;
   }
 
-  .capsule[data-state="queued"] .roleIcon,
-  .capsule[data-state="running"] .roleIcon {
+  .capsule[data-state="queued"] .roleIcon > svg,
+  .capsule[data-state="running"] .roleIcon > svg {
     animation: none;
   }
 }

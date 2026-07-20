@@ -56,15 +56,43 @@ describe("Git runtime", () => {
     const fetcher = vi.fn().mockResolvedValue(jsonResponse({
       repository_id: repositoryId,
       repository_version: "v1",
-      files: [],
+      files: [{
+        old_path: null,
+        new_path: "src/selected file.ts",
+        status: "untracked",
+        binary: false,
+        old_mode: null,
+        new_mode: "100644",
+        additions: 2,
+        deletions: 0,
+        hunks: [{
+          header: "@@ -0,0 +1,2 @@",
+          old_start: 0,
+          old_lines: 0,
+          new_start: 1,
+          new_lines: 2,
+          lines: ["+first", "+second"],
+        }],
+        raw_patch: "diff --git a/src/selected file.ts b/src/selected file.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/selected file.ts\n@@ -0,0 +1,2 @@\n+first\n+second\n",
+        truncated: false,
+      }],
     }));
     const runtime = createGitRuntime(new HttpClient({ baseUrl: "http://127.0.0.1:8765", fetcher }));
     const controller = new AbortController();
 
-    await runtime.diff(scope, {
+    await expect(runtime.diff(scope, {
       untracked: true,
       path: "src/selected file.ts",
       signal: controller.signal,
+    })).resolves.toMatchObject({
+      files: [{
+        oldPath: null,
+        newPath: "src/selected file.ts",
+        status: "untracked",
+        additions: 2,
+        deletions: 0,
+        hunks: [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: 2 }],
+      }],
     });
 
     expect(fetcher).toHaveBeenCalledWith(

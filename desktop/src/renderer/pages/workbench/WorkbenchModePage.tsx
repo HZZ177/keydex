@@ -11,6 +11,7 @@ import {
 } from "react";
 
 import type { RuntimeBridge } from "@/runtime";
+import { TerminalDockAction } from "@/renderer/features/terminal";
 import { useRafPanelResize } from "@/renderer/components/layout/useRafPanelResize";
 import {
   FilePreview,
@@ -1417,7 +1418,11 @@ function WorkbenchMainPreviewTabs({
       data-open-tab-count={tabs.length}
       data-testid="workbench-main-file-preview"
     >
-      <div className={styles.previewTabRail} data-overflow={tabScrollState.hasOverflow ? "true" : "false"}>
+      <div
+        className={styles.previewTabRail}
+        data-overflow={tabScrollState.hasOverflow ? "true" : "false"}
+        data-testid="workbench-preview-tab-rail"
+      >
         {tabScrollState.hasOverflow ? (
           <button
             className={`${styles.previewTabScrollButton} ${styles.previewTabScrollButtonLeft}`}
@@ -1491,6 +1496,10 @@ function WorkbenchMainPreviewTabs({
             <ChevronRight size={14} strokeWidth={2} />
           </button>
         ) : null}
+        <TerminalDockAction
+          badgeClassName={styles.previewTabTerminalBadge}
+          className={styles.previewTabTerminalAction}
+        />
       </div>
       {tabMenu ? (
         <div

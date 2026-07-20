@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 describe("retained semantic Markdown table runtime", () => {
-  it("keeps table semantics, alignment, empty cells, and horizontal scrolling", () => {
+  it("keeps table semantics and lets ordinary tables wrap within the container", () => {
     const harness = renderTable([
       "| Left | Center | Right | Empty |",
       "| :--- | :---: | ---: | --- |",
@@ -31,6 +31,8 @@ describe("retained semantic Markdown table runtime", () => {
 
     expect(harness.wrapper.dataset.scrollAxis).toBe("x");
     expect(harness.wrapper.style.overflowX).toBe("auto");
+    expect(harness.wrapper.dataset.markdownTableColumns).toBe("4");
+    expect(harness.wrapper.dataset.markdownTableLayout).toBe("wrap");
     expect(harness.wrapper.querySelectorAll("thead th")).toHaveLength(4);
     expect(harness.wrapper.querySelectorAll("tbody td")).toHaveLength(4);
     expect(harness.wrapper.querySelectorAll("tbody td")[3]?.textContent).toBe("");
@@ -62,6 +64,17 @@ describe("retained semantic Markdown table runtime", () => {
     const cell = link.closest("td")!;
     expect(Number(cell.dataset.markdownSourceStart)).toBeLessThan(Number(cell.dataset.markdownSourceEnd));
     harness.destroy();
+  });
+
+  it("switches to scrolling only after the wrapped-column threshold", () => {
+    const wrapped = renderSnapshot(syntheticTable(1, 6));
+    const wide = renderSnapshot(syntheticTable(1, 7));
+
+    expect(wrapped.wrapper.dataset.markdownTableLayout).toBe("wrap");
+    expect(wide.wrapper.dataset.markdownTableLayout).toBe("scroll");
+
+    wrapped.destroy();
+    wide.destroy();
   });
 
   it("preserves native selection and annotation overlays inside cells", () => {
@@ -114,6 +127,7 @@ describe("retained semantic Markdown table runtime", () => {
     const harness = renderSnapshot(snapshot, { maxVisibleRows: 48, overscanRows: 4, maxViewportHeight: 280 });
 
     expect(harness.wrapper.dataset.markdownTableVirtual).toBe("true");
+    expect(harness.wrapper.dataset.markdownTableLayout).toBe("scroll");
     expect(Number(harness.wrapper.dataset.markdownTableMountedRows)).toBeLessThanOrEqual(48);
     expect(harness.wrapper.querySelectorAll("tbody tr").length).toBeLessThanOrEqual(50);
     expect(harness.wrapper.querySelector("[data-markdown-table-spacer='bottom']")).not.toBeNull();
@@ -212,6 +226,8 @@ describe("retained semantic Markdown table runtime", () => {
     expect(harness.wrapper.querySelectorAll("tbody td")).toHaveLength(columns);
     expect(harness.wrapper.querySelector("tbody td:last-child")?.textContent).toBe("V63");
     expect(harness.wrapper.style.overflowX).toBe("auto");
+    expect(harness.wrapper.dataset.markdownTableColumns).toBe(String(columns));
+    expect(harness.wrapper.dataset.markdownTableLayout).toBe("scroll");
     harness.destroy();
   });
 });

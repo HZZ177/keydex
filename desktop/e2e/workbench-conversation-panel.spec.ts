@@ -71,6 +71,48 @@ test("workbench drawer renders the reused Agent conversation panel and message c
   await saveEvidence(page, "was-048-056-062-drawer-components");
 });
 
+test("workbench drawer plan card escapes clipping, stays open and separates long items", async ({ page }) => {
+  const backend = createWorkbenchBackend();
+  await installWebSocketMock(page);
+  await mockWorkbenchBackend(page, backend);
+
+  await page.goto(`${APP_BASE}/#/workbench/${WORKSPACE_A}/session/${RICH_SESSION}`);
+  await openWorkbenchComposer(page);
+  await page.getByRole("button", { name: "将工作台助手展开到右侧" }).click();
+
+  const drawer = page.getByTestId("workbench-assistant-drawer");
+  const planPill = page.getByTestId("plan-summary-pill");
+  await expect(drawer).toBeVisible();
+  await expect(planPill).toContainText("2/2 步");
+  await planPill.hover();
+
+  const planCard = page.getByTestId("plan-summary-card");
+  await expect(planCard).toBeVisible();
+  await expect(planCard).toContainText("E2E plan accessory");
+  await page.waitForTimeout(250);
+  await expect(planCard).toBeVisible();
+  expect(
+    await planCard.getByRole("listitem").nth(1).evaluate((element) => getComputedStyle(element).borderTopWidth),
+  ).toBe("1px");
+
+  const geometry = await planCard.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const drawerElement = document.querySelector<HTMLElement>("[data-testid='workbench-assistant-drawer']");
+    const sample = document.elementFromPoint(rect.left + 1, rect.top + rect.height / 2);
+    return {
+      clippedAtLeftEdge: !sample || !element.contains(sample),
+      insideDrawer: Boolean(drawerElement?.contains(element)),
+      left: rect.left,
+      right: rect.right,
+      viewportWidth: window.innerWidth,
+    };
+  });
+  expect(geometry.insideDrawer).toBe(false);
+  expect(geometry.clippedAtLeftEdge).toBe(false);
+  expect(geometry.left).toBeGreaterThanOrEqual(12);
+  expect(geometry.right).toBeLessThanOrEqual(geometry.viewportWidth - 12);
+});
+
 test("workbench expanded overlay uses the same panel without reflowing the workspace or opening the global sidebar", async ({ page }) => {
   const backend = createWorkbenchBackend();
   await installWebSocketMock(page);

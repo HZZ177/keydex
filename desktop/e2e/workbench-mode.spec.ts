@@ -76,6 +76,78 @@ test("workbench picker, workspace switch and scoped session list stay workspace-
   await saveEvidence(page, "e2e-007");
 });
 
+test("closed terminal dock does not scroll the workbench shell away from the window frame", async ({ page }) => {
+  const backend = createWorkbenchBackend();
+  await installWebSocketMock(page);
+  await mockWorkbenchBackend(page, backend);
+
+  await page.goto(`${APP_BASE}/#/workbench`);
+  await page.getByRole("button", { name: "选择工作区" }).click();
+  await page.getByRole("option", { name: /keydex/ }).click();
+  await expect(page.getByTestId("workbench-workspace-shell")).toBeVisible();
+
+  const geometry = await page.evaluate(() => {
+    const shell = document.querySelector<HTMLElement>("[data-testid='app-shell']");
+    const titlebar = document.querySelector<HTMLElement>("[data-testid='titlebar']");
+    if (!shell || !titlebar) throw new Error("Workbench shell geometry is unavailable.");
+    return {
+      shellClientHeight: shell.clientHeight,
+      shellScrollHeight: shell.scrollHeight,
+      shellScrollTop: shell.scrollTop,
+      titlebarTop: titlebar.getBoundingClientRect().top,
+    };
+  });
+
+  expect(geometry.shellScrollHeight).toBe(geometry.shellClientHeight);
+  expect(geometry.shellScrollTop).toBe(0);
+  expect(geometry.titlebarTop).toBe(0);
+});
+
+test("workbench terminal action stays at the far right of the file tab rail", async ({ page }) => {
+  const workspaceFilePaths = [
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "ARCHITECTURE.md",
+    "DEVELOPMENT.md",
+    "SECURITY.md",
+    "LICENSE.md",
+  ];
+  const backend = createWorkbenchBackend({ workspaceFilePaths });
+  await installWebSocketMock(page);
+  await mockWorkbenchBackend(page, backend);
+
+  await page.goto(`${APP_BASE}/#/workbench/${WORKSPACE_A}/session/${SESSION_A}`);
+
+  await page.getByRole("button", { name: "选择文件 README.md" }).click();
+
+  const tabRail = page.getByTestId("workbench-preview-tab-rail");
+  const terminalAction = tabRail.getByTestId("terminal-dock-action");
+  await expect(tabRail).toBeVisible();
+  await expect(terminalAction).toBeVisible();
+  await expect(page.getByTestId("content-top-actions")).toHaveCount(0);
+  await expect(terminalAction).toHaveAttribute("title", "内置终端仅在 Keydex 桌面客户端中可用");
+  await expect(page.getByTestId("workbench-assistant-capsule").getByTestId("terminal-dock-action")).toHaveCount(0);
+  expect(await tabRail.locator(":scope > *").evaluateAll((children) =>
+    children.map((child) => (child as HTMLElement).dataset.testid ?? child.getAttribute("role")),
+  )).toEqual(["workbench-preview-tab-strip", "terminal-dock-action"]);
+
+  for (const filePath of workspaceFilePaths.slice(1)) {
+    await page.getByRole("button", { name: `选择文件 ${filePath}` }).click();
+    await expect(page.getByRole("tab", { name: filePath, exact: true })).toBeVisible();
+  }
+
+  await expect(tabRail).toHaveAttribute("data-overflow", "true");
+  expect(await tabRail.locator(":scope > *").evaluateAll((children) =>
+    children.map((child) => (child as HTMLElement).dataset.testid ?? child.getAttribute("role")),
+  )).toEqual([
+    "workbench-preview-tab-scroll-left",
+    "workbench-preview-tab-strip",
+    "workbench-preview-tab-scroll-right",
+    "terminal-dock-action",
+  ]);
+});
+
 test("workbench capsule creates workspace-owned sessions, sends, searches and previews files", async ({ page }) => {
   const backend = createWorkbenchBackend();
   await installWebSocketMock(page);
@@ -582,6 +654,7 @@ interface MockBackendState {
   skillReadRequests: Array<{ sessionId: string; skillName: string; resourcePath: string }>;
   approvalDecisions: Array<{ approvalId: string; body: Record<string, unknown> }>;
   skills: SkillSummary[];
+  workspaceFilePaths: string[];
 }
 
 interface E2ESession {
@@ -599,7 +672,13 @@ interface E2EWorkspace {
   archived_at: null;
 }
 
-function createWorkbenchBackend({ skills = [] }: { skills?: SkillSummary[] } = {}): MockBackendState {
+function createWorkbenchBackend({
+  skills = [],
+  workspaceFilePaths = ["README.md"],
+}: {
+  skills?: SkillSummary[];
+  workspaceFilePaths?: string[];
+} = {}): MockBackendState {
   return {
     sessions: {
       [SESSION_A]: session(SESSION_A, "工作台 A 会话", WORKSPACE_A),
@@ -612,6 +691,7 @@ function createWorkbenchBackend({ skills = [] }: { skills?: SkillSummary[] } = {
     skillReadRequests: [],
     approvalDecisions: [],
     skills,
+    workspaceFilePaths,
   };
 }
 
@@ -766,7 +846,13 @@ async function mockWorkbenchBackend(page: Page, backend: MockBackendState) {
         return fulfillJson(route, {
           root: workspace(workspaceId, workspaceId).root_path,
           entries: [
-            { name: "README.md", path: "README.md", type: "file", size: 35, modified_at: null },
+            ...backend.workspaceFilePaths.map((filePath) => ({
+              name: filePath,
+              path: filePath,
+              type: "file",
+              size: 35,
+              modified_at: null,
+            })),
             { name: "src", path: "src", type: "directory", size: null, modified_at: null },
           ],
         });
