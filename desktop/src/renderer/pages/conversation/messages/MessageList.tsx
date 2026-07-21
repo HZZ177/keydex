@@ -1038,6 +1038,7 @@ export function MessageList({
       onScroll={handleVirtualScroll}
       onWheel={handleUserWheel}
       onPublished={handleConversationTimelinePublished}
+      onUnitCommitted={scheduleTailReadinessCheck}
       onViewportChanged={handleConversationViewportChanged}
       onScrollRequest={autoScroll.applyScrollRequest}
       followBottom={autoScroll.shouldFollowTail}

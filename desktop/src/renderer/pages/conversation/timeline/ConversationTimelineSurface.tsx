@@ -40,6 +40,8 @@ export interface ConversationTimelineSurfaceProps {
   readonly onWheel?: (event: React.WheelEvent<HTMLDivElement>) => void;
   readonly onScroll?: (event: React.UIEvent<HTMLDivElement>) => void;
   readonly onPublished?: (diagnostics: ConversationTimelineDiagnostics) => void;
+  /** Fires after the matching local React root clears its measurement-pending marker. */
+  readonly onUnitCommitted?: (unit: ConversationRenderUnit) => void;
   readonly onViewportChanged?: () => void;
   readonly onScrollRequest?: (request: ConversationTimelineScrollRequest) => void;
   readonly followBottom?: boolean;
@@ -64,6 +66,7 @@ export function ConversationTimelineSurface({
   onWheel,
   onScroll,
   onPublished,
+  onUnitCommitted,
   onViewportChanged,
   onScrollRequest,
   followBottom = false,
@@ -73,12 +76,14 @@ export function ConversationTimelineSurface({
   const runtimeInstanceRef = useRef<ConversationTimelineRuntime | null>(null);
   const renderUnitRef = useRef(renderUnit);
   const onPublishedRef = useRef(onPublished);
+  const onUnitCommittedRef = useRef(onUnitCommitted);
   const onViewportChangedRef = useRef(onViewportChanged);
   const onScrollRequestRef = useRef(onScrollRequest);
   const scrollerRefRef = useRef(scrollerRef);
   const residentUnitIdsRef = useRef(residentUnitIds);
   renderUnitRef.current = renderUnit;
   onPublishedRef.current = onPublished;
+  onUnitCommittedRef.current = onUnitCommitted;
   onViewportChangedRef.current = onViewportChanged;
   onScrollRequestRef.current = onScrollRequest;
   scrollerRefRef.current = scrollerRef;
@@ -102,7 +107,12 @@ export function ConversationTimelineSurface({
               <ConversationTimelineMeasurementCommit
                 unit={nextUnit}
                 onCommit={(committedUnit) => {
-                  if (runtimeInstanceRef.current === runtime) runtime.commitRenderedUnit(committedUnit);
+                  if (runtimeInstanceRef.current !== runtime) return;
+                  if (!runtime.commitRenderedUnit(committedUnit)) return;
+                  const element = runtime.getUnitElement(committedUnit.id);
+                  if (element && !element.dataset.conversationUnitMeasurementPending) {
+                    onUnitCommittedRef.current?.(committedUnit);
+                  }
                 }}
               >
                 {renderUnitRef.current(nextUnit)}
