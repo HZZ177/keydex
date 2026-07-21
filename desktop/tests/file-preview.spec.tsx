@@ -1,5 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { defaultHighlightStyle, highlightingFor } from "@codemirror/language";
 import { EditorView } from "@codemirror/view";
+import { tags } from "@lezer/highlight";
 import { useEffect, useMemo, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import mermaid, { type ParseResult, type RenderResult } from "mermaid";
@@ -1066,6 +1068,93 @@ describe("FilePreview", () => {
       expect(sourceViewer.textContent).toContain("const");
       expect(sourceViewer.textContent).toContain("1");
       expect(sourceViewer.textContent).toContain("2");
+    });
+  });
+
+  it("applies the semantic syntax highlighter to code files in dark mode", async () => {
+    const previousTheme = document.documentElement.getAttribute("data-theme");
+    let unmount: (() => void) | null = null;
+    document.documentElement.dataset.theme = "dark";
+    try {
+      const runtime = fakeRuntime({
+        readFile: vi.fn().mockResolvedValue({
+          path: "src/main.py",
+          content: "def main() -> None:\n    return True\n",
+          encoding: "utf-8",
+        }),
+      });
+
+      ({ unmount } = render(
+        <FilePreview request={{ type: "file", path: "src/main.py" }} sessionId="ses-1" runtime={runtime} />,
+      ));
+
+      const sourceViewer = await screen.findByTestId("file-source-viewer");
+      const view = EditorView.findFromDOM(sourceViewer);
+      expect(view).not.toBeNull();
+      const keywordClass = highlightingFor(view!.state, [tags.keyword]);
+      expect(keywordClass).not.toBeNull();
+      expect(keywordClass).not.toBe(defaultHighlightStyle.style([tags.keyword]));
+      await waitFor(() => {
+        const keyword = Array.from(sourceViewer.querySelectorAll("span"))
+          .find((element) => element.textContent === "def");
+        expect(keyword?.classList.contains(keywordClass!)).toBe(true);
+      });
+    } finally {
+      unmount?.();
+      if (previousTheme === null) {
+        document.documentElement.removeAttribute("data-theme");
+      } else {
+        document.documentElement.setAttribute("data-theme", previousTheme);
+      }
+    }
+  });
+
+  it("normalizes mixed line endings in CodeMirror and preserves the preferred separator when saving", async () => {
+    const source = "const first = 1;\r\nconst second = 2;\nconst third = 3;\r\n";
+    const normalizedSource = "const first = 1;\nconst second = 2;\nconst third = 3;\n";
+    const writeDocument = vi.fn().mockResolvedValue({
+      protocol_version: "document-write/v1",
+      path: "src/mixed.ts",
+      revision: "sha256:after",
+      encoding: "utf-8",
+      total_bytes: source.length,
+    });
+    const runtime = fakeRuntime({
+      readDocument: vi.fn().mockResolvedValue({
+        document_id: "workspace:session:ses-1:src/mixed.ts",
+        source: "workspace",
+        path: "src/mixed.ts",
+        content: source,
+        encoding: "utf-8",
+        revision: "sha256:before",
+        total_bytes: source.length,
+      }),
+      writeDocument,
+    });
+
+    render(<FilePreview request={{ type: "file", path: "src/mixed.ts" }} sessionId="ses-1" runtime={runtime} />);
+
+    const sourceViewer = await screen.findByTestId("file-source-viewer");
+    const view = EditorView.findFromDOM(sourceViewer);
+    expect(view?.state.doc.toString()).toBe(normalizedSource);
+    expect(view?.state.doc.lines).toBe(4);
+    expect(sourceViewer.querySelector(".cm-specialChar")).toBeNull();
+
+    const editPosition = normalizedSource.indexOf("1");
+    act(() => {
+      view?.dispatch({
+        changes: { from: editPosition, to: editPosition + 1, insert: "9" },
+        userEvent: "input",
+      });
+    });
+
+    await waitFor(() => {
+      expect(writeDocument).toHaveBeenCalledWith(
+        { sessionId: "ses-1" },
+        "src/mixed.ts",
+        "const first = 9;\r\nconst second = 2;\r\nconst third = 3;\r\n",
+        expect.objectContaining({ expectedRevision: "sha256:before" }),
+      );
     });
   });
 

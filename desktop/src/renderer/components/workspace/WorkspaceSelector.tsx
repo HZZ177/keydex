@@ -26,6 +26,7 @@ export interface WorkspaceSelectorProps {
   loading?: boolean;
   placement?: "top" | "bottom";
   variant?: "default" | "sidebar" | "titlebar";
+  showHoverHint?: boolean;
   allowProjectFreeChat?: boolean;
   onSelectChat?: () => void;
   onSelectWorkspace?: (workspace: Workspace) => void;
@@ -48,6 +49,7 @@ export function WorkspaceSelector({
   loading = false,
   placement = "bottom",
   variant = "default",
+  showHoverHint = true,
   allowProjectFreeChat = true,
   onSelectChat,
   onSelectWorkspace,
@@ -419,7 +421,7 @@ export function WorkspaceSelector({
         aria-haspopup="dialog"
         aria-expanded={open ? "true" : "false"}
         aria-controls={open ? menuId : undefined}
-        title={displayHint}
+        title={showHoverHint ? displayHint : undefined}
         disabled={!canOpen}
         onClick={toggleOpen}
       >

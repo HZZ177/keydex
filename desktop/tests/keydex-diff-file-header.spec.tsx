@@ -66,6 +66,26 @@ describe("Keydex Diff product file header", () => {
       header.textContent?.indexOf("a/very/long/ghost/path") ?? Number.MAX_SAFE_INTEGER,
     );
   });
+
+  it("keeps the compact conversation header short and visually subordinate", () => {
+    const chromeCss = readFileSync(resolve(
+      process.cwd(),
+      "src/renderer/components/diff/DiffChrome.module.css",
+    ), "utf8");
+    const wrapperCss = readFileSync(resolve(
+      process.cwd(),
+      "src/renderer/components/diff/wrappers/CompactDiffView.module.css",
+    ), "utf8");
+
+    expect(chromeCss).toMatch(
+      /\.fileHeader\[data-density="compact"\]\s*\{[^}]*min-height:\s*28px[^}]*padding:\s*2px 7px/su,
+    );
+    expect(chromeCss).toMatch(
+      /\.fileHeader\[data-density="compact"\] \.fileName\s*\{[^}]*font-size:\s*12px/su,
+    );
+    expect(wrapperCss).toMatch(/\.headerAction\s*\{[^}]*width:\s*24px[^}]*height:\s*24px/su);
+    expect(wrapperCss).toMatch(/\.toggleGlyph\s*\{[^}]*width:\s*20px[^}]*height:\s*20px/su);
+  });
 });
 
 function file(overrides: Partial<KeydexDiffFileInput> = {}) {

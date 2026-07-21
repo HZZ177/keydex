@@ -135,6 +135,7 @@ export function Titlebar({
               allowProjectFreeChat={false}
               placement="bottom"
               variant="titlebar"
+              showHoverHint={false}
             />
           </div>
         ) : null}

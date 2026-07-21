@@ -8,8 +8,8 @@
 
 .headerAction {
   display: inline-flex;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   align-items: center;
   justify-content: center;
   border: 0;
@@ -24,8 +24,8 @@
 .headerAction:disabled { opacity: 0.4; cursor: default; }
 .toggleGlyph {
   display: inline-flex;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   align-items: center;
   justify-content: center;
   color: var(--color-text-tertiary);

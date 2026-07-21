@@ -86,9 +86,11 @@ describe("Titlebar", () => {
     );
 
     expect(screen.getByTestId("workbench-titlebar-workspace-selector")).not.toBeNull();
-    expect(screen.getByLabelText("选择工作区").textContent).toContain("keydex");
+    const workspaceSelector = screen.getByLabelText("选择工作区");
+    expect(workspaceSelector.textContent).toContain("keydex");
+    expect(workspaceSelector.getAttribute("title")).toBeNull();
 
-    fireEvent.click(screen.getByLabelText("选择工作区"));
+    fireEvent.click(workspaceSelector);
     fireEvent.click(screen.getByRole("option", { name: /kt-agent-framework/ }));
     expect(onSelectWorkspace).toHaveBeenCalledWith(expect.objectContaining({ id: "ws-2" }));
 

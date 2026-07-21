@@ -28,7 +28,6 @@ import { xml } from "@codemirror/lang-xml";
 import { yaml } from "@codemirror/lang-yaml";
 import {
   bracketMatching,
-  defaultHighlightStyle,
   foldGutter,
   foldKeymap,
   HighlightStyle,
@@ -4072,7 +4071,9 @@ function CodeMirrorSourceView({
   const languageCompartmentRef = useRef<Compartment | null>(null);
   const findCompartmentRef = useRef<Compartment | null>(null);
   const editableCompartmentRef = useRef<Compartment | null>(null);
-  const lineSeparatorCompartmentRef = useRef<Compartment | null>(null);
+  const sourceLineSeparatorRef = useRef(sourceLineSeparator(source));
+  const normalizedSource = normalizeCodeMirrorSource(source);
+  sourceLineSeparatorRef.current = sourceLineSeparator(source);
   if (themeCompartmentRef.current === null) {
     themeCompartmentRef.current = new Compartment();
   }
@@ -4085,14 +4086,10 @@ function CodeMirrorSourceView({
   if (editableCompartmentRef.current === null) {
     editableCompartmentRef.current = new Compartment();
   }
-  if (lineSeparatorCompartmentRef.current === null) {
-    lineSeparatorCompartmentRef.current = new Compartment();
-  }
   const themeCompartment = themeCompartmentRef.current;
   const languageCompartment = languageCompartmentRef.current;
   const findCompartment = findCompartmentRef.current;
   const editableCompartment = editableCompartmentRef.current;
-  const lineSeparatorCompartment = lineSeparatorCompartmentRef.current;
 
   useEffect(() => {
     onSelectionChangeRef.current = onSelectionChange;
@@ -4107,7 +4104,9 @@ function CodeMirrorSourceView({
     () =>
       EditorView.updateListener.of((update) => {
         if (update.docChanged && !applyingSourceRef.current) {
-          onSourceChangeRef.current?.(update.state.sliceDoc());
+          onSourceChangeRef.current?.(
+            restoreSourceLineSeparator(update.state.sliceDoc(), sourceLineSeparatorRef.current),
+          );
         }
         if (!update.selectionSet) {
           return;
@@ -4150,16 +4149,16 @@ function CodeMirrorSourceView({
       view = new EditorView({
         parent: host,
         state: EditorState.create({
-          doc: source,
+          doc: normalizedSource,
           extensions: [
             ...codeMirrorBaseExtensions(),
             selectionExtension,
             annotationAdapter.extension,
             themeCompartment.of(codeMirrorTheme(theme)),
             languageCompartment.of(codeMirrorLanguage(language) ?? []),
-            findCompartment.of(codeMirrorFindExtension(source, sourceFindState ?? null)),
+            findCompartment.of(codeMirrorFindExtension(normalizedSource, sourceFindState ?? null)),
             editableCompartment.of(codeMirrorEditableExtension(editable)),
-            lineSeparatorCompartment.of(EditorState.lineSeparator.of(sourceLineSeparator(source))),
+            EditorState.lineSeparator.of("\n"),
             EditorView.domEventHandlers({
               blur: () => {
                 onSourceBlurRef.current?.();
@@ -4197,32 +4196,24 @@ function CodeMirrorSourceView({
       return;
     }
     const currentSource = view.state.sliceDoc();
-    if (currentSource === source) {
+    if (currentSource === normalizedSource) {
       return;
     }
     applyingSourceRef.current = true;
     try {
       view.dispatch({
-        changes: { from: 0, to: view.state.doc.length, insert: source },
+        changes: { from: 0, to: view.state.doc.length, insert: normalizedSource },
       });
     } finally {
       applyingSourceRef.current = false;
     }
-  }, [source]);
+  }, [normalizedSource]);
 
   useEffect(() => {
     viewRef.current?.dispatch({
       effects: editableCompartment.reconfigure(codeMirrorEditableExtension(editable)),
     });
   }, [editable, editableCompartment]);
-
-  useEffect(() => {
-    viewRef.current?.dispatch({
-      effects: lineSeparatorCompartment.reconfigure(
-        EditorState.lineSeparator.of(sourceLineSeparator(source)),
-      ),
-    });
-  }, [lineSeparatorCompartment, source]);
 
   useEffect(() => {
     viewRef.current?.dispatch({
@@ -4238,9 +4229,11 @@ function CodeMirrorSourceView({
 
   useEffect(() => {
     viewRef.current?.dispatch({
-      effects: findCompartment.reconfigure(codeMirrorFindExtension(source, sourceFindState ?? null)),
+      effects: findCompartment.reconfigure(
+        codeMirrorFindExtension(normalizedSource, sourceFindState ?? null),
+      ),
     });
-  }, [findCompartment, source, sourceFindState]);
+  }, [findCompartment, normalizedSource, sourceFindState]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -4732,8 +4725,7 @@ function codeMirrorBaseExtensions(): Extension[] {
     history(),
     EditorView.lineWrapping,
     keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap]),
-    syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-    syntaxHighlighting(codeMirrorHighlightStyle, { fallback: true }),
+    syntaxHighlighting(codeMirrorHighlightStyle),
   ].filter(Boolean) as Extension[];
 }
 
@@ -5856,6 +5848,14 @@ function codeMirrorEditableExtension(editable: boolean): Extension {
 
 function sourceLineSeparator(source: string): "\n" | "\r\n" {
   return source.includes("\r\n") ? "\r\n" : "\n";
+}
+
+function normalizeCodeMirrorSource(source: string): string {
+  return source.replace(/\r\n?/gu, "\n");
+}
+
+function restoreSourceLineSeparator(source: string, lineSeparator: "\n" | "\r\n"): string {
+  return lineSeparator === "\r\n" ? source.replace(/\n/gu, "\r\n") : source;
 }
 
 function previewRequestIdentity(
