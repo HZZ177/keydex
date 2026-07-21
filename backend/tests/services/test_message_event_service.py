@@ -736,6 +736,7 @@ def test_message_event_service_handles_multi_turn_reasoning_error_and_cancel(tmp
     assert messages[2]["role"] == "reasoning"
     assert messages[2]["content"] == "观察"
     assert messages[2]["reasoningKind"] == "reasoning"
+    assert messages[2]["status"] == "failed"
     assert isinstance(messages[2]["timestamp"], int)
     assert messages[3]["role"] == "error"
     assert messages[3]["content"] == "失败"
@@ -1234,6 +1235,10 @@ def test_completed_events_to_messages_fast_path_applies_ghost_footer() -> None:
     messages = MessageEventService.events_to_messages(
         [
             {"action": "ai_message", "data": {"content": "完成"}},
+            {
+                "action": "reasoning_message",
+                "data": {"kind": "reasoning", "text": "检查完成"},
+            },
             {"action": "tool_start", "data": {"tool": "read_file", "run_id": "tool_1"}},
             {"action": "tool_end", "data": {"run_id": "tool_1", "result": "ok"}},
         ],
@@ -1249,3 +1254,4 @@ def test_completed_events_to_messages_fast_path_applies_ghost_footer() -> None:
     assert messages[0] == {"role": "user", "content": "做事"}
     assert messages[1]["ghostStats"]["traceId"] == "trace_1"
     assert messages[2]["status"] == "completed"
+    assert messages[3]["status"] == "completed"

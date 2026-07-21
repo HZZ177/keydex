@@ -2087,7 +2087,15 @@ async def test_chat_service_disables_project_tools_for_chat_session(tmp_path) ->
 async def test_chat_service_fails_loudly_when_request_omits_model_selection(tmp_path) -> None:
     model = ToolFriendlyFakeModel(responses=[AIMessage(content="不应调用")])
     service, repositories, _checkpointer, factory = _service(tmp_path, model)
-    chat_adapter = RecordingChatAdapter()
+    observed_terminal_statuses: list[str] = []
+
+    class TerminalStatusRecordingAdapter(RecordingChatAdapter):
+        async def send(self, *, session_id: str, action: str, data: dict[str, Any]) -> bool:
+            if action == "error":
+                observed_terminal_statuses.append(repositories.sessions.get(session_id).status)
+            return await super().send(session_id=session_id, action=action, data=data)
+
+    chat_adapter = TerminalStatusRecordingAdapter()
 
     result = await service.handle_chat(
         ChatRequest(message="你好"),
@@ -2108,6 +2116,7 @@ async def test_chat_service_fails_loudly_when_request_omits_model_selection(tmp_
         "retryable": False,
     }
     assert not ({"message", "code", "details"} & chat_adapter.sent[-1]["data"].keys())
+    assert observed_terminal_statuses == ["failed"]
     assert repositories.sessions.get(result.session_id).status == "failed"
 
 

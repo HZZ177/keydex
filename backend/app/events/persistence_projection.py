@@ -311,6 +311,24 @@ class PersistenceProjection:
         if already_flushed:
             if final_text == already_flushed:
                 self._reasoning_started_at_ms.pop(key, None)
+                await self._save(
+                    ReplayAction.REASONING.value,
+                    self._wrap_payload(
+                        ReplayAction.REASONING.value,
+                        {
+                            "kind": payload.get("kind", "reasoning"),
+                            "text": "",
+                            "done": True,
+                            "trace_id": payload.get("trace_id") or event.trace_id,
+                        },
+                        event_type=DomainEventType.REASONING_FINISHED.value,
+                        source=event.source,
+                        run_id=event.run_id,
+                        timestamp_ms=event.timestamp_ms,
+                        message_time_ms=event.timestamp_ms,
+                    ),
+                    event,
+                )
                 return
             if final_text.startswith(already_flushed):
                 final_text = final_text[len(already_flushed) :]

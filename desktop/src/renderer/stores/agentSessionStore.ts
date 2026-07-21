@@ -542,6 +542,9 @@ function loadHistory(
   view.stale = false;
   view.pendingInputs = normalizePendingInputs(history.pending_inputs ?? previousView?.pendingInputs ?? []);
   applyHydratedRuntimeState(view, previousView);
+  if (view.runtimeState === "failed") {
+    updateSessionStatus(next, sessionId, "failed");
+  }
   return next;
 }
 
@@ -567,6 +570,9 @@ function prependHistory(
   view.stale = false;
   view.pendingInputs = previousView?.pendingInputs?.map(clonePendingInput) ?? view.pendingInputs;
   applyHydratedRuntimeState(view, previousView);
+  if (view.runtimeState === "failed") {
+    updateSessionStatus(next, sessionId, "failed");
+  }
   return next;
 }
 
@@ -905,10 +911,20 @@ function applyHydratedRuntimeState(view: AgentSessionViewState, previousView?: A
     runtimeState = previousView.runtimeState === "waiting_approval" ? runtimeState : previousView.runtimeState;
   }
 
+  // A terminal event is delivered before the follow-up history refresh. If that
+  // refresh races with session persistence, it may still describe the session
+  // as running. Keep the locally observed failure terminal until an explicit
+  // new turn (or an explicit local send) starts it again.
+  if (previousView?.runtimeState === "failed" && isActiveRuntimeState(runtimeState)) {
+    runtimeState = "failed";
+  }
+
   view.runtimeState = runtimeState;
   view.pendingApproval = pendingApproval;
   view.pendingElicitation = pendingElicitation;
-  view.isStreaming = hasStreamingMessage || (runtimeState === "running" && previousView?.isStreaming === true);
+  view.isStreaming = runtimeState === "failed"
+    ? false
+    : hasStreamingMessage || (runtimeState === "running" && previousView?.isStreaming === true);
   view.isCancelling = runtimeState === "cancelling";
 }
 
@@ -1025,7 +1041,9 @@ function handleTurnStarted(state: AgentConversationState, data: AgentTurnStarted
     });
   }
   view.isStreaming = true;
-  markTurnInProgress(view);
+  view.isCancelling = false;
+  view.runtimeState = "running";
+  updateSessionStatus(next, sessionId, "running");
   return next;
 }
 
@@ -1102,6 +1120,9 @@ function handleStream(state: AgentConversationState, data: AgentStreamActionData
   if (!sessionId || !content) {
     return state;
   }
+  if (state.sessionStateById[sessionId]?.runtimeState === "failed") {
+    return state;
+  }
   const next = cloneState(state);
   const view = ensureSessionState(next, sessionId);
   const eventTimestamp = timestampFromData(data);
@@ -1146,6 +1167,9 @@ function handleFirstToken(state: AgentConversationState, data: AgentFirstTokenDa
   const sessionId = data.session_id || state.selectedSessionId || "";
   const firstTokenAtMs = nonNegativeNumber(data.first_token_at_ms);
   if (!sessionId || firstTokenAtMs === null) {
+    return state;
+  }
+  if (state.sessionStateById[sessionId]?.runtimeState === "failed") {
     return state;
   }
   const next = cloneState(state);
@@ -1681,6 +1705,9 @@ function handleReasoning(
   if (!sessionId) {
     return state;
   }
+  if (state.sessionStateById[sessionId]?.runtimeState === "failed") {
+    return state;
+  }
 
   const next = cloneState(state);
   const view = ensureSessionState(next, sessionId);
@@ -2179,6 +2206,7 @@ function handleError(state: AgentConversationState, data: AgentErrorData): Agent
   view.pendingElicitation = null;
   view.firstTokenAtMs = null;
   view.runtimeState = "failed";
+  updateSessionStatus(next, sessionId, "failed");
   return next;
 }
 
@@ -2266,7 +2294,7 @@ function handleStatus(state: AgentConversationState, data: Record<string, unknow
   ]);
   for (const runningSessionId of runningSessionIds) {
     const runningView = ensureSessionState(next, runningSessionId);
-    if (!runningView.pendingApproval) {
+    if (!runningView.pendingApproval && runningView.runtimeState !== "failed") {
       runningView.runtimeState = "running";
       runningView.isStreaming = true;
     }
@@ -2274,6 +2302,9 @@ function handleStatus(state: AgentConversationState, data: Record<string, unknow
   }
   for (const waitingSessionId of waitingApprovalSessionIds) {
     const waitingView = ensureSessionState(next, waitingSessionId);
+    if (waitingView.runtimeState === "failed") {
+      continue;
+    }
     waitingView.runtimeState = "waiting_approval";
     waitingView.isStreaming = false;
     waitingView.isCancelling = false;
@@ -2281,6 +2312,9 @@ function handleStatus(state: AgentConversationState, data: Record<string, unknow
   }
   for (const waitingSessionId of waitingInputSessionIds) {
     const waitingView = ensureSessionState(next, waitingSessionId);
+    if (waitingView.runtimeState === "failed") {
+      continue;
+    }
     waitingView.runtimeState = "waiting_input";
     waitingView.isStreaming = false;
     waitingView.isCancelling = false;
@@ -2304,10 +2338,19 @@ function handleStatus(state: AgentConversationState, data: Record<string, unknow
   }
   const status = stringValue(data.status);
   if (isAgentSessionStatus(status)) {
-    view.status = status;
-    view.runtimeState = runtimeStateFromSessionStatus(status);
+    const incomingRuntimeState = runtimeStateFromSessionStatus(status);
+    if (
+      view.runtimeState !== "failed"
+      || incomingRuntimeState === "failed"
+      || incomingRuntimeState === "closed"
+    ) {
+      view.status = status;
+      view.runtimeState = incomingRuntimeState;
+    }
   } else if (isRuntimeState(status)) {
-    view.runtimeState = status;
+    if (view.runtimeState !== "failed" || status === "failed" || status === "closed") {
+      view.runtimeState = status;
+    }
   }
   if (view.runtimeState === "idle") {
     settleMissingRunRuntimeState(next, view, sessionId);
@@ -2765,6 +2808,9 @@ function normalizeHistoryStatus(payload: AgentChatMessagePayload): AgentChatMess
   }
   if (payload.role === "tool") {
     return payload.error || payload.toolError ? "error" : "completed";
+  }
+  if (payload.role === "reasoning") {
+    return "completed";
   }
   return undefined;
 }
@@ -3512,7 +3558,11 @@ function hasStreamingMessage(view: AgentSessionViewState): boolean {
 }
 
 function markTurnInProgress(view: AgentSessionViewState) {
-  if (view.runtimeState !== "cancelling" && view.runtimeState !== "closed") {
+  if (
+    view.runtimeState !== "cancelling"
+    && view.runtimeState !== "failed"
+    && view.runtimeState !== "closed"
+  ) {
     view.runtimeState = "running";
   }
 }
@@ -4192,6 +4242,9 @@ function mergeIncomingRuntimeState(
   incoming: AgentSessionRuntimeState | undefined,
 ): AgentSessionRuntimeState {
   if (!incoming) {
+    return current;
+  }
+  if (current === "failed" && incoming !== "failed" && incoming !== "closed") {
     return current;
   }
   if (incoming === "idle" && isActiveRuntimeState(current)) {

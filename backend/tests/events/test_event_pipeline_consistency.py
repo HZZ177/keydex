@@ -516,6 +516,7 @@ async def test_realtime_persistence_and_history_keep_subagent_reasoning_sequence
     assert messages[1]["role"] == "reasoning"
     assert messages[1]["content"] == "观察完成"
     assert messages[1]["reasoningKind"] == "initial_response"
+    assert messages[1]["status"] == "completed"
     assert isinstance(messages[1]["timestamp"], int)
 
 
@@ -556,6 +557,7 @@ async def test_persistence_keeps_reasoning_stream_between_assistant_batches(tmp_
         "stream_batch",
         "reasoning",
         "stream_batch",
+        "reasoning",
     ]
     assert [message["role"] for message in messages] == [
         "assistant",
@@ -569,3 +571,4 @@ async def test_persistence_keeps_reasoning_stream_between_assistant_batches(tmp_
     ]
     assert messages[1]["timestamp"] == base_time + 2
     assert messages[1]["reasoningDurationMs"] == 1
+    assert messages[1]["status"] == "completed"

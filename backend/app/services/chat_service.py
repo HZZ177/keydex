@@ -1630,6 +1630,11 @@ class ChatService:
                     failed_payload["first_token_at_ms"] = aggregator.first_token_at_ms
                 if thread_task_context:
                     failed_payload["thread_task"] = thread_task_context
+                # Persist the terminal session state before publishing the
+                # terminal event. The desktop refreshes history immediately on
+                # TURN_FAILED; publishing first lets that refresh observe the
+                # stale running state and resurrect the failed turn.
+                self.repositories.sessions.update(session.id, status="failed")
                 await dispatcher.emit_event(
                     event_type=DomainEventType.TURN_FAILED.value,
                     source="chat_service",
@@ -1642,7 +1647,6 @@ class ChatService:
                 )
             finally:
                 self._finish_trace(trace_id, status="failed", duration_ms=duration_ms)
-                self.repositories.sessions.update(session.id, status="failed")
             return ChatTurnResult(
                 session_id=session.id,
                 trace_id=trace_id,

@@ -3059,6 +3059,120 @@ describe("agentSessionStore reducer", () => {
     });
   });
 
+  it("keeps a failed turn terminal across stale history and delayed output until a new turn starts", () => {
+    let state = createInitialAgentConversationState();
+    state = reduceAgentWsEvent(state, {
+      action: "turn_started",
+      data: { session_id: "ses-1", turn_index: 1, trace_id: "trace-1" },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "reasoning",
+      data: {
+        session_id: "ses-1",
+        kind: "reasoning",
+        content: "失败前的思考",
+        turn_index: 1,
+        trace_id: "trace-1",
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "error",
+      data: {
+        session_id: "ses-1",
+        message: "模型响应超时",
+        turn_index: 1,
+        trace_id: "trace-1",
+      },
+    });
+
+    const staleHistory = history([
+      {
+        role: "reasoning",
+        content: "失败前的思考",
+        reasoningKind: "reasoning",
+        turnIndex: 1,
+        traceId: "trace-1",
+      },
+      {
+        role: "error",
+        content: "模型响应超时",
+        status: "failed",
+        turnIndex: 1,
+        traceId: "trace-1",
+      },
+    ]);
+    staleHistory.session = session("ses-1", "2026-06-18T08:00:01Z", "running");
+    state = agentConversationReducer(state, {
+      type: "history/loaded",
+      sessionId: "ses-1",
+      history: staleHistory,
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "status",
+      data: { running_sessions: ["ses-1"] },
+    });
+
+    expect(selectAgentSessionState(state, "ses-1")).toMatchObject({
+      status: "failed",
+      runtimeState: "failed",
+      isStreaming: false,
+    });
+    expect(selectAgentMessages(state, "ses-1")[0]).toMatchObject({
+      role: "reasoning",
+      status: "completed",
+      streaming: false,
+    });
+
+    const failedMessages = selectAgentMessages(state, "ses-1");
+    state = reduceAgentWsEvent(state, {
+      action: "reasoning",
+      data: {
+        session_id: "ses-1",
+        kind: "reasoning",
+        content: "不应接收的迟到思考",
+        turn_index: 1,
+        trace_id: "trace-1",
+      },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "stream",
+      data: {
+        session_id: "ses-1",
+        content: "不应接收的迟到正文",
+        turn_index: 1,
+        trace_id: "trace-1",
+      },
+    });
+
+    expect(selectAgentRuntimeState(state, "ses-1")).toBe("failed");
+    expect(selectAgentMessages(state, "ses-1")).toEqual(failedMessages);
+
+    state = reduceAgentWsEvent(state, {
+      action: "turn_started",
+      data: { session_id: "ses-1", turn_index: 2, trace_id: "trace-2" },
+    });
+    state = reduceAgentWsEvent(state, {
+      action: "reasoning",
+      data: {
+        session_id: "ses-1",
+        kind: "reasoning",
+        content: "新一轮思考",
+        turn_index: 2,
+        trace_id: "trace-2",
+      },
+    });
+
+    expect(selectAgentRuntimeState(state, "ses-1")).toBe("running");
+    expect(selectAgentMessages(state, "ses-1").at(-1)).toMatchObject({
+      role: "reasoning",
+      content: "新一轮思考",
+      status: "streaming",
+      streaming: true,
+      turnIndex: 2,
+      traceId: "trace-2",
+    });
+  });
+
   it("appends context compression notices when compression completes", () => {
     let state = createInitialAgentConversationState();
     state = reduceAgentWsEvent(state, {

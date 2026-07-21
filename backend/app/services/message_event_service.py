@@ -320,10 +320,21 @@ class MessageEventService:
                 continue
 
             if action == ReplayAction.REASONING.value:
+                reasoning_content = str(data.get("text", data.get("content", "")) or "")
+                reasoning_kind = str(data.get("kind") or "reasoning")
+                if data.get("done") is True and not reasoning_content:
+                    self._finalize_reasoning_messages(
+                        messages,
+                        turn_index=event.turn_index,
+                        status="completed",
+                        reasoning_kind=reasoning_kind,
+                    )
+                    continue
                 message = {
                     "role": "reasoning",
-                    "content": str(data.get("text", data.get("content", "")) or ""),
-                    "reasoningKind": data.get("kind", "reasoning"),
+                    "content": reasoning_content,
+                    "reasoningKind": reasoning_kind,
+                    "status": "completed" if data.get("done") is True else "streaming",
                     "timestamp": self._event_timestamp_ms(event),
                     "messageEventId": event.id,
                     "turnIndex": event.turn_index,
@@ -375,6 +386,11 @@ class MessageEventService:
                 continue
 
             if action == ReplayAction.COMPLETED.value:
+                self._finalize_reasoning_messages(
+                    messages,
+                    turn_index=event.turn_index,
+                    status="completed",
+                )
                 self._apply_turn_duration_to_latest_assistant(
                     messages,
                     terminal_timestamp=self._event_timestamp_ms(event),
@@ -385,6 +401,11 @@ class MessageEventService:
                 continue
 
             if action == ReplayAction.CANCELLED.value:
+                self._finalize_reasoning_messages(
+                    messages,
+                    turn_index=event.turn_index,
+                    status="completed",
+                )
                 self._apply_turn_duration_to_latest_assistant(
                     messages,
                     terminal_timestamp=self._event_timestamp_ms(event),
@@ -395,6 +416,11 @@ class MessageEventService:
                 continue
 
             if action == ReplayAction.ERROR.value:
+                self._finalize_reasoning_messages(
+                    messages,
+                    turn_index=event.turn_index,
+                    status="failed",
+                )
                 self._apply_turn_duration_to_latest_assistant(
                     messages,
                     terminal_timestamp=self._event_timestamp_ms(event),
@@ -470,6 +496,7 @@ class MessageEventService:
                     "role": "reasoning",
                     "content": str(data.get("text", data.get("content", "")) or ""),
                     "reasoningKind": data.get("kind", "reasoning"),
+                    "status": "completed",
                 }
                 duration_ms = _non_negative_duration_ms(data.get("duration_ms"))
                 if duration_ms is not None:
@@ -478,6 +505,26 @@ class MessageEventService:
 
         MessageEventService._apply_ghost_footer_to_latest_assistant(messages, ghost_footer)
         return messages
+
+    @staticmethod
+    def _finalize_reasoning_messages(
+        messages: list[dict[str, Any]],
+        *,
+        turn_index: int,
+        status: str,
+        reasoning_kind: str | None = None,
+    ) -> None:
+        for message in messages:
+            if (
+                message.get("role") == "reasoning"
+                and message.get("turnIndex") == turn_index
+                and message.get("status") == "streaming"
+                and (
+                    reasoning_kind is None
+                    or message.get("reasoningKind") == reasoning_kind
+                )
+            ):
+                message["status"] = status
 
     @staticmethod
     def _canonical_action(event: MessageEventRecord) -> str:
