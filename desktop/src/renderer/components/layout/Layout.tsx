@@ -377,6 +377,7 @@ export function Layout({
       && sameNavigationPath(activePath, pendingSessionNavigation.sourcePath)
       && !sameNavigationPath(activePath, pendingSessionNavigation.targetPath),
   );
+  const primaryContentNavigationPending = sessionNavigationPending && appMode !== "workbench";
   const pendingSessionPath = sessionNavigationPending ? pendingSessionNavigation?.targetPath : undefined;
   const shellActivePath = pendingSessionPath ?? activePath;
   const primarySurface = sessionNavigationPending ? "content" : (routePrimarySurface ?? localPrimarySurface);
@@ -1211,9 +1212,9 @@ export function Layout({
                 data-content={contentMode}
                 data-primary-content="conversation"
                 hidden={primarySurface === "git"}
-                aria-busy={sessionNavigationPending || undefined}
+                aria-busy={primaryContentNavigationPending || undefined}
               >
-                {sessionNavigationPending ? (
+                {primaryContentNavigationPending ? (
                   <LoadingSkeleton
                     aria-label="正在加载会话"
                     className={styles.sessionNavigationLoading}

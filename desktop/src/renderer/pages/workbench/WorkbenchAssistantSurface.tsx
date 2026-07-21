@@ -1960,6 +1960,7 @@ export function WorkbenchAssistantSurface({
               className={styles.expandedPanelFrame}
               data-btw-active={btwActive ? "true" : "false"}
               data-review-active={reviewActive ? "true" : "false"}
+              data-turn-navigator-visible={!reviewActive && turnNavigationItems.length >= 2 ? "true" : "false"}
               data-testid="workbench-expanded-panel-frame"
               initial={{ opacity: 0, y: 16, clipPath: "inset(100% 0 0 0 round 18px)" }}
               animate={{ opacity: 1, y: 0, clipPath: "inset(0% 0 0 0 round 18px)" }}

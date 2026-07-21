@@ -447,6 +447,54 @@ test("workbench expanded layer, drawer and approval stay above the workspace", a
   await saveEvidence(page, "e2e-019");
 });
 
+test("workbench expanded history joins the bottom composer support without a seam", async ({ page }) => {
+  const backend = createWorkbenchBackend();
+  await installWebSocketMock(page);
+  await mockWorkbenchBackend(page, backend);
+
+  await page.goto(`${APP_BASE}/#/workbench/${WORKSPACE_A}/session/${SESSION_A}`);
+  await openWorkbenchComposer(page);
+  await page.getByRole("button", { name: "展开工作台消息层" }).click();
+
+  const expandedLayer = page.getByTestId("workbench-expanded-layer");
+  const expandedFrame = page.getByTestId("workbench-expanded-panel-frame");
+  await expect(expandedLayer).toBeVisible();
+  await expect(page.getByTestId("conversation-panel")).toBeVisible();
+
+  await expect.poll(async () => expandedLayer.evaluate((layer) => {
+    const frame = layer.querySelector<HTMLElement>("[data-testid='workbench-expanded-panel-frame']");
+    const chrome = document.querySelector<HTMLElement>("[data-testid='workbench-assistant-chrome']");
+    if (!frame || !chrome) return Number.POSITIVE_INFINITY;
+    return Math.abs(frame.getBoundingClientRect().bottom - (chrome.getBoundingClientRect().top - 12));
+  })).toBeLessThanOrEqual(1);
+
+  const joinGeometry = await expandedLayer.evaluate((layer) => {
+    const frame = layer.querySelector<HTMLElement>("[data-testid='workbench-expanded-panel-frame']");
+    const chrome = document.querySelector<HTMLElement>("[data-testid='workbench-assistant-chrome']");
+    if (!frame || !chrome) throw new Error("Expanded history join geometry is unavailable.");
+    const frameRect = frame.getBoundingClientRect();
+    const chromeRect = chrome.getBoundingClientRect();
+    const supportStyle = getComputedStyle(chrome, "::before");
+    return {
+      frameBottom: frameRect.bottom,
+      layerAfterContent: getComputedStyle(layer, "::after").content,
+      supportBottomLeftRadius: supportStyle.borderBottomLeftRadius,
+      supportBottomRightRadius: supportStyle.borderBottomRightRadius,
+      supportTop: chromeRect.top - 12,
+      supportTopLeftRadius: supportStyle.borderTopLeftRadius,
+      supportTopRightRadius: supportStyle.borderTopRightRadius,
+    };
+  });
+
+  expect(Math.abs(joinGeometry.frameBottom - joinGeometry.supportTop)).toBeLessThanOrEqual(1);
+  expect(joinGeometry.layerAfterContent).toBe("none");
+  expect(joinGeometry.supportTopLeftRadius).toBe("0px");
+  expect(joinGeometry.supportTopRightRadius).toBe("0px");
+  expect(joinGeometry.supportBottomLeftRadius).toBe("32px");
+  expect(joinGeometry.supportBottomRightRadius).toBe("32px");
+  await expect(expandedFrame).toHaveAttribute("data-turn-navigator-visible", "false");
+});
+
 test("workbench dock keeps large markdown searchable without enabling the global sidebar", async ({ page }) => {
   const backend = createWorkbenchBackend();
   await installWebSocketMock(page);

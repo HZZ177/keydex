@@ -76,6 +76,20 @@ describe("workbench assistant geometry", () => {
     expect(css).toContain("--workbench-assistant-dock-inline-size: min(380px, 48vw)");
   });
 
+  it("aligns the expanded history content and joins it with the capsule support itself", () => {
+    const css = readFileSync(
+      resolve(process.cwd(), "src/renderer/pages/workbench/WorkbenchAssistantSurface.module.css"),
+      "utf8",
+    );
+
+    expect(css).toContain("--workbench-assistant-expanded-bottom-clearance: 4px");
+    expect(css).toContain("--workbench-assistant-expanded-inline-shift: 26px");
+    expect(css).toMatch(/\.expandedLayer\s*\{[\s\S]*padding: 0 0 calc\([\s\S]*var\(--workbench-assistant-expanded-bottom-gap\) \+ var\(--workbench-assistant-expanded-bottom-clearance\)/);
+    expect(css).toMatch(/\.surface\[data-surface-mode="expanded"\] \.chrome\[data-shell-mode="composer"\]::before\s*\{[\s\S]*border-radius: 0 0 32px 32px/);
+    expect(css).not.toContain(".expandedLayer::after");
+    expect(css).toMatch(/\.expandedPanelFrame\[data-turn-navigator-visible="true"\]\s*\{[\s\S]*left: clamp\([\s\S]*calc\(\(100% - 760px\) \/ 2\),[\s\S]*var\(--workbench-assistant-expanded-inline-shift\)/);
+  });
+
   it("keeps dock morph transitions on an opaque panel that collapses back to the capsule", () => {
     const css = readFileSync(
       resolve(process.cwd(), "src/renderer/pages/workbench/WorkbenchAssistantSurface.module.css"),

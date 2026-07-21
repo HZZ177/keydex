@@ -10,6 +10,7 @@ from backend.app.agent.langchain_tools import local_tool_to_langchain_tool
 from backend.app.agent.tool_results.artifact_repository import ToolResultArtifactRepository
 from backend.app.storage import StorageRepositories, init_database
 from backend.app.tools.base import FunctionTool, ToolExecutionContext
+from backend.app.tools.filesystem import create_filesystem_tools
 
 
 def _setup(tmp_path: Path):
@@ -127,6 +128,7 @@ async def test_langchain_adapter_persists_full_payload_before_projected_truncati
     model_payload = json.loads(output.content)
     assert model_payload["_keydex_projection"] == {
         "truncated": True,
+        "reason_code": "budget_exceeded",
         "artifact_id": artifact_id,
     }
     record = repositories.tool_result_artifacts.get(artifact_id)
@@ -134,3 +136,49 @@ async def test_langchain_adapter_persists_full_payload_before_projected_truncati
     stored = (tmp_path / "data" / record.relative_path).read_text(encoding="utf-8")
     assert "full-row-中😀" in stored
     assert len(output.content.encode("utf-8")) <= 32 * 1024
+
+
+@pytest.mark.asyncio
+async def test_native_read_window_uses_continuation_without_persisting_artifact(
+    tmp_path: Path,
+) -> None:
+    repositories, base_context, artifact_repo = _setup(tmp_path)
+    base_context.workspace_root.mkdir(parents=True)
+    (base_context.workspace_root / "window.txt").write_text(
+        "".join(f"line {index}\n" for index in range(40)),
+        encoding="utf-8",
+    )
+    context = ToolExecutionContext(
+        session_id=base_context.session_id,
+        user_id=base_context.user_id,
+        workspace_root=base_context.workspace_root,
+        turn_index=1,
+        metadata={
+            "repositories": repositories,
+            "data_dir": str(tmp_path / "data"),
+            "tool_result_artifact_repository": artifact_repo,
+        },
+    )
+    tool = next(tool for tool in create_filesystem_tools() if tool.name == "read_file")
+    langchain_tool = local_tool_to_langchain_tool(tool, context_factory=lambda: context)
+
+    output = await langchain_tool.ainvoke(
+        {
+            "type": "tool_call",
+            "id": "call-read-window",
+            "name": tool.name,
+            "args": {"path": "window.txt", "start_line": 1, "max_lines": 5},
+        }
+    )
+
+    assert isinstance(output, ToolMessage)
+    model_payload = json.loads(output.content)
+    assert model_payload["returned_lines"] == 5
+    assert model_payload["next_start_line"] == 6
+    assert model_payload["_keydex_projection"] == {
+        "truncated": True,
+        "reason_code": "requested_window",
+        "continuation": {"kind": "next_start_line", "value": 6},
+    }
+    assert output.artifact["projection"]["artifact_id"] is None
+    assert output.artifact["persisted_ref"] is None

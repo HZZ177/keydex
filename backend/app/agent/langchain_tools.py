@@ -250,7 +250,16 @@ def _persist_projection_if_needed(
     if repository is None:
         return projection
     command_path = payload.get("output_path") if isinstance(payload, dict) else None
-    should_persist = bool(policy.persist_on_truncate and projection.meta.truncated)
+    continuation_only = bool(
+        projection.meta.continuation is not None
+        and projection.meta.reason_code
+        in {None, "requested_window", "search_source_truncated"}
+    )
+    should_persist = bool(
+        policy.persist_on_truncate
+        and projection.meta.truncated
+        and not continuation_only
+    )
     if not should_persist and not command_path:
         return projection
     try:

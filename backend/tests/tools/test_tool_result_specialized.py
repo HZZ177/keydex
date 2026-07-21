@@ -54,6 +54,7 @@ async def test_read_file_model_projection_contains_numbered_body_once(tmp_path: 
     assert len(content.encode("utf-8")) <= 24 * 1024
     assert payload["truncated"] is True
     assert payload["next_start_line"] == payload["returned_lines"] + 1
+    assert payload["_keydex_projection"]["reason_code"] == "model_byte_budget"
 
 
 @pytest.mark.asyncio
@@ -138,6 +139,8 @@ def test_grep_projection_removes_duplicate_paths_and_mtime(tmp_path: Path) -> No
     assert "paths" not in payload
     assert all("modified_time" not in item for item in payload["results"])
     assert [item["matches"] for item in payload["results"]] == [2, 1]
+    assert projection.meta.truncated is False
+    assert "_keydex_projection" not in payload
 
 
 def test_grep_projection_keeps_file_identities_before_long_snippets(tmp_path: Path) -> None:
@@ -168,6 +171,10 @@ def test_grep_projection_keeps_file_identities_before_long_snippets(tmp_path: Pa
     assert all(
         {"path", "matches", "first_line"}.issubset(item)
         for item in projection.display_payload["results"]
+    )
+    assert projection.meta.truncated is True
+    assert projection.display_payload["_keydex_projection"]["reason_code"] == (
+        "search_result_compacted"
     )
 
 
@@ -224,6 +231,7 @@ async def test_search_text_cursor_is_stable_bound_and_non_overlapping(tmp_path: 
     assert len(second_ids) == 25
     assert first_ids.isdisjoint(second_ids), sorted(first_ids & second_ids)
     assert first["next_cursor"] != second["next_cursor"]
+    assert first["_keydex_projection"]["reason_code"] == "search_source_truncated"
 
     failed = json.loads(
         await langchain_tool.ainvoke(

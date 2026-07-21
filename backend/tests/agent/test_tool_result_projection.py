@@ -49,7 +49,10 @@ def test_generic_projection_is_valid_json_within_global_budget(
     parsed = json.loads(projection.model_content)
     assert len(projection.model_content.encode("utf-8")) <= GLOBAL_TOOL_RESULT_BUDGET_BYTES
     assert parsed["truncated"] is True
-    assert parsed["_keydex_projection"] == {"truncated": True}
+    assert parsed["_keydex_projection"] == {
+        "truncated": True,
+        "reason_code": "budget_exceeded",
+    }
     assert projection.meta.full_bytes > GLOBAL_TOOL_RESULT_BUDGET_BYTES
     assert parsed == projection.display_payload
 

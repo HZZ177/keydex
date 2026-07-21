@@ -24,13 +24,15 @@ def read_file_projector(
             policy=policy,
         )
     display = {key: value for key, value in result.items() if key != "content"}
+    source_paginated = bool(display.get("truncated"))
     projection = projection_from_display_payload(
         display,
         original_result=result,
         tool_name=tool_name,
         policy=policy,
-        truncated=bool(display.get("truncated")),
+        truncated=source_paginated,
         continuation=_read_continuation(display),
+        reason_code="requested_window" if source_paginated else None,
     )
     if (
         utf8_bytes(projection.model_content) <= policy.budget_bytes
@@ -584,7 +586,15 @@ def _search_projector(
 
     for snippet_bytes in (600, 240, 80, 0):
         compacted = [_compact_search_item(item, kind, snippet_bytes) for item in original_items]
-        lossy_compaction = compacted != original_items
+        content_compacted = _search_content_compacted(
+            original_items,
+            compacted,
+            kind=kind,
+        )
+        reason_code = _search_projection_reason(
+            source_truncated=source_truncated,
+            content_compacted=content_compacted,
+        )
         candidate = _search_display(
             result,
             compacted,
@@ -596,14 +606,8 @@ def _search_projector(
             original_result=result,
             tool_name=tool_name,
             policy=policy,
-            truncated=source_truncated or lossy_compaction,
-            reason_code=(
-                "search_source_truncated"
-                if source_truncated
-                else "search_result_compacted"
-                if lossy_compaction
-                else None
-            ),
+            truncated=source_truncated or content_compacted,
+            reason_code=reason_code,
         )
         if "result_preview" not in projected.display_payload:
             if source_truncated:
@@ -622,6 +626,7 @@ def _search_projector(
                     policy=policy,
                     truncated=True,
                     continuation={"kind": "next_cursor", "value": next_cursor},
+                    reason_code=reason_code,
                 )
             if "result_preview" not in projected.display_payload:
                 return projected
@@ -690,6 +695,37 @@ def _compact_search_item(item: dict[str, Any], kind: str, snippet_bytes: int) ->
     if snippet_bytes > 0 and snippet:
         compact["snippet"] = _utf8_prefix(snippet, snippet_bytes)
     return compact
+
+
+def _search_content_compacted(
+    original_items: list[dict[str, Any]],
+    compacted_items: list[dict[str, Any]],
+    *,
+    kind: str,
+) -> bool:
+    for original, compacted in zip(original_items, compacted_items, strict=True):
+        if str(original.get("snippet") or "") != str(compacted.get("snippet") or ""):
+            return True
+        if kind == "search_text" and any(
+            original.get(key) not in (None, [], "")
+            for key in ("before_context", "after_context", "context_before", "context_after")
+        ):
+            return True
+    return False
+
+
+def _search_projection_reason(
+    *,
+    source_truncated: bool,
+    content_compacted: bool,
+) -> str | None:
+    if source_truncated and content_compacted:
+        return "search_source_and_result_compacted"
+    if source_truncated:
+        return "search_source_truncated"
+    if content_compacted:
+        return "search_result_compacted"
+    return None
 
 
 def _search_display(

@@ -155,6 +155,7 @@ describe("tool presentation contract", () => {
       next_offset: 1,
       _keydex_projection: {
         truncated: true,
+        reason_code: "model_byte_budget",
         continuation: { kind: "next_offset", value: 1 },
         artifact_id: "tra_example",
       },
@@ -173,6 +174,7 @@ describe("tool presentation contract", () => {
     });
     expect(presentation.projection).toEqual({
       truncated: true,
+      reasonCode: "model_byte_budget",
       continuation: { kind: "next_offset", value: 1 },
       artifactId: "tra_example",
     });
@@ -232,5 +234,46 @@ describe("tool presentation contract", () => {
     );
     expect(screen.getByLabelText("工具结果投影信息").textContent).toContain("Agent 可见 4.9 KB");
     expect(screen.getByLabelText("工具结果投影信息").textContent).toContain("工具原始 20 KB");
+  });
+
+  it("distinguishes native windows, search compaction, and model budget clipping", () => {
+    const { rerender } = render(
+      <ToolProjectionNotice
+        projection={{
+          truncated: true,
+          reasonCode: "requested_window",
+          continuation: { kind: "next_start_line", value: 101 },
+        }}
+      />,
+    );
+    expect(screen.getByLabelText("工具结果投影信息").textContent).toContain("文件还有后续内容");
+    expect(screen.getByLabelText("工具结果投影信息").textContent).not.toContain("上下文预算");
+
+    rerender(
+      <ToolProjectionNotice
+        projection={{ truncated: true, reasonCode: "search_result_compacted" }}
+      />,
+    );
+    expect(screen.getByLabelText("工具结果投影信息").textContent).toContain("搜索结果详情已精简");
+
+    rerender(
+      <ToolProjectionNotice
+        projection={{
+          truncated: true,
+          reasonCode: "search_source_and_result_compacted",
+          continuation: { kind: "next_cursor", value: "cursor" },
+        }}
+      />,
+    );
+    expect(screen.getByLabelText("工具结果投影信息").textContent).toContain(
+      "搜索结果还有后续页，当前页详情已精简",
+    );
+
+    rerender(
+      <ToolProjectionNotice
+        projection={{ truncated: true, reasonCode: "model_byte_budget" }}
+      />,
+    );
+    expect(screen.getByLabelText("工具结果投影信息").textContent).toContain("结果已按上下文预算精简");
   });
 });

@@ -350,6 +350,8 @@ def _model_projection_notice(meta: ToolResultProjectionMeta) -> dict[str, Any] |
     if not meta.truncated:
         return None
     notice: dict[str, Any] = {"truncated": True}
+    if meta.reason_code:
+        notice["reason_code"] = meta.reason_code
     if meta.continuation is not None:
         notice["continuation"] = meta.continuation
     if meta.artifact_id:

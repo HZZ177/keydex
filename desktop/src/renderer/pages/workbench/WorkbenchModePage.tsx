@@ -162,9 +162,19 @@ export function WorkbenchModePage({
   const backendReady = runtimeConnection?.ready ?? true;
   const previewContext = useOptionalPreview();
   const layout = useLayoutState();
-  const workbenchUiScopeKey = workbenchModeUiScopeKey({ workspaceId, selectedSessionId, externalPreviewPath });
+  const workbenchUiScopeKey = workbenchModeUiScopeKey({ workspaceId, externalPreviewPath });
+  // Preserve the currently visible layout once when upgrading from the former per-session cache.
+  const legacyWorkbenchUiScopeKey = legacySessionScopedWorkbenchModeUiScopeKey({
+    workspaceId,
+    selectedSessionId,
+    externalPreviewPath,
+  });
   const workbenchUiStateCache = workbenchModeUiStateCacheForRuntime(runtime);
-  const cachedWorkbenchUiState = cachedWorkbenchModeUiState(workbenchUiStateCache, workbenchUiScopeKey);
+  const cachedWorkbenchUiState = cachedWorkbenchModeUiState(
+    workbenchUiStateCache,
+    workbenchUiScopeKey,
+    legacyWorkbenchUiScopeKey,
+  );
   const cachedWorkspaceBrowserState =
     cachedWorkbenchUiState?.workspaceBrowserState ?? null;
   const initialWorkbenchUiStateRef = useRef<WorkbenchModeUiState | null | undefined>(undefined);
@@ -226,11 +236,11 @@ export function WorkbenchModePage({
   useEffect(() => {
     setMainPreviewNearBottom(false);
   }, [assistantViewportKey]);
-  const previousPreviewResetScopeRef = useRef({
+  const previousWorkbenchUiScopeRef = useRef({
     externalPreviewPath,
-    selectedSessionId,
     workspaceId,
   });
+  const previousSessionIdRef = useRef(selectedSessionId);
   const handledExternalPreviewIntentKeyRef = useRef<string | null>(null);
   const activeWorkbenchPreviewPath = activeWorkbenchPreviewTab
     ? targetPathForPreviewRequest(activeWorkbenchPreviewTab.request)
@@ -681,21 +691,35 @@ export function WorkbenchModePage({
   }, []);
 
   useEffect(() => {
-    const previousScope = previousPreviewResetScopeRef.current;
-    previousPreviewResetScopeRef.current = {
+    const previousSessionId = previousSessionIdRef.current;
+    previousSessionIdRef.current = selectedSessionId;
+    if (previousSessionId === selectedSessionId) {
+      return;
+    }
+    handledFilePanelRequestIdRef.current = previewContext?.filePanelRequest?.requestId ?? 0;
+    handledPreviewEntryStampRef.current = previewContext?.activeEntry ? previewEntryStamp(previewContext.activeEntry) : "";
+    setBtwSession(null);
+    setBtwLoadedHistoryTurnCount(null);
+  }, [previewContext?.activeEntry, previewContext?.filePanelRequest?.requestId, selectedSessionId]);
+
+  useEffect(() => {
+    const previousScope = previousWorkbenchUiScopeRef.current;
+    previousWorkbenchUiScopeRef.current = {
       externalPreviewPath,
-      selectedSessionId,
       workspaceId,
     };
-    const workspaceScopeChanged =
-      previousScope.workspaceId !== workspaceId || previousScope.selectedSessionId !== selectedSessionId;
+    const workspaceScopeChanged = previousScope.workspaceId !== workspaceId;
     const externalPreviewInvolved = Boolean(previousScope.externalPreviewPath || externalPreviewPath);
     if (!workspaceScopeChanged || externalPreviewInvolved) {
       return;
     }
     handledFilePanelRequestIdRef.current = previewContext?.filePanelRequest?.requestId ?? 0;
     handledPreviewEntryStampRef.current = previewContext?.activeEntry ? previewEntryStamp(previewContext.activeEntry) : "";
-    const restoredState = cachedWorkbenchModeUiState(workbenchUiStateCache, workbenchUiScopeKey);
+    const restoredState = cachedWorkbenchModeUiState(
+      workbenchUiStateCache,
+      workbenchUiScopeKey,
+      legacyWorkbenchUiScopeKey,
+    );
     workbenchUiStateScopeKeyRef.current = workbenchUiScopeKey;
     const restoredPreviewBrowserWidth = restoredState?.previewBrowserWidth ?? DEFAULT_WORKBENCH_BROWSER_WIDTH;
     setPreviewBrowserWidth(restoredPreviewBrowserWidth);
@@ -711,9 +735,9 @@ export function WorkbenchModePage({
   }, [
     applyWorkbenchPreviewBrowserWidth,
     externalPreviewPath,
+    legacyWorkbenchUiScopeKey,
     previewContext?.activeEntry,
     previewContext?.filePanelRequest?.requestId,
-    selectedSessionId,
     workbenchUiStateCache,
     workbenchUiScopeKey,
     workspaceId,
@@ -1056,12 +1080,20 @@ function workbenchModeUiStateCacheForRuntime(runtime: RuntimeBridge): Map<string
 function cachedWorkbenchModeUiState(
   cache: Map<string, WorkbenchModeUiState>,
   scopeKey: string,
+  legacyScopeKey?: string,
 ): WorkbenchModeUiState | null {
   const cached = cache.get(scopeKey);
   if (cached) return cached;
   const persisted = readPersistedWorkbenchModeUiState(scopeKey);
-  if (persisted) cache.set(scopeKey, persisted);
-  return persisted;
+  if (persisted) {
+    cache.set(scopeKey, persisted);
+    return persisted;
+  }
+  if (!legacyScopeKey || legacyScopeKey === scopeKey) return null;
+  const legacy = cache.get(legacyScopeKey) ?? readPersistedWorkbenchModeUiState(legacyScopeKey);
+  if (!legacy) return null;
+  cache.set(scopeKey, legacy);
+  return legacy;
 }
 
 function readPersistedWorkbenchModeUiState(scopeKey: string): WorkbenchModeUiState | null {
@@ -1131,6 +1163,22 @@ function workbenchUiStorageKey(scopeKey: string): string {
 
 function workbenchModeUiScopeKey({
   workspaceId,
+  externalPreviewPath,
+}: {
+  workspaceId?: string;
+  externalPreviewPath?: string;
+}) {
+  if (workspaceId) {
+    return `workspace:${workspaceId}`;
+  }
+  if (externalPreviewPath) {
+    return `external:${hashText(externalPreviewPath)}`;
+  }
+  return "picker";
+}
+
+function legacySessionScopedWorkbenchModeUiScopeKey({
+  workspaceId,
   selectedSessionId,
   externalPreviewPath,
 }: {
@@ -1138,13 +1186,9 @@ function workbenchModeUiScopeKey({
   selectedSessionId?: string;
   externalPreviewPath?: string;
 }) {
-  if (workspaceId) {
-    return `workspace:${workspaceId}:session:${selectedSessionId ?? ""}`;
-  }
-  if (externalPreviewPath) {
-    return `external:${hashText(externalPreviewPath)}`;
-  }
-  return "picker";
+  return workspaceId
+    ? `workspace:${workspaceId}:session:${selectedSessionId ?? ""}`
+    : workbenchModeUiScopeKey({ externalPreviewPath });
 }
 
 function sanitizeWorkbenchPreviewTabs(state: WorkbenchPreviewTabsState): WorkbenchPreviewTabsState {

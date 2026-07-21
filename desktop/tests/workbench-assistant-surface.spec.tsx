@@ -1547,7 +1547,9 @@ describe("WorkbenchAssistantSurface", () => {
     const expandedLayer = screen.getByTestId("workbench-expanded-layer");
     expect(chrome.getAttribute("data-shell-mode")).toBe("composer");
     expect(chrome.contains(expandedLayer)).toBe(false);
-    expect(screen.getByTestId("workbench-expanded-panel-frame")).not.toBeNull();
+    expect(screen.getByTestId("workbench-expanded-panel-frame").getAttribute("data-turn-navigator-visible")).toBe(
+      "true",
+    );
     expect(screen.getByRole("button", { name: "收起工作台消息层" }).closest("form")).toBeNull();
     expect(screen.getByTestId("workbench-expanded-layer")).not.toBeNull();
     expect(screen.getByTestId("workbench-expanded-panel-loading")).not.toBeNull();
@@ -1586,6 +1588,9 @@ describe("WorkbenchAssistantSurface", () => {
     fireEvent.click(screen.getByRole("button", { name: "展开工作台消息层" }));
     await screen.findByTestId("conversation-panel");
 
+    expect(screen.getByTestId("workbench-expanded-panel-frame").getAttribute("data-turn-navigator-visible")).toBe(
+      "false",
+    );
     expect(screen.getByTestId("workbench-expanded-message-empty").textContent).toBe(
       "当前工作空间还没有助手消息。",
     );

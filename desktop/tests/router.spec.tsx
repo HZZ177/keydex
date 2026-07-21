@@ -27,6 +27,7 @@ import {
 import { AppRouter } from "@/renderer/components/layout/Router";
 import { emitSessionUpdated } from "@/renderer/events/sessionEvents";
 import { emitLifecycleEvent } from "@/renderer/events/lifecycleEvents";
+import { TerminalProvider } from "@/renderer/features/terminal";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { LAYOUT_PREFERENCES_KEY } from "@/renderer/hooks/layout/layoutStore";
 import { AgentSessionProvider, useAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
@@ -34,6 +35,7 @@ import { AppUpdateController } from "@/renderer/providers/AppUpdateController";
 import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
 import { RuntimeConnectionProvider } from "@/renderer/providers/RuntimeConnectionProvider";
+import { TerminalSessionScopeProvider } from "@/renderer/providers/TerminalSessionScopeProvider";
 import { ThemeProvider } from "@/renderer/providers/ThemeProvider";
 import { FontProvider } from "@/renderer/providers/FontProvider";
 import type { AgentSession, CommandApprovalRequest, Workspace } from "@/types/protocol";
@@ -62,15 +64,19 @@ function renderRouter(
           <AppUpdateController>
             <LayoutStateProvider>
               <RuntimeConnectionProvider runtime={runtime} starter={starter}>
-                <AgentSessionProvider runtime={runtime}>
-                  <PreviewProvider>
-                    {extra}
-                    <MemoryRouter initialEntries={initialEntries}>
-                      {routeExtra}
-                      <AppRouter runtime={runtime} associatedFileOpen={associatedFileOpen} />
-                    </MemoryRouter>
-                  </PreviewProvider>
-                </AgentSessionProvider>
+                <TerminalSessionScopeProvider>
+                  <TerminalProvider runtimeAvailable={false}>
+                    <AgentSessionProvider runtime={runtime}>
+                      <PreviewProvider>
+                        {extra}
+                        <MemoryRouter initialEntries={initialEntries}>
+                          {routeExtra}
+                          <AppRouter runtime={runtime} associatedFileOpen={associatedFileOpen} />
+                        </MemoryRouter>
+                      </PreviewProvider>
+                    </AgentSessionProvider>
+                  </TerminalProvider>
+                </TerminalSessionScopeProvider>
               </RuntimeConnectionProvider>
             </LayoutStateProvider>
           </AppUpdateController>
@@ -99,15 +105,19 @@ function renderRouterWithoutLayoutProvider(
         <NotificationProvider>
           <AppUpdateController>
             <RuntimeConnectionProvider runtime={runtime} starter={starter}>
-              <AgentSessionProvider runtime={runtime}>
-                <PreviewProvider>
-                  {extra}
-                  <MemoryRouter initialEntries={initialEntries}>
-                    {routeExtra}
-                    <AppRouter runtime={runtime} associatedFileOpen={associatedFileOpen} />
-                  </MemoryRouter>
-                </PreviewProvider>
-              </AgentSessionProvider>
+              <TerminalSessionScopeProvider>
+                <TerminalProvider runtimeAvailable={false}>
+                  <AgentSessionProvider runtime={runtime}>
+                    <PreviewProvider>
+                      {extra}
+                      <MemoryRouter initialEntries={initialEntries}>
+                        {routeExtra}
+                        <AppRouter runtime={runtime} associatedFileOpen={associatedFileOpen} />
+                      </MemoryRouter>
+                    </PreviewProvider>
+                  </AgentSessionProvider>
+                </TerminalProvider>
+              </TerminalSessionScopeProvider>
             </RuntimeConnectionProvider>
           </AppUpdateController>
         </NotificationProvider>
@@ -497,6 +507,46 @@ describe("AppRouter", () => {
       workspaceId: "workspace A",
       pageSize: 50,
     });
+  });
+
+  it("keeps the workbench browsing layout while switching sessions in one workspace", async () => {
+    const workspaceA = workspace("workspace A", "keydex");
+    renderRouter(["/workbench/workspace%20A/session/session%201"], {
+      extra: <WorkbenchFileOpenProbe />,
+      sessions: [
+        agentSession({
+          id: "session 1",
+          title: "第一个工作台会话",
+          session_type: "workspace",
+          workspace_id: workspaceA.id,
+          workspace: workspaceA,
+        }),
+        agentSession({
+          id: "session 2",
+          title: "第二个工作台会话",
+          session_type: "workspace",
+          workspace_id: workspaceA.id,
+          workspace: workspaceA,
+        }),
+      ],
+    });
+
+    expect(await screen.findByTestId("workbench-workspace-shell", undefined, { timeout: 10000 })).not.toBeNull();
+    fireEvent.click(screen.getByTestId("open-workbench-file-readme"));
+    expect(await screen.findByRole("tab", { name: "README.md" }, { timeout: 10000 })).not.toBeNull();
+    const fileBrowser = screen.getByTestId("workspace-file-browser");
+
+    fireEvent.click(screen.getByRole("button", { name: "打开会话 第二个工作台会话" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("workbench-mode-page").getAttribute("data-selected-session-id")).toBe("session 2");
+    });
+    expect(screen.getByTestId("workspace-file-browser")).toBe(fileBrowser);
+    expect(screen.getByRole("tab", { name: "README.md" }).getAttribute("aria-selected")).toBe("true");
+    const selectedTreeButton = screen
+      .getByTestId("workspace-file-browser-tree")
+      .querySelector<HTMLElement>("button[data-entry-path='README.md']");
+    expect(selectedTreeButton?.getAttribute("data-selected")).toBe("true");
   });
 
   it("leaves an archived workbench workspace scope so workspace preview listeners unmount", async () => {
@@ -1072,7 +1122,14 @@ describe("AppRouter", () => {
   });
 
   it("creates a workspace-owned session from the workbench assistant capsule", async () => {
-    const { runtime } = renderRouter(["/workbench/workspace%20A"]);
+    const { runtime } = renderRouter(["/workbench/workspace%20A"], {
+      extra: <WorkbenchFileOpenProbe />,
+    });
+
+    expect(await screen.findByTestId("workbench-workspace-shell", undefined, { timeout: 10000 })).not.toBeNull();
+    fireEvent.click(screen.getByTestId("open-workbench-file-readme"));
+    expect(await screen.findByRole("tab", { name: "README.md" }, { timeout: 10000 })).not.toBeNull();
+    const fileBrowser = screen.getByTestId("workspace-file-browser");
 
     fireEvent.click(await screen.findByRole("button", { name: "展开工作台输入框" }, { timeout: 10000 }));
     const input = await screen.findByLabelText("工作台助手输入", undefined, { timeout: 10000 });
@@ -1107,6 +1164,12 @@ describe("AppRouter", () => {
         "new-workbench-session",
       );
     });
+    expect(screen.getByTestId("workspace-file-browser")).toBe(fileBrowser);
+    expect(screen.getByRole("tab", { name: "README.md" }).getAttribute("aria-selected")).toBe("true");
+    const selectedTreeButton = screen
+      .getByTestId("workspace-file-browser-tree")
+      .querySelector<HTMLElement>("button[data-entry-path='README.md']");
+    expect(selectedTreeButton?.getAttribute("data-selected")).toBe("true");
   });
 
   it("routes workbench file-open requests into the main preview area", async () => {

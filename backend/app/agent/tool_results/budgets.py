@@ -30,7 +30,6 @@ _POLICIES: dict[str, ToolResultPolicy] = {
     "read_file": ToolResultPolicy(
         budget_bytes=24 * 1024,
         native_pagination=True,
-        persist_on_truncate=True,
         persist_before_clear=True,
     ),
     "list_dir": ToolResultPolicy(

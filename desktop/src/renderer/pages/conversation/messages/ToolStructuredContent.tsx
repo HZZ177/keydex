@@ -138,9 +138,10 @@ export function ToolProjectionNotice({ projection }: { projection: ToolProjectio
     return null;
   }
   const facts: ReactNode[] = [];
-  if (projection.truncated === true) facts.push(<span key="truncated">结果已按上下文预算精简</span>);
+  const reasonLabel = projectionReasonLabel(projection);
+  if (reasonLabel) facts.push(<span key="truncated">{reasonLabel}</span>);
   if (projection.artifactComplete === false) facts.push(<span key="incomplete">上游原文不完整</span>);
-  if (projection.continuation) facts.push(<span key="continuation">还有后续内容</span>);
+  if (projection.continuation && !reasonLabel) facts.push(<span key="continuation">还有后续内容</span>);
   if (
     projection.truncated === true
     && projection.fullBytes !== undefined
@@ -164,6 +165,28 @@ export function ToolProjectionNotice({ projection }: { projection: ToolProjectio
       {facts}
     </div>
   );
+}
+
+
+function projectionReasonLabel(projection: ToolProjectionPresentation): string | null {
+  if (projection.truncated !== true) {
+    return null;
+  }
+  switch (projection.reasonCode) {
+    case "model_byte_budget":
+    case "budget_exceeded":
+      return "结果已按上下文预算精简";
+    case "requested_window":
+      return "文件还有后续内容";
+    case "search_source_truncated":
+      return "搜索结果还有后续页";
+    case "search_source_and_result_compacted":
+      return "搜索结果还有后续页，当前页详情已精简";
+    case "search_result_compacted":
+      return "搜索结果详情已精简";
+    default:
+      return projection.continuation ? "还有后续内容" : "结果已精简";
+  }
 }
 
 export function RawToolDataDisclosure({
