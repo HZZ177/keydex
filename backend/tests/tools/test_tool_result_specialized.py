@@ -76,7 +76,9 @@ async def test_list_dir_keeps_tree_protocol_inside_unified_10kb_projection(tmp_p
     assert isinstance(payload["tree"], str)
     assert payload["truncated"] is True
     assert payload["next_offset"] == payload["returned_entries"]
-    assert payload["_keydex_projection"]["continuation"]["kind"] == "next_offset"
+    projection_notice = payload["_keydex_projection"]
+    assert projection_notice["continuation"]["kind"] == "next_offset"
+    assert set(projection_notice) == {"truncated", "continuation"}
 
 
 def test_search_text_keeps_all_identities_before_optional_snippets(tmp_path: Path) -> None:
@@ -388,7 +390,7 @@ def test_web_fetch_projection_matches_bounded_ui_visible_summary(tmp_path: Path)
 
 
 @pytest.mark.parametrize("state", ["completed", "failed", "cancelled", "interrupted"])
-def test_subagent_terminal_projection_is_bounded_for_all_states(
+def test_subagent_terminal_projection_preserves_complete_report_for_all_states(
     state: str,
     tmp_path: Path,
 ) -> None:
@@ -408,7 +410,10 @@ def test_subagent_terminal_projection_is_bounded_for_all_states(
         policy=get_tool_result_policy("delegate_subagent"),
         context=_context(tmp_path),
     )
-    assert len(projection.model_content.encode("utf-8")) <= 32 * 1024
     assert projection.display_payload["state"] == state
     if state == "completed":
-        assert projection.display_payload["report_truncated"] is True
+        assert len(projection.model_content.encode("utf-8")) > 32 * 1024
+        assert projection.display_payload["final_report"] == result["final_report"]
+        assert "report_truncated" not in projection.display_payload
+        assert "_keydex_projection" not in projection.display_payload
+        assert projection.meta.truncated is False

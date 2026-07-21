@@ -403,67 +403,46 @@
   line-height: 1.35;
 }
 
-.codeViewport {
+.structuredViewport {
+  display: grid;
   min-height: 0;
   min-width: 0;
-  max-height: 144px;
-  overflow-x: auto;
-  overflow-y: auto;
-  background: transparent;
-  box-shadow: none;
-  padding: 4px 0 0;
+  max-height: 220px;
+  gap: 8px;
+  overflow: auto;
+  padding: 5px 0 0;
   scrollbar-color: color-mix(in srgb, var(--color-text-tertiary) 42%, transparent) transparent;
   scrollbar-width: thin;
 }
 
-.codeViewport::-webkit-scrollbar {
+.structuredViewport[data-kind="output"] {
+  max-height: 360px;
+  padding-top: 3px;
+}
+
+.structuredViewport[data-state="error"] {
+  color: color-mix(in srgb, var(--color-danger) 82%, var(--color-text-primary));
+}
+
+.structuredViewport::-webkit-scrollbar {
   width: 9px;
   height: 9px;
 }
 
-.codeViewport::-webkit-scrollbar-track {
+.structuredViewport::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.codeViewport::-webkit-scrollbar-thumb {
+.structuredViewport::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--color-text-tertiary) 46%, transparent);
   background-clip: padding-box;
 }
 
-.codeViewport::-webkit-scrollbar-thumb:hover {
+.structuredViewport::-webkit-scrollbar-thumb:hover {
   background: color-mix(in srgb, var(--color-text-tertiary) 62%, transparent);
   background-clip: padding-box;
-}
-
-:global(html[data-theme="dark"]) .codeViewport {
-  box-shadow: none;
-}
-
-.sectionHeader[data-kind="output"] + .codeViewport {
-  max-height: 260px;
-  padding-top: 2px;
-}
-
-.args,
-.detailSection pre {
-  max-width: 100%;
-  margin: 0;
-  overflow: visible;
-  border-radius: 0;
-  background: transparent;
-  color: color-mix(in srgb, var(--color-text-primary) 88%, transparent);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.55;
-  padding: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.detailSection pre[data-kind="error"] {
-  color: color-mix(in srgb, var(--color-danger) 82%, var(--color-text-primary));
 }
 
 .copyButton {

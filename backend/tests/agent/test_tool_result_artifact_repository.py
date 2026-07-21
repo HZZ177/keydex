@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -123,6 +124,11 @@ async def test_langchain_adapter_persists_full_payload_before_projected_truncati
     assert isinstance(output, ToolMessage)
     artifact_id = output.artifact["projection"]["artifact_id"]
     assert artifact_id
+    model_payload = json.loads(output.content)
+    assert model_payload["_keydex_projection"] == {
+        "truncated": True,
+        "artifact_id": artifact_id,
+    }
     record = repositories.tool_result_artifacts.get(artifact_id)
     assert record is not None
     stored = (tmp_path / "data" / record.relative_path).read_text(encoding="utf-8")

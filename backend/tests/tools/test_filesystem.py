@@ -59,7 +59,7 @@ async def test_read_file_tool_reads_utf8_text_with_line_window(tmp_path) -> None
 
     assert result.ok is True
     assert result.result["path"] == "docs/note.md"
-    assert result.result["content"] == "二\n"
+    assert "content" not in result.result
     assert result.result["numbered_content"] == "2: 二\n"
     assert result.result["truncated"] is True
     assert result.result["next_start_line"] == 3
@@ -106,12 +106,12 @@ async def test_read_file_tool_supports_line_window_and_indentation_mode(tmp_path
     )
 
     assert window.ok is True
-    assert window.result["content"] == "        first()\n"
+    assert window.result["numbered_content"] == "3:         first()\n"
     assert block.ok is True
     assert block.result["start_line"] == 2
     assert "2:     def run(self):" in block.result["numbered_content"]
     assert "4:         second()" in block.result["numbered_content"]
-    assert "def outside" not in block.result["content"]
+    assert "def outside" not in block.result["numbered_content"]
 
 
 async def test_list_dir_tool_returns_depth_limited_tree_and_pagination(tmp_path) -> None:
@@ -334,7 +334,7 @@ async def test_filesystem_tools_allow_external_read_in_full_access_mode(tmp_path
 
     assert result.ok is True
     assert result.result["path"] == outside.resolve().as_posix()
-    assert result.result["content"] == "external"
+    assert result.result["numbered_content"] == "1: external\n"
 
 
 async def test_filesystem_tools_allow_external_write_in_full_access_mode(tmp_path) -> None:

@@ -17,6 +17,7 @@ class ToolResultPolicy:
     persist_before_clear: bool = False
     must_be_complete: bool = False
     never_clear: bool = False
+    unbounded_model_result: bool = False
 
     def __post_init__(self) -> None:
         if self.budget_bytes <= 0 or self.budget_bytes > GLOBAL_TOOL_RESULT_BUDGET_BYTES:
@@ -94,12 +95,12 @@ _POLICIES: dict[str, ToolResultPolicy] = {
         persist_before_clear=True,
     ),
     "delegate_subagent": ToolResultPolicy(
-        persist_on_truncate=True,
         never_clear=True,
+        unbounded_model_result=True,
     ),
     "continue_subagent": ToolResultPolicy(
-        persist_on_truncate=True,
         never_clear=True,
+        unbounded_model_result=True,
     ),
     "load_skill": ToolResultPolicy(must_be_complete=True, never_clear=True),
 }

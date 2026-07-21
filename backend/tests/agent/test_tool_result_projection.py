@@ -49,8 +49,24 @@ def test_generic_projection_is_valid_json_within_global_budget(
     parsed = json.loads(projection.model_content)
     assert len(projection.model_content.encode("utf-8")) <= GLOBAL_TOOL_RESULT_BUDGET_BYTES
     assert parsed["truncated"] is True
-    assert parsed["_keydex_projection"]["full_bytes"] > GLOBAL_TOOL_RESULT_BUDGET_BYTES
+    assert parsed["_keydex_projection"] == {"truncated": True}
+    assert projection.meta.full_bytes > GLOBAL_TOOL_RESULT_BUDGET_BYTES
     assert parsed == projection.display_payload
+
+
+def test_complete_projection_sends_only_business_payload(tmp_path: Path) -> None:
+    payload = {"path": ".", "tree": "./\nsrc/", "truncated": False}
+
+    projection = project_tool_result(
+        payload,
+        tool_name="list_dir",
+        policy=get_tool_result_policy("list_dir"),
+        context=_context(tmp_path),
+    )
+
+    assert json.loads(projection.model_content) == payload
+    assert "_keydex_projection" not in projection.model_content
+    assert projection.meta.full_bytes == projection.meta.model_bytes
 
 
 def test_circular_and_unserializable_values_do_not_break_projection(tmp_path: Path) -> None:

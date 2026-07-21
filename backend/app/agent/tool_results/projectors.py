@@ -66,17 +66,16 @@ def generic_projector(
     full_bytes = utf8_bytes(full_content)
     continuation = _continuation_from_payload(safe_result)
 
-    display_payload = _display_with_meta(
-        safe_result,
-        _meta(
-            tool_name=tool_name,
-            full_bytes=full_bytes,
-            budget_bytes=policy.budget_bytes,
-            truncated=False,
-            continuation=continuation,
-        ),
+    meta = _meta(
+        tool_name=tool_name,
+        full_bytes=full_bytes,
+        budget_bytes=policy.budget_bytes,
+        truncated=False,
+        continuation=continuation,
     )
-    projection = _finalize_projection(display_payload)
+    projection = _finalize_projection(safe_result, meta=meta)
+    if policy.unbounded_model_result:
+        return projection
     if utf8_bytes(projection.model_content) <= policy.budget_bytes:
         return projection
 
@@ -125,8 +124,7 @@ def projection_from_display_payload(
         artifact_complete=artifact_complete,
         reason_code=reason_code,
     )
-    payload = _display_with_meta(safe_display, meta)
-    projection = _finalize_projection(payload)
+    projection = _finalize_projection(safe_display, meta=meta)
     return enforce_global_guard(projection, tool_name=tool_name, policy=policy)
 
 
@@ -136,6 +134,8 @@ def enforce_global_guard(
     tool_name: str,
     policy: ToolResultPolicy,
 ) -> ToolResultProjection:
+    if policy.unbounded_model_result:
+        return projection
     hard_budget = min(policy.budget_bytes, GLOBAL_TOOL_RESULT_BUDGET_BYTES)
     if utf8_bytes(projection.model_content) <= hard_budget:
         return projection
@@ -177,12 +177,9 @@ def attach_persisted_ref(
     )
     display = make_json_serializable(projection.display_payload)
     if isinstance(display, dict):
-        display[PROJECTION_FIELD] = meta.model_dump(mode="json")
         if "artifact_complete" in display:
             display["artifact_complete"] = complete
-        if meta.truncated:
-            display["artifact_id"] = artifact_id
-    attached = _finalize_projection(display, persisted_ref=persisted_ref)
+    attached = _finalize_projection(display, meta=meta, persisted_ref=persisted_ref)
     return enforce_global_guard(attached, tool_name=tool_name, policy=policy)
 
 
@@ -258,9 +255,12 @@ def _truncated_projection(
             "status": "truncated",
             "truncated": True,
             "result_preview": preview,
-            PROJECTION_FIELD: meta.model_dump(mode="json"),
         }
-        candidate = _finalize_projection(display_payload, persisted_ref=persisted_ref)
+        candidate = _finalize_projection(
+            display_payload,
+            meta=meta,
+            persisted_ref=persisted_ref,
+        )
         if utf8_bytes(candidate.model_content) <= policy.budget_bytes:
             best = candidate
             low = preview_bytes + 1
@@ -299,38 +299,64 @@ def _projection_failure(
         "ok": False,
         "status": "failed",
         "error": {"code": reason_code, "message": message, "retryable": False},
-        PROJECTION_FIELD: meta.model_dump(mode="json"),
     }
-    return _finalize_projection(display_payload)
-
-
-def _display_with_meta(result: Any, meta: ToolResultProjectionMeta) -> Any:
-    if isinstance(result, dict):
-        return {**result, PROJECTION_FIELD: meta.model_dump(mode="json")}
-    return {"result": result, PROJECTION_FIELD: meta.model_dump(mode="json")}
+    return _finalize_projection(display_payload, meta=meta)
 
 
 def _finalize_projection(
     display_payload: Any,
     *,
+    meta: ToolResultProjectionMeta,
     persisted_ref: dict[str, Any] | None = None,
 ) -> ToolResultProjection:
-    payload = make_json_serializable(display_payload)
-    for _ in range(3):
-        content = _json_dumps(payload)
-        model_bytes = utf8_bytes(content)
-        if isinstance(payload, dict) and isinstance(payload.get(PROJECTION_FIELD), dict):
-            projection_meta = payload[PROJECTION_FIELD]
-            projection_meta["model_bytes"] = model_bytes
-            projection_meta["approximate_model_tokens"] = approximate_tokens(model_bytes)
+    payload = _model_payload(display_payload, meta=meta)
     content = _json_dumps(payload)
-    meta = ToolResultProjectionMeta.model_validate(payload[PROJECTION_FIELD])
+    model_bytes = utf8_bytes(content)
+    finalized_meta = meta.model_copy(
+        update={
+            "model_bytes": model_bytes,
+            "approximate_model_tokens": approximate_tokens(model_bytes),
+        }
+    )
     return ToolResultProjection(
         model_content=content,
         display_payload=payload,
-        meta=meta,
+        meta=finalized_meta,
         persisted_ref=persisted_ref,
     )
+
+
+def _model_payload(display_payload: Any, *, meta: ToolResultProjectionMeta) -> Any:
+    """Build the exact model/UI payload without leaking observability metadata."""
+
+    payload = make_json_serializable(display_payload)
+    notice = _model_projection_notice(meta)
+    if isinstance(payload, dict):
+        payload = dict(payload)
+        # Strip the legacy full telemetry envelope when a custom projector or a
+        # historical payload reaches the new finalizer.
+        payload.pop(PROJECTION_FIELD, None)
+        if notice is not None:
+            payload[PROJECTION_FIELD] = notice
+        return payload
+    if notice is None:
+        return payload
+    return {"result": payload, PROJECTION_FIELD: notice}
+
+
+def _model_projection_notice(meta: ToolResultProjectionMeta) -> dict[str, Any] | None:
+    """Expose only fields the Agent can act on after a result was shortened."""
+
+    if not meta.truncated:
+        return None
+    notice: dict[str, Any] = {"truncated": True}
+    if meta.continuation is not None:
+        notice["continuation"] = meta.continuation
+    if meta.artifact_id:
+        notice["artifact_id"] = meta.artifact_id
+    if not meta.artifact_complete:
+        notice["artifact_complete"] = False
+    return notice
 
 
 def _meta(

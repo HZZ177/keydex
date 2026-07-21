@@ -26,6 +26,8 @@ def test_named_and_generic_policies_are_code_owned_and_bounded() -> None:
     assert get_tool_result_policy("list_dir").budget_bytes == 10 * 1024
     assert get_tool_result_policy("load_skill").must_be_complete is True
     assert get_tool_result_policy("apply_patch").never_clear is True
+    assert get_tool_result_policy("delegate_subagent").unbounded_model_result is True
+    assert get_tool_result_policy("continue_subagent").unbounded_model_result is True
     assert get_tool_result_policy("unknown_tool").budget_bytes == GLOBAL_TOOL_RESULT_BUDGET_BYTES
     assert get_tool_result_policy("mcp__server__read").persist_before_clear is True
 

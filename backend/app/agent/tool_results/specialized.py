@@ -447,48 +447,18 @@ def subagent_result_projector(
     context: Any,
 ) -> ToolResultProjection:
     del context
-    if not isinstance(result, dict):
-        return projection_from_display_payload(
-            result,
-            original_result=result,
-            tool_name=tool_name,
-            policy=policy,
-        )
-    report = str(result.get("final_report") or "")
-    display = dict(result)
-    if report:
-        display["final_report"] = _head_tail_bytes(report, 28 * 1024)
-        if display["final_report"] != report:
-            display["report_truncated"] = True
-            display["original_report_bytes"] = len(report.encode("utf-8"))
-    projection = projection_from_display_payload(
-        display,
+    source_truncated = bool(
+        isinstance(result, dict) and result.get("report_truncated")
+    )
+    return projection_from_display_payload(
+        result,
         original_result=result,
         tool_name=tool_name,
         policy=policy,
-        truncated=bool(display.get("report_truncated")),
-        reason_code="subagent_report_budget" if display.get("report_truncated") else None,
+        truncated=source_truncated,
+        reason_code="subagent_report_incomplete" if source_truncated else None,
+        artifact_complete=not source_truncated,
     )
-    if "result_preview" not in projection.display_payload:
-        return projection
-    for limit in (20 * 1024, 12 * 1024, 4 * 1024, 0):
-        candidate = {
-            **display,
-            "final_report": _head_tail_bytes(report, limit),
-            "report_truncated": True,
-            "original_report_bytes": len(report.encode("utf-8")),
-        }
-        projection = projection_from_display_payload(
-            candidate,
-            original_result=result,
-            tool_name=tool_name,
-            policy=policy,
-            truncated=True,
-            reason_code="subagent_report_budget",
-        )
-        if "result_preview" not in projection.display_payload:
-            return projection
-    return projection
 
 
 def _compact_web_source(value: dict[str, Any]) -> dict[str, Any]:

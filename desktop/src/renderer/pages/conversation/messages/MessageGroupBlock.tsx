@@ -1,12 +1,16 @@
 import {
+  BookCopy,
+  BookSearch,
   CheckCircle2,
   ChevronDown,
   FileDiff,
+  FilePlusCorner,
   FilePenLine,
-  FileText,
+  FileSearchCorner,
   FileX2,
-  FolderOpen,
+  FolderSearch,
   LoaderCircle,
+  PencilSparkles,
   Search,
   SquareTerminal,
   Wrench,
@@ -111,6 +115,8 @@ type GroupIconKind =
   | "file_change"
   | "read"
   | "directory"
+  | "file_search"
+  | "content_search"
   | "search"
   | "command"
   | "edit"
@@ -150,17 +156,21 @@ function groupIcon(kind: GroupIconKind) {
     case "file_change":
       return <FileDiff size={16} />;
     case "read":
-      return <FileText size={16} />;
+      return <BookCopy size={16} />;
     case "directory":
-      return <FolderOpen size={16} />;
+      return <FolderSearch size={16} />;
+    case "file_search":
+      return <FileSearchCorner size={16} />;
+    case "content_search":
+      return <BookSearch size={16} />;
     case "search":
       return <Search size={16} />;
     case "command":
       return <SquareTerminal size={16} />;
     case "edit":
-      return <FilePenLine size={16} />;
+      return <PencilSparkles size={16} />;
     case "create":
-      return <FilePenLine size={16} />;
+      return <FilePlusCorner size={16} />;
     case "delete":
       return <FileX2 size={16} />;
     case "move":
@@ -253,13 +263,19 @@ function toolIconKindFromMessage(message: ConversationMessage): GroupIconKind {
   if (isDirectoryTool(toolName)) {
     return "directory";
   }
+  if (["grep_files", "search_files"].includes(toolName)) {
+    return "file_search";
+  }
+  if (toolName === "search_text") {
+    return "content_search";
+  }
   if (isSearchTool(toolName)) {
     return "search";
   }
-  if (["write_file", "create_file"].includes(toolName)) {
+  if (toolName === "create_file") {
     return "create";
   }
-  if (["apply_patch", "edit_file"].includes(toolName)) {
+  if (["write_file", "apply_patch", "edit_file"].includes(toolName)) {
     return "edit";
   }
   if (toolName === "delete_file") {

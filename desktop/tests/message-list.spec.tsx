@@ -1808,6 +1808,7 @@ describe("MessageList", () => {
     );
 
     expect(screen.getByRole("button", { name: "已搜索文件 2 次详情" })).not.toBeNull();
+    expect(screen.getByTestId("message-group-block").querySelector("svg.lucide-file-search-corner")).not.toBeNull();
   });
 
   it("groups search_text as content search activity", () => {
@@ -1821,6 +1822,7 @@ describe("MessageList", () => {
     );
 
     expect(screen.getByRole("button", { name: "已搜索内容 2 次详情" })).not.toBeNull();
+    expect(screen.getByTestId("message-group-block").querySelector("svg.lucide-book-search")).not.toBeNull();
   });
 
   it("identifies grouped MCP tool activity", () => {
@@ -1854,6 +1856,21 @@ describe("MessageList", () => {
     );
 
     expect(screen.getByTestId("message-group-block").querySelector("[data-icon-kind]")?.getAttribute("data-icon-kind")).toBe("read");
+    expect(screen.getByTestId("message-group-block").querySelector("svg.lucide-book-copy")).not.toBeNull();
+  });
+
+  it("uses folder-search for grouped directory activity", () => {
+    render(
+      <MessageList
+        messages={[
+          toolMessage("dir-1", "list_directory", { path: "src" }),
+          toolMessage("dir-2", "list_directory", { path: "docs" }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "查看了 2 个目录详情" })).not.toBeNull();
+    expect(screen.getByTestId("message-group-block").querySelector("svg.lucide-folder-search")).not.toBeNull();
   });
 
   it("keeps the check icon for grouped activity with mixed tool categories", () => {
@@ -1874,6 +1891,7 @@ describe("MessageList", () => {
     render(<MessageList messages={[fileChangeMessage("file-change-1", "src/main.py"), fileChangeMessage("file-change-2", "src/app.py")]} />);
 
     expect(screen.getByText("编辑了 2 个文件")).not.toBeNull();
+    expect(screen.getByTestId("message-group-block").querySelector("svg.lucide-pencil-sparkles")).not.toBeNull();
     expect(screen.queryByLabelText("步骤摘要")).toBeNull();
     expect(screen.queryByText("src/main.py")).toBeNull();
     expect(screen.queryByText("+1 -0")).toBeNull();
@@ -1915,6 +1933,7 @@ describe("MessageList", () => {
     expect(screen.getByText("创建了 2 个文件")).not.toBeNull();
     expect(screen.queryByText("编辑了 2 个文件")).toBeNull();
     expect(screen.getByTestId("message-group-block").querySelector("[data-icon-kind]")?.getAttribute("data-icon-kind")).toBe("create");
+    expect(screen.getByTestId("message-group-block").querySelector("svg.lucide-file-plus-corner")).not.toBeNull();
   });
 
   it("groups moved file changes with move wording", () => {

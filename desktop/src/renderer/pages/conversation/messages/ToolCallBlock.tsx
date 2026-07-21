@@ -1,11 +1,15 @@
 import {
+  BookCopy,
+  BookSearch,
   Check,
   ChevronDown,
   Clipboard,
+  FilePlusCorner,
   FilePenLine,
-  FileText,
+  FileSearchCorner,
   FileX2,
-  FolderOpen,
+  FolderSearch,
+  PencilSparkles,
   Search,
   Wrench,
   XCircle,
@@ -27,7 +31,13 @@ import { formatErrorText, readableErrorText } from "./errorText";
 import type { FileChangePreview } from "./FileChangeBlock";
 import { LineChangeTicker } from "./LineChangeTicker";
 import { copyText } from "./markdown";
+import {
+  RawToolDataDisclosure,
+  ToolProjectionNotice,
+  ToolStructuredContent,
+} from "./ToolStructuredContent";
 import styles from "./ToolCallBlock.module.css";
+import { buildToolPresentation, type ToolProjectionPresentation } from "./toolPresentation";
 import { useLazyToolDetails, type ToolDetailsLoader } from "./useLazyToolDetails";
 import { useDeferredUnmount } from "./useDeferredUnmount";
 import { useExpansionScrollAnchor } from "./useExpansionScrollAnchor";
@@ -220,8 +230,15 @@ export function ToolCallBlock({ message, onPreviewFile, onLoadDetails }: ToolCal
                       {inputCopyStatus === "copied" ? <Check size={13} /> : <Clipboard size={13} />}
                     </button>
                   </div>
-                  <div className={styles.codeViewport}>
-                    <pre className={styles.args}>{details.loading ? "正在加载工具详情" : tool.argsText}</pre>
+                  <div className={styles.structuredViewport} data-kind="input">
+                    {details.loading ? (
+                      <p className={styles.emptyResult}>正在加载工具详情</p>
+                    ) : (
+                      <>
+                        <ToolStructuredContent value={tool.inputValue} toolName={tool.name} mode="input" />
+                        <RawToolDataDisclosure label="原始入参" source={tool.argsText} />
+                      </>
+                    )}
                   </div>
                 </section>
 
@@ -241,19 +258,26 @@ export function ToolCallBlock({ message, onPreviewFile, onLoadDetails }: ToolCal
                     </button>
                   </div>
                   {details.loading ? (
-                    <div className={styles.codeViewport}>
+                    <div className={styles.structuredViewport} data-kind="output">
                       <p className={styles.emptyResult}>正在加载工具详情</p>
                     </div>
                   ) : details.error ? (
-                    <div className={styles.codeViewport}>
+                    <div className={styles.structuredViewport} data-kind="output">
                       <p className={styles.emptyResult}>工具详情加载失败</p>
                     </div>
-                  ) : tool.resultText ? (
-                    <div className={styles.codeViewport}>
-                      <pre data-kind={failed ? "error" : "result"}>{tool.resultText}</pre>
+                  ) : tool.outputValue !== undefined || tool.resultText ? (
+                    <div className={styles.structuredViewport} data-kind="output" data-state={failed ? "error" : "result"}>
+                      <ToolStructuredContent
+                        value={tool.outputValue}
+                        toolName={tool.name}
+                        mode="output"
+                        emptyText={running ? "工具正在执行" : "暂无输出"}
+                      />
+                      <ToolProjectionNotice projection={tool.projection} />
+                      <RawToolDataDisclosure label="原始结果" source={tool.resultText} />
                     </div>
                   ) : (
-                    <div className={styles.codeViewport}>
+                    <div className={styles.structuredViewport} data-kind="output">
                       <p className={styles.emptyResult}>{running ? "工具正在执行" : "暂无输出"}</p>
                     </div>
                   )}
@@ -536,8 +560,11 @@ interface ParsedToolPayload {
   fileTarget: boolean;
   fileChange: ToolFileChange | null;
   fileChanges: ToolFileChange[];
+  inputValue: unknown;
+  outputValue: unknown;
   argsText: string;
   resultText: string;
+  projection: ToolProjectionPresentation | null;
   resultStatus: string | null;
   duration: string;
   errorPreview: string;
@@ -559,7 +586,8 @@ interface ParsedMcpToolMetadata {
 function parseToolPayload(message: ConversationMessage): ParsedToolPayload {
   const call = asRecord(message.payload.call);
   const result = asRecord(message.payload.result);
-  const args = asRecord(call?.arguments) ?? asRecord(message.payload.arguments) ?? {};
+  const rawArgs = call?.arguments ?? message.payload.arguments ?? {};
+  const args = asRecord(rawArgs) ?? {};
   const summary = asRecord(message.payload.toolSummary) ?? {};
   const name = stringValue(call?.name) || stringValue(message.payload.tool) || stringValue(message.payload.tool_name) || message.content || "未知工具";
   const resultStatus = stringValue(result?.status);
@@ -569,7 +597,7 @@ function parseToolPayload(message: ConversationMessage): ParsedToolPayload {
   const actionLabel = mcp
     ? mcpToolActionLabel(mcp.rawToolName || name, message.status, resultStatus)
     : toolActionLabel(name, message.status, resultStatus, fileChanges);
-  const outputText = resultText(result, message.payload);
+  const presentation = buildToolPresentation({ args: rawArgs, result, payload: message.payload });
   const errorValue = result?.error ?? message.payload.error;
   const error =
     errorValue === undefined || errorValue === null
@@ -579,7 +607,9 @@ function parseToolPayload(message: ConversationMessage): ParsedToolPayload {
           fallbackMessage: "工具执行失败",
         });
   const fileChange = fileChanges.length === 1 ? fileChanges[0] : null;
-  const rawErrorText = error?.message ?? errorText(result, message.payload, outputText);
+  const rawErrorText = error?.message ?? errorText(result, message.payload, presentation.outputRawText);
+  const outputValue = presentation.outputValue === undefined ? error ?? undefined : presentation.outputValue;
+  const outputText = presentation.outputRawText || (error ? stringify(error) : "");
   return {
     name,
     title: target ? `${actionLabel} ${target}` : actionLabel,
@@ -588,8 +618,11 @@ function parseToolPayload(message: ConversationMessage): ParsedToolPayload {
     fileTarget: isFileMutationTool(name),
     fileChange,
     fileChanges,
-    argsText: stringify(args),
-    resultText: error ? stringify(error) : outputText,
+    inputValue: presentation.inputValue,
+    outputValue,
+    argsText: presentation.inputRawText,
+    resultText: outputText,
+    projection: presentation.projection,
     resultStatus,
     duration: formatDuration(result?.duration_ms ?? result?.durationMs ?? message.payload.duration_ms ?? message.payload.durationMs),
     errorPreview: truncateInlineError(mcpErrorPreview(mcp, rawErrorText)),
@@ -831,28 +864,6 @@ function errorText(
   );
 }
 
-function resultText(result: Record<string, unknown> | null, payload: Record<string, unknown>): string {
-  if (!result) {
-    return stringValue(payload.result_text) || stringValue(payload.model_content) || "";
-  }
-  if (typeof result.model_content === "string" && result.model_content.trim()) {
-    return result.model_content;
-  }
-  if (typeof result.text === "string") {
-    return result.text;
-  }
-  if (typeof result.error === "string") {
-    return result.error;
-  }
-  if (result.status === "running") {
-    return "";
-  }
-  if (result.ui_payload && typeof result.ui_payload === "object") {
-    return stringify(result.ui_payload);
-  }
-  return stringify(result);
-}
-
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
@@ -1002,19 +1013,25 @@ function toolIcon(name: string, failed: boolean) {
     return <XCircle size={16} />;
   }
   if (["read_file", "read_text_file", "open_file"].includes(name)) {
-    return <FileText size={16} />;
+    return <BookCopy size={16} />;
   }
   if (["list_directory", "list_dir", "read_directory"].includes(name)) {
-    return <FolderOpen size={16} />;
+    return <FolderSearch size={16} />;
   }
-  if (["search_files", "search_text", "grep_files", "search", "grep"].includes(name)) {
+  if (["search_files", "grep_files"].includes(name)) {
+    return <FileSearchCorner size={16} />;
+  }
+  if (name === "search_text") {
+    return <BookSearch size={16} />;
+  }
+  if (["search", "grep"].includes(name)) {
     return <Search size={16} />;
   }
   if (["write_file", "apply_patch", "edit_file"].includes(name)) {
-    return <FilePenLine size={16} />;
+    return <PencilSparkles size={16} />;
   }
   if (name === "create_file") {
-    return <FilePenLine size={16} />;
+    return <FilePlusCorner size={16} />;
   }
   if (name === "delete_file") {
     return <FileX2 size={16} />;

@@ -35,6 +35,7 @@ def test_projection_models_round_trip_and_runtime_artifact_is_bounded_view(tmp_p
     artifact = KeydexToolMessageArtifact.model_validate(projection.runtime_artifact())
 
     assert parsed == artifact.display_payload
+    assert "_keydex_projection" not in parsed
     assert artifact.projection.model_bytes == len(projection.model_content.encode("utf-8"))
     assert "items" in artifact.display_payload
     assert "full_payload" not in artifact.model_dump(mode="json")

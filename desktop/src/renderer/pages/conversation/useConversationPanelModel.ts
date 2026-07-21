@@ -180,13 +180,18 @@ export function useConversationPanelModel({
     () => adaptConversationMessages(controller.agentMessages, a2uiMessageCacheRef.current),
     [controller.agentMessages],
   );
+  // Sub-Agent Sessions are intentionally internal and cannot be resolved by the
+  // public Session-scoped workspace/Skill APIs. Their workspace is inherited
+  // from the visible parent, so keep conversation operations on the child while
+  // routing resource reads through the parent Session.
+  const resourceSessionId = subagentContext?.parentSessionId?.trim() || sessionId;
   const messageWorkspaceScope = useMemo<WorkspaceScope>(
     () => session
-      ? { sessionId }
+      ? { sessionId: resourceSessionId }
       : fallbackWorkspaceScope?.workspaceId
         ? { workspaceId: fallbackWorkspaceScope.workspaceId }
-        : { sessionId },
-    [fallbackWorkspaceScope?.workspaceId, session, sessionId],
+        : { sessionId: resourceSessionId },
+    [fallbackWorkspaceScope?.workspaceId, resourceSessionId, session],
   );
   const workspaceUnavailable = Boolean(session && session.session_type === "workspace" && !session.workspace);
   const workspaceAvailable = Boolean(session?.session_type === "workspace" && session.workspace && !workspaceUnavailable);
@@ -195,7 +200,7 @@ export function useConversationPanelModel({
   const workspaceId = workspaceAvailable ? (session?.workspace?.id ?? session?.workspace_id ?? undefined) : undefined;
   const effectiveSkillScope = useMemo(
     () => session
-      ? { type: "session" as const, sessionId }
+      ? { type: "session" as const, sessionId: resourceSessionId }
       : fallbackWorkspaceScope?.workspaceId
         ? {
             type: "workspace" as const,
@@ -203,7 +208,7 @@ export function useConversationPanelModel({
             workspaceRoot: fallbackWorkspaceScope.workspaceRoot,
           }
         : null,
-    [fallbackWorkspaceScope?.workspaceId, fallbackWorkspaceScope?.workspaceRoot, session, sessionId],
+    [fallbackWorkspaceScope?.workspaceId, fallbackWorkspaceScope?.workspaceRoot, resourceSessionId, session],
   );
   const {
     state: effectiveSkillsState,
@@ -254,19 +259,19 @@ export function useConversationPanelModel({
     () =>
       workspaceAvailable
         ? (query: string, options?: { signal?: AbortSignal }) =>
-            runtime.workspace.search({ sessionId }, query, options)
+            runtime.workspace.search({ sessionId: resourceSessionId }, query, options)
         : undefined,
-    [runtime, sessionId, workspaceAvailable],
+    [resourceSessionId, runtime, workspaceAvailable],
   );
   const listWorkspaceDirectory = useMemo(
     () =>
       workspaceAvailable
         ? (path: string) =>
             runtime.workspace
-              .listDirectory({ sessionId }, path)
+              .listDirectory({ sessionId: resourceSessionId }, path)
               .then((response) => workspaceEntriesToSearchResults(response.entries))
         : undefined,
-    [runtime, sessionId, workspaceAvailable],
+    [resourceSessionId, runtime, workspaceAvailable],
   );
 
   const updateScrollControls = useCallback((controls: MessageListScrollControls) => {
@@ -423,7 +428,7 @@ export function useConversationPanelModel({
   const previewRenderContext = useMemo<PreviewRenderContext>(
     () => ({
       panelScopeKey: previewPanelScopeKey ?? undefined,
-      sessionId,
+      sessionId: resourceSessionId,
       workspaceId,
       workspaceRootPath,
       workspaceAvailable,
@@ -435,8 +440,8 @@ export function useConversationPanelModel({
     [
       previewPanelScopeKey,
       quoteSelection,
+      resourceSessionId,
       runtime,
-      sessionId,
       startChatFromAnnotation,
       workspaceAvailable,
       workspaceId,

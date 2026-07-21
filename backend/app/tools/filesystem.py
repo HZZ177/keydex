@@ -53,7 +53,7 @@ IGNORED_DIRS = {
 
 READ_FILE_DESCRIPTION = (
     "读取文件访问权限允许范围内的 UTF-8 文本文件，支持从 1 开始的行号窗口。"
-    "当目标文件已知或已定位时使用。返回原始 content、带行号的 numbered_content、"
+    "当目标文件已知或已定位时使用。只返回带行号的 numbered_content、"
     "总行数、截断信息和用于继续分页的 next_start_line。"
 )
 
@@ -249,7 +249,7 @@ async def read_file_tool(
             max_lines=max_lines,
         )
 
-    selected, returned_lines, next_start_line = _select_lines(
+    returned_lines, next_start_line = _select_lines(
         lines,
         start_line=start_line,
         max_lines=max_lines,
@@ -276,7 +276,6 @@ async def read_file_tool(
     )
     return {
         "path": relative,
-        "content": selected,
         "numbered_content": numbered_content,
         "encoding": "utf-8",
         "size": size,
@@ -433,14 +432,14 @@ def _select_lines(
     *,
     start_line: int,
     max_lines: int,
-) -> tuple[str, int, int | None]:
+) -> tuple[int, int | None]:
     if not lines:
-        return "", 0, None
+        return 0, None
     start_index = min(start_line - 1, len(lines))
-    selected_lines = lines[start_index : start_index + max_lines]
-    next_line = start_index + len(selected_lines) + 1
+    returned_lines = min(max_lines, len(lines) - start_index)
+    next_line = start_index + returned_lines + 1
     next_start_line = next_line if next_line <= len(lines) else None
-    return "".join(selected_lines), len(selected_lines), next_start_line
+    return returned_lines, next_start_line
 
 
 def _numbered_content(lines: list[str], *, start_line: int, max_lines: int) -> str:

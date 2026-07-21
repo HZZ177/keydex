@@ -73,6 +73,53 @@ describe("useConversationPanelModel", () => {
     await waitFor(() => expect(runtime.skills.listSession).toHaveBeenCalled());
   });
 
+  it("routes Sub-Agent workspace resources through the visible parent Session", async () => {
+    const runtime = fakeRuntime();
+    const controller = fakeController({
+      session: agentSession({
+        id: "subagent-session-1",
+        session_type: "workspace",
+        workspace_id: "ws-1",
+        workspace: workspace(),
+        cwd: "D:/repo/keydex",
+      }),
+    });
+
+    const { result } = renderHook(
+      () => useConversationPanelModel({
+        runtime,
+        sessionId: "subagent-session-1",
+        controller,
+        subagentContext: {
+          parentSessionId: "parent-session-1",
+          runId: "subagent-run-1",
+        },
+      }),
+      { wrapper: Providers },
+    );
+
+    expect(result.current.messageWorkspaceScope).toEqual({ sessionId: "parent-session-1" });
+    expect(result.current.previewRenderContext.sessionId).toBe("parent-session-1");
+
+    await act(async () => {
+      await result.current.searchWorkspace?.("README", { signal: undefined });
+      await result.current.listWorkspaceDirectory?.("/");
+    });
+
+    expect(runtime.workspace.search).toHaveBeenCalledWith(
+      { sessionId: "parent-session-1" },
+      "README",
+      { signal: undefined },
+    );
+    expect(runtime.workspace.listDirectory).toHaveBeenCalledWith({ sessionId: "parent-session-1" }, "/");
+    await waitFor(() => {
+      expect(runtime.skills.listSession).toHaveBeenCalledWith(
+        "parent-session-1",
+        expect.objectContaining({ forceReload: false, signal: expect.any(AbortSignal) }),
+      );
+    });
+  });
+
   it("keeps pure chat and unavailable workspace sessions out of workspace file search without disabling session skills", async () => {
     const runtime = fakeRuntime();
     const pureChat = renderHook(

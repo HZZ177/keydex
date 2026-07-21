@@ -112,6 +112,23 @@ describe("ToolCallBlock", () => {
     expect(screen.getByText("已搜索内容 needle")).not.toBeNull();
   });
 
+  it.each([
+    ["read_file", { path: "README.md" }, "book-copy"],
+    ["list_directory", { path: "src" }, "folder-search"],
+    ["create_file", { path: "src/new.ts", content: "" }, "file-plus-corner"],
+    ["apply_patch", { path: "src/app.ts", patch: "*** Begin Patch\n*** End Patch" }, "pencil-sparkles"],
+    ["search_files", { query: "needle" }, "file-search-corner"],
+    ["search_text", { query: "needle" }, "book-search"],
+  ])("uses the dedicated %s icon", (name, args, iconClass) => {
+    render(
+      <ToolCallBlock
+        message={toolMessage("completed", { status: "success", model_content: "" }, name, args)}
+      />,
+    );
+
+    expect(screen.getByTestId("tool-call-block").querySelector(`svg.lucide-${iconClass}`)).not.toBeNull();
+  });
+
   it("copies completed tool arguments", async () => {
     const clipboard = navigator.clipboard.writeText as unknown as ReturnType<typeof vi.fn>;
     render(<ToolCallBlock message={toolMessage("completed", { status: "success", model_content: "文件内容", duration_ms: 1250 })} />);
@@ -320,7 +337,10 @@ describe("ToolCallBlock", () => {
     expect(screen.getByText(/错误信息：文件访问权限已关闭/)).not.toBeNull();
     expect(screen.getByText(/错误码：file_access_disabled/)).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "展开工具详情" }));
-    expect(screen.getByRole("region", { name: "工具错误" }).textContent).toContain('"tool":"read_file"');
+    const errorRegion = screen.getByRole("region", { name: "工具错误" });
+    expect(errorRegion.textContent).toContain("read_file");
+    expect(errorRegion.textContent).toContain("file_access_disabled");
+    expect(errorRegion.querySelector("details")?.textContent).toContain('"tool":"read_file"');
   });
 
   it("renders failed file mutation tools with file-change style target", () => {
@@ -596,7 +616,7 @@ describe("ToolCallBlock", () => {
 
     expect(screen.queryByTestId("tool-call-block")).toBeNull();
     expect(screen.getByTestId("subagent-invocation-capsule").textContent).toContain("sub-explore");
-    expect(screen.getByTestId("subagent-invocation-capsule").textContent).toContain("inspect the workspace");
+    expect(screen.getByTestId("subagent-invocation-capsule").getAttribute("aria-label")).toContain("inspect the workspace");
   });
 });
 
