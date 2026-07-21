@@ -43,6 +43,7 @@ describe("ChatLayout", () => {
     const onExport = vi.fn();
     const onFork = vi.fn();
     const onRename = vi.fn();
+    const onCopyId = vi.fn();
     const onArchive = vi.fn();
     const onRefresh = vi.fn();
     function MessageFlow() {
@@ -62,6 +63,7 @@ describe("ChatLayout", () => {
           onFork,
           canMutate: true,
           onRename,
+          onCopyId,
           onArchive,
           showRefresh: true,
           onRefresh,
@@ -78,11 +80,16 @@ describe("ChatLayout", () => {
       "导出对话记录",
       "从对话派生",
       "重命名",
+      "复制会话 ID",
       "归档",
       "刷新",
     ]);
     expect(screen.queryByRole("menuitem", { name: "复制标题" })).toBeNull();
     expect(screen.getByTestId("session-archive-icon")).not.toBeNull();
+    fireEvent.click(screen.getByRole("menuitem", { name: "复制会话 ID" }));
+    expect(onCopyId).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("menu", { name: "对话操作菜单" })).toBeNull();
+    fireEvent.click(screen.getByLabelText("更多对话操作"));
     fireEvent.click(screen.getByRole("menuitem", { name: "归档会话" }));
     expect(onArchive).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByLabelText("更多对话操作"));
@@ -92,6 +99,31 @@ describe("ChatLayout", () => {
     expect(screen.queryByText("已连接")).toBeNull();
     expect(screen.queryByRole("complementary")).toBeNull();
     expect(mounts).toBe(1);
+  });
+
+  it("keeps fork progress visible after the conversation menu closes", () => {
+    render(
+      <ChatLayout
+        title="对话 thread-1"
+        sessionActions={{
+          canExport: false,
+          onExport: vi.fn(),
+          canFork: true,
+          forking: true,
+          onFork: vi.fn(),
+          canMutate: false,
+          onRename: vi.fn(),
+          onCopyId: vi.fn(),
+          onArchive: vi.fn(),
+          showRefresh: false,
+          onRefresh: vi.fn(),
+        }}
+      >
+        <div>消息流</div>
+      </ChatLayout>,
+    );
+
+    expect(screen.getByRole("status").textContent).toContain("正在创建派生会话");
   });
 });
 

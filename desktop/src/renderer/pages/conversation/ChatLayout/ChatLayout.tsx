@@ -1,4 +1,4 @@
-import { FolderOpen, GitBranch, MoreHorizontal, SendHorizontal } from "lucide-react";
+import { FolderOpen, GitBranch, LoaderCircle, MoreHorizontal, SendHorizontal } from "lucide-react";
 import { type PropsWithChildren, type ReactNode, useEffect, useRef, useState } from "react";
 
 import {
@@ -126,6 +126,7 @@ export function ChatLayout({
                     onExport={() => runSessionAction(sessionActions.onExport)}
                     onFork={() => runSessionAction(sessionActions.onFork)}
                     onRename={() => runSessionAction(sessionActions.onRename)}
+                    onCopyId={sessionActions.onCopyId ? () => runSessionAction(sessionActions.onCopyId) : undefined}
                     onArchive={() => runSessionAction(sessionActions.onArchive)}
                     onRefresh={() => runSessionAction(sessionActions.onRefresh)}
                   />
@@ -133,6 +134,12 @@ export function ChatLayout({
               </div>
             ) : null}
           </div>
+          {sessionActions?.forking ? (
+            <span className={styles.operationStatus} role="status" aria-live="polite">
+              <LoaderCircle size={13} aria-hidden="true" />
+              正在创建派生会话…
+            </span>
+          ) : null}
         </div>
       </div>
 

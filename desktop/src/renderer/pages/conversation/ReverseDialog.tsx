@@ -614,6 +614,7 @@ function resultLabel(status: string): string {
 }
 
 function errorLabel(code: string | null): string {
+  if (code === "reverse_before_fork_point") return "抱歉，无法恢复到派生点之前的会话轮次。";
   if (code === "file_preview_stale") return "文件状态已经变化，请重新检查后再回溯。";
   if (code === "file_restore_turn_running") return "当前回复仍在进行中，请先停止或等待完成后再回溯。";
   if (code === "file_restore_session_busy" || code === "file_restore_locked") {

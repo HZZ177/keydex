@@ -1515,6 +1515,8 @@ describe("Sider", () => {
   });
 
   it("opens the same session action menu from right-click", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
     const runtime = fakeRuntime([thread({ id: "thread-a", title: "右键会话" })], {
       forkSession: vi.fn(),
       loadHistory: vi.fn(),
@@ -1540,10 +1542,16 @@ describe("Sider", () => {
     const menu = screen.getByRole("menu", { name: "会话操作 右键会话" });
     expect(within(menu).getByRole("menuitem", { name: "从对话派生" })).not.toBeNull();
     expect(within(menu).getByRole("menuitem", { name: "重命名" })).not.toBeNull();
+    expect(within(menu).getByRole("menuitem", { name: "复制会话 ID" })).not.toBeNull();
     expect(within(menu).getByRole("menuitem", { name: "归档会话" }).getAttribute("data-tone")).toBe("danger");
     expect(within(menu).getByRole("menuitem", { name: "刷新" })).not.toBeNull();
 
-    fireEvent.click(within(menu).getByRole("menuitem", { name: "重命名" }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "复制会话 ID" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("thread-a"));
+    expect(await screen.findByText("已复制会话 ID")).not.toBeNull();
+
+    fireEvent.contextMenu(sessionButton, { clientX: 80, clientY: 96 });
+    fireEvent.click(within(screen.getByRole("menu", { name: "会话操作 右键会话" })).getByRole("menuitem", { name: "重命名" }));
     expect(screen.getByRole("dialog", { name: "重命名会话" })).not.toBeNull();
   });
 
@@ -1572,7 +1580,11 @@ describe("Sider", () => {
       updated_at: "2026-06-17T11:30:00Z",
     });
     const loadHistory = vi.fn();
-    const forkSession = vi.fn().mockResolvedValue(branchResponse(forkedSession));
+    const forkResponse = branchResponse(forkedSession);
+    let resolveFork: ((response: typeof forkResponse) => void) | undefined;
+    const forkSession = vi.fn(() => new Promise<typeof forkResponse>((resolve) => {
+      resolveFork = resolve;
+    }));
     const runtime = fakeRuntime([sourceSession], { forkSession, loadHistory });
     const onNavigate = vi.fn();
 
@@ -1583,6 +1595,10 @@ describe("Sider", () => {
 
     expect(loadHistory).not.toHaveBeenCalled();
     expect(forkSession).toHaveBeenCalledWith("thread-a", {});
+    expect(
+      screen.getAllByRole("status").some((status) => status.textContent?.includes("派生中")),
+    ).toBe(true);
+    act(() => resolveFork?.(forkResponse));
     await waitFor(() => {
       expect(onNavigate).toHaveBeenCalledWith("/conversation/thread-fork");
     });

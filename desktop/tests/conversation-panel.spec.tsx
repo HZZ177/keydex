@@ -231,6 +231,26 @@ describe("ConversationPanel", () => {
     expect(screen.queryByRole("button", { name: "从该轮派生对话" })).toBeNull();
   });
 
+  it("keeps the fork confirmation visible and locks its actions while executing", () => {
+    const cancelForkFromMessage = vi.fn();
+    const confirmForkFromMessage = vi.fn();
+    render(
+      <ConversationPanel
+        model={panelModel({
+          forkConfirmation: message("assistant-1", "assistant", "较长会话中的回答"),
+          forkExecuting: true,
+          cancelForkFromMessage,
+          confirmForkFromMessage,
+        })}
+        workspaceRuntime={fakeRuntime()}
+      />,
+    );
+
+    expect(screen.getByRole("dialog", { name: "确认从该轮派生对话？" })).not.toBeNull();
+    expect((screen.getByRole("button", { name: "正在派生…" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "取消" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("wires composer accessory file preview and scroll controls to the same model", () => {
     const openFileChangePreview = vi.fn();
     const scrollToBottom = vi.fn();

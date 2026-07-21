@@ -619,7 +619,7 @@ describe("ConversationPage", () => {
 
   it("forks a restored message and navigates to the new branch session", async () => {
     const navigateToConversation = vi.fn();
-    const forkSession = vi.fn().mockResolvedValue({
+    const forkResponse = {
       session: agentSession({
         id: "ses-fork",
         title: "从该轮派生对话",
@@ -632,7 +632,11 @@ describe("ConversationPage", () => {
         }),
       }),
       source: branchSource({ message_event_id: "evt-ai-1" }),
-    });
+    };
+    let resolveFork: ((response: typeof forkResponse) => void) | undefined;
+    const forkSession = vi.fn(() => new Promise<typeof forkResponse>((resolve) => {
+      resolveFork = resolve;
+    }));
     const { runtime } = fakeRuntime({
       history: [
         historyMessage("user", "历史问题", { messageEventId: "evt-user-1" }),
@@ -654,6 +658,14 @@ describe("ConversationPage", () => {
 
     await waitFor(() => {
       expect(forkSession).toHaveBeenCalledWith("ses-1", { messageEventId: "evt-ai-1" });
+    });
+    expect(screen.getByRole("dialog", { name: "确认从该轮派生对话？" })).not.toBeNull();
+    expect((screen.getByRole("button", { name: "正在派生…" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "取消" }) as HTMLButtonElement).disabled).toBe(true);
+
+    act(() => resolveFork?.(forkResponse));
+
+    await waitFor(() => {
       expect(navigateToConversation).toHaveBeenCalledWith("ses-fork");
     });
   });
@@ -765,6 +777,8 @@ describe("ConversationPage", () => {
   });
 
   it("uses the sidebar session actions in the conversation header menu", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
     const session = agentSession({ id: "ses-1", title: "原会话名称" });
     const messages = [
       historyMessage("user", "历史问题", { messageEventId: "evt-user-1", turnIndex: 1 }),
@@ -781,10 +795,14 @@ describe("ConversationPage", () => {
       archive_origin: "manual",
       event: null,
     }));
-    const forkSession = vi.fn().mockResolvedValue({
+    const headerForkResponse = {
       session: agentSession({ id: "ses-fork", title: "派生会话" }),
       source: branchSource({ message_event_id: "evt-ai-1" }),
-    });
+    };
+    let resolveHeaderFork: ((response: typeof headerForkResponse) => void) | undefined;
+    const forkSession = vi.fn(() => new Promise<typeof headerForkResponse>((resolve) => {
+      resolveHeaderFork = resolve;
+    }));
     const onNavigateToConversation = vi.fn();
     const onArchived = vi.fn();
     const { runtime } = fakeRuntime({
@@ -810,11 +828,17 @@ describe("ConversationPage", () => {
       "导出对话记录",
       "从对话派生",
       "重命名",
+      "复制会话 ID",
       "归档",
       "刷新",
     ]);
     expect(screen.queryByRole("menuitem", { name: "复制标题" })).toBeNull();
 
+    fireEvent.click(screen.getByRole("menuitem", { name: "复制会话 ID" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("ses-1"));
+    expect(await screen.findByText("已复制会话 ID")).not.toBeNull();
+
+    fireEvent.click(screen.getByLabelText("更多对话操作"));
     fireEvent.click(screen.getByRole("menuitem", { name: "重命名" }));
     fireEvent.change(screen.getByLabelText("会话名称"), { target: { value: "新会话名称" } });
     fireEvent.click(screen.getByRole("button", { name: "保存重命名" }));
@@ -828,8 +852,10 @@ describe("ConversationPage", () => {
     fireEvent.click(screen.getByLabelText("更多对话操作"));
     fireEvent.click(screen.getByRole("menuitem", { name: "从对话派生" }));
     await waitFor(() => expect(forkSession).toHaveBeenCalledWith("ses-1", {}));
+    expect(screen.getByText("正在创建派生会话…")).not.toBeNull();
+    act(() => resolveHeaderFork?.(headerForkResponse));
+    await waitFor(() => expect(onNavigateToConversation).toHaveBeenCalledWith("ses-fork"));
     expect(runtime.conversation.loadHistory).toHaveBeenCalledTimes(2);
-    expect(onNavigateToConversation).toHaveBeenCalledWith("ses-fork");
 
     fireEvent.click(screen.getByLabelText("更多对话操作"));
     fireEvent.click(screen.getByRole("menuitem", { name: "归档会话" }));

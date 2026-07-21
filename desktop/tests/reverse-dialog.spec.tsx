@@ -361,6 +361,20 @@ describe("ReverseDialog", () => {
     expect(screen.queryByText("回溯完成")).toBeNull();
     expect(screen.queryByText("compensation failed")).toBeNull();
   });
+
+  it("explains that copied history before the fork point cannot be restored", () => {
+    renderDialog({
+      loading: false,
+      preview: null,
+      error: "trace does not belong to this session",
+      errorCode: "reverse_before_fork_point",
+    });
+
+    expect(screen.getByRole("alert").textContent).toContain(
+      "抱歉，无法恢复到派生点之前的会话轮次",
+    );
+    expect(screen.queryByText(/trace does not belong/u)).toBeNull();
+  });
 });
 
 function renderDialog(

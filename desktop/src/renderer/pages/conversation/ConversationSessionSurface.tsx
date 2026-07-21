@@ -362,6 +362,22 @@ export function ConversationSessionSurface({
     }
   }, [controller, editingTitle, notifications, runtime, session?.id]);
 
+  const copySessionId = useCallback(async () => {
+    const sessionId = session?.id?.trim() ?? "";
+    if (!sessionId) {
+      return;
+    }
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("当前环境不支持剪贴板");
+      }
+      await navigator.clipboard.writeText(sessionId);
+      notifications.success("已复制会话 ID");
+    } catch (reason) {
+      notifications.error(`复制会话 ID 失败：${errorMessage(reason)}`);
+    }
+  }, [notifications, session?.id]);
+
   const archiveSession = useCallback(async (stopIfActive = false) => {
     const sessionId = session?.id?.trim() ?? "";
     if (!sessionId || typeof runtime.conversation.archiveSession !== "function" || archiveBusy) {
@@ -1031,6 +1047,7 @@ export function ConversationSessionSurface({
           onFork: () => void forkSessionFromLatestTurn(),
           canMutate: canMutateSession,
           onRename: () => setEditingTitle(title),
+          onCopyId: session?.id ? () => void copySessionId() : undefined,
           archiving: archiveBusy,
           onArchive: () => void archiveSession(false),
           showRefresh: true,

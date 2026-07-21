@@ -61,6 +61,47 @@ def test_message_events_append_and_query_by_session_and_turn(tmp_path) -> None:
     assert repositories.message_events.get_max_seq_and_turn("ses_events") == (3, 2)
 
 
+def test_message_events_append_many_uses_contiguous_sequences_and_turn_filter(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    repositories.message_events.append(
+        event_id="evt_existing",
+        session_id="ses_events",
+        turn_index=1,
+        action="user_message",
+        data={"content": "已有事件"},
+    )
+
+    appended = repositories.message_events.append_many(
+        session_id="ses_events",
+        events=[
+            {
+                "event_id": "evt_batch_1",
+                "trace_record_id": "trace_1",
+                "turn_index": 1,
+                "action": "ai_message",
+                "data": {"content": "第一轮回复"},
+            },
+            {
+                "event_id": "evt_batch_2",
+                "trace_record_id": "trace_2",
+                "turn_index": 2,
+                "action": "user_message",
+                "data": {"content": "第二轮问题"},
+            },
+        ],
+    )
+
+    assert [event.seq for event in appended] == [2, 3]
+    assert [event.trace_record_id for event in appended] == ["trace_1", "trace_2"]
+    first_turn = repositories.message_events.list_by_session(
+        "ses_events",
+        limit=None,
+        through_turn_index=1,
+    )
+    assert [event.id for event in first_turn] == ["evt_existing", "evt_batch_1"]
+    assert repositories.message_events.get_max_seq_and_turn("ses_events") == (3, 2)
+
+
 def test_message_events_delete_from_turn_allows_rewriting_rolled_back_turn(tmp_path) -> None:
     repositories = _repositories(tmp_path)
 

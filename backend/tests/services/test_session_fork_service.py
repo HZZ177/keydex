@@ -262,6 +262,36 @@ def test_session_fork_service_allows_multiple_forks_from_same_message(tmp_path) 
     )
 
 
+def test_session_reverse_rejects_copied_history_at_fork_boundary(tmp_path) -> None:
+    repositories, saver = _prepare_source(tmp_path)
+    service = SessionForkService(repositories, checkpointer=saver)
+    forked = service.fork_session(
+        session_id="ses_source",
+        user_id="local-user",
+        message_event_id="evt_ai_1",
+    ).session
+    copied_user_event = next(
+        event
+        for event in repositories.message_events.list_by_session(forked.id)
+        if event.action == "user_message"
+    )
+
+    with pytest.raises(SessionForkServiceError) as exc_info:
+        service.resolve_reverse_source(
+            session_id=forked.id,
+            message_event_id=copied_user_event.id,
+        )
+
+    assert exc_info.value.code == "reverse_before_fork_point"
+    assert exc_info.value.details == {
+        "session_id": forked.id,
+        "source_session_id": "ses_source",
+        "message_event_id": copied_user_event.id,
+        "requested_turn_index": 1,
+        "fork_turn_index": 1,
+    }
+
+
 def test_session_fork_copies_artifact_grants_without_copying_artifact(tmp_path) -> None:
     repositories, saver = _prepare_source(tmp_path)
     artifact = repositories.tool_result_artifacts.create_or_get(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -96,6 +97,7 @@ class SessionForkService:
         message_event_id: str | None = None,
         turn_index: int | None = None,
     ) -> SessionForkResult:
+        fork_started = time.perf_counter()
         source_session = self._require_session(session_id)
         target_user_id = user_id or source_session.user_id
         if target_user_id != source_session.user_id:
@@ -105,6 +107,7 @@ class SessionForkService:
                 {"session_id": source_session.id},
             )
         checkpoint_only = self._is_checkpoint_only_fork(session_tag)
+        resolve_started = time.perf_counter()
         try:
             source = (
                 self.checkpoint_service.resolve_latest_checkpoint(session_id=session_id)
@@ -120,17 +123,21 @@ class SessionForkService:
             )
         except CheckpointServiceError as exc:
             raise SessionForkServiceError(exc.code, exc.message, exc.details) from exc
+        resolve_ms = self._elapsed_ms(resolve_started)
 
         if not checkpoint_only:
             self._validate_fork_source(source_session=source_session, source=source)
         target_session_id = new_id()
         try:
+            checkpoint_clone_started = time.perf_counter()
             self.checkpointer.clone_checkpoint_to_thread(
                 source_thread_id=source.active_session_id,
                 target_thread_id=target_session_id,
                 checkpoint_id=source.checkpoint_id,
                 checkpoint_ns=source.checkpoint_ns,
             )
+            checkpoint_clone_ms = self._elapsed_ms(checkpoint_clone_started)
+            session_create_started = time.perf_counter()
             target = self.repositories.sessions.create(
                 session_id=target_session_id,
                 user_id=target_user_id,
@@ -149,23 +156,32 @@ class SessionForkService:
                 context_compression_epoch=source_session.context_compression_epoch,
                 title_source="manual",
             )
+            session_create_ms = self._elapsed_ms(session_create_started)
+            artifact_grants_started = time.perf_counter()
             self.repositories.tool_result_artifacts.copy_grants(
                 source_session_id=source_session.id,
                 target_session_id=target.id,
                 owner_user_id=target_user_id,
             )
+            artifact_grants_ms = self._elapsed_ms(artifact_grants_started)
             if checkpoint_only:
                 logger.info(
                     "[SessionForkService] 创建 checkpoint-only session 分支 | "
                     f"source_session_id={source_session.id} | target_session_id={target.id} | "
-                    f"checkpoint_id={source.checkpoint_id}"
+                    f"checkpoint_id={source.checkpoint_id} | copied_events=0 | "
+                    f"resolve_ms={resolve_ms} | checkpoint_clone_ms={checkpoint_clone_ms} | "
+                    f"session_create_ms={session_create_ms} | "
+                    f"artifact_grants_ms={artifact_grants_ms} | "
+                    f"duration_ms={self._elapsed_ms(fork_started)}"
                 )
                 return SessionForkResult(session=target, source=source)
+            history_copy_started = time.perf_counter()
             copied_events = self._copy_visible_history(
                 source_session=source_session,
                 target_session=target,
                 cutoff_turn_index=source.turn_index,
             )
+            history_copy_ms = self._elapsed_ms(history_copy_started)
             target_event = copied_events.get(source.message_event_id or "")
             if target_event is None:
                 raise SessionForkServiceError(
@@ -177,6 +193,7 @@ class SessionForkService:
                         "message_event_id": source.message_event_id,
                     },
                 )
+            relation_started = time.perf_counter()
             self._record_fork_relation(
                 source_session=source_session,
                 target_session=target,
@@ -184,10 +201,16 @@ class SessionForkService:
                 target_event=target_event,
             )
             target = self._require_session(target.id)
+            relation_ms = self._elapsed_ms(relation_started)
             logger.info(
                 "[SessionForkService] 创建 session 分支 | "
                 f"source_session_id={source_session.id} | target_session_id={target.id} | "
-                f"checkpoint_id={source.checkpoint_id}"
+                f"checkpoint_id={source.checkpoint_id} | copied_events={len(copied_events)} | "
+                f"resolve_ms={resolve_ms} | checkpoint_clone_ms={checkpoint_clone_ms} | "
+                f"session_create_ms={session_create_ms} | "
+                f"artifact_grants_ms={artifact_grants_ms} | "
+                f"history_copy_ms={history_copy_ms} | relation_ms={relation_ms} | "
+                f"duration_ms={self._elapsed_ms(fork_started)}"
             )
             return SessionForkResult(session=target, source=source)
         except Exception as exc:
@@ -496,25 +519,29 @@ class SessionForkService:
         target_session: SessionRecord,
         cutoff_turn_index: int | None,
     ) -> dict[str, MessageEventRecord]:
-        copied_events: dict[str, MessageEventRecord] = {}
-        events = self.repositories.message_events.list_by_session(source_session.id, limit=5000)
-        for event in events:
-            if cutoff_turn_index is not None and event.turn_index > cutoff_turn_index:
-                continue
-            copied = self.repositories.message_events.append(
-                event_id=new_id(),
-                session_id=target_session.id,
-                trace_record_id=event.trace_record_id,
-                turn_index=event.turn_index,
-                action=event.action,
-                data=self._copy_event_data(
-                    event,
-                    source_session=source_session,
-                    target_session=target_session,
-                ),
-            )
-            copied_events[event.id] = copied
-        return copied_events
+        events = self.repositories.message_events.list_by_session(
+            source_session.id,
+            limit=None,
+            through_turn_index=cutoff_turn_index,
+        )
+        copied = self.repositories.message_events.append_many(
+            session_id=target_session.id,
+            events=[
+                {
+                    "event_id": new_id(),
+                    "trace_record_id": event.trace_record_id,
+                    "turn_index": event.turn_index,
+                    "action": event.action,
+                    "data": self._copy_event_data(
+                        event,
+                        source_session=source_session,
+                        target_session=target_session,
+                    ),
+                }
+                for event in events
+            ],
+        )
+        return {source.id: target for source, target in zip(events, copied, strict=True)}
 
     @staticmethod
     def _copy_event_data(
@@ -531,6 +558,10 @@ class SessionForkService:
         if data.get("active_session_id") == (source_session.active_session_id or source_session.id):
             data["active_session_id"] = target_session.id
         return data
+
+    @staticmethod
+    def _elapsed_ms(started_at: float) -> int:
+        return max(0, int((time.perf_counter() - started_at) * 1000))
 
     @staticmethod
     def _fork_title(source_session: SessionRecord, title: str | None) -> str:
@@ -629,6 +660,10 @@ class SessionForkService:
             )
         if trace_id:
             trace = self._require_trace(trace_id)
+            self._validate_reverse_fork_boundary(
+                source_session=source_session,
+                turn_index=trace.turn_index,
+            )
             if trace.session_id != source_session.id:
                 raise SessionForkServiceError(
                     "trace_session_mismatch",
@@ -671,6 +706,11 @@ class SessionForkService:
                     "action": self._event_action(event),
                 },
             )
+        self._validate_reverse_fork_boundary(
+            source_session=source_session,
+            turn_index=event.turn_index,
+            message_event_id=event.id,
+        )
         if not event.trace_record_id:
             raise SessionForkServiceError(
                 "message_event_checkpoint_missing",
@@ -691,6 +731,10 @@ class SessionForkService:
         source_session: SessionRecord,
         turn_index: int,
     ) -> SessionReverseSource:
+        self._validate_reverse_fork_boundary(
+            source_session=source_session,
+            turn_index=turn_index,
+        )
         events = self.repositories.message_events.list_by_turn(source_session.id, int(turn_index))
         for event in events:
             if self._event_action(event) == "user_message" and event.trace_record_id:
@@ -786,6 +830,28 @@ class SessionForkService:
                 {"trace_id": trace_id},
             )
         return trace
+
+    def _validate_reverse_fork_boundary(
+        self,
+        *,
+        source_session: SessionRecord,
+        turn_index: int,
+        message_event_id: str | None = None,
+    ) -> None:
+        fork = self.repositories.session_forks.get_by_target(source_session.id)
+        if fork is None or int(turn_index) > fork.target_turn_index:
+            return
+        raise SessionForkServiceError(
+            "reverse_before_fork_point",
+            "无法回溯到派生点之前的会话轮次",
+            {
+                "session_id": source_session.id,
+                "source_session_id": fork.source_session_id,
+                "message_event_id": message_event_id,
+                "requested_turn_index": int(turn_index),
+                "fork_turn_index": fork.target_turn_index,
+            },
+        )
 
     def _has_visible_history_before_turn(self, session_id: str, turn_index: int) -> bool:
         with self.repositories.db.connect() as conn:

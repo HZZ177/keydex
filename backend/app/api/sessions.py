@@ -899,6 +899,7 @@ def _branch_error(exc: SessionForkServiceError) -> HTTPException:
         "message_event_checkpoint_missing": status.HTTP_400_BAD_REQUEST,
         "turn_checkpoint_missing": status.HTTP_400_BAD_REQUEST,
         "reverse_input_checkpoint_missing": status.HTTP_400_BAD_REQUEST,
+        "reverse_before_fork_point": status.HTTP_400_BAD_REQUEST,
         "session_reverse_failed": status.HTTP_400_BAD_REQUEST,
         "fork_message_event_missing": status.HTTP_400_BAD_REQUEST,
         "fork_turn_index_missing": status.HTTP_400_BAD_REQUEST,

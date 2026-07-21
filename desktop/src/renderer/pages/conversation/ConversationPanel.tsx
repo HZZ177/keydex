@@ -112,6 +112,7 @@ export function ConversationPanel({
       {model.forkConfirmation ? (
         <ForkConfirmDialog
           preview={model.forkConfirmation.content}
+          busy={model.forkExecuting}
           onCancel={model.cancelForkFromMessage}
           onConfirm={model.confirmForkFromMessage}
         />
@@ -133,10 +134,12 @@ export function ConversationPanel({
 
 function ForkConfirmDialog({
   preview,
+  busy,
   onCancel,
   onConfirm,
 }: {
   preview: string;
+  busy: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -146,7 +149,9 @@ function ForkConfirmDialog({
       title="确认从该轮派生对话？"
       description="会以当前对话截至这条回复的上下文创建新的派生会话，并切换到新会话。当前对话不会被修改。"
       preview={summary}
-      confirmLabel="派生对话"
+      cancelDisabled={busy}
+      confirmDisabled={busy}
+      confirmLabel={busy ? "正在派生…" : "派生对话"}
       onCancel={onCancel}
       onConfirm={onConfirm}
     />

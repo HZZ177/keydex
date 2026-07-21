@@ -563,6 +563,80 @@ describe("useConversationPanelModel", () => {
     );
   });
 
+  it("preserves the fork-boundary error code when reverse preview is rejected", async () => {
+    const runtime = fakeRuntime();
+    vi.mocked(runtime.conversation.previewSessionReverse).mockRejectedValueOnce({
+      detail: {
+        code: "reverse_before_fork_point",
+        message: "无法回溯到派生点之前的会话轮次",
+      },
+    });
+    const { result } = renderHook(
+      () => useConversationPanelModel({ runtime, sessionId: "ses-1", controller: fakeController() }),
+      { wrapper: Providers },
+    );
+
+    act(() => result.current.reverseFromMessage(reverseMessage()));
+
+    await waitFor(() => {
+      expect(result.current.reverseConfirmation?.loading).toBe(false);
+      expect(result.current.reverseConfirmation?.errorCode).toBe("reverse_before_fork_point");
+    });
+  });
+
+  it("keeps message fork state pending and suppresses duplicate confirmation until the request settles", async () => {
+    const runtime = fakeRuntime();
+    const response = {
+      session: agentSession({ id: "ses-fork" }),
+      source: {
+        session_id: "ses-1",
+        active_session_id: "ses-1",
+        checkpoint_id: "checkpoint-1",
+        checkpoint_ns: "",
+        trace_id: "trace-1",
+        turn_index: 1,
+        message_event_id: "event-user-1",
+        source_type: "message_event",
+      },
+    };
+    let resolveFork: ((value: typeof response) => void) | null = null;
+    vi.mocked(runtime.conversation.forkSession).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveFork = resolve;
+      }),
+    );
+    const onForkSessionCreated = vi.fn();
+    const { result } = renderHook(
+      () => useConversationPanelModel({
+        runtime,
+        sessionId: "ses-1",
+        controller: fakeController(),
+        onForkSessionCreated,
+      }),
+      { wrapper: Providers },
+    );
+
+    act(() => result.current.forkFromMessage(reverseMessage()));
+    act(() => {
+      result.current.confirmForkFromMessage();
+      result.current.confirmForkFromMessage();
+      result.current.cancelForkFromMessage();
+    });
+
+    expect(runtime.conversation.forkSession).toHaveBeenCalledTimes(1);
+    expect(result.current.forkExecuting).toBe(true);
+    expect(result.current.forkConfirmation).not.toBeNull();
+
+    await act(async () => {
+      resolveFork?.(response);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(result.current.forkExecuting).toBe(false));
+    expect(result.current.forkConfirmation).toBeNull();
+    expect(onForkSessionCreated).toHaveBeenCalledWith(response.session);
+  });
+
   it("drops a late preview response after switching sessions", async () => {
     const runtime = fakeRuntime();
     let resolvePreview: ((value: ReturnType<typeof reversePreview>) => void) | null = null;
@@ -800,6 +874,19 @@ function fakeController(overrides: Partial<AgentSessionController> = {}): AgentS
 function fakeRuntime(): RuntimeBridge {
   return {
     conversation: {
+      forkSession: vi.fn().mockResolvedValue({
+        session: agentSession({ id: "ses-fork" }),
+        source: {
+          session_id: "ses-1",
+          active_session_id: "ses-1",
+          checkpoint_id: "checkpoint-1",
+          checkpoint_ns: "",
+          trace_id: "trace-1",
+          turn_index: 1,
+          message_event_id: "event-user-1",
+          source_type: "message_event",
+        },
+      }),
       loadToolDetails: vi.fn().mockResolvedValue({
         detailRef: { startEventId: "start-1", endEventId: "end-1" },
         toolName: "search_text",

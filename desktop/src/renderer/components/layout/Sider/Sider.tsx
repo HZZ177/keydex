@@ -114,9 +114,9 @@ const EMPTY_SESSION_INDICATOR: SessionIndicator = {
 const WORKSPACE_SESSION_PREVIEW_LIMIT = 5;
 const WORKSPACE_SESSION_EXPAND_STEP = 10;
 const WORKSPACE_SESSION_HISTORY_PAGE_SIZE = 50;
-const SESSION_ACTION_MENU_WIDTH = 112;
-const SESSION_ACTION_MENU_HEIGHT = 132;
-const SESSION_CONTEXT_ACTION_MENU_HEIGHT = 166;
+const SESSION_ACTION_MENU_WIDTH = 118;
+const SESSION_ACTION_MENU_HEIGHT = 166;
+const SESSION_CONTEXT_ACTION_MENU_HEIGHT = 200;
 const SESSION_ACTION_MENU_GAP = 10;
 const SESSION_ACTION_MENU_EDGE = 8;
 const SESSION_ACTION_MENU_CLOSE_MS = 120;
@@ -1639,6 +1639,7 @@ function SiderSection({
   onArchiveWorkspace,
   onTogglePinned,
 }: SiderSectionProps) {
+  const notifications = useNotifications();
   const [hoveredSession, setHoveredSession] = useState<SessionHoverCard | null>(null);
   const [hoveredProject, setHoveredProject] = useState<ProjectHoverCard | null>(null);
   const [actionMenuId, setActionMenuId] = useState<string | null>(null);
@@ -1672,7 +1673,7 @@ function SiderSection({
   const canExpandHistory =
     shouldLimitHistory && (visibleExtraItemCount < extraItems.length || historyHasMore);
   const historyToggleLoading = historyExpansionLoading || localHistoryExpansionLoading;
-  const canOpenSessionActionMenu = canMutate || canFork || canExport;
+  const canOpenSessionActionMenu = items.length > 0;
   const canOpenProjectActionMenu = Boolean(
     kind === "workspace"
     && workspaceId
@@ -1857,10 +1858,23 @@ function SiderSection({
     });
   };
 
+  const copySessionId = useCallback(async (sessionId: string) => {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("当前环境不支持剪贴板");
+      }
+      await navigator.clipboard.writeText(sessionId);
+      notifications.success("已复制会话 ID");
+    } catch (reason) {
+      notifications.error(`复制会话 ID 失败：${errorMessage(reason)}`);
+    }
+  }, [notifications]);
+
   const renderHistoryRow = (item: SiderEntry) => {
     const path = getSessionPath(item.id);
     const active = routeSelectionEnabled && isActivePath(activePath, path);
     const indicator = sessionIndicators[item.id] ?? EMPTY_SESSION_INDICATOR;
+    const isForking = forkingSessionId === item.id;
     const showUpdatedTime = Boolean(
       item.updatedAt
       && !indicator.isStreaming
@@ -1869,7 +1883,8 @@ function SiderSection({
       && !indicator.waitingInteraction,
     );
     const hasMeta = Boolean(
-      showUpdatedTime
+      isForking
+      || showUpdatedTime
       || indicator.isStreaming
       || indicator.hasUnread
       || indicator.waitingApproval
@@ -1878,7 +1893,6 @@ function SiderSection({
     const menuOpen = actionMenuId === item.id;
     const menuVisible = menuOpen || closingActionMenuId === item.id;
     const canShowHoverCard = editing?.id !== item.id && archivingSessionId !== item.id && !menuVisible;
-    const isForking = forkingSessionId === item.id;
     const isExporting = exportingSessionId === item.id;
     const isArchiving = archivingSessionId === item.id;
     const showContextRefresh = menuVisible && actionMenuSource === "context" && Boolean(onRefresh);
@@ -1906,6 +1920,7 @@ function SiderSection({
         data-active={active ? "true" : "false"}
         data-can-actions={canOpenSessionActionMenu ? "true" : "false"}
         data-can-mutate={canMutate ? "true" : "false"}
+        data-forking={isForking ? "true" : "false"}
         data-menu-open={menuVisible ? "true" : "false"}
         onContextMenu={canOpenSessionActionMenu ? openContextMenu : undefined}
         onBlurCapture={
@@ -1944,6 +1959,12 @@ function SiderSection({
           <div className={styles.historyTrailing}>
             {hasMeta ? (
               <span className={styles.historyMeta}>
+                {isForking ? (
+                  <span className={styles.historyForkingStatus} role="status" aria-live="polite">
+                    <LoaderCircle size={11} aria-hidden="true" />
+                    派生中
+                  </span>
+                ) : null}
                 {showUpdatedTime && item.updatedAt ? (
                   <time dateTime={item.updatedAt}>{formatRelativeTime(item.updatedAt)}</time>
                 ) : null}
@@ -2019,6 +2040,11 @@ function SiderSection({
                             setHoveredSession(null);
                             closeActionMenu();
                             onStartRename?.(item);
+                          }}
+                          onCopyId={() => {
+                            setHoveredSession(null);
+                            closeActionMenu();
+                            void copySessionId(item.id);
                           }}
                           archiving={isArchiving}
                           onArchive={() => {

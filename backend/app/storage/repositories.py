@@ -6753,6 +6753,27 @@ class MessageEventsRepository:
         data: dict[str, Any] | None = None,
         trace_record_id: str | None = None,
     ) -> MessageEventRecord:
+        return self.append_many(
+            session_id=session_id,
+            events=[
+                {
+                    "event_id": event_id,
+                    "trace_record_id": trace_record_id,
+                    "turn_index": turn_index,
+                    "action": action,
+                    "data": data or {},
+                }
+            ],
+        )[0]
+
+    def append_many(
+        self,
+        *,
+        session_id: str,
+        events: list[dict[str, Any]],
+    ) -> list[MessageEventRecord]:
+        if not events:
+            return []
         now = to_iso_z(utc_now())
         with self.db.transaction(immediate=True) as conn:
             row = conn.execute(
@@ -6763,30 +6784,55 @@ class MessageEventsRepository:
                 """,
                 (session_id,),
             ).fetchone()
-            seq = int(row["max_seq"]) + 1
-            conn.execute(
+            first_seq = int(row["max_seq"]) + 1
+            records: list[MessageEventRecord] = []
+            rows: list[tuple[Any, ...]] = []
+            for offset, event in enumerate(events):
+                event_id = str(event["event_id"])
+                trace_record_id = event.get("trace_record_id")
+                turn_index = int(event["turn_index"])
+                action = str(event["action"])
+                data = event.get("data") or {}
+                if not isinstance(data, dict):
+                    raise ValueError("message event data 必须是 JSON 对象")
+                seq = first_seq + offset
+                copied_data = dict(data)
+                rows.append(
+                    (
+                        event_id,
+                        session_id,
+                        trace_record_id,
+                        seq,
+                        turn_index,
+                        action,
+                        _json_dumps(copied_data),
+                        now,
+                        now,
+                    )
+                )
+                records.append(
+                    MessageEventRecord(
+                        id=event_id,
+                        session_id=session_id,
+                        trace_record_id=trace_record_id,
+                        seq=seq,
+                        turn_index=turn_index,
+                        action=action,
+                        data=copied_data,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            conn.executemany(
                 """
                 insert into message_events (
                   id, session_id, trace_record_id, seq, turn_index, action,
                   data_json, created_at, updated_at
                 ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    event_id,
-                    session_id,
-                    trace_record_id,
-                    seq,
-                    turn_index,
-                    action,
-                    _json_dumps(data or {}),
-                    now,
-                    now,
-                ),
+                rows,
             )
-        record = self.get(event_id)
-        if record is None:
-            raise RuntimeError(f"追加 message event 后无法读取: {event_id}")
-        return record
+        return records
 
     def get(self, event_id: str, *, include_deleted: bool = False) -> MessageEventRecord | None:
         query = "select * from message_events where id = ?"
@@ -6802,14 +6848,20 @@ class MessageEventsRepository:
         session_id: str,
         *,
         include_deleted: bool = False,
-        limit: int = 1000,
+        limit: int | None = 1000,
+        through_turn_index: int | None = None,
     ) -> list[MessageEventRecord]:
         query = "select * from message_events where session_id = ?"
         params: list[Any] = [session_id]
         if not include_deleted:
             query += " and is_deleted = 0"
-        query += " order by seq asc limit ?"
-        params.append(max(1, min(limit, 5000)))
+        if through_turn_index is not None:
+            query += " and turn_index <= ?"
+            params.append(int(through_turn_index))
+        query += " order by seq asc"
+        if limit is not None:
+            query += " limit ?"
+            params.append(max(1, min(limit, 5000)))
         with self.db.connect() as conn:
             rows = conn.execute(query, params).fetchall()
         return [self._from_row(row) for row in rows]

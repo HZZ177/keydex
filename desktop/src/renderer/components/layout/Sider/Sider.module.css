@@ -696,6 +696,17 @@ button.sectionTitle[data-kind="pinned"]:focus-visible,
   white-space: nowrap;
 }
 
+.historyForkingStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-3);
+}
+
+.historyForkingStatus svg {
+  animation: historySpinner 900ms linear infinite;
+}
+
 .historyTrailing {
   position: relative;
   display: inline-flex;
@@ -796,6 +807,15 @@ button.sectionTitle[data-kind="pinned"]:focus-visible,
 .historyRow[data-can-mutate="true"]:focus-within .historyMeta,
 .historyRow[data-menu-open="true"] .historyMeta {
   opacity: 0;
+}
+
+.historyRow[data-forking="true"] .historyMeta {
+  opacity: 1;
+}
+
+.historyRow[data-forking="true"] .historyActions {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .historyActions > button {

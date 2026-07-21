@@ -425,21 +425,25 @@ class SQLiteCheckpointSaver(BaseCheckpointSaver):
             raise ValueError("source_thread_id and target_thread_id must be different")
         if not checkpoint_id.strip():
             raise ValueError("checkpoint_id must not be empty")
-
-        source_rows = self._load_checkpoint_chain(
-            thread_id=source_thread_id,
-            checkpoint_ns=checkpoint_ns,
-            checkpoint_id=checkpoint_id,
-        )
-        if not source_rows:
-            raise ValueError(
-                f"checkpoint not found: thread_id={source_thread_id} "
-                f"checkpoint_ns={checkpoint_ns} checkpoint_id={checkpoint_id}"
-            )
-        checkpoint_ids = [str(row["checkpoint_id"]) for row in source_rows]
         now = to_iso_z(utc_now())
+        source_ready = False
         try:
-            with self.db.transaction() as conn:
+            with self.db.transaction(immediate=True) as conn:
+                source = conn.execute(
+                    """
+                    select 1
+                    from checkpoints_v2
+                    where thread_id = ? and checkpoint_ns = ? and checkpoint_id = ?
+                    limit 1
+                    """,
+                    (source_thread_id, checkpoint_ns, checkpoint_id),
+                ).fetchone()
+                if source is None:
+                    raise ValueError(
+                        f"checkpoint not found: thread_id={source_thread_id} "
+                        f"checkpoint_ns={checkpoint_ns} checkpoint_id={checkpoint_id}"
+                    )
+                source_ready = True
                 conn.execute(
                     "delete from checkpoint_writes_v2 where thread_id = ? and checkpoint_ns = ?",
                     (target_thread_id, checkpoint_ns),
@@ -448,58 +452,70 @@ class SQLiteCheckpointSaver(BaseCheckpointSaver):
                     "delete from checkpoints_v2 where thread_id = ? and checkpoint_ns = ?",
                     (target_thread_id, checkpoint_ns),
                 )
-                for row in reversed(source_rows):
-                    conn.execute(
-                        """
-                        insert into checkpoints_v2 (
-                          thread_id, checkpoint_ns, checkpoint_id, created_at,
-                          parent_checkpoint_id, type, checkpoint_blob, metadata
-                        ) values (?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            target_thread_id,
-                            checkpoint_ns,
-                            row["checkpoint_id"],
-                            now,
-                            row["parent_checkpoint_id"],
-                            row["type"],
-                            bytes(row["checkpoint_blob"]),
-                            row["metadata"],
-                        ),
+                conn.execute(
+                    """
+                    with recursive checkpoint_chain(checkpoint_id, parent_checkpoint_id) as (
+                      select checkpoint_id, parent_checkpoint_id
+                      from checkpoints_v2
+                      where thread_id = ? and checkpoint_ns = ? and checkpoint_id = ?
+                      union all
+                      select parent.checkpoint_id, parent.parent_checkpoint_id
+                      from checkpoints_v2 as parent
+                      join checkpoint_chain as child
+                        on child.parent_checkpoint_id = parent.checkpoint_id
+                      where parent.thread_id = ? and parent.checkpoint_ns = ?
                     )
-                placeholders = ", ".join("?" for _ in checkpoint_ids)
-                writes = conn.execute(
-                    f"""
-                    select checkpoint_id, task_id, task_path, idx, channel, type, value_blob
-                    from checkpoint_writes_v2
-                    where thread_id = ? and checkpoint_ns = ? and checkpoint_id in ({placeholders})
-                    order by checkpoint_id asc, task_id asc, idx asc
+                    insert into checkpoints_v2 (
+                      thread_id, checkpoint_ns, checkpoint_id, created_at,
+                      parent_checkpoint_id, type, checkpoint_blob, metadata
+                    )
+                    select ?, source.checkpoint_ns, source.checkpoint_id, ?,
+                           source.parent_checkpoint_id, source.type,
+                           source.checkpoint_blob, source.metadata
+                    from checkpoints_v2 as source
+                    join checkpoint_chain as chain
+                      on chain.checkpoint_id = source.checkpoint_id
+                    where source.thread_id = ? and source.checkpoint_ns = ?
                     """,
-                    (source_thread_id, checkpoint_ns, *checkpoint_ids),
-                ).fetchall()
-                for write in writes:
-                    conn.execute(
-                        """
-                        insert into checkpoint_writes_v2 (
-                          thread_id, checkpoint_ns, checkpoint_id, task_id, task_path,
-                          idx, channel, type, value_blob, created_at
-                        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            target_thread_id,
-                            checkpoint_ns,
-                            write["checkpoint_id"],
-                            write["task_id"],
-                            write["task_path"],
-                            write["idx"],
-                            write["channel"],
-                            write["type"],
-                            bytes(write["value_blob"] or b""),
-                            now,
-                        ),
+                    (
+                        source_thread_id,
+                        checkpoint_ns,
+                        checkpoint_id,
+                        source_thread_id,
+                        checkpoint_ns,
+                        target_thread_id,
+                        now,
+                        source_thread_id,
+                        checkpoint_ns,
+                    ),
+                )
+                conn.execute(
+                    """
+                    insert into checkpoint_writes_v2 (
+                      thread_id, checkpoint_ns, checkpoint_id, task_id, task_path,
+                      idx, channel, type, value_blob, created_at
                     )
+                    select ?, source.checkpoint_ns, source.checkpoint_id,
+                           source.task_id, source.task_path, source.idx,
+                           source.channel, source.type, coalesce(source.value_blob, x''), ?
+                    from checkpoint_writes_v2 as source
+                    join checkpoints_v2 as cloned
+                      on cloned.thread_id = ?
+                     and cloned.checkpoint_ns = source.checkpoint_ns
+                     and cloned.checkpoint_id = source.checkpoint_id
+                    where source.thread_id = ? and source.checkpoint_ns = ?
+                    """,
+                    (
+                        target_thread_id,
+                        now,
+                        target_thread_id,
+                        source_thread_id,
+                        checkpoint_ns,
+                    ),
+                )
         except Exception:
-            self.delete_thread(target_thread_id)
+            if source_ready:
+                self.delete_thread(target_thread_id)
             raise
 
     def replace_checkpoint_messages(
@@ -577,24 +593,35 @@ class SQLiteCheckpointSaver(BaseCheckpointSaver):
         checkpoint_ns: str,
         checkpoint_id: str,
     ) -> list[Any]:
-        rows: list[Any] = []
-        next_checkpoint_id: str | None = checkpoint_id
         with self.db.connect() as conn:
-            while next_checkpoint_id:
-                row = conn.execute(
-                    """
-                    select checkpoint_id, parent_checkpoint_id, type, checkpoint_blob, metadata
-                    from checkpoints_v2
-                    where thread_id = ? and checkpoint_ns = ? and checkpoint_id = ?
-                    limit 1
-                    """,
-                    (thread_id, checkpoint_ns, next_checkpoint_id),
-                ).fetchone()
-                if row is None:
-                    break
-                rows.append(row)
-                next_checkpoint_id = row["parent_checkpoint_id"]
-        return rows
+            return conn.execute(
+                """
+                with recursive checkpoint_chain(
+                  checkpoint_id, parent_checkpoint_id, type, checkpoint_blob, metadata, depth
+                ) as (
+                  select checkpoint_id, parent_checkpoint_id, type, checkpoint_blob, metadata, 0
+                  from checkpoints_v2
+                  where thread_id = ? and checkpoint_ns = ? and checkpoint_id = ?
+                  union all
+                  select parent.checkpoint_id, parent.parent_checkpoint_id,
+                         parent.type, parent.checkpoint_blob, parent.metadata, child.depth + 1
+                  from checkpoints_v2 as parent
+                  join checkpoint_chain as child
+                    on child.parent_checkpoint_id = parent.checkpoint_id
+                  where parent.thread_id = ? and parent.checkpoint_ns = ?
+                )
+                select checkpoint_id, parent_checkpoint_id, type, checkpoint_blob, metadata
+                from checkpoint_chain
+                order by depth asc
+                """,
+                (
+                    thread_id,
+                    checkpoint_ns,
+                    checkpoint_id,
+                    thread_id,
+                    checkpoint_ns,
+                ),
+            ).fetchall()
 
     async def aget_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
         return self.get_tuple(config)

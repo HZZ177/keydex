@@ -58,6 +58,28 @@
   gap: 6px;
 }
 
+.operationStatus {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: var(--ui-line-height-tight);
+  white-space: nowrap;
+}
+
+.operationStatus svg {
+  animation: operationStatusSpin 900ms linear infinite;
+}
+
+@keyframes operationStatusSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .title {
   min-width: 0;
   flex: 1 1 auto;

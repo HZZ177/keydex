@@ -142,6 +142,9 @@ export function useConversationPanelModel({
   const appliedContextWindowSnapshotKeyRef = useRef<string | null>(null);
   const contextWindowSessionIdRef = useRef<string | null>(null);
   const [forkCandidate, setForkCandidate] = useState<ConversationMessage | null>(null);
+  const [forkExecuting, setForkExecuting] = useState(false);
+  const forkExecuteInFlightRef = useRef(false);
+  const forkRequestGenerationRef = useRef(0);
   const [reverseState, setReverseState] = useState<ReverseDialogState | null>(null);
   const reverseRequestGenerationRef = useRef(0);
   const reverseExecuteInFlightRef = useRef(false);
@@ -506,6 +509,9 @@ export function useConversationPanelModel({
   }, [runtime, sessionId]);
 
   useEffect(() => {
+    forkRequestGenerationRef.current += 1;
+    forkExecuteInFlightRef.current = false;
+    setForkExecuting(false);
     setForkCandidate(null);
     reverseRequestGenerationRef.current += 1;
     reverseExecuteInFlightRef.current = false;
@@ -845,6 +851,9 @@ export function useConversationPanelModel({
 
   const forkFromMessage = useCallback(
     (message: ConversationMessage) => {
+      if (forkExecuteInFlightRef.current) {
+        return;
+      }
       reverseRequestGenerationRef.current += 1;
       setReverseState(null);
       setForkCandidate(message);
@@ -867,16 +876,28 @@ export function useConversationPanelModel({
   );
 
   const cancelForkFromMessage = useCallback(() => {
+    if (forkExecuteInFlightRef.current) {
+      return;
+    }
     setForkCandidate(null);
   }, []);
 
   const confirmForkFromMessage = useCallback(() => {
     const message = forkCandidate;
-    if (!message) {
+    if (!message || forkExecuteInFlightRef.current) {
       return;
     }
-    setForkCandidate(null);
-    void branchFromMessage(message, "fork");
+    const generation = ++forkRequestGenerationRef.current;
+    forkExecuteInFlightRef.current = true;
+    setForkExecuting(true);
+    void branchFromMessage(message, "fork").finally(() => {
+      if (forkRequestGenerationRef.current !== generation) {
+        return;
+      }
+      forkExecuteInFlightRef.current = false;
+      setForkExecuting(false);
+      setForkCandidate(null);
+    });
   }, [branchFromMessage, forkCandidate]);
 
   const cancelReverseFromMessage = useCallback(() => {
@@ -1063,6 +1084,7 @@ export function useConversationPanelModel({
     contextWindowUsage,
     forkFromMessage,
     forkConfirmation: forkCandidate,
+    forkExecuting,
     cancelForkFromMessage,
     confirmForkFromMessage,
     navigateToForkSource,
@@ -1463,6 +1485,9 @@ function branchActionErrorMessage(mode: "fork" | "reverse", reason: unknown): st
 }
 
 function reverseActionErrorMessage(code: string | null): string {
+  if (code === "reverse_before_fork_point") {
+    return "抱歉，无法恢复到派生点之前的会话轮次";
+  }
   if (code === "file_preview_stale") {
     return "文件状态已经变化，请重新检查后再回溯";
   }

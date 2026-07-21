@@ -35,6 +35,7 @@
 .renameDialogForm {
   display: grid;
   gap: 18px;
+  padding: 16px 18px 18px;
 }
 
 .renameDialogField {
