@@ -6,6 +6,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
+from backend.app.agent.tool_results.models import INTERNAL_ARTIFACT_SOURCE_KEY
 from backend.app.core.config import AppSettings
 from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
@@ -35,7 +36,10 @@ from backend.app.mcp.resources import (
 )
 from backend.app.mcp.runtime import McpAllowedToolExecution, McpLiveExecutionGuard
 from backend.app.mcp.sampling import McpSamplingService
-from backend.app.mcp.tools import normalize_mcp_tool_result
+from backend.app.mcp.tools import (
+    normalize_mcp_tool_result,
+    normalize_mcp_tool_result_for_artifact,
+)
 from backend.app.mcp.trust import resolve_mcp_tool_approval_policy
 from backend.app.mcp.types import McpErrorCode, McpServerStatus
 from backend.app.storage import McpServerRecord, StorageRepositories
@@ -634,6 +638,7 @@ class McpManager:
                         "is_error": tool_result.is_error,
                     },
                 )
+            artifact_source = normalize_mcp_tool_result_for_artifact(tool_result)
             result_payload = normalize_mcp_tool_result(
                 tool_result,
                 max_bytes=self.settings.mcp_max_tool_result_bytes,
@@ -681,6 +686,7 @@ class McpManager:
             return ToolExecutionResult.success(
                 result_payload,
                 metadata={
+                    INTERNAL_ARTIFACT_SOURCE_KEY: artifact_source,
                     "mcp": {
                         "kind": "mcp_tool",
                         "snapshot_id": snapshot_id,

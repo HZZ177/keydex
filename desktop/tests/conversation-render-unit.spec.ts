@@ -165,6 +165,57 @@ describe("Conversation RenderUnit projection", () => {
     expect(counted.renderVersion).not.toBe(named.renderVersion);
   });
 
+  it("changes a running command render version when termination and output progress arrive", () => {
+    const initialMessage = message("command-stream", "command", "", "running", {
+      call: {
+        id: "call-command",
+        name: "run_git_bash",
+        arguments: { command: "sleep 50", cwd: "." },
+      },
+      result: {
+        status: "running",
+        ui_payload: {
+          kind: "command_progress",
+          command: "sleep 50",
+          status: "running",
+        },
+      },
+    });
+    const terminableMessage = message("command-stream", "command", "", "running", {
+      ...initialMessage.payload,
+      result: {
+        status: "running",
+        ui_payload: {
+          kind: "command_progress",
+          command_id: "cmd-1",
+          command: "sleep 50",
+          status: "running",
+          can_terminate: true,
+          output_bytes: 0,
+        },
+      },
+    });
+    const outputMessage = message("command-stream", "command", "", "running", {
+      ...terminableMessage.payload,
+      result: {
+        status: "running",
+        ui_payload: {
+          ...((terminableMessage.payload.result as Record<string, unknown>).ui_payload as Record<string, unknown>),
+          output_bytes: 5,
+          combined_tail: "ready",
+        },
+      },
+    });
+    const initial = unit(projectConversationRenderUnits(processMessages([initialMessage])), "tool");
+    const terminable = unit(projectConversationRenderUnits(processMessages([terminableMessage])), "tool");
+    const output = unit(projectConversationRenderUnits(processMessages([outputMessage])), "tool");
+
+    expect(terminable.id).toBe(initial.id);
+    expect(output.id).toBe(initial.id);
+    expect(terminable.renderVersion).not.toBe(initial.renderVersion);
+    expect(output.renderVersion).not.toBe(terminable.renderVersion);
+  });
+
   it("invalidates only the changed parallel Sub-Agent capsule across queued, running and blocked updates", () => {
     const queuedA = subagentRun({
       run_id: "run-a",

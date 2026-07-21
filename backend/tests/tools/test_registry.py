@@ -196,6 +196,7 @@ def test_default_tool_registry_exposes_phase_one_tool_contracts(tmp_path) -> Non
         "list_dir",
         "move_file",
         "read_file",
+        "read_tool_result",
         "search_files",
         "search_text",
         "update_plan",

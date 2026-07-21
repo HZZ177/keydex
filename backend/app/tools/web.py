@@ -4,6 +4,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from backend.app.agent.tool_results.specialized import web_result_projector
 from backend.app.tools.base import FunctionTool, ToolExecutionContext, ToolExecutionError
 from backend.app.tools.registry import ToolRegistry
 from backend.app.web.errors import WebProviderError
@@ -147,6 +148,7 @@ def create_web_search_tool(service: WebService) -> FunctionTool:
         description=WEB_SEARCH_DESCRIPTION,
         parameters=WEB_SEARCH_PARAMETERS,
         handler=web_search_handler,
+        result_projector=web_result_projector,
     )
 
 
@@ -185,6 +187,7 @@ def create_web_fetch_tool(service: WebService) -> FunctionTool:
         description=WEB_FETCH_DESCRIPTION,
         parameters=WEB_FETCH_PARAMETERS,
         handler=web_fetch_handler,
+        result_projector=web_result_projector,
     )
 
 

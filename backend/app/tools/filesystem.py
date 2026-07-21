@@ -10,6 +10,11 @@ from backend.app.agent.tool_call_progress import (
     count_text_lines,
     normalize_file_change,
 )
+from backend.app.agent.tool_results.specialized import (
+    list_dir_projector,
+    mutation_result_projector,
+    read_file_projector,
+)
 from backend.app.core.logger import logger
 from backend.app.tools.base import FunctionTool, ToolExecutionContext, ToolExecutionError
 from backend.app.tools.file_access import (
@@ -64,7 +69,8 @@ LIST_DIR_DESCRIPTION = (
     "优先从 depth=1 或 2 的小范围开始；已知名称时改用 search_files，"
     "已知内容时改用 grep_files 或 search_text。支持 depth、offset、limit，"
     "返回不超过 10KB 的紧凑 tree 文本；若 truncated=true，使用 next_offset 继续，"
-    "不要并行发起多个宽范围目录查询。"
+    "不要并行发起多个宽范围目录查询。开放式、跨目录或需要多轮调查时应委派 Explorer；"
+    "主 Agent 同一回合最多执行 5 个新的宽范围逻辑查询。"
 )
 
 
@@ -126,6 +132,7 @@ def create_filesystem_tools() -> list[FunctionTool]:
                 "required": ["path"],
             },
             handler=read_file_tool,
+            result_projector=read_file_projector,
         ),
         FunctionTool(
             name="create_file",
@@ -142,6 +149,7 @@ def create_filesystem_tools() -> list[FunctionTool]:
                 "required": ["path", "content"],
             },
             handler=write_file_tool,
+            result_projector=mutation_result_projector,
         ),
         FunctionTool(
             name="list_dir",
@@ -187,6 +195,7 @@ def create_filesystem_tools() -> list[FunctionTool]:
                 },
             },
             handler=list_dir_tool,
+            result_projector=list_dir_projector,
         ),
     ]
 

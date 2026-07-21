@@ -2,7 +2,7 @@ import json
 
 import httpx
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from backend.app.agent.factory import AgentFactory
 from backend.app.model import ModelSettings, OpenAICompatibleProviderClient
@@ -400,6 +400,51 @@ def test_chat_openai_round_trips_reasoning_payload_in_chat_messages() -> None:
     assert request_message["reasoning_details"] == [{"text": "detail"}]
     assert request_message["tool_calls"][0]["id"] == "call_read"
     assert payload["messages"][3]["reasoning_content"] == "普通回答前的思考"
+
+
+def test_chat_openai_outbound_tool_message_uses_content_not_runtime_artifact() -> None:
+    llm = AgentFactory().get_or_create_llm(
+        ModelSettings(
+            base_url="http://tool-artifact-boundary.test/v1",
+            api_key="sk-test",
+            model="tool-artifact-boundary-model",
+        ),
+        model="tool-artifact-boundary-model",
+        http_transport=create_e2e_model_transport(delay_ms=0),
+    )
+    tool_call = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "search_text",
+                "args": {"query": "needle"},
+                "id": "call-search",
+                "type": "tool_call",
+            }
+        ],
+    )
+    result = ToolMessage(
+        content='{"items":[{"path":"README.md"}],"truncated":true}',
+        tool_call_id="call-search",
+        name="search_text",
+        artifact={
+            "schema_version": "keydex.tool_artifact.v1",
+            "display_payload": {"items": [{"path": "README.md"}]},
+            "runtime_only_payload": "secret-body" * 100_000,
+        },
+    )
+
+    payload = llm._get_request_payload([HumanMessage(content="search"), tool_call, result])
+    outbound = payload["messages"][2]
+
+    assert outbound == {
+        "role": "tool",
+        "content": result.content,
+        "tool_call_id": "call-search",
+    }
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert "runtime_only_payload" not in serialized
+    assert "secret-body" not in serialized
 
 
 def test_chat_openai_deduplicates_reasoning_aliases_without_capture_metadata() -> None:

@@ -7,6 +7,10 @@ from langchain_core.messages import ToolMessage
 from langchain_core.tools import InjectedToolCallId, tool
 from langgraph.types import Command
 
+from backend.app.agent.tool_results.budgets import (
+    GLOBAL_TOOL_RESULT_BUDGET_BYTES,
+    utf8_bytes,
+)
 from backend.app.core.logger import logger
 from backend.app.core.request_context import (
     get_keydex_capability,
@@ -200,6 +204,23 @@ async def run_load_skill(
             },
             tool_call_id,
         )
+    if utf8_bytes(activation_content) > GLOBAL_TOOL_RESULT_BUDGET_BYTES:
+        return _tool_response(
+            {
+                "skill_name": requested_skill,
+                "source": skill.source,
+                "locator": skill.relative_entry,
+                "found": True,
+                "loaded": False,
+                "injected": False,
+                "code": "skill_content_too_large_for_model",
+                "message": (
+                    "Skill activation content exceeds the 32KB model delivery limit. "
+                    "Split large reference material into smaller resource files."
+                ),
+            },
+            tool_call_id,
+        )
     logger.info(f"[load_skill] activated skill | skill={requested_skill}")
     return _tool_response(
         {
@@ -268,22 +289,38 @@ def _load_skill_resource(
             tool_call_id,
         )
 
-    return _tool_response(
-        {
-            "skill_name": requested_skill,
-            "source": skill.source,
-            "locator": skill.relative_entry,
-            "resource_path": resource_path,
-            "found": True,
-            "loaded": True,
-            "injected": False,
-            "message": "Skill resource file loaded.",
-            "content": resource.content,
-            "encoding": resource.encoding,
-            "revision": resource.revision,
-        },
-        tool_call_id,
-    )
+    payload = {
+        "skill_name": requested_skill,
+        "source": skill.source,
+        "locator": skill.relative_entry,
+        "resource_path": resource_path,
+        "found": True,
+        "loaded": True,
+        "injected": False,
+        "message": "Skill resource file loaded.",
+        "content": resource.content,
+        "encoding": resource.encoding,
+        "revision": resource.revision,
+    }
+    if utf8_bytes(_serialize_tool_payload(payload)) > GLOBAL_TOOL_RESULT_BUDGET_BYTES:
+        return _tool_response(
+            {
+                "skill_name": requested_skill,
+                "source": skill.source,
+                "locator": skill.relative_entry,
+                "resource_path": resource_path,
+                "found": True,
+                "loaded": False,
+                "injected": False,
+                "code": "skill_content_too_large_for_model",
+                "message": (
+                    "Skill resource exceeds the 32KB model delivery limit. "
+                    "Split it into smaller resource files."
+                ),
+            },
+            tool_call_id,
+        )
+    return _tool_response(payload, tool_call_id)
 
 
 def _resolve_frozen_skills_snapshot() -> _FrozenSkillsSnapshot | None:
@@ -326,7 +363,7 @@ def _tool_response(
     update: dict[str, Any] = {
         "messages": [
             ToolMessage(
-                content=json.dumps(payload, ensure_ascii=False),
+                content=_serialize_tool_payload(payload),
                 tool_call_id=tool_call_id,
                 name=LOAD_SKILL_TOOL_NAME,
             )
@@ -335,3 +372,7 @@ def _tool_response(
     if pending_skill_activations is not None:
         update["pending_skill_activations"] = pending_skill_activations
     return Command(update=update)
+
+
+def _serialize_tool_payload(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, ensure_ascii=False)

@@ -27,6 +27,7 @@ _EXPORTS = {
     "create_plan_tools": ("backend.app.tools.plan", "create_plan_tools"),
     "create_search_tools": ("backend.app.tools.search", "create_search_tools"),
     "create_thread_task_tools": ("backend.app.tools.thread_task", "create_thread_task_tools"),
+    "create_tool_result_tools": ("backend.app.tools.tool_results", "create_tool_result_tools"),
     "create_web_search_tool": ("backend.app.tools.web", "create_web_search_tool"),
     "create_web_fetch_tool": ("backend.app.tools.web", "create_web_fetch_tool"),
     "create_command_tools": ("backend.app.tools.command_runtime.tools", "create_command_tools"),
@@ -41,6 +42,10 @@ _EXPORTS = {
     "register_thread_task_tools": (
         "backend.app.tools.thread_task",
         "register_thread_task_tools",
+    ),
+    "register_tool_result_tools": (
+        "backend.app.tools.tool_results",
+        "register_tool_result_tools",
     ),
     "register_web_search_tool": ("backend.app.tools.web", "register_web_search_tool"),
     "register_web_fetch_tool": ("backend.app.tools.web", "register_web_fetch_tool"),

@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import snapshotFixture from "./fixtures/subagent-run-snapshot.json";
@@ -45,9 +46,39 @@ describe("SubagentSidecarComposer", () => {
     expect(screen.queryByRole("button")).toBeNull();
   });
 
+  it("shows the child session context window ring for active and read-only Runs", () => {
+    const usage = {
+      sessionId: "child-fixture-1",
+      activeSessionId: "child-fixture-1",
+      tokenCount: 80_000,
+      contextWindow: 200_000,
+      windowFraction: 0.4,
+      thresholdFraction: 0.8,
+      thresholdTokenCount: 160_000,
+      thresholdUsageFraction: 0.5,
+      remainingToThresholdTokens: 80_000,
+      callPhase: "after",
+      callStatus: "completed",
+      tokenSource: "usage_metadata",
+      updatedAtMs: 1,
+    };
+
+    const activeView = renderComposer(runningSnapshot(), {}, true, usage);
+    const activeIndicator = screen.getByTestId("context-window-indicator");
+    expect(activeIndicator.getAttribute("aria-label")).toContain("80,000 tokens");
+    expect(activeIndicator.getAttribute("aria-label")).toContain("50.0%");
+    expect(activeIndicator.getAttribute("data-tooltip-align")).toBe("start");
+
+    activeView.unmount();
+    renderComposer(normalizeSubagentRunSnapshot(snapshotFixture), {}, true, usage);
+    expect(screen.getByTestId("subagent-terminal-run-notice")).not.toBeNull();
+    expect(screen.getByTestId("context-window-indicator")).not.toBeNull();
+  });
+
   it("keeps a historical Run read-only", () => {
     renderComposer(normalizeSubagentRunSnapshot(snapshotFixture), {}, false);
     expect(screen.getByTestId("subagent-historical-run-notice")).not.toBeNull();
+    expect(screen.getByTestId("context-window-indicator")).not.toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.queryByRole("button")).toBeNull();
   });
@@ -79,9 +110,17 @@ function renderComposer(
   run: ReturnType<typeof normalizeSubagentRunSnapshot>,
   conversation: Record<string, unknown>,
   isCurrentRun = true,
+  contextWindowUsage: ComponentProps<typeof SubagentSidecarComposer>["contextWindowUsage"] = null,
 ) {
   const runtime = { conversation } as unknown as RuntimeBridge;
-  return render(<SubagentSidecarComposer runtime={runtime} run={run} isCurrentRun={isCurrentRun} />);
+  return render(
+    <SubagentSidecarComposer
+      runtime={runtime}
+      run={run}
+      isCurrentRun={isCurrentRun}
+      contextWindowUsage={contextWindowUsage}
+    />,
+  );
 }
 
 function runningSnapshot(overrides: Record<string, unknown> = {}) {

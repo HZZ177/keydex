@@ -280,6 +280,7 @@ function renderVersion(kind: ConversationRenderUnitKind, messages: readonly Conv
       content.length,
       contentRenderFingerprint(message, content),
       a2uiRenderStateFingerprint(message),
+      commandRenderStateFingerprint(message),
       fileChangeRenderStateFingerprint(message),
       subagentRunRenderStateFingerprint(message),
       footerPayloadVersion(message.payload),
@@ -306,6 +307,47 @@ function a2uiRenderStateFingerprint(message: ConversationMessage): string {
     payloadInteraction: message.payload.interaction,
     a2uiInteraction: a2ui?.interaction,
     debugInteraction: debug?.interaction,
+  }));
+}
+
+function commandRenderStateFingerprint(message: ConversationMessage): string {
+  if (message.kind !== "command") return "";
+  const payload = message.payload;
+  const result = recordValue(payload.result);
+  const directUiPayload = recordValue(payload.ui_payload) ?? recordValue(payload.uiPayload);
+  const resultUiPayload = recordValue(result?.ui_payload) ?? recordValue(result?.uiPayload);
+  const command = {
+    ...payload,
+    ...(directUiPayload ?? {}),
+    ...(resultUiPayload ?? {}),
+  };
+  const approval = recordValue(command.approval);
+  return stableMarkdownIdentityHash(JSON.stringify({
+    commandId: command.command_id,
+    command: command.command,
+    description: command.description,
+    cwd: command.cwd,
+    shell: command.shell,
+    shellLabel: command.shell_label,
+    status: command.status,
+    cancelReason: command.cancel_reason,
+    canTerminate: command.can_terminate,
+    exitCode: command.exit_code,
+    durationMs: command.duration_ms ?? command.durationMs,
+    timeoutSeconds: command.timeout_seconds ?? command.timeoutSeconds,
+    timeoutSource: command.timeout_source ?? command.timeoutSource,
+    outputBytes: command.output_bytes ?? command.outputBytes,
+    outputTruncated: command.output_truncated ?? command.outputTruncated,
+    outputLimitExceeded: command.output_limit_exceeded ?? command.outputLimitExceeded,
+    stdout: boundedTextRenderFingerprint(command.stdout),
+    stderr: boundedTextRenderFingerprint(command.stderr),
+    stdoutTail: boundedTextRenderFingerprint(command.stdout_tail),
+    stderrTail: boundedTextRenderFingerprint(command.stderr_tail),
+    combinedTail: boundedTextRenderFingerprint(command.combined_tail),
+    approvalStatus: approval?.status,
+    approvalDecision: approval?.decision,
+    approvalTrustScope: approval?.trust_scope,
+    approvalRejectMessage: approval?.reject_message,
   }));
 }
 

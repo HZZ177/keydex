@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -124,6 +125,7 @@ def test_explorer_agent_assembly_omits_disabled_web_and_new_registry_tools(
         "search_text",
         "grep_files",
         "search_files",
+        "read_tool_result",
     }
 
 
@@ -243,7 +245,8 @@ async def test_ft_role_024_worker_assembled_write_tool_changes_only_temp_workspa
         {"path": "worker-output.txt", "content": "worker result\n"}
     )
 
-    assert '"operation": "add"' in result
+    payload = json.loads(result)
+    assert payload["files"][0]["operation"] == "add"
     assert (tmp_path / "worker-output.txt").read_text(encoding="utf-8") == "worker result\n"
     assert "delegate_subagent" not in {tool.name for tool in factory.tools}
     assert "continue_subagent" not in {tool.name for tool in factory.tools}

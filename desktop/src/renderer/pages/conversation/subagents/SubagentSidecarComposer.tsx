@@ -3,6 +3,8 @@ import { useState, type FormEvent } from "react";
 import type { RuntimeBridge } from "@/runtime";
 import { useOptionalAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
 import { isActiveSubagentRun, type SubagentRunSnapshot } from "@/types/subagents";
+import { ContextWindowIndicator } from "../ConversationComposer";
+import type { ContextWindowUsageStatus } from "../useConversationPanelModel";
 
 import styles from "./SubagentSidecarComposer.module.css";
 
@@ -10,10 +12,14 @@ export function SubagentSidecarComposer({
   runtime,
   run,
   isCurrentRun,
+  contextWindowUsage = null,
+  contextCompressionEnabled = true,
 }: {
   runtime: RuntimeBridge;
   run: SubagentRunSnapshot;
   isCurrentRun: boolean;
+  contextWindowUsage?: ContextWindowUsageStatus | null;
+  contextCompressionEnabled?: boolean;
 }) {
   const agentRuntime = useOptionalAgentSessionRuntime();
   const [value, setValue] = useState("");
@@ -63,7 +69,11 @@ export function SubagentSidecarComposer({
   if (!isCurrentRun) {
     return (
       <div className={styles.readonly} role="status" data-testid="subagent-historical-run-notice">
-        这是历史 Run，可查看完整过程，但不能在此发送引导或停止。
+        <span>这是历史 Run，可查看完整过程，但不能在此发送引导或停止。</span>
+        <ContextWindowIndicator
+          usage={contextWindowUsage}
+          contextCompressionEnabled={contextCompressionEnabled}
+        />
       </div>
     );
   }
@@ -71,7 +81,11 @@ export function SubagentSidecarComposer({
   if (!active) {
     return (
       <div className={styles.readonly} role="status" data-testid="subagent-terminal-run-notice">
-        此 Sub-Agent Run 已结束，仅可查看。只有主 Agent 可以委派新的 Sub-Agent。
+        <span>此 Sub-Agent Run 已结束，仅可查看。只有主 Agent 可以委派新的 Sub-Agent。</span>
+        <ContextWindowIndicator
+          usage={contextWindowUsage}
+          contextCompressionEnabled={contextCompressionEnabled}
+        />
       </div>
     );
   }
@@ -92,6 +106,13 @@ export function SubagentSidecarComposer({
           onChange={(event) => setValue(event.currentTarget.value)}
         />
         <div className={styles.actions}>
+          <span className={styles.contextStatus}>
+            <ContextWindowIndicator
+              usage={contextWindowUsage}
+              contextCompressionEnabled={contextCompressionEnabled}
+              tooltipAlign="start"
+            />
+          </span>
           <button type="button" className={styles.cancel} disabled={Boolean(busy)} onClick={() => void cancel()}>
             {busy === "cancel" ? "正在停止…" : "停止该 Sub-Agent"}
           </button>

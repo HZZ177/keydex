@@ -70,6 +70,24 @@ async def test_load_skill_resource_reads_valid_text_file(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
+async def test_load_skill_resource_over_model_budget_fails_without_partial_content(
+    tmp_path: Path,
+) -> None:
+    skill_dir = _write_skill(tmp_path)
+    resource = skill_dir / "references" / "large-guide.md"
+    resource.parent.mkdir()
+    resource.write_text("资源正文😀\n" * 5000, encoding="utf-8")
+
+    command = await _run_with_snapshot(tmp_path, "references/large-guide.md")
+    payload = _payload(command)
+
+    assert payload["code"] == "skill_content_too_large_for_model"
+    assert payload["loaded"] is False
+    assert "content" not in payload
+    assert "资源正文" not in command.update["messages"][0].content
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("resource_path", ["../secret.md", "..\\secret.md"])
 async def test_t77_load_skill_resource_rejects_parent_escape(
     tmp_path: Path,

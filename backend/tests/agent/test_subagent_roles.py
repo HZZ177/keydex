@@ -174,6 +174,7 @@ def test_explorer_tool_selection_is_exact_allowlist_and_deny_by_default() -> Non
             "search_text",
             "grep_files",
             "search_files",
+            "read_tool_result",
             "web_search",
             "web_fetch",
             "apply_patch",

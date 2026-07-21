@@ -701,7 +701,6 @@ def test_message_event_service_loads_full_deferred_tool_detail(tmp_path) -> None
     detail = service.get_tool_detail(
         session_id="ses_history",
         start_event_id="evt_start",
-        end_event_id="evt_end",
     )
 
     assert detail is not None
@@ -827,6 +826,20 @@ def test_message_event_service_appends_cancelled_marker_after_tool_only_turn(tmp
     assert messages[1]["status"] == "cancelled"
     assert messages[1]["cancelled"] is True
     assert messages[1]["traceId"] == "trace_tool"
+
+    detail = service.get_tool_detail(
+        session_id="ses_history",
+        start_event_id="evt_1",
+    )
+
+    assert detail is not None
+    assert detail["status"] == "cancelled"
+    assert detail["detailRef"]["endEventId"] is None
+    assert detail["uiPayload"] == {
+        "status": "cancelled",
+        "can_terminate": False,
+        "cancel_reason": "turn_cancelled",
+    }
 
 
 def test_message_event_service_restores_message_injection_as_user_context_items(tmp_path) -> None:

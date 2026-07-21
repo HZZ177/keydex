@@ -4,6 +4,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from backend.app.agent.tool_results.specialized import subagent_result_projector
 from backend.app.subagents.models import ContinueSubagentRequest, DelegateSubagentRequest
 from backend.app.tools.base import FunctionTool, ToolExecutionError, ToolHandler
 
@@ -117,6 +118,7 @@ def create_delegate_subagent_tool(handler: ToolHandler) -> FunctionTool:
         description=DELEGATE_SUBAGENT_TOOL_DESCRIPTION,
         parameters=DELEGATE_SUBAGENT_PARAMETERS,
         handler=handler,
+        result_projector=subagent_result_projector,
     )
 
 
@@ -145,4 +147,5 @@ def create_continue_subagent_tool(handler: ToolHandler) -> FunctionTool:
         description=CONTINUE_SUBAGENT_TOOL_DESCRIPTION,
         parameters=CONTINUE_SUBAGENT_PARAMETERS,
         handler=handler,
+        result_projector=subagent_result_projector,
     )

@@ -71,6 +71,104 @@ test("workbench drawer renders the reused Agent conversation panel and message c
   await saveEvidence(page, "was-048-056-062-drawer-components");
 });
 
+test("workbench drawer bounds expanded tool groups and exposes result scrolling", async ({ page }) => {
+  const longToolPath = "backend/app/keydex/builtin_skills/skills/init-keydex/references/very-long-tool-result-contract.md";
+  const longToolResult = Array.from(
+    { length: 80 },
+    (_, index) => `long result line ${index + 1}: ${"bounded-output ".repeat(12)}`,
+  ).join("\n");
+  const toolMessages = Array.from({ length: 3 }, (_, index) => ({
+    id: `bounded-tool-${index}`,
+    sessionId: RICH_SESSION,
+    role: "tool",
+    content: "",
+    timestamp: 1_782_518_400_001 + index,
+    toolName: "read_file",
+    toolParams: { path: `${longToolPath}.${index}` },
+    toolResult: longToolResult,
+    toolDurationMs: 150 + index,
+    status: "completed",
+  }));
+  const backend = createWorkbenchBackend({
+    historyBySession: {
+      [RICH_SESSION]: [
+        {
+          id: "bounded-user",
+          sessionId: RICH_SESSION,
+          role: "user",
+          content: "读取长路径文件",
+          timestamp: 1_782_518_400_000,
+        },
+        ...toolMessages,
+      ],
+    },
+  });
+  await installWebSocketMock(page);
+  await mockWorkbenchBackend(page, backend);
+
+  await page.goto(`${APP_BASE}/#/workbench/${WORKSPACE_A}/session/${RICH_SESSION}`);
+  await openWorkbenchComposer(page);
+  await page.getByRole("button", { name: "将工作台助手展开到右侧" }).click();
+
+  const drawer = page.getByTestId("workbench-assistant-drawer");
+  const group = drawer.getByTestId("message-group-block");
+  await expect(group).toBeVisible();
+  await group.getByRole("button").first().click();
+  await expect(group.locator('[data-motion="open"]')).toBeVisible();
+
+  const toolBlock = drawer.getByTestId("tool-call-block").first();
+  const toolHeader = toolBlock.getByRole("button", { name: "展开工具详情" });
+  await expect(toolHeader).toBeVisible();
+  const rowGeometry = await toolHeader.evaluate((header) => {
+    const titleGroup = header.children.item(1) as HTMLElement | null;
+    const title = titleGroup?.children.item(0) as HTMLElement | null;
+    const meta = titleGroup?.children.item(titleGroup.children.length - 1) as HTMLElement | null;
+    const trailing = header.children.item(2) as HTMLElement | null;
+    const headerRect = header.getBoundingClientRect();
+    const blockRect = header.parentElement?.getBoundingClientRect();
+    return {
+      blockRight: blockRect?.right ?? 0,
+      headerRight: headerRect.right,
+      metaRight: meta?.getBoundingClientRect().right ?? 0,
+      titleClientWidth: title?.clientWidth ?? 0,
+      titleScrollWidth: title?.scrollWidth ?? 0,
+      trailingRight: trailing?.getBoundingClientRect().right ?? 0,
+    };
+  });
+  expect(rowGeometry.titleScrollWidth).toBeGreaterThan(rowGeometry.titleClientWidth);
+  expect(rowGeometry.headerRight).toBeLessThanOrEqual(rowGeometry.blockRight + 1);
+  expect(rowGeometry.metaRight).toBeLessThanOrEqual(rowGeometry.headerRight + 1);
+  expect(rowGeometry.trailingRight).toBeLessThanOrEqual(rowGeometry.headerRight + 1);
+
+  await toolHeader.click();
+  const toolDetails = toolBlock.getByLabel("工具详情", { exact: true });
+  await expect(toolDetails).toBeVisible();
+  const panelGeometry = await toolDetails.evaluate((panel) => {
+    const parentGroup = panel.closest<HTMLElement>("[data-testid='message-group-block']");
+    const panelRect = panel.getBoundingClientRect();
+    const groupRect = parentGroup?.getBoundingClientRect();
+    return {
+      groupRight: groupRect?.right ?? 0,
+      panelRight: panelRect.right,
+      panelWidth: panelRect.width,
+      groupWidth: groupRect?.width ?? 0,
+    };
+  });
+  expect(panelGeometry.panelRight).toBeLessThanOrEqual(panelGeometry.groupRight + 1);
+  expect(panelGeometry.panelWidth).toBeLessThanOrEqual(panelGeometry.groupWidth);
+
+  const resultViewport = toolBlock.getByLabel("工具输出").locator("pre").locator("..");
+  const resultScroll = await resultViewport.evaluate((viewport) => ({
+    clientHeight: viewport.clientHeight,
+    overflowY: getComputedStyle(viewport).overflowY,
+    scrollHeight: viewport.scrollHeight,
+    scrollbarWidth: getComputedStyle(viewport, "::-webkit-scrollbar").width,
+  }));
+  expect(resultScroll.scrollHeight).toBeGreaterThan(resultScroll.clientHeight);
+  expect(resultScroll.overflowY).toBe("auto");
+  expect(resultScroll.scrollbarWidth).toBe("9px");
+});
+
 test("workbench drawer plan card escapes clipping, stays open and separates long items", async ({ page }) => {
   const backend = createWorkbenchBackend();
   await installWebSocketMock(page);

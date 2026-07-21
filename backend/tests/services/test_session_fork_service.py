@@ -262,6 +262,52 @@ def test_session_fork_service_allows_multiple_forks_from_same_message(tmp_path) 
     )
 
 
+def test_session_fork_copies_artifact_grants_without_copying_artifact(tmp_path) -> None:
+    repositories, saver = _prepare_source(tmp_path)
+    artifact = repositories.tool_result_artifacts.create_or_get(
+        artifact_id="tra_source",
+        owner_user_id="local-user",
+        source_session_id="ses_source",
+        tool_call_id="call-source",
+        tool_name="search_text",
+        storage_kind="managed_json",
+        relative_path="tool-results/context/tra_source.json",
+        content_type="application/json",
+        content_sha256="a" * 64,
+        content_bytes=123,
+        approximate_tokens=31,
+    )
+    repositories.tool_result_artifacts.grant(
+        artifact_id=artifact.id,
+        session_id="ses_source",
+    )
+
+    forked = SessionForkService(repositories, checkpointer=saver).fork_session(
+        session_id="ses_source",
+        user_id="local-user",
+        message_event_id="evt_ai_1",
+    ).session
+
+    assert repositories.tool_result_artifacts.has_grant(
+        artifact_id=artifact.id,
+        session_id=forked.id,
+    )
+    assert repositories.tool_result_artifacts.get(artifact.id) == artifact
+
+
+def test_session_fork_rejects_cross_user_artifact_grant_inheritance(tmp_path) -> None:
+    repositories, saver = _prepare_source(tmp_path)
+
+    with pytest.raises(SessionForkServiceError) as captured:
+        SessionForkService(repositories, checkpointer=saver).fork_session(
+            session_id="ses_source",
+            user_id="different-user",
+            message_event_id="evt_ai_1",
+        )
+
+    assert captured.value.code == "session_fork_user_mismatch"
+
+
 def test_session_fork_service_uses_latest_completed_checkpoint_by_default(tmp_path) -> None:
     repositories, saver = _prepare_source(tmp_path)
     with repositories.db.transaction() as conn:

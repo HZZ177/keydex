@@ -115,6 +115,7 @@ describe("conversation message density CSS contract", () => {
     const toolCallCss = readCss("../src/renderer/pages/conversation/messages/ToolCallBlock.module.css");
 
     expect(cssRule(toolCallCss, ".header")).toContain("width: fit-content");
+    expect(cssRule(toolCallCss, ".header")).toContain("min-width: 0");
     expect(cssRule(toolCallCss, ".header")).toContain(
       "max-width: var(--message-inline-tool-detail-width, min(760px, 100%))",
     );
@@ -128,6 +129,29 @@ describe("conversation message density CSS contract", () => {
     expect(cssRule(toolCallCss, ".fileTargetLabel")).toContain("overflow: hidden");
     expect(cssRule(toolCallCss, ".fileTargetLabel")).toContain("text-overflow: ellipsis");
     expect(cssRule(toolCallCss, ".fileTargetLabel")).toContain("white-space: nowrap");
+  });
+
+  it("keeps expanded tool groups inside the message column", () => {
+    const groupCss = readCss("../src/renderer/pages/conversation/messages/MessageGroupBlock.module.css");
+
+    expect(cssRule(groupCss, ".block")).toContain("width: 100%");
+    expect(cssRule(groupCss, ".block")).toContain("min-width: 0");
+    expect(cssRule(groupCss, ".children")).toContain("width: calc(100% - 10px)");
+    expect(cssRule(groupCss, ".children")).toContain("min-width: 0");
+    expect(cssRule(groupCss, ".childrenInner")).toContain("min-width: 0");
+  });
+
+  it("keeps tool and command result scrollbars visible", () => {
+    const toolCallCss = readCss("../src/renderer/pages/conversation/messages/ToolCallBlock.module.css");
+    const commandCss = readCss("../src/renderer/pages/conversation/messages/CommandExecutionBlock.module.css");
+
+    [toolCallCss, commandCss].forEach((css) => {
+      expect(cssRule(css, ".codeViewport")).toContain("overflow-y: auto");
+      expect(cssRule(css, ".codeViewport")).toContain("scrollbar-width: thin");
+      expect(cssRule(css, ".codeViewport::-webkit-scrollbar")).toContain("width: 9px");
+      expect(cssRule(css, ".codeViewport::-webkit-scrollbar")).toContain("height: 9px");
+      expect(cssRule(css, ".codeViewport::-webkit-scrollbar-thumb")).toContain("background-clip: padding-box");
+    });
   });
 });
 

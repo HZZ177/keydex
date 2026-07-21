@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import re
 import sys
@@ -22,6 +23,9 @@ from backend.app.agent.compact_runtime_attachments import (
 from backend.app.agent.context_compression_utils import (
     is_context_compression_summary_message,
 )
+from backend.app.agent.tool_result_context_editing import (
+    TOOL_RESULT_TOMBSTONE_METADATA_KEY,
+)
 from backend.app.core.config import AppSettings
 from backend.app.core.time import to_iso_z, utc_now
 from backend.app.main import create_app
@@ -41,6 +45,7 @@ _COMPRESSION_SCENARIO_MARKERS = (
     "KeydexGoalCompactE2E",
     "KeydexSoftOverflowE2E",
     "KeydexMandatoryOverflowE2E",
+    "KeydexToolContextGovernanceE2E",
 )
 
 
@@ -87,6 +92,9 @@ def _keydex_e2e_transport(
                 "stream": payload.get("stream") is not False,
                 "user_message_count": _role_message_count(payload, "user"),
                 "compact_summary_count": _compact_summary_count(payload),
+                "max_tool_message_bytes": _max_tool_message_bytes(payload),
+                "tool_tombstone_count": _tool_tombstone_count(payload),
+                "last_tool_message_sha256": _last_tool_message_sha256(payload),
             }
             observations.append(observation)
         if payload.get("stream") is False:
@@ -147,6 +155,22 @@ def _keydex_e2e_transport(
                     },
                 },
             )
+        if "KeydexReadArtifactE2E" in user_message:
+            artifact_id = user_message.split("KeydexReadArtifactE2E", 1)[1].strip().split()[0]
+            if not _has_tool_message(payload):
+                return _stream_tool_call_response(
+                    payload,
+                    name="read_tool_result",
+                    args={"artifact_id": artifact_id, "max_bytes": 16_384},
+                    call_id="call_e2e_read_tool_result",
+                    delay_ms=delay_ms,
+                )
+            return _stream_response(
+                payload,
+                "KeydexReadArtifactE2E restored=true "
+                f"artifact_id={artifact_id} tool_bytes={_last_tool_message_bytes(payload)}",
+                delay_ms,
+            )
         if "KeydexLongCompactE2E" in scenario_markers:
             counts = scenario_counts if scenario_counts is not None else {}
             long_stream_key = "KeydexLongCompactE2E:stream"
@@ -162,6 +186,25 @@ def _keydex_e2e_transport(
             return _stream_response(
                 payload,
                 "KeydexLongCompactE2E completed after two automatic compactions",
+                delay_ms,
+            )
+        if "KeydexToolContextGovernanceE2E" in scenario_markers:
+            completed_reads = _tool_name_count(payload, "read_file")
+            if completed_reads < 35:
+                return _stream_tool_call_response(
+                    payload,
+                    name="read_file",
+                    args={
+                        "path": "CONTEXT_GOVERNANCE.txt",
+                        "start_line": completed_reads * 80 + 1,
+                        "max_lines": 80,
+                    },
+                    call_id=f"call_e2e_context_governance_{completed_reads + 1}",
+                    delay_ms=delay_ms,
+                )
+            return _stream_response(
+                payload,
+                "KeydexToolContextGovernanceE2E completed 35 bounded tool calls",
                 delay_ms,
             )
         if "KeydexGoalCompactE2E" in scenario_markers:
@@ -487,6 +530,41 @@ def _tool_message_count(payload: dict[str, Any]) -> int:
     )
 
 
+def _tool_message_contents(payload: dict[str, Any]) -> list[str]:
+    messages = payload.get("messages")
+    if not isinstance(messages, list):
+        return []
+    return [
+        str(message.get("content") or "")
+        for message in messages
+        if isinstance(message, dict) and message.get("role") == "tool"
+    ]
+
+
+def _max_tool_message_bytes(payload: dict[str, Any]) -> int:
+    return max(
+        (len(content.encode("utf-8")) for content in _tool_message_contents(payload)),
+        default=0,
+    )
+
+
+def _last_tool_message_bytes(payload: dict[str, Any]) -> int:
+    contents = _tool_message_contents(payload)
+    return len(contents[-1].encode("utf-8")) if contents else 0
+
+
+def _last_tool_message_sha256(payload: dict[str, Any]) -> str:
+    contents = _tool_message_contents(payload)
+    return hashlib.sha256(contents[-1].encode("utf-8")).hexdigest() if contents else ""
+
+
+def _tool_tombstone_count(payload: dict[str, Any]) -> int:
+    return sum(
+        "[Earlier tool result cleared]" in content
+        for content in _tool_message_contents(payload)
+    )
+
+
 def _tool_name_count(payload: dict[str, Any], name: str) -> int:
     messages = payload.get("messages")
     if not isinstance(messages, list):
@@ -702,6 +780,24 @@ def main() -> None:
                         str(dialogue_metadata.get("kind") or "")
                         if isinstance(dialogue_metadata, dict)
                         else ""
+                    ),
+                    "content_bytes": len(
+                        str(getattr(message, "content", "") or "").encode("utf-8")
+                    ),
+                    "tool_call_id": str(getattr(message, "tool_call_id", "") or ""),
+                    "tombstone": bool(
+                        getattr(message, "additional_kwargs", {}).get(
+                            TOOL_RESULT_TOMBSTONE_METADATA_KEY
+                        )
+                    ),
+                    "artifact_id": str(
+                        (
+                            getattr(message, "additional_kwargs", {}).get(
+                                TOOL_RESULT_TOMBSTONE_METADATA_KEY
+                            )
+                            or {}
+                        ).get("artifact_id")
+                        or ""
                     ),
                 }
             )

@@ -155,6 +155,7 @@ async def test_command_waits_for_approval_before_execution(tmp_path, monkeypatch
 
     approval = await _wait_for_pending(repositories)
     assert approval.tool_name == "run_cmd"
+    assert approval.details["command_id"]
     assert approval.details["shell_path"].endswith("cmd.exe")
     assert approval.details["timeout_seconds"] == 300
     assert approval.details["timeout_source"] == "default"

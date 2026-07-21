@@ -97,6 +97,13 @@ class SessionForkService:
         turn_index: int | None = None,
     ) -> SessionForkResult:
         source_session = self._require_session(session_id)
+        target_user_id = user_id or source_session.user_id
+        if target_user_id != source_session.user_id:
+            raise SessionForkServiceError(
+                "session_fork_user_mismatch",
+                "不能将会话及其工具结果授权到其他用户",
+                {"session_id": source_session.id},
+            )
         checkpoint_only = self._is_checkpoint_only_fork(session_tag)
         try:
             source = (
@@ -126,7 +133,7 @@ class SessionForkService:
             )
             target = self.repositories.sessions.create(
                 session_id=target_session_id,
-                user_id=user_id or source_session.user_id,
+                user_id=target_user_id,
                 scene_id=source_session.scene_id,
                 title=self._fork_title(source_session, title),
                 status="active",
@@ -141,6 +148,11 @@ class SessionForkService:
                 current_model=source_session.current_model,
                 context_compression_epoch=source_session.context_compression_epoch,
                 title_source="manual",
+            )
+            self.repositories.tool_result_artifacts.copy_grants(
+                source_session_id=source_session.id,
+                target_session_id=target.id,
+                owner_user_id=target_user_id,
             )
             if checkpoint_only:
                 logger.info(

@@ -11,6 +11,7 @@ from backend.app.agent.tool_call_progress import (
     count_text_lines,
     finalize_file_change,
 )
+from backend.app.agent.tool_results.specialized import mutation_result_projector
 from backend.app.core.logger import logger
 from backend.app.tools.base import FunctionTool, ToolExecutionContext, ToolExecutionError
 from backend.app.tools.file_access import relative_tool_path, resolve_file_access_path
@@ -116,6 +117,7 @@ def create_patch_tools() -> list[FunctionTool]:
                 "required": ["patch"],
             },
             handler=apply_patch_tool,
+            result_projector=mutation_result_projector,
         )
     ]
 

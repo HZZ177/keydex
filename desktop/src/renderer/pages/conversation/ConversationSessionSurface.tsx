@@ -965,6 +965,8 @@ export function ConversationSessionSurface({
         runtime={runtime}
         run={selectedSubagentRun}
         isCurrentRun={isCurrentSubagentRun}
+        contextWindowUsage={panelModel.contextWindowUsage}
+        contextCompressionEnabled={contextCompressionEnabled}
       />
     )
   ) : composer;

@@ -745,18 +745,25 @@ export function useConversationPanelModel({
             return;
           }
           reverseExecuteInFlightRef.current = false;
-          setReverseState((current) =>
-            current?.sessionId === sessionId
-              ? {
-                  ...current,
-                  phase: "result",
-                  executing: false,
-                  result,
-                  error: null,
-                  errorCode: result.error_code ?? null,
-                }
-              : current,
-          );
+          const dismissResultDialog =
+            result.status === "full" &&
+            (result.mode === "conversation" || result.decision === "conversation_only");
+          setReverseState((current) => {
+            if (current?.sessionId !== sessionId) {
+              return current;
+            }
+            if (dismissResultDialog) {
+              return null;
+            }
+            return {
+              ...current,
+              phase: "result",
+              executing: false,
+              result,
+              error: null,
+              errorCode: result.error_code ?? null,
+            };
+          });
           if (result.conversation_rewound) {
             try {
               await controller.reloadHistory();

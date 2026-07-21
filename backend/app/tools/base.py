@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import re
 import time
@@ -13,6 +14,7 @@ from backend.app.core.logger import logger, redact_sensitive
 from backend.app.model import ToolSpec
 
 if TYPE_CHECKING:
+    from backend.app.agent.tool_results.models import ToolResultProjector
     from backend.app.services.file_history_service import FileHistoryService
 
 _TOOL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -256,6 +258,7 @@ class FunctionTool:
     parameters: dict[str, Any]
     handler: ToolHandler
     enabled: bool = True
+    result_projector: ToolResultProjector | None = None
 
     def __post_init__(self) -> None:
         validate_tool_name(self.name)
@@ -294,7 +297,16 @@ class FunctionTool:
                     details={"tool": self.name},
                 )
             )
+        reservation = None
+        guard = context.metadata.get("exploration_guard")
         try:
+            if guard is not None:
+                reservation = await guard.before_tool(
+                    tool_name=self.name,
+                    args=dict(args),
+                    call_id=context.tool_call_id or "",
+                    context=context,
+                )
             value = self.handler(args, context)
             if inspect.isawaitable(value):
                 value = await value
@@ -304,8 +316,34 @@ class FunctionTool:
                 f"turn_index={context.turn_index} | trace_id={context.trace_id or '-'} | "
                 f"duration_ms={duration_ms} | result_type={type(value).__name__}"
             )
-            return ToolExecutionResult.success(value)
+            governance = None
+            if guard is not None:
+                governance = await guard.after_tool(
+                    reservation,
+                    tool_name=self.name,
+                    args=dict(args),
+                    result=value,
+                )
+            return ToolExecutionResult.success(
+                value,
+                metadata=(
+                    {"_keydex_internal_governance": governance}
+                    if governance is not None
+                    else None
+                ),
+            )
+        except asyncio.CancelledError:
+            if guard is not None and reservation is not None:
+                await guard.cancel_tool(reservation)
+            raise
         except ToolExecutionError as exc:
+            if guard is not None and reservation is not None:
+                await guard.after_tool(
+                    reservation,
+                    tool_name=self.name,
+                    args=dict(args),
+                    result=None,
+                )
             duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
             logger.warning(
                 f"[Tool] 执行失败 | tool={self.name} | session_id={context.session_id} | "
@@ -314,6 +352,13 @@ class FunctionTool:
             )
             return ToolExecutionResult.failed(exc)
         except Exception as exc:
+            if guard is not None and reservation is not None:
+                await guard.after_tool(
+                    reservation,
+                    tool_name=self.name,
+                    args=dict(args),
+                    result=None,
+                )
             duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
             error_message = str(exc).strip() or type(exc).__name__
             logger.opt(exception=True).error(

@@ -3179,6 +3179,10 @@ function applyApprovalStateToCommandMessage(
     ...existingUiPayload,
     approval: commandApprovalPayload(approval),
   };
+  const commandId = stringValue(approval.details.command_id ?? approval.details.commandId);
+  if (commandId) {
+    nextUiPayload.command_id = commandId;
+  }
   const timeoutSeconds = approval.details.timeout_seconds ?? approval.details.timeoutSeconds;
   const timeoutSource = approval.details.timeout_source ?? approval.details.timeoutSource;
   if (timeoutSeconds !== undefined) {
@@ -3187,8 +3191,14 @@ function applyApprovalStateToCommandMessage(
   if (timeoutSource !== undefined) {
     nextUiPayload.timeout_source = timeoutSource;
   }
-  if (!shouldPreserveTerminalCommandUiStatus(existingUiPayload, commandStatus)) {
+  const preserveTerminalStatus = shouldPreserveTerminalCommandUiStatus(existingUiPayload, commandStatus);
+  if (!preserveTerminalStatus) {
     nextUiPayload.status = commandStatus;
+  }
+  if (commandStatus === "running" && !preserveTerminalStatus) {
+    nextUiPayload.can_terminate = true;
+  } else if (commandStatus === "approval_pending" || commandStatus === "rejected") {
+    nextUiPayload.can_terminate = false;
   }
   const params = commandParamsFromApproval(approval);
   if (params && !target.toolParams) {

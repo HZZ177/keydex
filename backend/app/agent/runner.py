@@ -11,6 +11,10 @@ from backend.app.a2ui.prompt import build_a2ui_prompt_section
 from backend.app.a2ui.registry import build_builtin_a2ui_registry
 from backend.app.a2ui.runtime import A2UIRuntime
 from backend.app.a2ui.tools import a2ui_registry_to_langchain_tools
+from backend.app.agent.exploration_guard import (
+    ExplorationGuard,
+    should_enable_exploration_guard,
+)
 from backend.app.agent.factory import AgentFactory, agent_factory
 from backend.app.agent.langchain_tools import tools_to_langchain_tools
 from backend.app.agent.middleware.builder import build_default_middleware
@@ -335,6 +339,16 @@ class AgentRunner:
             f"file_edit_tool_style={runtime_settings.file_edit_tool_style} | "
             f"workspace_root={tool_context.workspace_root}"
         )
+        tool_names = {str(getattr(tool, "name", "") or "") for tool in tools}
+        exploration_guard = ExplorationGuard(
+            workspace_root=tool_context.workspace_root,
+            enabled=should_enable_exploration_guard(
+                has_role_preset=role_preset is not None,
+                agent_kind=str(tool_context.metadata.get("agent_kind") or "main"),
+                tool_names=tool_names,
+            ),
+        )
+        tool_context.metadata["exploration_guard"] = exploration_guard
         return self.factory.create_agent(
             model=llm,
             tools=tools,
@@ -347,6 +361,8 @@ class AgentRunner:
                 checkpointer=self.checkpointer,
                 model_http_transport=model_http_transport,
                 factory=self.factory,
+                data_dir=tool_context.metadata.get("data_dir"),
+                exploration_guard=exploration_guard,
             ),
             state_schema=KeydexAgentState,
             name="desktop_agent",

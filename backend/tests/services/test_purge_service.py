@@ -74,11 +74,69 @@ def _record_attachment(
     )
 
 
+def _record_tool_result_artifact(
+    repositories,
+    data_dir: Path,
+    *,
+    artifact_id: str,
+    source_session_id: str,
+    granted_session_ids: tuple[str, ...],
+) -> Path:
+    path = data_dir / "tool-results" / "context" / f"{artifact_id}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = f'{{"artifact":"{artifact_id}"}}'.encode()
+    path.write_bytes(payload)
+    record = repositories.tool_result_artifacts.create_or_get(
+        artifact_id=artifact_id,
+        owner_user_id="local-user",
+        source_session_id=source_session_id,
+        tool_call_id=f"call-{artifact_id}",
+        tool_name="search_text",
+        storage_kind="managed_json",
+        relative_path=path.relative_to(data_dir).as_posix(),
+        content_type="application/json",
+        content_sha256=hashlib.sha256(payload).hexdigest(),
+        content_bytes=len(payload),
+        approximate_tokens=8,
+    )
+    for session_id in granted_session_ids:
+        repositories.tool_result_artifacts.grant(
+            artifact_id=record.id,
+            session_id=session_id,
+        )
+    return path
+
+
 def _insert_all_session_relation_rows(conn, *, session_id: str, prefix: str) -> None:
     """Insert one valid row in every table owned by a session purge."""
 
     now = "2026-07-14T00:00:00Z"
     server_id = "mcp-purge-inventory"
+    conn.execute(
+        """
+        insert into tool_result_artifacts (
+          id, owner_user_id, source_session_id, tool_call_id, tool_name,
+          storage_kind, relative_path, content_type, content_sha256,
+          content_bytes, approximate_tokens, is_complete, status, created_at
+        ) values (?, 'local-user', ?, ?, 'search_text', 'managed_json', ?,
+                  'application/json', ?, 0, 0, 1, 'active', ?)
+        """,
+        (
+            f"artifact-{prefix}",
+            session_id,
+            f"artifact-call-{prefix}",
+            f"tool-results/context/artifact-{prefix}.json",
+            prefix.ljust(64, "0")[:64],
+            now,
+        ),
+    )
+    conn.execute(
+        """
+        insert into tool_result_artifact_grants (artifact_id, session_id, created_at)
+        values (?, ?, ?)
+        """,
+        (f"artifact-{prefix}", session_id, now),
+    )
     conn.execute(
         """
         insert or ignore into mcp_servers (
@@ -580,9 +638,19 @@ def test_session_purge_removes_secondary_active_session_and_trace_relations(tmp_
         )
         conn.execute(
             """
+            insert into file_history_snapshot_scopes (
+              snapshot_id, scope_kind, scope_identity, scope_root, scope_label
+            ) values ('snapshot-secondary', 'workspace', 'secondary',
+                      'D:/secondary', 'secondary')
+            """
+        )
+        conn.execute(
+            """
             insert into file_history_snapshot_entries (
-              snapshot_id, canonical_path, display_path, state, version, backup_time
-            ) values ('snapshot-secondary', '/secondary.txt', '/secondary.txt',
+              snapshot_id, scope_kind, scope_identity, scope_root, scope_label,
+              canonical_path, display_path, state, version, backup_time
+            ) values ('snapshot-secondary', 'workspace', 'secondary',
+                      'D:/secondary', 'secondary', '/secondary.txt', '/secondary.txt',
                       'missing', 1, ?)
             """,
             (now,),
@@ -590,10 +658,12 @@ def test_session_purge_removes_secondary_active_session_and_trace_relations(tmp_
         conn.execute(
             """
             insert into file_history_mutations (
-              id, session_id, active_session_id, workspace_identity, canonical_path,
-              display_path, mutation_kind, before_state, after_state, status,
+              id, session_id, active_session_id, workspace_identity,
+              scope_kind, scope_identity, scope_root, scope_label,
+              canonical_path, display_path, mutation_kind, before_state, after_state, status,
               created_at, updated_at
-            ) values ('mutation-secondary', ?, ?, 'secondary', '/mutation.txt',
+            ) values ('mutation-secondary', ?, ?, 'secondary', 'workspace',
+                      'secondary', 'D:/secondary', 'secondary', '/mutation.txt',
                       '/mutation.txt', 'update', 'missing', 'missing', 'committed', ?, ?)
             """,
             (neighbor.id, target.id, now, now),
@@ -611,9 +681,11 @@ def test_session_purge_removes_secondary_active_session_and_trace_relations(tmp_
         conn.execute(
             """
             insert into file_history_operation_files (
-              operation_id, canonical_path, display_path, preview_current_state,
-              target_state, classification, writer_session_id, updated_at
-            ) values ('operation-secondary', '/operation.txt', '/operation.txt',
+              operation_id, scope_kind, scope_identity, scope_root, scope_label,
+              canonical_path, display_path, preview_current_state, target_state,
+              classification, writer_session_id, updated_at
+            ) values ('operation-secondary', 'workspace', 'secondary',
+                      'D:/secondary', 'secondary', '/operation.txt', '/operation.txt',
                       'missing', 'missing', 'ready', ?, ?)
             """,
             (target.id, now),
@@ -1097,6 +1169,63 @@ def test_quarantine_can_rollback_and_finalize_exact_operation_directory(tmp_path
     assert not (data_dir / "lifecycle-quarantine" / token).exists()
 
 
+def test_purge_keeps_artifact_file_while_another_session_has_grant(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    source = _session(repositories, "ses-artifact-source")
+    target = _session(repositories, "ses-artifact-target")
+    _archive_session(repositories, source.id)
+    data_dir = tmp_path / "data"
+    artifact_path = _record_tool_result_artifact(
+        repositories,
+        data_dir,
+        artifact_id="tra-shared",
+        source_session_id=source.id,
+        granted_session_ids=(source.id, target.id),
+    )
+
+    result = PurgeService(repositories, data_dir=data_dir).purge_session(
+        source.id,
+        request_id="req-shared-artifact",
+        confirmed=True,
+    )
+
+    assert result["counts"]["tool_result_artifact_grants"] == 1
+    assert result["counts"]["tool_result_artifacts"] == 0
+    assert artifact_path.is_file()
+    assert repositories.tool_result_artifacts.has_grant(
+        artifact_id="tra-shared",
+        session_id=target.id,
+    )
+
+
+def test_purge_quarantines_and_deletes_last_grant_artifact(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    source = _session(repositories, "ses-artifact-last")
+    _archive_session(repositories, source.id)
+    data_dir = tmp_path / "data"
+    artifact_path = _record_tool_result_artifact(
+        repositories,
+        data_dir,
+        artifact_id="tra-last",
+        source_session_id=source.id,
+        granted_session_ids=(source.id,),
+    )
+
+    plan = PurgePlanner(repositories, data_dir=data_dir).plan_session(source.id)
+    assert plan.artifact_ids == ("tra-last",)
+    assert artifact_path in {asset.path for asset in plan.assets}
+
+    result = PurgeService(repositories, data_dir=data_dir).purge_session(
+        source.id,
+        request_id="req-last-artifact",
+        confirmed=True,
+    )
+
+    assert result["counts"]["tool_result_artifacts"] == 1
+    assert repositories.tool_result_artifacts.get("tra-last") is None
+    assert not artifact_path.exists()
+
+
 def test_purge_service_success_preserves_external_file_and_replays_anonymous_audit(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     data_dir = tmp_path / "data"
@@ -1159,6 +1288,13 @@ def test_purge_database_failure_rolls_back_quarantine_and_keeps_archived_object(
         session_id=session.id,
         path=managed,
     )
+    artifact_path = _record_tool_result_artifact(
+        repositories,
+        data_dir,
+        artifact_id="tra-db-failure",
+        source_session_id=session.id,
+        granted_session_ids=(session.id,),
+    )
 
     def fail_database(phase: str) -> None:
         if phase == "database":
@@ -1175,6 +1311,12 @@ def test_purge_database_failure_rolls_back_quarantine_and_keeps_archived_object(
 
     assert repositories.sessions.get_archived(session.id) is not None
     assert managed.read_bytes() == b"managed"
+    assert artifact_path.is_file()
+    assert repositories.tool_result_artifacts.get("tra-db-failure") is not None
+    assert repositories.tool_result_artifacts.has_grant(
+        artifact_id="tra-db-failure",
+        session_id=session.id,
+    )
     operation = repositories.lifecycle_operations.get_by_request(
         entity_type="session",
         entity_id=session.id,

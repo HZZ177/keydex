@@ -67,12 +67,37 @@ class MessageEventService:
         )
         if start_event is None and end_event is None:
             return None
+        cancelled_event = None
+        if start_event is not None and end_event is None:
+            end_event, cancelled_event = self._resolve_tool_terminal_event(start_event)
         if start_event is not None and end_event is not None:
             start_data = self._visible_data(start_event)
             end_data = self._visible_data(end_event)
             if not _same_tool_call(start_data, end_data):
                 return None
-        return self._tool_detail_from_events(start_event, end_event)
+        return self._tool_detail_from_events(
+            start_event,
+            end_event,
+            cancelled_event=cancelled_event,
+        )
+
+    def _resolve_tool_terminal_event(
+        self,
+        start_event: MessageEventRecord,
+    ) -> tuple[MessageEventRecord | None, MessageEventRecord | None]:
+        start_data = self._visible_data(start_event)
+        cancelled_event = None
+        for event in self._repository.list_by_turn(start_event.session_id, start_event.turn_index):
+            if event.seq <= start_event.seq:
+                continue
+            action = self._canonical_action(event)
+            if action == ReplayAction.TOOL_END.value:
+                if _same_tool_call(start_data, self._visible_data(event)):
+                    return event, None
+                continue
+            if action == ReplayAction.CANCELLED.value and cancelled_event is None:
+                cancelled_event = event
+        return None, cancelled_event
 
     def _aggregate_events(
         self,
@@ -1421,11 +1446,23 @@ class MessageEventService:
     def _tool_detail_from_events(
         start_event: MessageEventRecord | None,
         end_event: MessageEventRecord | None,
+        *,
+        cancelled_event: MessageEventRecord | None = None,
     ) -> dict[str, Any]:
         start_data = MessageEventService._visible_data(start_event) if start_event else {}
         end_data = MessageEventService._visible_data(end_event) if end_event else {}
+        cancelled_data = (
+            MessageEventService._visible_data(cancelled_event) if cancelled_event else {}
+        )
         data = {**start_data, **end_data}
         ui_payload = MessageEventService._tool_ui_payload(end_data)
+        if cancelled_event is not None and end_event is None:
+            ui_payload = {
+                **(MessageEventService._tool_ui_payload(start_data) or {}),
+                "status": "cancelled",
+                "can_terminate": False,
+                "cancel_reason": cancelled_data.get("reason") or "turn_cancelled",
+            }
         tool_name = str(data.get("tool") or data.get("tool_name") or "")
         if tool_name in {"web_search", "web_fetch"}:
             ui_payload = MessageEventService._tool_web_activity_summary(ui_payload)
@@ -1438,7 +1475,11 @@ class MessageEventService:
             "runId": data.get("run_id"),
             "toolCallId": data.get("tool_call_id"),
         }
-        status = end_data.get("status") or start_data.get("status") or "completed"
+        status = (
+            "cancelled"
+            if cancelled_event is not None and end_event is None
+            else end_data.get("status") or start_data.get("status") or "completed"
+        )
         if not end_event and status == "completed":
             status = "running"
         detail: dict[str, Any] = {

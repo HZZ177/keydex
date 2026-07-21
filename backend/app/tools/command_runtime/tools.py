@@ -7,6 +7,7 @@ from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 
+from backend.app.agent.tool_results.specialized import command_result_projector
 from backend.app.command_approval import (
     ApprovalService,
     find_trusted_command_rule,
@@ -46,6 +47,7 @@ def create_command_tools(settings: CommandSettings) -> list[FunctionTool]:
             description=command_tool_description(runtime),
             parameters=command_tool_schema(),
             handler=run_configured_command_tool,
+            result_projector=command_result_projector,
         )
     ]
 
@@ -249,6 +251,7 @@ async def _approval_before_spawn(
     if not settings.require_approval_for_untrusted or repositories is None:
         return dict(DEFAULT_APPROVAL)
     request_details = {
+        "command_id": request.command_id,
         "tool": runtime.tool_name,
         "shell": runtime.shell,
         "shell_label": runtime.shell_label,
@@ -305,10 +308,12 @@ async def _emit_progress_until_done(
         return
     started_at = time.perf_counter()
     interval = settings.progress_interval_ms / 1000
-    while True:
-        await asyncio.sleep(interval)
-        snapshot = output_store.snapshot()
+    active = command_process_manager.get(request.command_id)
+    while active is None:
+        await asyncio.sleep(min(interval, 0.01))
         active = command_process_manager.get(request.command_id)
+    while True:
+        snapshot = output_store.snapshot()
         cancel_reason = active.cancel_reason if active is not None else None
         terminating = active is not None and active.cancel_event.is_set()
         status = "terminating" if terminating else "running" if active is not None else "completed"
@@ -348,6 +353,8 @@ async def _emit_progress_until_done(
             run_id=request.run_id,
             turn_index=context.turn_index,
         )
+        await asyncio.sleep(interval)
+        active = command_process_manager.get(request.command_id)
 
 
 async def _emit_final_progress(result: CommandRunResult, context: ToolExecutionContext) -> None:

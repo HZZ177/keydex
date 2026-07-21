@@ -1,6 +1,9 @@
 .block {
   display: grid;
+  width: 100%;
+  min-width: 0;
   gap: 5px;
+  box-sizing: border-box;
   max-width: 100%;
   color: var(--color-text-primary);
 }
@@ -123,7 +126,9 @@
 
 .children {
   display: grid;
-  max-width: 100%;
+  width: calc(100% - 10px);
+  min-width: 0;
+  max-width: calc(100% - 10px);
   box-sizing: border-box;
   margin-left: 10px;
   overflow: hidden;
@@ -151,6 +156,7 @@
 .childrenInner {
   display: grid;
   min-height: 0;
+  min-width: 0;
   gap: 7px;
   padding: 2px 0 2px 4px;
   overflow: hidden;

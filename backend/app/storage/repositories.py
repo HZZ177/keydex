@@ -719,6 +719,26 @@ class CompressionStagingRecord:
 
 
 @dataclass(frozen=True)
+class ToolResultArtifactRecord:
+    id: str
+    owner_user_id: str
+    source_session_id: str | None
+    tool_call_id: str
+    tool_name: str
+    storage_kind: str
+    relative_path: str
+    content_type: str
+    content_sha256: str
+    content_bytes: int
+    approximate_tokens: int
+    is_complete: bool
+    status: str
+    created_at: str
+    last_accessed_at: str | None = None
+    deleted_at: str | None = None
+
+
+@dataclass(frozen=True)
 class TraceRecord:
     trace_id: str
     session_id: str
@@ -8825,6 +8845,290 @@ def _max_iso_time(left: str | None, right: str | None) -> str | None:
     return max(left, right)
 
 
+class ToolResultArtifactsRepository:
+    VALID_STORAGE_KINDS = {"managed_json", "managed_text", "command_log"}
+    VALID_STATUSES = {"active", "quarantined", "deleted"}
+
+    def __init__(self, db: Database) -> None:
+        self.db = db
+
+    def create_or_get(
+        self,
+        *,
+        artifact_id: str,
+        owner_user_id: str,
+        source_session_id: str | None,
+        tool_call_id: str,
+        tool_name: str,
+        storage_kind: str,
+        relative_path: str,
+        content_type: str,
+        content_sha256: str,
+        content_bytes: int,
+        approximate_tokens: int,
+        is_complete: bool = True,
+        connection: sqlite3.Connection | None = None,
+    ) -> ToolResultArtifactRecord:
+        if storage_kind not in self.VALID_STORAGE_KINDS:
+            raise ValueError(f"unsupported tool result storage kind: {storage_kind}")
+        if content_bytes < 0 or approximate_tokens < 0:
+            raise ValueError("tool result artifact sizes must be non-negative")
+        now = to_iso_z(utc_now())
+        transaction = nullcontext(connection) if connection is not None else self.db.transaction()
+        with transaction as conn:
+            existing = conn.execute(
+                """
+                select * from tool_result_artifacts
+                where source_session_id is ? and tool_call_id = ? and content_sha256 = ?
+                """,
+                (source_session_id, tool_call_id, content_sha256),
+            ).fetchone()
+            if existing is None:
+                conn.execute(
+                    """
+                    insert into tool_result_artifacts (
+                      id, owner_user_id, source_session_id, tool_call_id, tool_name,
+                      storage_kind, relative_path, content_type, content_sha256,
+                      content_bytes, approximate_tokens, is_complete, status, created_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+                    """,
+                    (
+                        artifact_id,
+                        owner_user_id,
+                        source_session_id,
+                        tool_call_id,
+                        tool_name,
+                        storage_kind,
+                        relative_path,
+                        content_type,
+                        content_sha256,
+                        content_bytes,
+                        approximate_tokens,
+                        int(is_complete),
+                        now,
+                    ),
+                )
+                existing = conn.execute(
+                    "select * from tool_result_artifacts where id = ?",
+                    (artifact_id,),
+                ).fetchone()
+        if existing is None:
+            raise RuntimeError("tool result artifact row was not created")
+        return _tool_result_artifact_from_row(existing)
+
+    def get(self, artifact_id: str) -> ToolResultArtifactRecord | None:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                "select * from tool_result_artifacts where id = ?",
+                (artifact_id,),
+            ).fetchone()
+        return _tool_result_artifact_from_row(row) if row is not None else None
+
+    def find_by_source(
+        self,
+        *,
+        source_session_id: str | None,
+        tool_call_id: str,
+        content_sha256: str,
+    ) -> ToolResultArtifactRecord | None:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                """
+                select * from tool_result_artifacts
+                where source_session_id is ? and tool_call_id = ? and content_sha256 = ?
+                """,
+                (source_session_id, tool_call_id, content_sha256),
+            ).fetchone()
+        return _tool_result_artifact_from_row(row) if row is not None else None
+
+    def grant(
+        self,
+        *,
+        artifact_id: str,
+        session_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> None:
+        transaction = nullcontext(connection) if connection is not None else self.db.transaction()
+        with transaction as conn:
+            conn.execute(
+                """
+                insert or ignore into tool_result_artifact_grants (
+                  artifact_id, session_id, created_at
+                )
+                values (?, ?, ?)
+                """,
+                (artifact_id, session_id, to_iso_z(utc_now())),
+            )
+
+    def has_grant(self, *, artifact_id: str, session_id: str) -> bool:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                """
+                select 1 from tool_result_artifact_grants
+                where artifact_id = ? and session_id = ?
+                """,
+                (artifact_id, session_id),
+            ).fetchone()
+        return row is not None
+
+    def list_for_session(self, session_id: str) -> list[ToolResultArtifactRecord]:
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """
+                select a.* from tool_result_artifacts a
+                join tool_result_artifact_grants g on g.artifact_id = a.id
+                where g.session_id = ?
+                order by a.created_at, a.id
+                """,
+                (session_id,),
+            ).fetchall()
+        return [_tool_result_artifact_from_row(row) for row in rows]
+
+    def copy_grants(
+        self,
+        *,
+        source_session_id: str,
+        target_session_id: str,
+        owner_user_id: str | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> int:
+        transaction = nullcontext(connection) if connection is not None else self.db.transaction()
+        with transaction as conn:
+            before = conn.total_changes
+            if owner_user_id is None:
+                conn.execute(
+                    """
+                    insert or ignore into tool_result_artifact_grants (
+                      artifact_id, session_id, created_at
+                    )
+                    select artifact_id, ?, ? from tool_result_artifact_grants
+                    where session_id = ?
+                    """,
+                    (target_session_id, to_iso_z(utc_now()), source_session_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    insert or ignore into tool_result_artifact_grants (
+                      artifact_id, session_id, created_at
+                    )
+                    select g.artifact_id, ?, ?
+                      from tool_result_artifact_grants g
+                      join tool_result_artifacts a on a.id = g.artifact_id
+                     where g.session_id = ? and a.owner_user_id = ?
+                    """,
+                    (
+                        target_session_id,
+                        to_iso_z(utc_now()),
+                        source_session_id,
+                        owner_user_id,
+                    ),
+                )
+            return conn.total_changes - before
+
+    def delete_grants_for_session(
+        self,
+        session_id: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> list[str]:
+        transaction = nullcontext(connection) if connection is not None else self.db.transaction()
+        with transaction as conn:
+            rows = conn.execute(
+                "select artifact_id from tool_result_artifact_grants where session_id = ?",
+                (session_id,),
+            ).fetchall()
+            artifact_ids = [str(row["artifact_id"]) for row in rows]
+            conn.execute(
+                "delete from tool_result_artifact_grants where session_id = ?",
+                (session_id,),
+            )
+        return artifact_ids
+
+    def grant_count(self, artifact_id: str) -> int:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                "select count(*) as value from tool_result_artifact_grants where artifact_id = ?",
+                (artifact_id,),
+            ).fetchone()
+        return int(row["value"] if row is not None else 0)
+
+    def list_unreferenced(self) -> list[ToolResultArtifactRecord]:
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """
+                select a.* from tool_result_artifacts a
+                left join tool_result_artifact_grants g on g.artifact_id = a.id
+                where g.artifact_id is null and a.status != 'deleted'
+                order by a.created_at, a.id
+                """
+            ).fetchall()
+        return [_tool_result_artifact_from_row(row) for row in rows]
+
+    def set_status(
+        self,
+        artifact_id: str,
+        status: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> ToolResultArtifactRecord | None:
+        if status not in self.VALID_STATUSES:
+            raise ValueError(f"unsupported tool result artifact status: {status}")
+        transaction = nullcontext(connection) if connection is not None else self.db.transaction()
+        with transaction as conn:
+            cursor = conn.execute(
+                """
+                update tool_result_artifacts
+                set status = ?, deleted_at = case when ? = 'deleted' then ? else deleted_at end
+                where id = ?
+                """,
+                (status, status, to_iso_z(utc_now()), artifact_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+            row = conn.execute(
+                "select * from tool_result_artifacts where id = ?",
+                (artifact_id,),
+            ).fetchone()
+        return _tool_result_artifact_from_row(row) if row is not None else None
+
+    def touch(self, artifact_id: str) -> None:
+        with self.db.transaction() as conn:
+            conn.execute(
+                "update tool_result_artifacts set last_accessed_at = ? where id = ?",
+                (to_iso_z(utc_now()), artifact_id),
+            )
+
+    def delete_record(self, artifact_id: str) -> None:
+        with self.db.transaction() as conn:
+            conn.execute("delete from tool_result_artifacts where id = ?", (artifact_id,))
+
+
+def _tool_result_artifact_from_row(row: sqlite3.Row) -> ToolResultArtifactRecord:
+    return ToolResultArtifactRecord(
+        id=str(row["id"]),
+        owner_user_id=str(row["owner_user_id"]),
+        source_session_id=(
+            str(row["source_session_id"]) if row["source_session_id"] is not None else None
+        ),
+        tool_call_id=str(row["tool_call_id"]),
+        tool_name=str(row["tool_name"]),
+        storage_kind=str(row["storage_kind"]),
+        relative_path=str(row["relative_path"]),
+        content_type=str(row["content_type"]),
+        content_sha256=str(row["content_sha256"]),
+        content_bytes=int(row["content_bytes"]),
+        approximate_tokens=int(row["approximate_tokens"]),
+        is_complete=bool(row["is_complete"]),
+        status=str(row["status"]),
+        created_at=str(row["created_at"]),
+        last_accessed_at=(
+            str(row["last_accessed_at"]) if row["last_accessed_at"] is not None else None
+        ),
+        deleted_at=str(row["deleted_at"]) if row["deleted_at"] is not None else None,
+    )
+
+
 class StorageRepositories:
     """Repositories retained during backend runtime replacement.
 
@@ -8872,6 +9176,7 @@ class StorageRepositories:
         self.trace_event_logs = TraceEventLogsRepository(db)
         self.llm_request_logs = LLMRequestLogsRepository(db)
         self.file_history = FileHistoryRepository(db)
+        self.tool_result_artifacts = ToolResultArtifactsRepository(db)
 
 
 def legacy_model_provider_from_settings(value: dict[str, Any]) -> ModelProviderRecord | None:

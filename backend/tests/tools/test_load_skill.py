@@ -116,6 +116,29 @@ async def test_load_skill_activation_writes_pending_skill_activation(tmp_path: P
 
 
 @pytest.mark.asyncio
+async def test_load_skill_rejects_activation_over_32kb_without_pending_state(
+    tmp_path: Path,
+) -> None:
+    skill_md = _write_skill(tmp_path)
+    skill_md.write_text(
+        skill_md.read_text(encoding="utf-8") + "\n" + ("完整规则😀\n" * 5000),
+        encoding="utf-8",
+    )
+    token = set_request_context(keydex_snapshot=_snapshot(tmp_path))
+    try:
+        command = await run_load_skill(skill_name="dev-plan", tool_call_id="call-large")
+    finally:
+        reset_request_context(token)
+
+    payload = _tool_payload(command)
+    assert payload["code"] == "skill_content_too_large_for_model"
+    assert payload["loaded"] is False
+    assert payload["injected"] is False
+    assert "pending_skill_activations" not in command.update
+    assert "完整规则" not in command.update["messages"][0].content
+
+
+@pytest.mark.asyncio
 async def test_load_skill_keeps_frozen_entry_after_disk_update(tmp_path: Path) -> None:
     skill_md = _write_skill(tmp_path)
     snapshot = _snapshot(tmp_path)

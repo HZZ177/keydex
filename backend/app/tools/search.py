@@ -8,6 +8,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from backend.app.agent.tool_results.continuations import (
+    InvalidContinuationCursor,
+    SearchContinuation,
+    validate_search_cursor,
+)
+from backend.app.agent.tool_results.specialized import (
+    grep_files_projector,
+    search_files_projector,
+    search_text_projector,
+)
 from backend.app.core.logger import logger
 from backend.app.core.ripgrep import (
     BUNDLED_RIPGREP_BINARY_NAME,
@@ -54,6 +64,7 @@ DEFAULT_SEARCH_LIMIT = 50
 MAX_SEARCH_LIMIT = 200
 DEFAULT_GREP_FILE_LIMIT = 50
 MAX_GREP_FILE_LIMIT = 200
+MAX_INTERNAL_SEARCH_CANDIDATES = 5000
 MAX_CONTEXT_FILE_BYTES = 512 * 1024
 RIPGREP_TIMEOUT_SECONDS = 30
 
@@ -63,19 +74,25 @@ SEARCH_TEXT_DESCRIPTION = (
     "当需要确认某段文本、符号、错误信息或关键词出现在哪些行时使用；"
     "如果只需要在某个已知文件内搜索，可将 path 设为该文件路径。"
     "query 默认按固定字符串处理；使用 |、分组、^、$ 等正则语法时，"
-    "必须显式设置 regex=true。"
+    "必须显式设置 regex=true。首屏候选足以定位文件时不要机械翻页；"
+    "仅当目标未出现或任务明确要求穷尽时，才使用返回的 next_cursor 继续。"
+    "开放式、跨目录、多文件或需要多轮证据收集的调查应直接委派 Explorer；"
+    "主 Agent 同一用户回合最多执行 5 个新的宽范围逻辑查询，续页不重复计数。"
 )
 
 SEARCH_FILES_DESCRIPTION = (
     "只按文件访问权限允许范围内的文件名、目录名或路径搜索，不搜索文件内容。"
     "当用户给出文件名、目录名、路径片段或约定资源名称但完整路径不确定时使用。"
+    "开放式跨目录发现应委派 Explorer；主 Agent 同一回合最多执行 5 个新的宽范围查询。"
 )
 
 GREP_FILES_DESCRIPTION = (
     "在文件访问权限允许范围内的目录或单个文件内查找内容匹配正则或固定字符串的文件，"
-    "发现候选文件并返回匹配文件路径。"
+    "发现候选文件并返回匹配文件路径。首屏足以决策时不要机械翻页。"
     "当目标是查找某段内容、符号、错误信息或关键词分布在哪些文件中时使用；"
     "如果用户给出的是文件名或路径片段，应使用 search_files 或 read_file。"
+    "开放式、跨目录或需要多轮证据收集时应委派 Explorer；"
+    "主 Agent 同一回合最多执行 5 个新的宽范围逻辑查询。"
 )
 
 
@@ -136,10 +153,15 @@ def create_search_tools() -> list[FunctionTool]:
                         "default": 0,
                         "description": "每个匹配行前后返回的上下文行数。",
                     },
+                    "cursor": {
+                        "type": "string",
+                        "description": "仅使用上次同一 query/scope 返回的 next_cursor 继续。",
+                    },
                 },
                 "required": ["query"],
             },
             handler=search_text_tool,
+            result_projector=search_text_projector,
         ),
         FunctionTool(
             name="grep_files",
@@ -183,10 +205,15 @@ def create_search_tools() -> list[FunctionTool]:
                         "items": {"type": "string"},
                         "description": "可选的文件或目录排除 glob 模式。",
                     },
+                    "cursor": {
+                        "type": "string",
+                        "description": "仅使用上次同一 query/scope 返回的 next_cursor 继续。",
+                    },
                 },
                 "required": ["query"],
             },
             handler=grep_files_tool,
+            result_projector=grep_files_projector,
         ),
         FunctionTool(
             name="search_files",
@@ -209,10 +236,15 @@ def create_search_tools() -> list[FunctionTool]:
                         "default": DEFAULT_SEARCH_LIMIT,
                     },
                     "include_hidden": {"type": "boolean", "default": False},
+                    "cursor": {
+                        "type": "string",
+                        "description": "仅使用上次同一 query/scope 返回的 next_cursor 继续。",
+                    },
                 },
                 "required": ["query"],
             },
             handler=search_files_tool,
+            result_projector=search_files_projector,
         ),
     ]
 
@@ -235,6 +267,10 @@ async def search_text_tool(
     context_lines = min(_non_negative_int(args.get("context_lines"), default=0), 5)
     include = _normalize_globs(args.get("include"))
     exclude = _normalize_globs(args.get("exclude"))
+    continuation = _validated_continuation("search_text", args)
+    context.metadata["search_continuation"] = continuation
+    offset = continuation.offset if continuation is not None else 0
+    fetch_limit = _fetch_limit(offset, limit)
     rg_result = await _run_ripgrep_json_matches(
         root=root,
         context=context,
@@ -243,9 +279,13 @@ async def search_text_tool(
         case_sensitive=case_sensitive,
         include=include,
         exclude=exclude,
-        limit=limit,
+        limit=fetch_limit,
     )
-    results = _search_text_results_from_rg_matches(rg_result.matches)
+    all_results = sorted(
+        _search_text_results_from_rg_matches(rg_result.matches),
+        key=lambda item: (str(item.get("path") or "").lower(), int(item.get("line") or 0)),
+    )
+    results = all_results[offset : offset + limit]
     if context_lines and results:
         _attach_context_lines(results, context=context, context_lines=context_lines)
     return _search_text_result(
@@ -255,7 +295,7 @@ async def search_text_tool(
         context=context,
         scanned_files=rg_result.scanned_files,
         limit=limit,
-        truncated=rg_result.truncated,
+        truncated=rg_result.truncated or offset + len(results) < len(all_results),
         regex=regex,
     )
 
@@ -274,6 +314,10 @@ async def grep_files_tool(
     case_sensitive = bool(args.get("case_sensitive", False))
     include = _normalize_globs(args.get("include"))
     exclude = _normalize_globs(args.get("exclude"))
+    continuation = _validated_continuation("grep_files", args)
+    context.metadata["search_continuation"] = continuation
+    offset = continuation.offset if continuation is not None else 0
+    fetch_limit = _fetch_limit(offset, limit)
 
     path_arg = _relative(root, context)
     rg_paths = await _run_ripgrep_path_list(
@@ -282,6 +326,8 @@ async def grep_files_tool(
             "--no-messages",
             "--color",
             "never",
+            "--sort",
+            "path",
             *_ripgrep_pattern_args(
                 query,
                 regex=regex,
@@ -294,9 +340,10 @@ async def grep_files_tool(
         ],
         cwd=context.workspace_root,
         query=query,
-        limit=limit,
+        limit=fetch_limit,
     )
-    paths = rg_paths.paths
+    all_paths = sorted(rg_paths.paths, key=str.lower)
+    paths = all_paths[offset : offset + limit]
     details = await _grep_file_details(
         paths,
         context=context,
@@ -330,7 +377,7 @@ async def grep_files_tool(
         "scanned_files": len(paths),
         "limit": limit,
         "engine": "ripgrep",
-        "truncated": rg_paths.truncated,
+        "truncated": rg_paths.truncated or offset + len(paths) < len(all_paths),
     }
     logger.info(
         "[SearchTool] grep_files 完成 | "
@@ -348,23 +395,57 @@ async def search_files_tool(
     root = _resolve_search_root(args.get("path") or ".", context)
     limit = min(_positive_int(args.get("limit"), default=DEFAULT_SEARCH_LIMIT), MAX_SEARCH_LIMIT)
     include_hidden = bool(args.get("include_hidden", False))
+    continuation = _validated_continuation("search_files", args)
+    context.metadata["search_continuation"] = continuation
+    offset = continuation.offset if continuation is not None else 0
+    fetch_limit = _fetch_limit(offset, limit)
 
     rg_result = await _run_ripgrep_file_search(
         root=root,
         context=context,
         query=query,
         include_hidden=include_hidden,
-        limit=limit,
+        limit=fetch_limit,
     )
+    all_results = sorted(
+        rg_result.results,
+        key=lambda item: str(item.get("path") or "").lower(),
+    )
+    page_results = all_results[offset : offset + limit]
     return _search_files_result(
         query,
         root,
         context,
-        rg_result.results,
+        page_results,
         limit,
         scanned_files=rg_result.scanned_files,
-        truncated=rg_result.truncated,
+        truncated=rg_result.truncated or offset + len(page_results) < len(all_results),
     )
+
+
+def _validated_continuation(
+    tool_name: str,
+    args: dict[str, Any],
+) -> SearchContinuation | None:
+    cursor = str(args.get("cursor") or "").strip()
+    if not cursor:
+        return None
+    try:
+        continuation = validate_search_cursor(
+            cursor,
+            tool_name=tool_name,
+            args=args,
+        )
+    except InvalidContinuationCursor as exc:
+        raise ToolExecutionError(
+            "搜索游标无效、已过期或与当前 query/scope 不匹配",
+            code="invalid_search_cursor",
+        ) from exc
+    return continuation
+
+
+def _fetch_limit(offset: int, page_limit: int) -> int:
+    return min(MAX_INTERNAL_SEARCH_CANDIDATES, max(1, offset + page_limit + 1))
 
 
 def _search_text_result(
@@ -596,6 +677,8 @@ def _ripgrep_file_args(path_arg: str, *, include_hidden: bool) -> list[str]:
         "--no-messages",
         "--color",
         "never",
+        "--sort",
+        "path",
     ]
     if include_hidden:
         args.append("--hidden")
@@ -738,6 +821,8 @@ async def _run_ripgrep_json_matches(
         "--no-messages",
         "--color",
         "never",
+        "--sort",
+        "path",
         *_ripgrep_pattern_args(
             query,
             regex=regex,

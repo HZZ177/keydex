@@ -234,12 +234,14 @@ export function conversationComposerPlaceholder(
   return state === "waiting_input" ? "请先完成页面交互" : placeholder;
 }
 
-function ContextWindowIndicator({
+export function ContextWindowIndicator({
   usage,
   contextCompressionEnabled,
+  tooltipAlign = "end",
 }: {
   usage: ContextWindowUsageStatus | null;
   contextCompressionEnabled: boolean;
+  tooltipAlign?: "start" | "end";
 }) {
   const disabled = !contextCompressionEnabled;
   const thresholdProgress = disabled ? 0 : usage ? clampNonNegative(usage.thresholdUsageFraction) : 0;
@@ -282,6 +284,7 @@ function ContextWindowIndicator({
       tabIndex={0}
       aria-label={ariaLabel}
       data-level={level}
+      data-tooltip-align={tooltipAlign}
       data-testid="context-window-indicator"
     >
       <svg className={styles.contextWindowRing} viewBox="0 0 16 16" aria-hidden="true">

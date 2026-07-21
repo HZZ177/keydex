@@ -6,11 +6,11 @@ import os
 import shutil
 import stat
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
-from backend.app.core.time import to_iso_z, utc_now
 from backend.app.services.archive_lifecycle_service import ArchiveLifecycleError
 from backend.app.storage import LifecycleOperationRecord, StorageRepositories
 
@@ -33,12 +33,15 @@ class PurgePlan:
     database_counts: dict[str, int]
     assets: tuple[PurgeAsset, ...]
     snapshot_hash: str
+    artifact_ids: tuple[str, ...] = ()
 
 
 class PurgePlanner:
     """Read-only inventory for lifecycle purge."""
 
     SESSION_RELATIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("tool_result_artifact_grants", ("session_id",)),
+        ("tool_result_artifacts", ("source_session_id",)),
         ("mcp_session_tool_usage", ("session_id",)),
         ("mcp_trust_rules", ("session_id",)),
         ("mcp_session_tool_overrides", ("session_id",)),
@@ -218,6 +221,7 @@ class PurgePlanner:
         with self._repositories.db.connect() as conn:
             signatures = self._session_signatures(conn, session_ids)
             counts = self._relation_counts(conn, session_ids)
+            artifact_rows = self._artifact_rows_for_purge(conn, session_ids)
             if entity_type == "workspace":
                 counts["workspace_annotations"] = int(
                     conn.execute(
@@ -247,12 +251,22 @@ class PurgePlanner:
             candidate = Path(str(row["path"])).expanduser()
             registered_root = self.data_dir / "attachments" / str(row["id"])
             assets.append(self._classify(candidate, registered_root=registered_root))
+        seen_artifact_paths: set[Path] = set()
+        for row in artifact_rows:
+            candidate = self.data_dir / Path(str(row["relative_path"]))
+            lexical = Path(os.path.abspath(candidate))
+            if lexical in seen_artifact_paths:
+                continue
+            seen_artifact_paths.add(lexical)
+            assets.append(self._classify(candidate, registered_root=candidate))
+        artifact_ids = tuple(str(row["id"]) for row in artifact_rows)
         snapshot_payload = {
             "entity_type": entity_type,
             "entity_id": entity_id,
             "workspace_id": workspace_id,
             "signatures": signatures,
             "counts": counts,
+            "artifact_ids": artifact_ids,
             "assets": [
                 {
                     "classification": asset.classification,
@@ -274,7 +288,35 @@ class PurgePlanner:
             database_counts=counts,
             assets=tuple(assets),
             snapshot_hash=snapshot_hash,
+            artifact_ids=artifact_ids,
         )
+
+    @staticmethod
+    def _artifact_rows_for_purge(conn, session_ids: tuple[str, ...]):
+        if not session_ids:
+            return []
+        placeholders = ", ".join("?" for _ in session_ids)
+        return conn.execute(
+            f"""
+            select a.*
+              from tool_result_artifacts a
+             where (
+               a.source_session_id in ({placeholders})
+               or exists (
+                 select 1 from tool_result_artifact_grants owned
+                  where owned.artifact_id = a.id
+                    and owned.session_id in ({placeholders})
+               )
+             )
+               and not exists (
+               select 1 from tool_result_artifact_grants retained
+                where retained.artifact_id = a.id
+                  and retained.session_id not in ({placeholders})
+             )
+             order by a.created_at, a.id
+            """,
+            [*session_ids, *session_ids, *session_ids],
+        ).fetchall()
 
     def _classify(self, candidate: Path, *, registered_root: Path) -> PurgeAsset:
         token = hashlib.sha256(str(candidate).encode("utf-8")).hexdigest()[:16]
@@ -648,11 +690,37 @@ class PurgeDatabaseExecutor:
         for table, total in current_counts.items():
             if int(plan.database_counts.get(table, 0)) != total:
                 raise ArchiveLifecycleError("purge_plan_stale", "彻底删除依赖已变化，请重试")
+        current_artifact_ids = tuple(
+            str(row["id"])
+            for row in PurgePlanner._artifact_rows_for_purge(conn, plan.session_ids)
+        )
+        if current_artifact_ids != plan.artifact_ids:
+            raise ArchiveLifecycleError("purge_plan_stale", "工具结果引用已变化，请重试")
 
     def _delete_session_relations(self, conn, plan: PurgePlan) -> dict[str, int]:
         predicate, params = self._session_predicate(plan, "session_id")
         active_predicate, active_params = self._session_predicate(plan, "active_session_id")
         counts: dict[str, int] = {}
+
+        counts["tool_result_artifact_grants"] = conn.execute(
+            f"delete from tool_result_artifact_grants where {predicate}",
+            params,
+        ).rowcount
+        if plan.artifact_ids:
+            artifact_placeholders = ", ".join("?" for _ in plan.artifact_ids)
+            counts["tool_result_artifacts"] = conn.execute(
+                f"""
+                delete from tool_result_artifacts
+                 where id in ({artifact_placeholders})
+                   and not exists (
+                     select 1 from tool_result_artifact_grants grants
+                      where grants.artifact_id = tool_result_artifacts.id
+                   )
+                """,
+                plan.artifact_ids,
+            ).rowcount
+        else:
+            counts["tool_result_artifacts"] = 0
 
         operation_predicate, operation_params = self._session_predicate(plan, "session_id")
         operation_active_predicate, operation_active_params = self._session_predicate(

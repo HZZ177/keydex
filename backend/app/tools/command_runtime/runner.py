@@ -19,8 +19,9 @@ from backend.app.tools.command_runtime.process_manager import (
     CommandProcessManager,
     command_process_manager,
 )
-from backend.app.tools.command_runtime.process_tree import kill_process_tree
 from backend.app.tools.command_runtime.providers import provider_for_runtime
+
+_PROCESS_TREE_TERMINATION_GRACE_SECONDS = 2
 
 
 class CommandRunner:
@@ -85,19 +86,13 @@ class CommandRunner:
                     break
                 if time.perf_counter() >= deadline:
                     status = "timed_out"
-                    if manager_record is not None:
-                        manager_record.cancel_reason = "timeout"
-                        manager_record.cancel_event.set()
                     cancel_reason = "timeout"
-                    kill_process_tree(process.pid)
+                    self.manager.terminate_command(request.command_id, reason="timeout")
                     break
                 if output_store.output_limit_exceeded:
                     status = "output_limit_exceeded"
-                    if manager_record is not None:
-                        manager_record.cancel_reason = "output_limit"
-                        manager_record.cancel_event.set()
                     cancel_reason = "output_limit"
-                    kill_process_tree(process.pid)
+                    self.manager.terminate_command(request.command_id, reason="output_limit")
                     break
                 time.sleep(0.05)
 
@@ -229,14 +224,34 @@ def _wait_for_process_exit(
     command_id: str,
     forced: bool,
 ) -> int | None:
+    if forced:
+        try:
+            return process.wait(timeout=_PROCESS_TREE_TERMINATION_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "[CommandRuntime] 进程树终止等待超时，直接终止根进程 | "
+                f"command_id={command_id} | pid={process.pid}"
+            )
+            try:
+                process.kill()
+            except Exception:
+                pass
+            try:
+                return process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                logger.warning(
+                    "[CommandRuntime] 命令进程仍未退出，返回已取消结果 | "
+                    f"command_id={command_id} | pid={process.pid}"
+                )
+                return None
+
     try:
-        return process.wait(timeout=1 if forced else 10)
+        return process.wait(timeout=10)
     except subprocess.TimeoutExpired:
         logger.warning(
             "[CommandRuntime] 等待命令进程退出超时，继续强制终止 | "
             f"command_id={command_id} | pid={process.pid}"
         )
-        kill_process_tree(process.pid)
         try:
             process.kill()
         except Exception:

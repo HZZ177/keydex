@@ -264,6 +264,49 @@ def test_sessions_api_defers_tool_payloads_and_loads_details(tmp_path) -> None:
     assert payload["uiPayload"] == {"text": "full file content"}
 
 
+def test_sessions_api_returns_cancelled_detail_for_unfinished_tool_in_cancelled_turn(
+    tmp_path,
+) -> None:
+    client = _client(tmp_path)
+    app = client.app
+    session_id = client.post("/api/sessions", json={"title": "取消工具"}).json()["session"]["id"]
+    app.state.repositories.message_events.append(
+        event_id="evt_cancelled_tool_start",
+        session_id=session_id,
+        turn_index=1,
+        action="tool_start",
+        data={
+            "tool": "run_cmd",
+            "params": {"command": "sleep 50"},
+            "run_id": "run_cancelled_tool",
+            "tool_call_id": "call_cancelled_tool",
+            "status": "running",
+        },
+    )
+    app.state.repositories.message_events.append(
+        event_id="evt_turn_cancelled",
+        session_id=session_id,
+        turn_index=1,
+        action="cancelled",
+        data={"trace_id": "trace_cancelled_tool", "reason": "user"},
+    )
+
+    detail = client.get(
+        f"/api/sessions/{session_id}/tool-details",
+        params={"start_event_id": "evt_cancelled_tool_start"},
+    )
+
+    assert detail.status_code == 200
+    payload = detail.json()["detail"]
+    assert payload["status"] == "cancelled"
+    assert payload["detailRef"]["endEventId"] is None
+    assert payload["uiPayload"] == {
+        "status": "cancelled",
+        "can_terminate": False,
+        "cancel_reason": "user",
+    }
+
+
 def test_sessions_api_filters_turn_history(tmp_path) -> None:
     client = _client(tmp_path)
     app = client.app

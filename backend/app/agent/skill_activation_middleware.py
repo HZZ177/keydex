@@ -11,6 +11,7 @@ from backend.app.agent.state import (
     CONTEXT_COMPRESSION_DIAGNOSTICS_STATE_KEY,
     build_pending_skill_activations_reset_update,
 )
+from backend.app.agent.tool_results.budgets import GLOBAL_TOOL_RESULT_BUDGET_BYTES, utf8_bytes
 from backend.app.core.logger import logger
 
 
@@ -30,6 +31,12 @@ class SkillActivationInjectionMiddleware(AgentMiddleware):
             if not content:
                 continue
             skill_name = str(item.get("skill_name") or "").strip()
+            if utf8_bytes(content) > GLOBAL_TOOL_RESULT_BUDGET_BYTES:
+                logger.warning(
+                    "[SkillActivationInjectionMiddleware] skipped oversized legacy activation | "
+                    f"skill={skill_name or '-'} | bytes={utf8_bytes(content)}"
+                )
+                continue
             injected_messages.append(SystemMessage(content=content))
             if skill_name:
                 injected_skill_names.append(skill_name)

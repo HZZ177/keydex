@@ -20,6 +20,9 @@ from backend.app.agent.middleware.invalid_tool_call_recovery import (
 )
 from backend.app.agent.middleware.pending_inputs import PendingUserInputInjectionMiddleware
 from backend.app.agent.middleware.tool_error_handling import ToolErrorHandlingMiddleware
+from backend.app.agent.middleware.tool_result_context_editing import (
+    ToolResultContextEditingMiddleware,
+)
 from backend.app.agent.runtime_settings import AgentRuntimeSettings
 from backend.app.agent.skill_activation_middleware import SkillActivationInjectionMiddleware
 from backend.app.agent.state import KeydexAgentState
@@ -253,6 +256,7 @@ def test_default_middleware_includes_context_compression_when_enabled(tmp_path) 
         ToolCallPresetMiddleware,
         SkillActivationInjectionMiddleware,
         PendingUserInputInjectionMiddleware,
+        ToolResultContextEditingMiddleware,
         ContextCompressionMiddleware,
         KeydexMarkdownContextMiddleware,
         ToolErrorHandlingMiddleware,

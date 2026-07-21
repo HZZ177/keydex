@@ -72,6 +72,23 @@ async def test_invalid_pending_items_only_reset_pending() -> None:
 
 
 @pytest.mark.asyncio
+async def test_oversized_legacy_pending_activation_is_not_injected() -> None:
+    middleware = SkillActivationInjectionMiddleware()
+    result = await middleware.abefore_model(
+        {
+            "messages": [],
+            "pending_skill_activations": [
+                {"skill_name": "legacy", "content": "x" * (32 * 1024 + 1)}
+            ],
+        },
+        None,
+    )
+    assert result == {
+        "pending_skill_activations": [PENDING_SKILL_ACTIVATIONS_RESET_MARKER],
+    }
+
+
+@pytest.mark.asyncio
 async def test_skill_activation_is_appended_after_existing_tool_sequence() -> None:
     middleware = SkillActivationInjectionMiddleware()
     ai_message = AIMessage(

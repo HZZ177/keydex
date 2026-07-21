@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from backend.app.agent.tool_results.specialized import mcp_result_projector
 from backend.app.mcp.audit import McpAuditWriter, redact_sensitive_data, redact_sensitive_text
 from backend.app.mcp.errors import McpRuntimeError, to_mcp_runtime_error
 from backend.app.mcp.exposure import McpVisibleTool
@@ -136,6 +137,7 @@ class McpLocalTool:
     metadata: McpLocalToolMetadata
     executor: McpToolExecutor
     enabled: bool = True
+    result_projector: Any = field(default=mcp_result_projector, init=False, repr=False)
 
     def __post_init__(self) -> None:
         validate_tool_name(self.name)
@@ -689,15 +691,7 @@ def normalize_mcp_tool_result(
     if max_bytes <= 0:
         raise ValueError("max_bytes must be greater than zero")
 
-    payload = {
-        "call_id": str(getattr(tool_result, "call_id", "")),
-        "status": str(getattr(tool_result, "status", "")),
-        "content": _redact_any(getattr(tool_result, "content", [])),
-        "structured_content": _redact_any(getattr(tool_result, "structured_content", None)),
-        "is_error": bool(getattr(tool_result, "is_error", False)),
-        "metadata": _redact_metadata(getattr(tool_result, "metadata", {})),
-    }
-    payload["metadata"]["result_truncated"] = False
+    payload = normalize_mcp_tool_result_for_artifact(tool_result)
     payload["metadata"]["max_result_bytes"] = max_bytes
     payload["metadata"]["result_size_bytes"] = _json_byte_size(payload)
 
@@ -744,6 +738,22 @@ def normalize_mcp_tool_result(
             "reason": "truncated_payload_exceeds_limit",
         },
     )
+
+
+def normalize_mcp_tool_result_for_artifact(tool_result: Any) -> dict[str, Any]:
+    """Return the redacted, lossless normalized provider result for internal storage."""
+
+    payload = {
+        "call_id": str(getattr(tool_result, "call_id", "")),
+        "status": str(getattr(tool_result, "status", "")),
+        "content": _redact_any(getattr(tool_result, "content", [])),
+        "structured_content": _redact_any(getattr(tool_result, "structured_content", None)),
+        "is_error": bool(getattr(tool_result, "is_error", False)),
+        "metadata": _redact_metadata(getattr(tool_result, "metadata", {})),
+    }
+    payload["metadata"]["result_truncated"] = False
+    payload["metadata"]["result_size_bytes"] = _json_byte_size(payload)
+    return payload
 
 
 def _matches_filters(

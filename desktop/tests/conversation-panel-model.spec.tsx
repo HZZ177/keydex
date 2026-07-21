@@ -540,7 +540,7 @@ describe("useConversationPanelModel", () => {
     expect(result.current.reverseConfirmation).toBeNull();
   });
 
-  it("executes a conversation rewind once and applies only conversation UI side effects", async () => {
+  it("closes the result dialog after a successful conversation-only rewind", async () => {
     const runtime = fakeRuntime();
     vi.mocked(runtime.conversation.executeSessionReverse).mockResolvedValueOnce({
       operation_id: "operation-1",
@@ -568,9 +568,9 @@ describe("useConversationPanelModel", () => {
     await waitFor(() => expect(result.current.reverseConfirmation?.preview).not.toBeNull());
     act(() => result.current.selectReverseMode("conversation"));
     act(() => result.current.confirmReverseFromMessage());
-    await waitFor(() => expect(result.current.reverseConfirmation?.result?.status).toBe("full"));
+    await waitFor(() => expect(result.current.reverseConfirmation).toBeNull());
 
-    expect(reloadHistory).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(reloadHistory).toHaveBeenCalledTimes(1));
     expect(restoreComposerDraft).toHaveBeenCalledWith(expect.objectContaining({ value: "restored draft" }));
     expect(runtime.conversation.getSession).toHaveBeenCalledWith("ses-1");
     expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: "session/upsert" }));

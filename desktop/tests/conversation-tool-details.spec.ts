@@ -115,6 +115,29 @@ describe("conversation tool detail helpers", () => {
     expect(conversationStatusFromToolDetail({ status: "success" }, "completed")).toBe("completed");
   });
 
+  it("maps cancelled tool details to a cancelled result payload", () => {
+    const patch = conversationPatchFromToolDetails(
+      toolMessage({
+        kind: "command",
+        status: "running",
+      }),
+      {
+        status: "cancelled",
+        uiPayload: { status: "cancelled", can_terminate: false, cancel_reason: "turn_cancelled" },
+      },
+    );
+
+    expect(patch.status).toBe("cancelled");
+    expect(patch.payload?.result).toMatchObject({
+      status: "cancelled",
+      ui_payload: {
+        status: "cancelled",
+        can_terminate: false,
+        cancel_reason: "turn_cancelled",
+      },
+    });
+  });
+
   it("preserves canonical tool and MCP error details in deferred history", () => {
     const error = {
       schema_version: 1 as const,

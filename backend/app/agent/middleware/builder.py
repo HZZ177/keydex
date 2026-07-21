@@ -6,6 +6,10 @@ import httpx
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents.middleware import AgentMiddleware
 
+from backend.app.agent.exploration_guard import (
+    ExplorationGuard,
+    ExplorationGuardTurnMiddleware,
+)
 from backend.app.agent.factory import AgentFactory, agent_factory
 from backend.app.agent.keydex_markdown_context_middleware import (
     KeydexMarkdownContextMiddleware,
@@ -20,6 +24,9 @@ from backend.app.agent.middleware.invalid_tool_call_recovery import (
 )
 from backend.app.agent.middleware.pending_inputs import PendingUserInputInjectionMiddleware
 from backend.app.agent.middleware.tool_error_handling import ToolErrorHandlingMiddleware
+from backend.app.agent.middleware.tool_result_context_editing import (
+    ToolResultContextEditingMiddleware,
+)
 from backend.app.agent.runtime_settings import (
     AgentRuntimeSettings,
     default_agent_runtime_settings,
@@ -39,6 +46,8 @@ def build_default_middleware(
     checkpointer: Any | None = None,
     model_http_transport: httpx.BaseTransport | httpx.AsyncBaseTransport | None = None,
     factory: AgentFactory = agent_factory,
+    data_dir: Any | None = None,
+    exploration_guard: ExplorationGuard | None = None,
 ) -> tuple[AgentMiddleware, ...]:
     """按运行时配置装配默认中间件链。"""
 
@@ -48,6 +57,8 @@ def build_default_middleware(
         ToolCallPresetMiddleware(),
         SkillActivationInjectionMiddleware(),
     ]
+    if exploration_guard is not None and exploration_guard.enabled:
+        middlewares.append(ExplorationGuardTurnMiddleware(exploration_guard))
     if repositories is None:
         logger.warning("[AgentMiddleware] 缺少 repositories，跳过运行中用户输入注入中间件")
     else:
@@ -55,6 +66,12 @@ def build_default_middleware(
             PendingUserInputInjectionMiddleware(
                 repositories=repositories,
                 dispatcher=dispatcher,
+            )
+        )
+        middlewares.append(
+            ToolResultContextEditingMiddleware(
+                repositories=repositories,
+                data_dir=data_dir or repositories.db.path.parent,
             )
         )
     if settings.context_compression.enabled:

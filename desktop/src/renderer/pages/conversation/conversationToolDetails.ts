@@ -37,7 +37,9 @@ export function conversationPatchFromToolDetails(
   const currentResult = asRecord(message.payload.result);
   const status = conversationStatusFromToolDetail(detail, message.status);
   const resultStatus =
-    detail.error || detail.toolError || detail.status === "error" || detail.status === "failed"
+    detail.status === "cancelled"
+      ? "cancelled"
+      : detail.error || detail.toolError || detail.status === "error" || detail.status === "failed"
       ? "error"
       : detail.status === "running"
         ? "running"

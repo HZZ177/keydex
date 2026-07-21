@@ -440,6 +440,88 @@ test("E30G Workbench Composer restores retained Skill after manual compression",
   await expect(page.getByText("Keydex E2E compacted", { exact: false })).toHaveCount(0);
 });
 
+test("E30H 35 high-output tool calls stay bounded, recoverable and UI-visible after reload", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  await writeFile(
+    path.join(fixture.workspaceRoot, "CONTEXT_GOVERNANCE.txt"),
+    `${Array.from(
+      { length: 2_800 },
+      (_, index) => `gov-line-${String(index + 1).padStart(4, "0")}-${"x".repeat(160)}`,
+    ).join("\n")}\n`,
+    "utf8",
+  );
+  const session = await fixture.createWorkspaceSession("E30H tool context governance");
+  const input = await openConversation(fixture, page, session);
+  const answer = await sendAndWait(
+    page,
+    input,
+    "KeydexToolContextGovernanceE2E run bounded long task",
+    /KeydexToolContextGovernanceE2E completed 35 bounded tool calls/,
+  );
+  await expect(answer).toContainText("completed 35 bounded tool calls");
+
+  const observations = await fixture.api<{
+    observations: Array<{
+      scenario_markers: string[];
+      max_tool_message_bytes: number;
+      tool_tombstone_count: number;
+    }>;
+  }>("/api/e2e/model-observations");
+  const calls = observations.observations.filter((item) =>
+    item.scenario_markers.includes("KeydexToolContextGovernanceE2E"),
+  );
+  expect(calls).toHaveLength(36);
+  expect(Math.max(...calls.map((item) => item.max_tool_message_bytes))).toBeLessThanOrEqual(
+    32 * 1024,
+  );
+  expect(calls.at(-1)?.tool_tombstone_count).toBeGreaterThan(0);
+
+  const state = await compressionState(session.id);
+  const toolMessages = state.checkpoint_messages.filter((message) => message.role === "tool");
+  const tombstones = toolMessages.filter((message) => message.tombstone);
+  const fullResults = toolMessages.filter((message) => !message.tombstone);
+  expect(toolMessages).toHaveLength(35);
+  expect(tombstones.length).toBeGreaterThan(0);
+  // The newest ToolMessage has not been seen by a later model response yet;
+  // together with the five protected seen results it is outside the reclaim pool.
+  const residualOldResults = fullResults.slice(0, Math.max(fullResults.length - 6, 0));
+  expect(
+    residualOldResults.reduce(
+      (total, message) => total + Math.ceil(message.content_bytes / 4),
+      0,
+    ),
+  ).toBeLessThan(100_000);
+  expect(Math.max(...fullResults.map((message) => message.content_bytes))).toBeLessThanOrEqual(
+    32 * 1024,
+  );
+
+  const artifactId = tombstones[0]?.artifact_id;
+  expect(artifactId).toMatch(/^tra_/);
+  const restored = await sendAndWait(
+    page,
+    input,
+    `KeydexReadArtifactE2E ${artifactId}`,
+    /KeydexReadArtifactE2E restored=true/,
+  );
+  await expect(restored).toContainText(`artifact_id=${artifactId}`);
+
+  const detailButtons = page.getByRole("button", { name: "展开工具详情" });
+  await expect(detailButtons.last()).toBeVisible({ timeout: 30_000 });
+  await detailButtons.last().click();
+  await expect(page.getByLabel("工具输出").last()).toContainText("artifact_id", {
+    timeout: 30_000,
+  });
+
+  await page.reload();
+  await expect(page.getByText(/KeydexToolContextGovernanceE2E completed/)).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByText("[Earlier tool result cleared]", { exact: false })).toHaveCount(0);
+  await fixture.evidence(page, "E30H-tool-context-governance");
+});
+
 test("E31 forked session resolves the target project context on its new Turn", async ({
   page,
 }) => {
@@ -480,6 +562,10 @@ interface CompressionState {
     content: string;
     tool_call_count: number;
     recent_dialogue_kind: string;
+    content_bytes: number;
+    tool_call_id: string;
+    tombstone: boolean;
+    artifact_id: string;
   }>;
   context_compression_epoch: number;
   compression_events: Array<{ action: string; data: Record<string, unknown> }>;

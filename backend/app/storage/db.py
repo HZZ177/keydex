@@ -1279,6 +1279,45 @@ create index if not exists idx_compression_staging_original_status_target
   on compression_staging(original_session_id, status, target_session_id, generation desc, id desc);
 create index if not exists idx_compression_staging_original_generation
   on compression_staging(original_session_id, generation desc, id desc);
+
+create table if not exists tool_result_artifacts (
+  id text primary key,
+  owner_user_id text not null,
+  source_session_id text,
+  tool_call_id text not null,
+  tool_name text not null,
+  storage_kind text not null
+    check (storage_kind in ('managed_json', 'managed_text', 'command_log')),
+  relative_path text not null,
+  content_type text not null,
+  content_sha256 text not null,
+  content_bytes integer not null check (content_bytes >= 0),
+  approximate_tokens integer not null check (approximate_tokens >= 0),
+  is_complete integer not null default 1 check (is_complete in (0, 1)),
+  status text not null default 'active'
+    check (status in ('active', 'quarantined', 'deleted')),
+  created_at text not null,
+  last_accessed_at text,
+  deleted_at text,
+  unique (source_session_id, tool_call_id, content_sha256)
+);
+
+create index if not exists idx_tool_result_artifacts_owner_status
+  on tool_result_artifacts(owner_user_id, status);
+create index if not exists idx_tool_result_artifacts_source_session
+  on tool_result_artifacts(source_session_id);
+
+create table if not exists tool_result_artifact_grants (
+  artifact_id text not null,
+  session_id text not null,
+  created_at text not null,
+  primary key (artifact_id, session_id),
+  foreign key (artifact_id) references tool_result_artifacts(id) on delete cascade,
+  foreign key (session_id) references sessions(id) on delete cascade
+);
+
+create index if not exists idx_tool_result_artifact_grants_session
+  on tool_result_artifact_grants(session_id);
 """
 
 

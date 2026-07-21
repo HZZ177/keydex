@@ -96,12 +96,20 @@ EXPLORER_READ_ONLY_TOOL_NAMES = frozenset(
         "search_text",
         "grep_files",
         "search_files",
+        "read_tool_result",
         "web_search",
         "web_fetch",
     }
 )
 EXPLORER_LOCAL_TOOL_NAMES = frozenset(
-    {"read_file", "list_dir", "search_text", "grep_files", "search_files"}
+    {
+        "read_file",
+        "list_dir",
+        "search_text",
+        "grep_files",
+        "search_files",
+        "read_tool_result",
+    }
 )
 EXPLORER_RUNTIME_TOOL_NAMES = frozenset({"web_search", "web_fetch"})
 

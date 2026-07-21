@@ -1415,7 +1415,9 @@ describe("agentSessionStore reducer", () => {
       toolName: "run_cmd",
       status: "running",
       uiPayload: {
+        command_id: "cmd-approved",
         status: "approval_pending",
+        can_terminate: false,
         timeout_seconds: 300,
         timeout_source: "default",
         approval: {
@@ -1432,7 +1434,9 @@ describe("agentSessionStore reducer", () => {
     expect(messages[0]).toMatchObject({
       role: "tool",
       uiPayload: {
+        command_id: "cmd-approved",
         status: "running",
+        can_terminate: true,
         timeout_seconds: 300,
         timeout_source: "default",
         approval: {
@@ -4337,6 +4341,7 @@ function commandApproval(id: string, status: CommandApprovalRequest["status"] = 
     title: "是否允许执行命令？",
     description: "请求执行命令。",
     details: {
+      command_id: "cmd-approved",
       command: "pnpm test",
       cwd: "D:/repo",
       tool_name: "run_cmd",

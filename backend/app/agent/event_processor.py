@@ -1116,12 +1116,26 @@ def _stringify_tool_output(output: Any) -> str:
 def _structured_tool_output(output: Any) -> Any:
     output = _public_tool_output(output)
     if isinstance(output, ToolMessage):
+        display_payload = _keydex_display_payload(output)
+        if display_payload is not None:
+            return display_payload
         return _parse_structured_tool_content(getattr(output, "content", ""))
     if isinstance(output, dict):
         return _make_json_serializable(output)
     if isinstance(output, str):
         return _parse_structured_tool_content(output)
     return None
+
+
+def _keydex_display_payload(message: ToolMessage) -> Any:
+    artifact = getattr(message, "artifact", None)
+    if not isinstance(artifact, dict):
+        return None
+    if artifact.get("schema_version") != "keydex.tool_artifact.v1":
+        return None
+    if "display_payload" not in artifact:
+        return None
+    return _make_json_serializable(artifact.get("display_payload"))
 
 
 def _tool_call_id_from_output(output: Any) -> str:
