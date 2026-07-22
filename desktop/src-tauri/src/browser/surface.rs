@@ -115,6 +115,13 @@ impl<T> SurfaceTable<T> {
             .and_then(|slot| slot.handle.clone())
     }
 
+    pub(crate) fn reference_for_label(&self, label: &str) -> Option<BrowserSurfaceRef> {
+        self.slots
+            .values()
+            .find(|slot| slot.identity.label == label && slot.handle.is_some())
+            .map(|slot| slot.identity.reference.clone())
+    }
+
     pub(crate) fn resolve_handle(&self, reference: &BrowserSurfaceRef) -> SurfaceHandle<T>
     where
         T: Clone,

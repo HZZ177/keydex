@@ -387,6 +387,18 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Allows a managed browser webview to submit authenticated structured-annotation bridge messages.",
+          "type": "string",
+          "const": "allow-browser-page-bridge-message",
+          "markdownDescription": "Allows a managed browser webview to submit authenticated structured-annotation bridge messages."
+        },
+        {
+          "description": "Allows the trusted main webview to use the existing Keydex application commands.",
+          "type": "string",
+          "const": "allow-main-application-commands",
+          "markdownDescription": "Allows the trusted main webview to use the existing Keydex application commands."
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",

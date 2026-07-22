@@ -6,6 +6,8 @@ use std::{
     },
 };
 
+use serde::Deserialize;
+use serde_json::Value;
 use tauri::{
     webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder},
     Emitter, LogicalPosition, LogicalSize, Manager, Url, Webview, WebviewUrl, Wry,
@@ -55,7 +57,7 @@ use super::navigation::{
 use super::permissions::{attach_permission_broker, PermissionBroker};
 use super::profiles::{clear_profile_data, configure_profile_security, BrowserProfileManager};
 use super::resources::{apply_native_resource_state, BrowserResourceRegistry};
-use super::security::ensure_main_webview_caller;
+use super::security::{ensure_main_webview_caller, is_remote_browser_label};
 use super::surface::{BeginCreate, DestroySurface, SurfaceHandle, SurfaceTable};
 
 const INITIAL_SURFACE_SIZE: f64 = 1.0;
@@ -94,6 +96,39 @@ impl Default for BrowserHostState {
             closing: Arc::new(AtomicBool::new(false)),
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct BrowserPageBridgeMessage {
+    transport_token: String,
+    envelope: Value,
+}
+
+#[tauri::command]
+pub(crate) fn browser_page_bridge_message(
+    caller: Webview,
+    message: BrowserPageBridgeMessage,
+) -> Result<(), String> {
+    if !is_remote_browser_label(caller.label()) {
+        return Err(
+            "Browser page bridge is available only to managed browser webviews".to_string(),
+        );
+    }
+    let state = caller.state::<BrowserHostState>().inner().clone();
+    let surface = state
+        .surfaces
+        .lock()
+        .ok()
+        .and_then(|surfaces| surfaces.reference_for_label(caller.label()))
+        .ok_or_else(|| "Browser page bridge surface is unavailable".to_string())?;
+    let raw = serde_json::to_string(&message.envelope)
+        .map_err(|_| "Browser page bridge message is not serializable".to_string())?;
+    let result = state
+        .bridge
+        .receive_authenticated_main(&surface, &message.transport_token, &raw);
+    emit_bridge_result(&caller, &state, &surface, result);
+    Ok(())
 }
 
 #[tauri::command]
@@ -165,7 +200,7 @@ pub(crate) async fn browser_create_surface(
         .lifecycle
         .reserve(identity.reference.clone(), payload.profile_mode);
     let bootstrap_navigation_id = format!("bootstrap-{}", identity.reference.generation);
-    state
+    let transport_token = state
         .bridge
         .register_surface(identity.reference.clone(), bootstrap_navigation_id.clone());
 
@@ -179,7 +214,10 @@ pub(crate) async fn browser_create_surface(
         .incognito(payload.profile_mode == BrowserProfileMode::Incognito)
         .zoom_hotkeys_enabled(false)
         .initialization_script(BROWSER_LINK_POLICY_SCRIPT)
-        .initialization_script_for_all_frames(bridge_initialization_script(&identity.reference))
+        .initialization_script_for_all_frames(bridge_initialization_script(
+            &identity.reference,
+            &transport_token,
+        ))
         .on_navigation(|url| is_allowed_browser_url(url, true))
         .on_document_title_changed(move |webview, title| {
             emit_browser_event(
@@ -269,31 +307,13 @@ pub(crate) async fn browser_create_surface(
         move |result: Result<
             super::bridge::BrowserBridgeEnvelope,
             super::bridge::BrowserBridgeError,
-        >| match result {
-            Ok(envelope) => match serde_json::to_value(envelope) {
-                Ok(bridge_envelope) => emit_browser_event(
-                    &bridge_route_emitter,
-                    &bridge_route_state,
-                    &bridge_route_surface,
-                    BrowserEvent::BridgeMessage(BridgeMessagePayload { bridge_envelope }),
-                ),
-                Err(_) => emit_browser_event(
-                    &bridge_route_emitter,
-                    &bridge_route_state,
-                    &bridge_route_surface,
-                    BrowserEvent::BridgeError(BridgeErrorPayload {
-                        code: "serialization_failed".to_string(),
-                    }),
-                ),
-            },
-            Err(error) => emit_browser_event(
+        >| {
+            emit_bridge_result(
                 &bridge_route_emitter,
                 &bridge_route_state,
                 &bridge_route_surface,
-                BrowserEvent::BridgeError(BridgeErrorPayload {
-                    code: error.code().to_string(),
-                }),
-            ),
+                result,
+            )
         },
     );
     if let Err(reason) =
@@ -1733,6 +1753,40 @@ fn emit_browser_event<R: tauri::Runtime, E: Emitter<R>>(
 ) {
     if let Some(envelope) = state.lifecycle.envelope(surface, event) {
         let _ = emitter.emit_to(MAIN_WEBVIEW_LABEL, BROWSER_EVENT_TOPIC, envelope);
+    }
+}
+
+fn emit_bridge_result<R: tauri::Runtime, E: Emitter<R>>(
+    emitter: &E,
+    state: &BrowserHostState,
+    surface: &BrowserSurfaceRef,
+    result: Result<super::bridge::BrowserBridgeEnvelope, super::bridge::BrowserBridgeError>,
+) {
+    match result {
+        Ok(envelope) => match serde_json::to_value(envelope) {
+            Ok(bridge_envelope) => emit_browser_event(
+                emitter,
+                state,
+                surface,
+                BrowserEvent::BridgeMessage(BridgeMessagePayload { bridge_envelope }),
+            ),
+            Err(_) => emit_browser_event(
+                emitter,
+                state,
+                surface,
+                BrowserEvent::BridgeError(BridgeErrorPayload {
+                    code: "serialization_failed".to_string(),
+                }),
+            ),
+        },
+        Err(error) => emit_browser_event(
+            emitter,
+            state,
+            surface,
+            BrowserEvent::BridgeError(BridgeErrorPayload {
+                code: error.code().to_string(),
+            }),
+        ),
     }
 }
 

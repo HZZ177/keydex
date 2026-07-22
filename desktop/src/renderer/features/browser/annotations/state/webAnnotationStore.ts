@@ -304,7 +304,16 @@ export function createWebAnnotationStore(
       },
       async createAnnotation(input) {
         const active = get().activePage;
-        if (!active) throw new Error("No active browser page for web annotation creation");
+        console.info("[Keydex Browser Annotation]", "store.create.requested", {
+          activePage: Boolean(active),
+          pageKey: active?.pageKey,
+          targetKind: input.target.kind,
+          bodyLength: input.bodyMarkdown.length,
+        });
+        if (!active) {
+          console.info("[Keydex Browser Annotation]", "store.create.rejected", { reason: "no_active_page" });
+          throw new Error("No active browser page for web annotation creation");
+        }
         const token = beginMutation("create", null);
         const payload: WebAnnotationCreateInput = {
           scope: active.scope,
@@ -328,8 +337,17 @@ export function createWebAnnotationStore(
           const detail = await client.create(payload);
           applyDetail(detail);
           finishMutation(token);
+          console.info("[Keydex Browser Annotation]", "store.create.completed", {
+            annotationId: detail.annotation.id,
+            pageKey: active.pageKey,
+            visibleItemCount: get().pages[active.pageKey]?.items.length ?? null,
+          });
           return detail;
         } catch (error) {
+          console.info("[Keydex Browser Annotation]", "store.create.failed", {
+            pageKey: active.pageKey,
+            error: error instanceof Error ? error.message : String(error),
+          });
           failMutation(token, error);
           throw error;
         }

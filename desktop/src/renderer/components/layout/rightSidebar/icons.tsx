@@ -1,4 +1,4 @@
-import { Bot, FileDiff, Folder, Globe, MessageSquare } from "lucide-react";
+import { Bot, FileDiff, Folders, Globe, MessagesSquare } from "lucide-react";
 
 import type { RightSidebarPanelIcon } from "./types";
 
@@ -14,9 +14,9 @@ export function RightSidebarPanelIconGlyph({
   const props = { size, strokeWidth };
   switch (icon) {
     case "folder":
-      return <Folder {...props} />;
+      return <Folders {...props} />;
     case "message":
-      return <MessageSquare {...props} />;
+      return <MessagesSquare {...props} />;
     case "bot":
       return <Bot {...props} />;
     case "review":

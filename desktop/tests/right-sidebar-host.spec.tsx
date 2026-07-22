@@ -63,6 +63,12 @@ describe("right sidebar registry host", () => {
       "审阅",
       "浏览器",
     ]);
+    expect(
+      screen.getByRole("button", { name: "旁路对话" }).querySelector(".lucide-messages-square"),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("button", { name: "文件" }).querySelector(".lucide-folders"),
+    ).not.toBeNull();
     expect(screen.getByRole("button", { name: "浏览器" }).querySelector(".lucide-globe")).not.toBeNull();
     expect(screen.getByRole("button", { name: "浏览器" }).querySelector(".lucide-globe-2")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "文件" }));

@@ -4816,7 +4816,7 @@ function codeMirrorTheme(theme: "light" | "dark"): Extension {
         padding: "10px 0 14px",
       },
       ".cm-line": {
-        padding: "0 24px 0 14px",
+        padding: "0 24px",
       },
       ".cm-gutters": {
         backgroundColor: "var(--color-bg-elevated)",

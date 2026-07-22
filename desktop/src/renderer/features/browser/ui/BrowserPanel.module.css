@@ -182,6 +182,145 @@
   opacity: 0.64;
 }
 
+.annotationToggle {
+  position: relative;
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  padding: 0;
+  background: transparent;
+  color: var(--annotation-accent);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    width var(--motion-panel) var(--motion-ease-out),
+    gap var(--motion-panel) var(--motion-ease-out),
+    padding var(--motion-panel) var(--motion-ease-out),
+    background-color var(--motion-fast) var(--motion-ease-out),
+    border-color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out),
+    color var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-fast) var(--motion-ease-standard);
+}
+
+.annotationToggle:hover:not(:disabled),
+.annotationToggle:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--annotation-accent) 10%, transparent);
+}
+
+.annotationToggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--annotation-accent) 28%, transparent);
+  outline-offset: 1px;
+}
+
+.annotationToggle[data-active="true"] {
+  width: 90px;
+  gap: 6px;
+  padding: 0 9px;
+  border-color: color-mix(in srgb, var(--annotation-accent) 30%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--annotation-accent) 12%, var(--control-pill-active-bg));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 22%),
+    inset 0 -1px 0 rgb(9 10 16 / 6%),
+    0 2px 7px rgb(9 10 16 / 9%);
+  color: var(--annotation-accent);
+  backdrop-filter: blur(10px) saturate(1.1);
+  -webkit-backdrop-filter: blur(10px) saturate(1.1);
+}
+
+.annotationToggle[data-active="true"]:hover:not(:disabled),
+.annotationToggle[data-active="true"]:focus-visible {
+  border-color: color-mix(in srgb, var(--annotation-accent) 40%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--annotation-accent) 17%, var(--control-pill-hover-bg));
+  color: color-mix(in srgb, var(--annotation-accent) 88%, var(--color-text-1));
+}
+
+.annotationToggle:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.annotationToggle:disabled {
+  cursor: default;
+  color: var(--color-text-4);
+  opacity: 0.64;
+}
+
+.annotationToggleIcon {
+  flex: 0 0 auto;
+  transition: transform var(--motion-panel) var(--motion-ease-out);
+}
+
+.annotationToggle[data-active="true"] .annotationToggleIcon {
+  transform: rotate(-8deg);
+}
+
+.annotationToggleLabel {
+  position: relative;
+  display: block;
+  width: 0;
+  height: 16px;
+  overflow: hidden;
+  flex: 0 0 auto;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition:
+    width var(--motion-panel) var(--motion-ease-out),
+    opacity var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-panel) var(--motion-ease-out);
+}
+
+.annotationToggle[data-active="true"] .annotationToggleLabel {
+  width: 48px;
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.annotationToggleText {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  font-size: 11px;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+  line-height: 16px;
+  transition:
+    opacity var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-fast) var(--motion-ease-out);
+}
+
+.annotationToggleText[data-mode-copy="active"] {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.annotationToggleText[data-mode-copy="close"] {
+  opacity: 0;
+  transform: translateY(7px);
+}
+
+.annotationToggle[data-active="true"]:is(:hover, :focus-visible)
+  .annotationToggleText[data-mode-copy="active"] {
+  opacity: 0;
+  transform: translateY(-7px);
+}
+
+.annotationToggle[data-active="true"]:is(:hover, :focus-visible)
+  .annotationToggleText[data-mode-copy="close"] {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .addressForm {
   display: flex;
   min-width: 88px;
@@ -350,6 +489,10 @@
 
 @media (prefers-reduced-motion: reduce) {
   .toolbarButton,
+  .annotationToggle,
+  .annotationToggleIcon,
+  .annotationToggleLabel,
+  .annotationToggleText,
   .addressForm {
     transition: none;
   }

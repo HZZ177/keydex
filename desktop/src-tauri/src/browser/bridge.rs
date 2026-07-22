@@ -20,7 +20,16 @@ const MAIN_FRAME_CHANNEL: &str = "main";
 const PAGE_BRIDGE_BUNDLE: &str = concat!(
     "(() => {\n",
     "const __KEYDEX_BRIDGE_COMMAND_TARGET__ = new EventTarget();\n",
-    "const __KEYDEX_BRIDGE_RESPONSE_TARGET__ = new EventTarget();\n",
+    "let __KEYDEX_BRIDGE_RESPONSE_HANDLER__ = null;\n",
+    "let __KEYDEX_BRIDGE_DIAGNOSTICS_POST__ = null;\n",
+    "const __KEYDEX_BRIDGE_RESPONSE_TARGET__ = new class extends EventTarget {\n",
+    "  dispatchEvent(event) {\n",
+    "    if (typeof __KEYDEX_BRIDGE_RESPONSE_HANDLER__ === 'function') {\n",
+    "      __KEYDEX_BRIDGE_RESPONSE_HANDLER__(event);\n",
+    "    }\n",
+    "    return super.dispatchEvent(event);\n",
+    "  }\n",
+    "}();\n",
     include_str!("page_bridge.js"),
     "\n",
     include_str!("page_bridge_frame.js"),
@@ -139,6 +148,7 @@ struct PendingBridgeRequest {
 struct BrowserBridgeCursor {
     surface: BrowserSurfaceRef,
     host_navigation_id: String,
+    transport_token: String,
     frames: HashMap<String, BrowserBridgeFrameCursor>,
     pending_requests: HashMap<String, PendingBridgeRequest>,
 }
@@ -149,18 +159,25 @@ pub(crate) struct BrowserBridgeBroker {
 }
 
 impl BrowserBridgeBroker {
-    pub(crate) fn register_surface(&self, surface: BrowserSurfaceRef, navigation_id: String) {
+    pub(crate) fn register_surface(
+        &self,
+        surface: BrowserSurfaceRef,
+        navigation_id: String,
+    ) -> String {
+        let transport_token = uuid::Uuid::new_v4().simple().to_string();
         if let Ok(mut cursors) = self.cursors.lock() {
             cursors.insert(
                 surface.panel_id.clone(),
                 BrowserBridgeCursor {
                     surface,
                     host_navigation_id: navigation_id,
+                    transport_token: transport_token.clone(),
                     frames: HashMap::new(),
                     pending_requests: HashMap::new(),
                 },
             );
         }
+        transport_token
     }
 
     pub(crate) fn begin_navigation(
@@ -255,6 +272,29 @@ impl BrowserBridgeBroker {
         self.receive_on_channel(MAIN_FRAME_CHANNEL, None, raw)
     }
 
+    pub(crate) fn receive_authenticated_main(
+        &self,
+        surface: &BrowserSurfaceRef,
+        transport_token: &str,
+        raw: &str,
+    ) -> Result<BrowserBridgeEnvelope, BrowserBridgeError> {
+        let authenticated = self
+            .cursors
+            .lock()
+            .ok()
+            .and_then(|cursors| cursors.get(&surface.panel_id).cloned())
+            .is_some_and(|cursor| {
+                cursor.surface == *surface && cursor.transport_token == transport_token
+            });
+        let result = if authenticated {
+            self.receive_on_channel(MAIN_FRAME_CHANNEL, None, raw)
+        } else {
+            Err(BrowserBridgeError::SourceMismatch)
+        };
+        write_debug_bridge_trace("tauri-main", raw, &result);
+        result
+    }
+
     pub(crate) fn receive_on_channel(
         &self,
         channel_id: &str,
@@ -276,15 +316,14 @@ impl BrowserBridgeBroker {
         }
         if envelope.kind == "bridge.ready" {
             validate_ready_channel(channel_id, source, &envelope)?;
-            if envelope.sequence != 1 {
-                return Err(BrowserBridgeError::OutOfOrder);
-            }
-            if cursor.frames.get(&envelope.frame_key).is_some_and(|frame| {
-                frame.channel_id == channel_id
-                    && frame.navigation_id == envelope.navigation_id
-                    && envelope.sequence <= frame.last_page_sequence
-            }) {
-                return Err(BrowserBridgeError::OutOfOrder);
+            if let Some(frame) = cursor.frames.get_mut(&envelope.frame_key) {
+                if frame.channel_id == channel_id && frame.navigation_id == envelope.navigation_id {
+                    if envelope.sequence <= frame.last_page_sequence {
+                        return Err(BrowserBridgeError::OutOfOrder);
+                    }
+                    frame.last_page_sequence = envelope.sequence;
+                    return Ok(envelope);
+                }
             }
             if envelope.frame_key == "main" {
                 cursor.frames.clear();
@@ -533,13 +572,18 @@ pub(crate) fn parse_browser_bridge_envelope_for_direction(
     })
 }
 
-pub(crate) fn bridge_initialization_script(surface: &BrowserSurfaceRef) -> String {
+pub(crate) fn bridge_initialization_script(
+    surface: &BrowserSurfaceRef,
+    transport_token: &str,
+) -> String {
     let scoring_policy: Value = serde_json::from_str(WEB_ANNOTATION_SCORING_POLICY_V1)
         .expect("web annotation scoring policy fixture must be valid JSON");
     let bootstrap = serde_json::json!({
         "panelId": surface.panel_id,
         "surfaceId": surface.surface_id,
         "generation": surface.generation,
+        "transportToken": transport_token,
+        "diagnostics": cfg!(debug_assertions),
         "scoringPolicy": scoring_policy,
         "resolverPolicy": {
             "batchSize": BROWSER_RESOLVE_BATCH_SIZE,
@@ -680,24 +724,145 @@ unsafe fn receive_windows_message(
     use windows_061::core::PWSTR;
 
     let mut message = PWSTR::null();
-    let raw = if args.TryGetWebMessageAsString(&mut message).is_ok() && !message.is_null() {
-        take_windows_string(message)?
-    } else {
-        let mut json = PWSTR::null();
-        args.WebMessageAsJson(&mut json)?;
-        if json.is_null() {
-            return Ok(());
-        }
-        take_windows_string(json)?
-    };
+    let (raw, is_string_message) =
+        if args.TryGetWebMessageAsString(&mut message).is_ok() && !message.is_null() {
+            (take_windows_string(message)?, true)
+        } else {
+            let mut json = PWSTR::null();
+            args.WebMessageAsJson(&mut json)?;
+            if json.is_null() {
+                return Ok(());
+            }
+            (take_windows_string(json)?, false)
+        };
+    // Tauri's IPC transport uses WebView2 string messages. The browser bridge
+    // owns only JSON object messages from child-frame channels, so leave every
+    // string exclusively to Tauri instead of emitting a second, false bridge
+    // error after the command handler accepts it.
+    if is_string_message {
+        return Ok(());
+    }
     let mut source = PWSTR::null();
     let source = if args.Source(&mut source).is_ok() && !source.is_null() {
         Some(take_windows_string(source)?)
     } else {
         None
     };
-    route(broker.receive_on_channel(channel_id, source.as_deref(), &raw));
+    if write_debug_page_trace(channel_id, &raw) {
+        return Ok(());
+    }
+    let result = broker.receive_on_channel(channel_id, source.as_deref(), &raw);
+    write_debug_bridge_trace(channel_id, &raw, &result);
+    route(result);
     Ok(())
+}
+
+#[cfg(all(windows, debug_assertions))]
+fn write_debug_page_trace(channel_id: &str, raw: &str) -> bool {
+    use std::io::Write;
+
+    let Ok(value) = serde_json::from_str::<Value>(raw) else {
+        return false;
+    };
+    if value.get("protocol").and_then(Value::as_str) != Some("keydex.web-annotation.debug.v1") {
+        return false;
+    }
+    let Some(stage) = value.get("stage").and_then(Value::as_str) else {
+        return true;
+    };
+    if stage.is_empty() || stage.len() > 128 {
+        return true;
+    }
+    let frame_key = value.get("frameKey").and_then(Value::as_str).unwrap_or("-");
+    let detail = value
+        .get("detail")
+        .filter(|value| value.is_object())
+        .map(Value::to_string)
+        .unwrap_or_else(|| "{}".to_string());
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_millis())
+        .unwrap_or_default();
+    let path = std::env::temp_dir().join("keydex-browser-bridge-debug.log");
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(
+            file,
+            "{timestamp} pid={} channel={channel_id} frame={frame_key} stage={stage} detail={detail}",
+            std::process::id(),
+        );
+    }
+    true
+}
+
+#[cfg(any(not(windows), not(debug_assertions)))]
+fn write_debug_page_trace(_channel_id: &str, _raw: &str) -> bool {
+    false
+}
+
+#[cfg(all(windows, debug_assertions))]
+fn write_debug_bridge_trace(
+    channel_id: &str,
+    raw: &str,
+    result: &Result<BrowserBridgeEnvelope, BrowserBridgeError>,
+) {
+    use std::io::Write;
+
+    let parsed = serde_json::from_str::<Value>(raw).ok();
+    let kind = parsed
+        .as_ref()
+        .and_then(|value| value.get("kind"))
+        .and_then(Value::as_str)
+        .unwrap_or("unparsed");
+    if !matches!(
+        kind,
+        "bridge.ready" | "annotation.submit" | "annotation.cancelled"
+    ) && result.is_ok()
+    {
+        return;
+    }
+    let request_id = parsed
+        .as_ref()
+        .and_then(|value| value.get("requestId"))
+        .and_then(Value::as_str)
+        .unwrap_or("-");
+    let sequence = parsed
+        .as_ref()
+        .and_then(|value| value.get("sequence"))
+        .and_then(Value::as_u64)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-".to_string());
+    let outcome = match result {
+        Ok(envelope) => format!("accepted:{}", envelope.kind),
+        Err(error) => format!("rejected:{}", error.code()),
+    };
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_millis())
+        .unwrap_or_default();
+    let path = std::env::temp_dir().join("keydex-browser-bridge-debug.log");
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(
+            file,
+            "{timestamp} pid={} channel={channel_id} kind={kind} request={request_id} sequence={sequence} outcome={outcome}",
+            std::process::id(),
+        );
+    }
+}
+
+#[cfg(any(not(windows), not(debug_assertions)))]
+fn write_debug_bridge_trace(
+    _channel_id: &str,
+    _raw: &str,
+    _result: &Result<BrowserBridgeEnvelope, BrowserBridgeError>,
+) {
 }
 
 #[cfg(windows)]
@@ -2048,6 +2213,48 @@ mod tests {
     }
 
     #[test]
+    fn repeated_ready_recovers_a_missed_bootstrap_before_annotation_submit() {
+        let broker = BrowserBridgeBroker::default();
+        broker.register_surface(surface(), "navigation-2".to_string());
+
+        let repeated_ready = message(7);
+        assert!(broker
+            .receive_on_channel(
+                MAIN_FRAME_CHANNEL,
+                Some("https://example.test/article"),
+                &repeated_ready.to_string(),
+            )
+            .is_ok());
+
+        let submission = json!({
+            "protocol": WEB_ANNOTATION_BRIDGE_PROTOCOL,
+            "kind": "annotation.submit",
+            "panelId": "panel-1",
+            "surfaceId": "surface-1",
+            "generation": 2,
+            "navigationId": "navigation-2",
+            "frameKey": "main",
+            "requestId": "selection-native",
+            "sequence": 8,
+            "payload": {
+                "selectionId": "selection-native",
+                "bodyMarkdown": "Native inspector annotation"
+            }
+        });
+        assert_eq!(
+            broker
+                .receive_on_channel(
+                    MAIN_FRAME_CHANNEL,
+                    Some("https://example.test/article"),
+                    &submission.to_string(),
+                )
+                .unwrap()
+                .kind,
+            "annotation.submit"
+        );
+    }
+
+    #[test]
     fn strict_payloads_reject_arbitrary_selector_html_and_password_values() {
         let mut selector = message(1);
         selector["payload"]["selector"] = json!("button.submit");
@@ -2092,7 +2299,7 @@ mod tests {
 
     #[test]
     fn initialization_script_is_fixed_and_has_no_generic_automation_surface() {
-        let script = bridge_initialization_script(&surface());
+        let script = bridge_initialization_script(&surface(), "transport-token-test");
         assert!(script.contains(WEB_ANNOTATION_BRIDGE_PROTOCOL));
         assert!(script.contains("keydex.web-annotation.scoring.v1"));
         assert!(script.contains("chrome?.webview?.postMessage"));

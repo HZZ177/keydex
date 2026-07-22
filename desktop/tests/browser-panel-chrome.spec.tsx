@@ -112,12 +112,15 @@ describe("BrowserPanel chrome", () => {
 
   it("starts the current-page annotation mode from the themed toolbar badge", () => {
     const onAnnotations = vi.fn();
-    renderPanel({ annotationCount: 3, onAnnotations });
+    renderPanel({ annotationCount: 3, onAnnotationList: vi.fn(), onAnnotations });
 
-    fireEvent.click(screen.getByRole("button", { name: "网页批注（3）" }));
+    const button = screen.getByRole("button", { name: "网页批注" });
+    expect(button.getAttribute("data-active")).toBe("false");
+    expect(button.querySelector(".lucide-mouse-pointer-click")).not.toBeNull();
+    fireEvent.click(button);
 
     expect(onAnnotations).toHaveBeenCalledTimes(1);
-    expect(screen.getByText("3")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "查看网页批注（3）" })).not.toBeNull();
   });
 
   it("uses the shared Keydex tooltip layer for browser toolbar buttons", () => {
@@ -133,12 +136,18 @@ describe("BrowserPanel chrome", () => {
   });
 
   it("shows the annotation button as an active toggle while inspecting the page", () => {
-    renderPanel({ annotationActive: true, onAnnotations: vi.fn() });
+    const onAnnotations = vi.fn();
+    renderPanel({ annotationActive: true, onAnnotations });
 
     const button = screen.getByRole("button", { name: "退出批注模式" });
     expect(button.getAttribute("aria-pressed")).toBe("true");
     expect(button.getAttribute("data-active")).toBe("true");
     expect(button.querySelector(".lucide-mouse-pointer-click")).not.toBeNull();
+    expect(button.querySelector('[data-mode-copy="active"]')?.textContent).toBe("批注模式");
+    expect(button.querySelector('[data-mode-copy="close"]')?.textContent).toBe("点击关闭");
+    expect(button.hasAttribute("data-tooltip-label")).toBe(false);
+    fireEvent.click(button);
+    expect(onAnnotations).toHaveBeenCalledTimes(1);
   });
 
   it("uses Globe for browser identity icons", () => {

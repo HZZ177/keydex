@@ -34,14 +34,14 @@ describe("fixed page bridge lifecycle", () => {
     openDoms.push(dom);
     const { window } = dom;
     const messages: BrowserBridgeEnvelope[] = [];
+    const mainNativePosts: unknown[] = [];
     const nativeListeners = new Set<(event: { data: unknown }) => void>();
     Object.defineProperty(window, "chrome", {
       configurable: true,
       value: {
         webview: {
           postMessage(value: unknown) {
-            const parsed = parseBrowserBridgeEnvelope(value, "page-to-host");
-            if (parsed.ok) messages.push(parsed.envelope);
+            mainNativePosts.push(value);
           },
           addEventListener(type: string, listener: (event: { data: unknown }) => void) {
             if (type === "message") nativeListeners.add(listener);
@@ -52,13 +52,31 @@ describe("fixed page bridge lifecycle", () => {
         },
       },
     });
-    const bootstrap = JSON.stringify({ panelId: "panel-1", surfaceId: "surface-1", generation: 2 });
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {
+        invoke(command: string, args: { message?: { transportToken?: string; envelope?: unknown } }) {
+          expect(command).toBe("browser_page_bridge_message");
+          expect(args.message?.transportToken).toBe("transport-token-test");
+          const parsed = parseBrowserBridgeEnvelope(args.message?.envelope, "page-to-host");
+          if (parsed.ok) messages.push(parsed.envelope);
+          return Promise.resolve();
+        },
+      },
+    });
+    const bootstrap = JSON.stringify({
+      panelId: "panel-1",
+      surfaceId: "surface-1",
+      generation: 2,
+      transportToken: "transport-token-test",
+    });
     const bundled = sources.map((source, index) => index === 0
       ? source.replace("__KEYDEX_BRIDGE_BOOTSTRAP__", bootstrap)
       : source).join("\n");
     window.eval(`(() => {
       const __KEYDEX_BRIDGE_COMMAND_TARGET__ = new EventTarget();
       const __KEYDEX_BRIDGE_RESPONSE_TARGET__ = new EventTarget();
+      let __KEYDEX_BRIDGE_DIAGNOSTICS_POST__ = null;
       ${bundled}
       __KEYDEX_BRIDGE_COMMAND_TARGET__.dispatchEvent(new Event("keydex:web-annotation-bootstrap-complete"));
     })();`);
@@ -117,6 +135,60 @@ describe("fixed page bridge lifecycle", () => {
     expect(messages.filter((message) => message.kind === "selection.candidate"
       && message.requestId === "selection-element")).toHaveLength(1);
     expect(window.document.querySelectorAll("[data-keydex-annotation-overlay-root='true']")).toHaveLength(1);
+    send("selection.cancel", "cancel-selection-element", {
+      selectionId: "selection-element",
+      reason: "user",
+    });
+    Object.defineProperty(window, "chrome", {
+      configurable: true,
+      value: {},
+    });
+
+    const nativeRequestId = "selection-native-element";
+    const opened = (window as unknown as {
+      KeydexAnnotationOverlay: {
+        openNativeEditor(detail: Record<string, unknown>): boolean;
+      };
+    }).KeydexAnnotationOverlay.openNativeEditor({
+      requestId: nativeRequestId,
+      selectionId: nativeRequestId,
+      target: {
+        type: "element",
+        tag: "button",
+        role: "button",
+        accessibleName: "Page action",
+        stableAttributes: [{ name: "id", value: "action" }],
+        path: [
+          { childIndex: 1, shadowRoot: false },
+          { childIndex: 1, shadowRoot: false },
+          { childIndex: 0, shadowRoot: false },
+        ],
+        context: { headingPath: [] },
+        rect: { x: 10, y: 20, width: 120, height: 32 },
+        frame: { url: "https://example.test/article", indexPath: [] },
+      },
+    });
+    expect(opened).toBe(true);
+    const editor = window.document
+      .querySelector<HTMLElement>("[data-keydex-annotation-overlay-root='true']")
+      ?.shadowRoot?.querySelector<HTMLElement>("[part='annotation-editor']");
+    const input = editor?.querySelector<HTMLTextAreaElement>("textarea");
+    const save = editor?.querySelector<HTMLButtonElement>("[data-kind='save']");
+    expect(input).toBeTruthy();
+    expect(save).toBeTruthy();
+    expect(editor?.getRootNode()).toBe(editor?.ownerDocument
+      .querySelector<HTMLElement>("[data-keydex-annotation-overlay-root='true']")?.shadowRoot);
+    expect(editor?.ownerDocument
+      .querySelector<HTMLElement>("[data-keydex-annotation-overlay-root='true']")
+      ?.style.getPropertyValue("pointer-events")).toBe("auto");
+    input!.value = "Native inspector annotation";
+    save!.click();
+    expect(messages.find((message) => message.kind === "annotation.submit"
+      && message.requestId === nativeRequestId)?.payload).toEqual({
+      selectionId: nativeRequestId,
+      bodyMarkdown: "Native inspector annotation",
+    });
+    expect(mainNativePosts).toHaveLength(0);
 
     window.dispatchEvent(new window.Event("pagehide"));
     expect(nativeListeners.size).toBe(0);

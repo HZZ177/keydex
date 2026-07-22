@@ -32,6 +32,18 @@
     ? document : __KEYDEX_BRIDGE_COMMAND_TARGET__;
   const responseTarget = typeof __KEYDEX_BRIDGE_RESPONSE_TARGET__ === "undefined"
     ? document : __KEYDEX_BRIDGE_RESPONSE_TARGET__;
+  // Capture the native WebView2 channel before untrusted page scripts can
+  // replace or wrap window.chrome. Every later bridge operation uses these
+  // bound functions instead of resolving a mutable page global again.
+  const nativeWebview = window.chrome?.webview ?? null;
+  const postNativeMessage = typeof nativeWebview?.postMessage === "function"
+    ? nativeWebview.postMessage.bind(nativeWebview) : null;
+  const addNativeMessageListener = typeof nativeWebview?.addEventListener === "function"
+    ? nativeWebview.addEventListener.bind(nativeWebview) : null;
+  const removeNativeMessageListener = typeof nativeWebview?.removeEventListener === "function"
+    ? nativeWebview.removeEventListener.bind(nativeWebview) : null;
+  const invokeNative = typeof window.__TAURI_INTERNALS__?.invoke === "function"
+    ? window.__TAURI_INTERNALS__.invoke.bind(window.__TAURI_INTERNALS__) : null;
   const overlaySelector = "[data-keydex-annotation-overlay-root='true']";
   const exactEnvelopeKeys = [
     "protocol",
@@ -48,6 +60,14 @@
   const activeRequests = new Map();
   let disposed = false;
   let sequence = 0;
+  const traceConsole = typeof console?.info === "function" ? console.info.bind(console) : null;
+  const trace = (stage, detail = {}) => {
+    try {
+      traceConsole?.("[Keydex Browser Annotation]", stage, detail);
+    } catch {
+      // Diagnostics must never affect the page bridge.
+    }
+  };
 
   const randomId = () => {
     if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
@@ -80,6 +100,23 @@
     }
   })();
   const navigationId = `navigation:${randomId()}`;
+  if (bootstrap.diagnostics && postNativeMessage) {
+    __KEYDEX_BRIDGE_DIAGNOSTICS_POST__ = (stage, detail = {}) => {
+      if (typeof stage !== "string" || stage.length === 0 || stage.length > 128) return;
+      try {
+        postNativeMessage({
+          protocol: "keydex.web-annotation.debug.v1",
+          stage,
+          frameKey,
+          navigationId,
+          detail,
+        });
+      } catch {
+        // Debug forwarding is deliberately isolated from the production bridge.
+      }
+    };
+    __KEYDEX_BRIDGE_DIAGNOSTICS_POST__("page-bridge.diagnostics.ready", {});
+  }
 
   const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
   const isId = (value) => typeof value === "string"
@@ -116,7 +153,17 @@
   };
 
   const post = (kind, requestId, payload) => {
-    if (disposed || !pageToHostKinds.has(kind) || !isId(requestId) || !isRecord(payload)) return;
+    const valid = !disposed && pageToHostKinds.has(kind) && isId(requestId) && isRecord(payload);
+    trace("page-bridge.post.requested", {
+      kind,
+      requestId,
+      frameKey,
+      valid,
+      nativeChannelAvailable: Boolean(postNativeMessage),
+      selectionId: payload?.selectionId,
+      bodyLength: typeof payload?.bodyMarkdown === "string" ? payload.bodyMarkdown.length : undefined,
+    });
+    if (!valid) return;
     const envelope = {
       protocol,
       kind,
@@ -133,7 +180,56 @@
     // only consumes string messages, while the BrowserHost broker reads the
     // JSON channel directly; keeping the channels type-separated avoids
     // spurious `missing field cmd` errors in page DevTools.
-    window.chrome?.webview?.postMessage(envelope);
+    if (frameKey === "main" && invokeNative && typeof bootstrap.transportToken === "string") {
+      void invokeNative("browser_page_bridge_message", {
+        message: {
+          transportToken: bootstrap.transportToken,
+          envelope,
+        },
+      }).then(() => {
+        trace("page-bridge.post.sent", {
+          kind,
+          requestId,
+          frameKey,
+          sequence: envelope.sequence,
+          transport: "tauri_ipc",
+        });
+      }).catch((error) => {
+        trace("page-bridge.post.failed", {
+          kind,
+          requestId,
+          sequence: envelope.sequence,
+          transport: "tauri_ipc",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+      return;
+    }
+    if (!postNativeMessage) {
+      trace("page-bridge.post.dropped", { kind, requestId, sequence: envelope.sequence, reason: "native_channel_missing" });
+      return;
+    }
+    try {
+      postNativeMessage(envelope);
+      trace("page-bridge.post.sent", {
+        kind,
+        requestId,
+        frameKey,
+        sequence: envelope.sequence,
+        transport: "webview2_frame",
+      });
+    } catch (error) {
+      trace("page-bridge.post.failed", {
+        kind,
+        requestId,
+        sequence: envelope.sequence,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
+  const announceReady = () => {
+    post("bridge.ready", "bridge-ready", { href: location.href, top: window === window.top });
   };
 
   const relayToChildren = (envelope) => {
@@ -172,12 +268,32 @@
   const onNativeMessage = (event) => dispatch(event.data);
   const onBootstrapComplete = () => {
     commandTarget.removeEventListener(bridgeBootstrapCompleteEventName, onBootstrapComplete);
-    post("bridge.ready", "bridge-ready", { href: location.href, top: window === window.top });
+    announceReady();
   };
   const onBridgeResponse = (event) => {
     const detail = event.detail;
-    if (!hasExactKeys(detail, ["kind", "requestId", "payload"])) return;
-    if (!pageToHostKinds.has(detail.kind) || !isId(detail.requestId) || !isRecord(detail.payload)) return;
+    trace("page-bridge.response.received", {
+      kind: detail?.kind,
+      requestId: detail?.requestId,
+      selectionId: detail?.payload?.selectionId,
+      bodyLength: typeof detail?.payload?.bodyMarkdown === "string" ? detail.payload.bodyMarkdown.length : undefined,
+    });
+    if (!hasExactKeys(detail, ["kind", "requestId", "payload"])) {
+      trace("page-bridge.response.rejected", { reason: "shape" });
+      return;
+    }
+    if (!pageToHostKinds.has(detail.kind) || !isId(detail.requestId) || !isRecord(detail.payload)) {
+      trace("page-bridge.response.rejected", { kind: detail.kind, requestId: detail.requestId, reason: "values" });
+      return;
+    }
+    // Native element inspection can open the editor even when the host attached
+    // after this document's one-shot bootstrap message. Re-announce the exact
+    // frame/navigation immediately before a terminal annotation response so the
+    // authenticated host and React cursors can recover without losing the draft.
+    if (detail.kind === "annotation.submit" || detail.kind === "annotation.cancelled") {
+      announceReady();
+    }
+    trace("page-bridge.response.forwarding", { kind: detail.kind, requestId: detail.requestId });
     post(detail.kind, detail.requestId, detail.payload);
     if (detail.kind === "selection.result") {
       const request = activeRequests.get(detail.requestId);
@@ -208,11 +324,16 @@
       }
     }
     disposed = true;
-    window.chrome?.webview?.removeEventListener("message", onNativeMessage);
+    removeNativeMessageListener?.("message", onNativeMessage);
     window.removeEventListener("message", onFrameRelay);
     window.removeEventListener("pagehide", teardown);
-    responseTarget.removeEventListener(bridgeResponseEventName, onBridgeResponse);
+    if (typeof __KEYDEX_BRIDGE_RESPONSE_HANDLER__ === "undefined") {
+      responseTarget.removeEventListener(bridgeResponseEventName, onBridgeResponse);
+    } else if (__KEYDEX_BRIDGE_RESPONSE_HANDLER__ === onBridgeResponse) {
+      __KEYDEX_BRIDGE_RESPONSE_HANDLER__ = null;
+    }
     commandTarget.removeEventListener(bridgeBootstrapCompleteEventName, onBootstrapComplete);
+    __KEYDEX_BRIDGE_DIAGNOSTICS_POST__ = null;
     activeRequests.clear();
     document.querySelectorAll(overlaySelector).forEach((element) => element.remove());
     try {
@@ -222,10 +343,14 @@
     }
   };
 
-  window.chrome?.webview?.addEventListener("message", onNativeMessage);
+  addNativeMessageListener?.("message", onNativeMessage);
   window.addEventListener("message", onFrameRelay);
   window.addEventListener("pagehide", teardown, { once: true });
-  responseTarget.addEventListener(bridgeResponseEventName, onBridgeResponse);
+  if (typeof __KEYDEX_BRIDGE_RESPONSE_HANDLER__ === "undefined") {
+    responseTarget.addEventListener(bridgeResponseEventName, onBridgeResponse);
+  } else {
+    __KEYDEX_BRIDGE_RESPONSE_HANDLER__ = onBridgeResponse;
+  }
   commandTarget.addEventListener(bridgeBootstrapCompleteEventName, onBootstrapComplete, { once: true });
   Object.defineProperty(window, "KeydexAnnotationBridge", {
     configurable: true,

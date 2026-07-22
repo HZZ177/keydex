@@ -57,20 +57,35 @@ export function createWebAnnotationClient(http: HttpClient): WebAnnotationClient
       return fromApiDetail(response);
     },
     async create(input) {
-      const response = await http.request<ApiWebAnnotationDetail>("/api/web-annotations", {
-        method: "POST",
-        body: {
-          schema_version: 1,
-          scope: input.scope,
-          source: toApiSource(input.source),
-          target: toApiTarget(input.target),
-          body_markdown: input.bodyMarkdown,
-          tags: input.tags ?? [],
-          properties: input.properties ?? [],
-          staged_asset_ids: input.stagedAssetIds ?? [],
-        },
+      console.info("[Keydex Browser Annotation]", "api.create.requested", {
+        targetKind: input.target.kind,
+        bodyLength: input.bodyMarkdown.length,
       });
-      return fromApiDetail(response);
+      try {
+        const response = await http.request<ApiWebAnnotationDetail>("/api/web-annotations", {
+          method: "POST",
+          body: {
+            schema_version: 1,
+            scope: input.scope,
+            source: toApiSource(input.source),
+            target: toApiTarget(input.target),
+            body_markdown: input.bodyMarkdown,
+            tags: input.tags ?? [],
+            properties: input.properties ?? [],
+            staged_asset_ids: input.stagedAssetIds ?? [],
+          },
+        });
+        const detail = fromApiDetail(response);
+        console.info("[Keydex Browser Annotation]", "api.create.completed", {
+          annotationId: detail.annotation.id,
+        });
+        return detail;
+      } catch (error) {
+        console.info("[Keydex Browser Annotation]", "api.create.failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
     },
     async patch(annotationId, input) {
       const response = await http.request<ApiWebAnnotationDetail>(annotationPath(annotationId), {

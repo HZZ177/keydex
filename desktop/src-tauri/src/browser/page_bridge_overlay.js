@@ -34,6 +34,17 @@
   let updateFrame = null;
   let lastGeometryRequestId = null;
   let disposed = false;
+  const traceConsole = typeof console?.info === "function" ? console.info.bind(console) : null;
+  const trace = (stage, detail = {}) => {
+    try {
+      traceConsole?.("[Keydex Browser Annotation]", stage, detail);
+      if (typeof __KEYDEX_BRIDGE_DIAGNOSTICS_POST__ === "function") {
+        __KEYDEX_BRIDGE_DIAGNOSTICS_POST__(stage, detail);
+      }
+    } catch {
+      // Diagnostics must never affect page interaction.
+    }
+  };
 
   const stylesheet = `
     :host {
@@ -482,13 +493,26 @@
 
   const openEditor = (requestId, currentSelectionId, target) => {
     const rect = targetRects(target)[0];
+    trace("overlay.editor.open.requested", {
+      requestId,
+      selectionId: currentSelectionId,
+      targetKind: target?.kind ?? "unknown",
+      validRect: validRect(rect),
+    });
     if (!validRect(rect)) {
+      trace("overlay.editor.open.rejected", {
+        requestId,
+        selectionId: currentSelectionId,
+        reason: "invalid_rect",
+      });
       clearSelection();
       respond("annotation.cancelled", requestId, { selectionId: currentSelectionId });
       return;
     }
     const current = ensureOverlay();
     closeEditor();
+    current.root.setAttribute("data-editor-open", "true");
+    current.root.style.setProperty("pointer-events", "auto", "important");
     clearLayer(current.selectionLayer);
     renderRects(current.selectionLayer, [rect], {
       kind: "candidate",
@@ -529,17 +553,39 @@
     editor.append(input, cancel, save, error);
 
     const stopPageInteraction = (event) => event.stopPropagation();
-    editor.addEventListener("pointerdown", stopPageInteraction);
-    editor.addEventListener("click", stopPageInteraction);
+    editor.addEventListener("pointerdown", (event) => {
+      trace("overlay.editor.pointerdown", {
+        requestId,
+        selectionId: currentSelectionId,
+        action: event.target?.dataset?.kind ?? event.target?.tagName?.toLowerCase() ?? "unknown",
+      });
+      stopPageInteraction(event);
+    });
+    editor.addEventListener("click", (event) => {
+      trace("overlay.editor.click", {
+        requestId,
+        selectionId: currentSelectionId,
+        action: event.target?.dataset?.kind ?? event.target?.tagName?.toLowerCase() ?? "unknown",
+      });
+      stopPageInteraction(event);
+    });
     const cancelDraft = () => finishEditor("annotation.cancelled", requestId, currentSelectionId);
     const submitDraft = () => {
       const bodyMarkdown = input.value.trim();
+      trace("overlay.editor.save.invoked", {
+        requestId,
+        selectionId: currentSelectionId,
+        bodyLength: bodyMarkdown.length,
+        bodyBytes: utf8Size(bodyMarkdown),
+      });
       if (!bodyMarkdown) {
+        trace("overlay.editor.save.rejected", { requestId, selectionId: currentSelectionId, reason: "empty" });
         error.textContent = "请输入批注内容";
         input.focus({ preventScroll: true });
         return;
       }
       if (utf8Size(bodyMarkdown) > 32 * 1024) {
+        trace("overlay.editor.save.rejected", { requestId, selectionId: currentSelectionId, reason: "too_large" });
         error.textContent = "批注内容不能超过 32 KiB";
         input.focus({ preventScroll: true });
         return;
@@ -568,6 +614,12 @@
     current.shadow.append(editor);
     current.editor = editor;
     editorDraft = { requestId, selectionId: currentSelectionId, target, editor };
+    trace("overlay.editor.opened", {
+      requestId,
+      selectionId: currentSelectionId,
+      hostPointerEvents: current.root.style.getPropertyValue("pointer-events"),
+      editorConnected: editor.isConnected,
+    });
     positionEditor();
     requestAnimationFrame(positionEditor);
     try {
@@ -579,13 +631,27 @@
   };
 
   const finishEditor = (kind, requestId, currentSelectionId, payload = {}) => {
-    if (!editorDraft || editorDraft.requestId !== requestId || editorDraft.selectionId !== currentSelectionId) return;
+    const draftMatches = Boolean(editorDraft)
+      && editorDraft.requestId === requestId
+      && editorDraft.selectionId === currentSelectionId;
+    trace("overlay.editor.finish.requested", {
+      kind,
+      requestId,
+      selectionId: currentSelectionId,
+      draftMatches,
+      bodyLength: typeof payload.bodyMarkdown === "string" ? payload.bodyMarkdown.length : undefined,
+    });
+    if (!draftMatches) return;
     clearSelection();
     respond(kind, requestId, { selectionId: currentSelectionId, ...payload });
   };
 
   const closeEditor = () => {
     editorDraft = null;
+    if (overlay) {
+      overlay.root.removeAttribute("data-editor-open");
+      overlay.root.style.setProperty("pointer-events", "none", "important");
+    }
     if (!overlay?.editor) return;
     overlay.editor.remove();
     overlay.editor = null;
@@ -850,9 +916,19 @@
     return other && Math.abs(rect.x - other.x) < 0.25 && Math.abs(rect.y - other.y) < 0.25
       && Math.abs(rect.width - other.width) < 0.25 && Math.abs(rect.height - other.height) < 0.25;
   });
-  const respond = (kind, requestId, payload) => responseTarget.dispatchEvent(new CustomEvent(responseEventName, {
-    detail: { kind, requestId, payload },
-  }));
+  const respond = (kind, requestId, payload) => {
+    trace("overlay.response.dispatch", {
+      kind,
+      requestId,
+      selectionId: payload?.selectionId,
+      bodyLength: typeof payload?.bodyMarkdown === "string" ? payload.bodyMarkdown.length : undefined,
+    });
+    const dispatched = responseTarget.dispatchEvent(new CustomEvent(responseEventName, {
+      detail: { kind, requestId, payload },
+    }));
+    trace("overlay.response.dispatched", { kind, requestId, dispatched });
+    return dispatched;
+  };
 
   const teardown = () => {
     if (disposed) return;

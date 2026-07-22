@@ -11,6 +11,7 @@
     "shell:default",
     "dialog:allow-open",
     "dialog:allow-save",
+    "allow-main-application-commands",
     "core:window:allow-close",
     "core:window:allow-is-maximized",
     "core:window:allow-minimize",

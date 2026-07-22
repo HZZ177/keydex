@@ -135,16 +135,14 @@ export function BrowserToolbar({
           <Download size={14} />
         </ToolbarButton>
         {onAnnotations ? (
-          <ToolbarButton
+          <AnnotationModeButton
             active={annotationActive}
             label={annotationActive
               ? "退出批注模式"
               : annotationDisabledReason ?? "网页批注"}
             disabled={disabled || annotationDisabled}
             onClick={onAnnotations}
-          >
-            <MousePointerClick size={14} />
-          </ToolbarButton>
+          />
         ) : null}
         {onAnnotationList ? (
           <ToolbarButton
@@ -158,6 +156,38 @@ export function BrowserToolbar({
         ) : null}
       </div>
     </div>
+  );
+}
+
+function AnnotationModeButton({
+  active,
+  disabled,
+  label,
+  onClick,
+}: {
+  readonly active: boolean;
+  readonly disabled: boolean;
+  readonly label: string;
+  onClick(): void;
+}) {
+  return (
+    <button
+      aria-label={label}
+      aria-pressed={active}
+      className={styles.annotationToggle}
+      data-active={active ? "true" : "false"}
+      data-annotation-toggle="true"
+      data-tooltip-label={active ? undefined : label}
+      disabled={disabled}
+      onClick={onClick}
+      type="button"
+    >
+      <MousePointerClick aria-hidden="true" className={styles.annotationToggleIcon} size={14} />
+      <span aria-hidden="true" className={styles.annotationToggleLabel}>
+        <span className={styles.annotationToggleText} data-mode-copy="active">批注模式</span>
+        <span className={styles.annotationToggleText} data-mode-copy="close">点击关闭</span>
+      </span>
+    </button>
   );
 }
 

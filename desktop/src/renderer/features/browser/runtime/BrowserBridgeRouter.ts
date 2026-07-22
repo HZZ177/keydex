@@ -87,7 +87,7 @@ export class BrowserBridgeRouter {
         this.#emitError({ code: "out_of_order", payload: input });
         return false;
       }
-      if (top) this.#frames.clear();
+      if (top && existing?.navigationId !== envelope.navigationId) this.#frames.clear();
       this.#frames.set(envelope.frameKey, {
         navigationId: envelope.navigationId,
         lastSequence: envelope.sequence,

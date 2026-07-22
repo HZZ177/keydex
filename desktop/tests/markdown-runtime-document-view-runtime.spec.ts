@@ -200,7 +200,7 @@ describe("DocumentViewRuntime keyed DOM patch", () => {
     expect(gutter?.querySelectorAll("[data-markdown-preview-fold-button='true']").length).toBeGreaterThan(0);
     expect(gutter?.textContent).toContain("1");
     expect(gutter?.textContent).toContain("3\n4");
-    expect(runtime.getBlockElement(snapshot.blocks[0].id)?.style.insetInlineStart).toBe("58px");
+    expect(runtime.getBlockElement(snapshot.blocks[0].id)?.style.insetInlineStart).toBe("74px");
 
     runtime.updateViewport({ scrollTop: 72, viewportHeight: 30 });
     expect(gutter?.querySelectorAll("[data-markdown-preview-line-number='true']")).toHaveLength(1);
@@ -231,7 +231,9 @@ describe("DocumentViewRuntime keyed DOM patch", () => {
     vi.advanceTimersByTime(180);
     expect(button.getAttribute("aria-expanded")).toBe("false");
     expect(runtime.getBlockElement(block.id)).toBeNull();
-    expect(element.querySelector("[data-markdown-preview-collapsed-block='true']")?.textContent).toBe("已折叠 2 行");
+    const collapsedSummary = element.querySelector<HTMLElement>("[data-markdown-preview-collapsed-block='true']");
+    expect(collapsedSummary?.textContent).toBe("已折叠 2 行");
+    expect(collapsedSummary?.style.insetInlineStart).toBe("74px");
     expect(runtime.canvas.style.height).toBe("98px");
 
     button.click();

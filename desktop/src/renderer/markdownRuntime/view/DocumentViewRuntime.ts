@@ -250,7 +250,7 @@ export class DocumentViewRuntime {
       element.style.position = "absolute";
       if (this.sourceGutter) {
         element.style.removeProperty("inset-inline");
-        element.style.insetInlineStart = `${sourceGutterWidth(snapshot.line_count) + 8}px`;
+        element.style.insetInlineStart = `${sourceGutterWidth(snapshot.line_count) + FILE_PREVIEW_SOURCE_GUTTER_GAP}px`;
         element.style.insetInlineEnd = "0";
       } else {
         element.style.insetInline = "0";
@@ -601,7 +601,7 @@ export class DocumentViewRuntime {
       }
       summary.dataset.markdownPreviewCollapsedBlock = descriptor.kind === "block" ? "true" : "false";
       summary.dataset.markdownPreviewCollapsedSection = descriptor.kind === "section" ? "true" : "false";
-      summary.style.insetInlineStart = `${sourceGutterWidth(snapshot.line_count) + 8}px`;
+      summary.style.insetInlineStart = `${sourceGutterWidth(snapshot.line_count) + FILE_PREVIEW_SOURCE_GUTTER_GAP}px`;
       summary.style.insetInlineEnd = "0";
       summary.style.top = `${item.top + (descriptor.kind === "section" ? this.baseHeights[item.index]! : 0)}px`;
       summary.textContent = `已折叠 ${descriptor.lineCount} 行`;
@@ -817,6 +817,7 @@ const COLLAPSED_SECTION_SUMMARY_HEIGHT = 42;
 const FOLD_COLLAPSE_MOTION_MS = 180;
 const FOLD_EXPAND_MOTION_MS = 160;
 const MAX_FOLD_ANIMATED_BLOCK_HEIGHT = 1_600;
+const FILE_PREVIEW_SOURCE_GUTTER_GAP = 24;
 
 type MarkdownFoldKind = "block" | "section";
 

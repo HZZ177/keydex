@@ -26,11 +26,12 @@ use browser::host::{
     browser_cancel_selection, browser_capture_region, browser_clear_highlights,
     browser_clear_profile_data, browser_configure_overlay, browser_create_surface,
     browser_destroy_surface, browser_discard_capture, browser_find, browser_go_back,
-    browser_go_forward, browser_navigate, browser_navigate_to_annotation_target, browser_reload,
-    browser_render_highlights, browser_resolve_annotations, browser_respond_download,
-    browser_respond_permission, browser_set_bounds, browser_set_resource_state,
-    browser_set_visibility, browser_set_zoom, browser_start_selection, browser_stop,
-    browser_stop_find, browser_take_incognito_capture, BrowserHostState,
+    browser_go_forward, browser_navigate, browser_navigate_to_annotation_target,
+    browser_page_bridge_message, browser_reload, browser_render_highlights,
+    browser_resolve_annotations, browser_respond_download, browser_respond_permission,
+    browser_set_bounds, browser_set_resource_state, browser_set_visibility, browser_set_zoom,
+    browser_start_selection, browser_stop, browser_stop_find, browser_take_incognito_capture,
+    BrowserHostState,
 };
 use terminal::manager::TerminalManager;
 use terminal::{
@@ -963,6 +964,7 @@ pub fn run() {
             take_associated_file_open_paths,
             relaunch_after_app_update,
             browser_create_surface,
+            browser_page_bridge_message,
             browser_destroy_surface,
             browser_navigate,
             browser_go_back,

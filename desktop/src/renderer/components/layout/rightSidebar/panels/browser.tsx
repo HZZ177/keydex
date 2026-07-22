@@ -56,6 +56,9 @@ import type {
 
 export const BROWSER_PANEL_SCHEMA_VERSION = 1 as const;
 export const BROWSER_START_URL = "" as const;
+const traceBrowserAnnotation = (stage: string, detail: Record<string, unknown> = {}) => {
+  console.info("[Keydex Browser Annotation]", stage, detail);
+};
 
 const BROWSER_PANEL_KEYS = [
   "id", "kind", "schemaVersion", "title", "faviconUrl", "restoreUrl",
@@ -371,6 +374,11 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
     const settleDraft = async (action: "save" | "cancel") => {
       if (disposed) return;
       const continueSelecting = annotationModeActiveRef.current;
+      traceBrowserAnnotation("renderer.draft.settle.started", {
+        action,
+        continueSelecting,
+        sessionStatus: session.getSnapshot().status,
+      });
       try {
         if (action === "save") {
           if (continueSelecting) await session.completeDraftSaveAndContinue("element");
@@ -380,7 +388,18 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
         } else {
           session.cancelDraft();
         }
+        traceBrowserAnnotation("renderer.draft.settle.completed", {
+          action,
+          continueSelecting,
+          sessionStatus: session.getSnapshot().status,
+          annotationModeActive: annotationModeActiveRef.current,
+        });
       } catch (error) {
+        traceBrowserAnnotation("renderer.draft.settle.failed", {
+          action,
+          continueSelecting,
+          error: error instanceof Error ? error.message : String(error),
+        });
         if (!disposed) {
           updateAnnotationModeActive(false);
           notifications.error(error instanceof Error ? error.message : "无法继续网页批注模式");
@@ -388,7 +407,21 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
       }
     };
     const unbindRouter = router.bind(browserPanelRuntime.client);
+    const unsubscribeBridgeErrors = router.subscribeErrors((failure) => {
+      if (!annotationModeActiveRef.current && session.getSnapshot().status === "idle") return;
+      const code = failure.hostCode ?? failure.code;
+      console.warn("[Keydex web annotation bridge] message rejected", failure);
+      notifications.error(`网页批注消息链路异常（${code}）`);
+    });
     const unsubscribeBridge = router.subscribe((envelope) => {
+      traceBrowserAnnotation("renderer.bridge.received", {
+        kind: envelope.kind,
+        requestId: envelope.requestId,
+        selectionId: "selectionId" in envelope.payload ? envelope.payload.selectionId : undefined,
+        bodyLength: "bodyMarkdown" in envelope.payload && typeof envelope.payload.bodyMarkdown === "string"
+          ? envelope.payload.bodyMarkdown.length
+          : undefined,
+      });
       session.applyBridgeEnvelope(envelope);
       resolver.applyBridgeEnvelope(envelope);
       if (envelope.kind === "annotation.cancelled") {
@@ -409,12 +442,21 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
       if (envelope.kind !== "annotation.submit") return;
       const submission = envelope as BrowserBridgeEnvelope<"annotation.submit">;
       const snapshot = session.getSnapshot();
-      if (
+      const submissionMatches = (
         snapshot.status !== "draft"
-        || snapshot.draft.request.requestId !== submission.requestId
-        || snapshot.draft.request.selectionId !== submission.payload.selectionId
-        || savingSelectionIds.has(submission.payload.selectionId)
-      ) return;
+          ? false
+          : snapshot.draft.request.requestId === submission.requestId
+            && snapshot.draft.request.selectionId === submission.payload.selectionId
+            && !savingSelectionIds.has(submission.payload.selectionId)
+      );
+      traceBrowserAnnotation("renderer.annotation.submit.checked", {
+        requestId: submission.requestId,
+        selectionId: submission.payload.selectionId,
+        sessionStatus: snapshot.status,
+        submissionMatches,
+        alreadySaving: savingSelectionIds.has(submission.payload.selectionId),
+      });
+      if (!submissionMatches || snapshot.status !== "draft") return;
       const bodyMarkdown = submission.payload.bodyMarkdown.trim();
       if (!bodyMarkdown) {
         void settleDraft("cancel");
@@ -422,13 +464,29 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
         return;
       }
       savingSelectionIds.add(submission.payload.selectionId);
+      traceBrowserAnnotation("renderer.annotation.create.started", {
+        requestId: submission.requestId,
+        selectionId: submission.payload.selectionId,
+        bodyLength: bodyMarkdown.length,
+        activePage: Boolean(annotationStore.getState().activePage),
+      });
       void annotationStore.getState().createAnnotation({
         target: snapshot.draft.target,
         bodyMarkdown,
-      }).then(() => {
+      }).then((detail) => {
+        traceBrowserAnnotation("renderer.annotation.create.completed", {
+          requestId: submission.requestId,
+          selectionId: submission.payload.selectionId,
+          annotationId: detail.annotation.id,
+        });
         notifications.success("网页批注已创建");
         void settleDraft("save");
       }).catch((error: unknown) => {
+        traceBrowserAnnotation("renderer.annotation.create.failed", {
+          requestId: submission.requestId,
+          selectionId: submission.payload.selectionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
         notifications.error(error instanceof Error ? error.message : "创建网页批注失败");
         void settleDraft("cancel");
       }).finally(() => {
@@ -436,6 +494,20 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
       });
     });
     const unsubscribeNavigation = browserPanelRuntime.client.subscribe((event) => {
+      if (
+        event.panelId === surface.panelId
+        && event.surfaceId === surface.surfaceId
+        && event.generation === surface.generation
+        && (event.kind === "selection.result"
+          || event.kind === "selection.cancelled"
+          || event.kind === "selection.failed")
+      ) {
+        traceBrowserAnnotation("renderer.host.received", {
+          kind: event.kind,
+          selectionRequestId: event.payload.selectionRequestId,
+          sessionStatus: session.getSnapshot().status,
+        });
+      }
       if (
         event.panelId === surface.panelId
         && event.surfaceId === surface.surfaceId
@@ -490,6 +562,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
       unsubscribeSession();
       unsubscribeNavigation();
       unsubscribeBridge();
+      unsubscribeBridgeErrors();
       unbindRouter();
       resolver.dispose();
       void highlighter.dispose().catch(() => undefined);

@@ -511,6 +511,16 @@ describe("style foundation", () => {
       expect(css, filePath).not.toMatch(/font-size\s*:[^;]*(?:vw|vh|vmin|vmax)/);
     }
   });
+
+  it("keeps file preview source and rendered content on the same inline spacing", () => {
+    const filePreview = readSource("renderer/components/workspace/FilePreview.module.css");
+    const filePreviewComponent = readSource("renderer/components/workspace/FilePreview.tsx");
+    const markdownDocumentRuntime = readSource("renderer/markdownRuntime/view/DocumentViewRuntime.ts");
+
+    expect(filePreview).toMatch(/\.markdownPane\s*{[^}]*padding:\s*14px 24px 14px 8px/s);
+    expect(filePreviewComponent).toContain('padding: "0 24px"');
+    expect(markdownDocumentRuntime).toContain("const FILE_PREVIEW_SOURCE_GUTTER_GAP = 24;");
+  });
 });
 
 function escapeRegExp(value: string): string {

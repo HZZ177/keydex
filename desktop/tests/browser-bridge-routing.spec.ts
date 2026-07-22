@@ -86,6 +86,27 @@ describe("browser bridge frame broker and React routing", () => {
     }));
   });
 
+  it("recovers a cleared React cursor from a repeated ready before annotation submit", () => {
+    const router = new BrowserBridgeRouter(surface);
+    const routed = vi.fn();
+    router.subscribe(routed);
+    const ready = structuredClone(fixture.pageToHost[0]);
+    expect(router.applyHostEvent(bridgeEvent(ready, 1))).toBe(true);
+    expect(router.applyHostEvent(hostEvent("navigation.started", 2, {
+      url: "https://example.test/article",
+      isMainFrame: true,
+    }))).toBe(true);
+
+    const repeatedReady = { ...ready, sequence: 2 };
+    const submitted = { ...structuredClone(fixture.pageToHost[3]), sequence: 3 };
+    expect(router.applyHostEvent(bridgeEvent(repeatedReady, 3))).toBe(true);
+    expect(router.applyHostEvent(bridgeEvent(submitted, 4))).toBe(true);
+    expect(routed).toHaveBeenLastCalledWith(expect.objectContaining({
+      kind: "annotation.submit",
+      requestId: "request-result",
+    }));
+  });
+
   it("clears frame registrations on navigation and destroy and forwards stable host errors", () => {
     const router = new BrowserBridgeRouter(surface);
     const failures: BrowserBridgeRouteFailure[] = [];

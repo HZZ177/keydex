@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "browser-page-bridge",
+  "description": "Grants managed remote browser webviews only the authenticated page-bridge transport command.",
+  "webviews": ["browser-*"],
+  "remote": {
+    "urls": ["http://*", "https://*"]
+  },
+  "permissions": ["allow-browser-page-bridge-message"]
+}
