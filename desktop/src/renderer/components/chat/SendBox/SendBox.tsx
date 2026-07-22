@@ -53,6 +53,7 @@ import { ImagePreviewDialog } from "@/renderer/components/workspace/ImagePreview
 import {
   webAnnotationReferencePresentations,
   type SelectedWebAnnotationReference,
+  type WebAnnotationChangeSummary,
   type WebAnnotationVisibleStatus,
 } from "@/renderer/features/browser/annotations";
 
@@ -2099,7 +2100,7 @@ function WebAnnotationContextChip({
   const presentation = presentations[reference.annotationId];
   const title = presentation?.title || "网页批注";
   const label = title === "网页批注" ? title : `网页批注 · ${title}`;
-  const warning = warningPresentation(presentation?.status);
+  const warning = warningPresentation(presentation?.status, presentation?.change);
   return (
     <ComposerContextHover
       className={styles.webAnnotationChipWrapper}
@@ -2137,8 +2138,13 @@ function WebAnnotationContextChip({
   );
 }
 
-function warningPresentation(status: WebAnnotationVisibleStatus | undefined): { readonly label: string } | null {
-  if (status === "changed") return { label: "网页内容已变化，发送时将保留原始与当前引用" };
+function warningPresentation(
+  status: WebAnnotationVisibleStatus | undefined,
+  change: WebAnnotationChangeSummary | undefined,
+): { readonly label: string } | null {
+  if (change?.material || status === "changed") {
+    return { label: "网页目标有变化，发送时将保留原始目标、当前目标与变化证据" };
+  }
   if (status === "ambiguous") return { label: "网页目标存在歧义，发送时不会自动选择候选" };
   if (status === "orphaned") return { label: "网页目标已失联，发送时仅保留原始引用和来源" };
   return null;

@@ -1001,7 +1001,15 @@ fn validate_bridge_payload(kind: &str, value: &Value) -> Result<(), BrowserBridg
             }
             read_bool(object, "reducedMotion")?;
         }
-        "annotation.resolve" | "navigate.toTarget" => {
+        "annotation.resolve" => {
+            exact_keys(object, &["annotationId", "target"], &["binding"])?;
+            read_id(object, "annotationId", MAX_ID_LENGTH)?;
+            validate_target(required(object, "target")?)?;
+            if let Some(binding) = object.get("binding") {
+                validate_live_node_binding(binding)?;
+            }
+        }
+        "navigate.toTarget" => {
             exact_keys(object, &["annotationId", "target"], &[])?;
             read_id(object, "annotationId", MAX_ID_LENGTH)?;
             validate_target(required(object, "target")?)?;
@@ -1021,9 +1029,10 @@ fn validate_bridge_payload(kind: &str, value: &Value) -> Result<(), BrowserBridg
             validate_id_array(required(object, "annotationIds")?, 50)?;
         }
         "page.changed" => {
-            exact_keys(object, &["reason", "revision"], &[])?;
+            exact_keys(object, &["reason", "revision", "annotationIds"], &[])?;
             read_enum(object, "reason", &["dom"])?;
             read_non_negative_u64(object, "revision")?;
+            validate_id_array(required(object, "annotationIds")?, 50)?;
         }
         "bridge.ready" => {
             exact_keys(object, &["href", "top"], &[])?;
@@ -1051,10 +1060,17 @@ fn validate_bridge_payload(kind: &str, value: &Value) -> Result<(), BrowserBridg
             read_non_negative_u64(object, "depth")?;
         }
         "selection.result" => {
-            exact_keys(object, &["selectionId", "target"], &["captureGeometry"])?;
+            exact_keys(
+                object,
+                &["selectionId", "target"],
+                &["captureGeometry", "binding"],
+            )?;
             read_id(object, "selectionId", MAX_ID_LENGTH)?;
             let target = required(object, "target")?;
             validate_target(target)?;
+            if let Some(binding) = object.get("binding") {
+                validate_live_node_binding(binding)?;
+            }
             if let Some(geometry) = object.get("captureGeometry") {
                 if target.get("type").and_then(Value::as_str) != Some("region") {
                     return Err(BrowserBridgeError::InvalidValue("captureGeometry"));
@@ -1148,7 +1164,7 @@ fn validate_resolution_evidence(value: &Value) -> Result<(), BrowserBridgeError>
             "truncated",
             "changedSignals",
         ],
-        &["currentQuote", "candidateSummaries"],
+        &["currentQuote", "candidateSummaries", "binding"],
     )?;
     read_enum(
         object,
@@ -1158,6 +1174,7 @@ fn validate_resolution_evidence(value: &Value) -> Result<(), BrowserBridgeError>
             "text_position",
             "exact_quote",
             "fuzzy_quote",
+            "node_handle",
             "stable_dom_path",
             "unique_id",
             "image_src_alt",
@@ -1202,6 +1219,9 @@ fn validate_resolution_evidence(value: &Value) -> Result<(), BrowserBridgeError>
             .filter(|value| !value.is_empty() && value.chars().count() <= 64)
             .ok_or(BrowserBridgeError::InvalidValue("changedSignals"))?;
     }
+    if let Some(binding) = object.get("binding") {
+        validate_live_node_binding(binding)?;
+    }
     if let Some(summaries) = object.get("candidateSummaries") {
         let summaries = summaries
             .as_array()
@@ -1220,6 +1240,16 @@ fn validate_resolution_evidence(value: &Value) -> Result<(), BrowserBridgeError>
             }
         }
     }
+    Ok(())
+}
+
+pub(crate) fn validate_live_node_binding(value: &Value) -> Result<(), BrowserBridgeError> {
+    let object = value
+        .as_object()
+        .ok_or(BrowserBridgeError::InvalidValue("binding"))?;
+    exact_keys(object, &["documentId", "nodeHandleId"], &[])?;
+    read_id(object, "documentId", MAX_ID_LENGTH)?;
+    read_id(object, "nodeHandleId", MAX_ID_LENGTH)?;
     Ok(())
 }
 
@@ -2267,7 +2297,8 @@ mod tests {
         let script = bridge_initialization_script(&surface());
         assert!(script.contains(WEB_ANNOTATION_BRIDGE_PROTOCOL));
         assert!(script.contains("keydex.web-annotation.scoring.v1"));
-        assert!(script.contains("chrome?.webview?.postMessage"));
+        assert!(script.contains("window.chrome?.webview"));
+        assert!(script.contains("postNativeMessage"));
         assert!(script.contains("addEventListener(\"message\""));
         assert!(script.contains("removeEventListener(\"message\""));
         assert!(script.contains("pagehide"));

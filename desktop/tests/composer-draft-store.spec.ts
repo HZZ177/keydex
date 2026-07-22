@@ -280,6 +280,32 @@ function replaySnapshot() {
       freshness: "current" as const,
     },
     evidence: { originalQuote: "历史片段" },
+    perception: {
+      originalTarget: {
+        type: "text" as const,
+        quote: { exact: "历史片段", prefix: "", suffix: "" },
+        context: { headingPath: [] },
+        rects: [{ x: 0, y: 0, width: 80, height: 20 }],
+        frame: { url: "https://example.test/history", indexPath: [] },
+      },
+      currentTarget: {
+        type: "text" as const,
+        quote: { exact: "历史片段", prefix: "", suffix: "" },
+        context: { headingPath: [] },
+        rects: [{ x: 0, y: 0, width: 80, height: 20 }],
+        frame: { url: "https://example.test/history", indexPath: [] },
+      },
+      resolution: {
+        navigationId: "navigation-history",
+        frameRevision: 1,
+        frameKey: "main",
+        reason: "exact_match",
+        settledAt: "2026-07-22T08:00:00Z",
+        candidateIds: [],
+        evidence: null,
+        change: { kinds: [], materialKinds: [], signals: [], material: false },
+      },
+    },
     annotation: { bodyMarkdown: "发送时正文", tags: [], properties: [] },
     digest: "digest-replay-1",
   };

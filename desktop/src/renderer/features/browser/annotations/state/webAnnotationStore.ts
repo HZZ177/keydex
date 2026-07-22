@@ -307,7 +307,7 @@ export function createWebAnnotationStore(
         console.info("[Keydex Browser Annotation]", "store.create.requested", {
           activePage: Boolean(active),
           pageKey: active?.pageKey,
-          targetKind: input.target.kind,
+          targetKind: input.target.type,
           bodyLength: input.bodyMarkdown.length,
         });
         if (!active) {

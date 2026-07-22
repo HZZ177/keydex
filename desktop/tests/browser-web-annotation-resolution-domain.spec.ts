@@ -7,6 +7,7 @@ import {
   rankAnchoringCandidates,
   scoreAnchoringCandidate,
   settleWebAnnotationResolution,
+  summarizeWebAnnotationChanges,
   visibleWebAnnotationResolutionStatus,
   WEB_ANNOTATION_RESOLUTION_REASON_CODES,
   WEB_ANNOTATION_SCORING_POLICY_V1,
@@ -126,7 +127,7 @@ describe("web annotation resolution domain", () => {
     const nextNavigation = { ...identity, navigationId: "navigation-2" };
     const stale: WebAnnotationResolutionState = { ...refreshing, identity: nextNavigation };
 
-    expect(visibleWebAnnotationResolutionStatus(refreshing)).toBe("changed");
+    expect(visibleWebAnnotationResolutionStatus(refreshing)).toBe("resolved");
     expect(currentSettledWebAnnotationResolution(refreshing, identity)).toBe(previous);
     expect(isWebAnnotationResolutionCurrent(previous, nextNavigation)).toBe(false);
     expect(currentSettledWebAnnotationResolution(stale, nextNavigation)).toBeNull();
@@ -140,6 +141,26 @@ describe("web annotation resolution domain", () => {
       heading: 1,
       position: 1,
     })).toThrow(RangeError);
+  });
+
+  it("separates material target changes from layout and surrounding-context drift", () => {
+    expect(summarizeWebAnnotationChanges([
+      "quote_changed",
+      "anchor_position_changed",
+      "heading_changed",
+    ])).toMatchObject({
+      kinds: ["content", "layout", "context"],
+      materialKinds: ["content"],
+      material: true,
+    });
+    expect(summarizeWebAnnotationChanges([
+      "anchor_size_changed",
+      "prefix_changed",
+    ])).toMatchObject({
+      kinds: ["layout", "context"],
+      materialKinds: [],
+      material: false,
+    });
   });
 });
 

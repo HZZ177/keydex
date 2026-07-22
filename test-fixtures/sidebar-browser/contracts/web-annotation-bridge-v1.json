@@ -210,6 +210,7 @@
       "sequence": 3,
       "payload": {
         "selectionId": "selection-1",
+        "binding": { "documentId": "document-1", "nodeHandleId": "node-1" },
         "target": {
           "type": "element",
           "tag": "button",
@@ -298,7 +299,7 @@
       "frameKey": "main",
       "requestId": "request-page-change",
       "sequence": 9,
-      "payload": { "reason": "dom", "revision": 3 }
+      "payload": { "reason": "dom", "revision": 3, "annotationIds": ["annotation-1"] }
     },
     {
       "protocol": "keydex.web-annotation.v1",

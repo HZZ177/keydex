@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   BROWSER_START_URL,
+  browserAnnotationComposerScopeKey,
   browserPanelCreateInput,
   normalizeBrowserPanelState,
   serializeBrowserPanelState,
@@ -36,6 +37,13 @@ function event(
 }
 
 describe("browser right-sidebar definition", () => {
+  it("maps the active browser scope to the current Agent composer capsule scope", () => {
+    expect(browserAnnotationComposerScopeKey("session:session-a")).toBe("session:session-a");
+    expect(browserAnnotationComposerScopeKey("workspace:workspace-a")).toBe("new-workspace:workspace-a");
+    expect(browserAnnotationComposerScopeKey("global")).toBe("new-chat");
+    expect(browserAnnotationComposerScopeKey("workspace:")).toBeNull();
+  });
+
   it("registers the browser only when the product flag is enabled", () => {
     expect(createRightSidebarDefinitionRegistry(true).list().map((item) => item.kind)).toContain("browser");
     expect(createRightSidebarDefinitionRegistry(false).list().map((item) => item.kind)).not.toContain("browser");

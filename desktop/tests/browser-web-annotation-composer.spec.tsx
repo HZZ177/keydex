@@ -30,11 +30,11 @@ describe("browser web annotation composer references", () => {
 
     let firstResult = "unhandled";
     act(() => {
-      firstResult = emitReference(scope, "annotation-1", "Article one", "changed");
+      firstResult = emitReference(scope, "annotation-1", "Article one", "resolved", true);
     });
     expect(firstResult).toBe("added");
     expect(screen.getByRole("button", { name: "移除网页批注引用 Article one" })).not.toBeNull();
-    expect(screen.getByRole("status", { name: "网页内容已变化，发送时将保留原始与当前引用" })).not.toBeNull();
+    expect(screen.getByRole("status", { name: "网页目标有变化，发送时将保留原始目标、当前目标与变化证据" })).not.toBeNull();
 
     let duplicateResult = "unhandled";
     act(() => {
@@ -117,6 +117,7 @@ function emitReference(
   annotationId: string,
   title: string,
   status?: WebAnnotationVisibleStatus,
+  changed = false,
 ) {
   const reference: SelectedWebAnnotationReference = {
     annotationId,
@@ -134,6 +135,14 @@ function emitReference(
       bodyMarkdown: "Review this section",
       origin: "https://example.test",
       status,
+      ...(changed ? {
+        change: {
+          kinds: ["content"] as const,
+          materialKinds: ["content"] as const,
+          signals: ["quote_changed"],
+          material: true,
+        },
+      } : {}),
       updatedAt: "2026-07-22T08:00:00Z",
     },
   });

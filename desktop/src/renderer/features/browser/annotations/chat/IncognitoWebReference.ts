@@ -8,6 +8,7 @@ import type { WebAnnotationTypedProperty } from "../api";
 import type { WebAnnotationDraft } from "../state/WebAnnotationSession";
 import {
   finalizeWebAnnotationContextSnapshot,
+  sanitizeWebAnnotationTargetForAgent,
   type SelectedWebAnnotationReference,
   type UnfinalizedWebAnnotationContextSnapshot,
   type WebAnnotationContextSnapshot,
@@ -102,6 +103,40 @@ export class IncognitoWebReferenceRegistry {
         freshness: "current",
       },
       evidence: targetEvidence(target),
+      perception: {
+        originalTarget: sanitizeWebAnnotationTargetForAgent(target, url.origin),
+        currentTarget: sanitizeWebAnnotationTargetForAgent(target, url.origin),
+        resolution: {
+          navigationId: null,
+          frameRevision: null,
+          frameKey: null,
+          reason: "user_selected",
+          settledAt: capturedAt,
+          candidateIds: [],
+          change: {
+            kinds: [],
+            materialKinds: [],
+            signals: [],
+            material: false,
+          },
+          evidence: {
+            strategy: target.type === "text"
+              ? "dom_range"
+              : target.type === "element"
+                ? "stable_dom_path"
+                : target.relativeElement
+                  ? "relative_region"
+                  : "coordinate_only_region",
+            score: 1,
+            rects: target.type === "text"
+              ? target.rects.map((rect) => ({ ...rect }))
+              : [{ ...target.rect }],
+            candidateCount: 1,
+            truncated: false,
+            changedSignals: [],
+          },
+        },
+      },
       annotation: {
         bodyMarkdown: input.bodyMarkdown.trim(),
         tags: [...input.tags].sort((left, right) => left.localeCompare(right)),

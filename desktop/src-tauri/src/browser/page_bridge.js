@@ -67,12 +67,123 @@
     }
   };
 
+  // Resolution and change detection are intentionally separate. Geometry and
+  // surrounding-page context may drift while the exact annotation target is
+  // still uniquely bound; those signals remain available as evidence but must
+  // not turn a successful location into a material target change.
+  const materialAnnotationChangeSignals = new Set([
+    "quote_changed",
+    "accessible_name_changed",
+    "text_changed",
+    "anchor_name_changed",
+    "anchor_text_changed",
+    "tag_changed",
+    "role_changed",
+    "anchor_tag_changed",
+    "anchor_role_changed",
+    "stable_attributes_changed",
+    "anchor_attributes_changed",
+    "local_fingerprint_changed",
+  ]);
+  const hasMaterialAnnotationChange = (signals) => (
+    Array.isArray(signals) && signals.some((signal) => materialAnnotationChangeSignals.has(signal))
+  );
+
   const randomId = () => {
     if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
       return globalThis.crypto.randomUUID();
     }
     return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   };
+
+  const nodeBindings = (() => {
+    const documentId = `document:${randomId()}`.slice(0, 128);
+    const handles = new Map();
+    const handleByNode = new WeakMap();
+    const annotations = new Map();
+    let handleSequence = 0;
+
+    const nodeElement = (node) => node instanceof Element
+      ? node
+      : (node?.parentElement instanceof Element ? node.parentElement : null);
+    const bindingForNode = (node) => {
+      const element = nodeElement(node);
+      if (!element?.isConnected) return null;
+      let nodeHandleId = handleByNode.get(element);
+      if (!nodeHandleId) {
+        nodeHandleId = `node:${++handleSequence}`;
+        handleByNode.set(element, nodeHandleId);
+        handles.set(nodeHandleId, element);
+      }
+      return Object.freeze({ documentId, nodeHandleId });
+    };
+    const bindSelection = (_selectionId, node) => bindingForNode(node);
+    const bindAnnotation = (annotationId, node) => {
+      const binding = bindingForNode(node);
+      if (!binding) return null;
+      annotations.set(annotationId, binding.nodeHandleId);
+      return binding;
+    };
+    const resolveAnnotation = (annotationId, preferredBinding) => {
+      let nodeHandleId = annotations.get(annotationId) ?? null;
+      if (preferredBinding?.documentId === documentId
+        && typeof preferredBinding.nodeHandleId === "string") {
+        nodeHandleId = preferredBinding.nodeHandleId;
+      }
+      const node = nodeHandleId ? handles.get(nodeHandleId) : null;
+      if (!(node instanceof Element) || !node.isConnected) {
+        annotations.delete(annotationId);
+        if (nodeHandleId) handles.delete(nodeHandleId);
+        return null;
+      }
+      annotations.set(annotationId, nodeHandleId);
+      return Object.freeze({ node, binding: Object.freeze({ documentId, nodeHandleId }) });
+    };
+    const releaseAnnotation = (annotationId) => {
+      annotations.delete(annotationId);
+    };
+    const affectedAnnotationIds = (mutations) => {
+      const affected = new Set();
+      for (const [annotationId, nodeHandleId] of annotations) {
+        const node = handles.get(nodeHandleId);
+        if (!(node instanceof Element) || !node.isConnected) {
+          affected.add(annotationId);
+          continue;
+        }
+        for (const mutation of mutations) {
+          const mutationElement = nodeElement(mutation.target);
+          if (mutationElement && (mutationElement === node
+            || node.contains(mutationElement)
+            || mutationElement.contains(node))) {
+            affected.add(annotationId);
+            break;
+          }
+          if (mutation.type === "childList") {
+            const removed = Array.from(mutation.removedNodes ?? []);
+            if (removed.some((candidate) => candidate === node
+              || (candidate instanceof Element && candidate.contains(node)))) {
+              affected.add(annotationId);
+              break;
+            }
+          }
+        }
+      }
+      return Object.freeze([...affected].sort());
+    };
+    const dispose = () => {
+      handles.clear();
+      annotations.clear();
+    };
+    return Object.freeze({
+      documentId,
+      bindSelection,
+      bindAnnotation,
+      resolveAnnotation,
+      releaseAnnotation,
+      affectedAnnotationIds,
+      dispose,
+    });
+  })();
 
   const frameKey = (() => {
     if (window === window.top) return "main";
@@ -304,6 +415,7 @@
     commandTarget.removeEventListener(bridgeBootstrapCompleteEventName, onBootstrapComplete);
     __KEYDEX_BRIDGE_DIAGNOSTICS_POST__ = null;
     activeRequests.clear();
+    nodeBindings.dispose();
     document.querySelectorAll(overlaySelector).forEach((element) => element.remove());
     try {
       delete window.KeydexAnnotationBridge;
@@ -332,6 +444,7 @@
       navigationId,
       scoringPolicy: bootstrap.scoringPolicy,
       resolverPolicy: bootstrap.resolverPolicy,
+      nodeBindings,
       commandEvent: bridgeEventName,
       responseEvent: bridgeResponseEventName,
     }),

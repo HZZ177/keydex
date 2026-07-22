@@ -58,7 +58,7 @@ export function createWebAnnotationClient(http: HttpClient): WebAnnotationClient
     },
     async create(input) {
       console.info("[Keydex Browser Annotation]", "api.create.requested", {
-        targetKind: input.target.kind,
+        targetKind: input.target.type,
         bodyLength: input.bodyMarkdown.length,
       });
       try {

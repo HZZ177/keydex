@@ -400,6 +400,7 @@ function nativeElementResult(
     payload: {
       selectionRequestId,
       frameKey: "devtools:iframe-session-1",
+      binding: { documentId: "document-1", nodeHandleId: "node-1" },
       target: nativeElementTarget,
     },
   };

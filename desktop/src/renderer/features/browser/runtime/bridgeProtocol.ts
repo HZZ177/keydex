@@ -124,12 +124,18 @@ export interface WebRegionCaptureGeometry {
 
 export type WebAnnotationTarget = WebTextTarget | WebElementTarget | WebRegionTarget;
 
+export interface WebAnnotationLiveNodeBinding {
+  readonly documentId: string;
+  readonly nodeHandleId: string;
+}
+
 export interface WebAnnotationPageResolutionEvidence {
   readonly strategy:
     | "dom_range"
     | "text_position"
     | "exact_quote"
     | "fuzzy_quote"
+    | "node_handle"
     | "stable_dom_path"
     | "unique_id"
     | "image_src_alt"
@@ -146,6 +152,7 @@ export interface WebAnnotationPageResolutionEvidence {
   readonly candidateCount: number;
   readonly truncated: boolean;
   readonly changedSignals: readonly string[];
+  readonly binding?: WebAnnotationLiveNodeBinding;
   readonly candidateSummaries?: readonly {
     readonly candidateId: string;
     readonly label: string;
@@ -175,7 +182,11 @@ interface BridgePayloadByKind {
     readonly motionMs: number;
     readonly reducedMotion: boolean;
   };
-  readonly "annotation.resolve": { readonly annotationId: string; readonly target: WebAnnotationTarget };
+  readonly "annotation.resolve": {
+    readonly annotationId: string;
+    readonly target: WebAnnotationTarget;
+    readonly binding?: WebAnnotationLiveNodeBinding;
+  };
   readonly "highlight.render": {
     readonly annotationId: string;
     readonly target: WebAnnotationTarget;
@@ -196,6 +207,7 @@ interface BridgePayloadByKind {
     readonly selectionId: string;
     readonly target: WebAnnotationTarget;
     readonly captureGeometry?: WebRegionCaptureGeometry;
+    readonly binding?: WebAnnotationLiveNodeBinding;
   };
   readonly "selection.cancelled": {
     readonly selectionId: string;
@@ -214,7 +226,11 @@ interface BridgePayloadByKind {
     readonly evidence?: WebAnnotationPageResolutionEvidence;
   };
   readonly "geometry.changed": { readonly annotationIds: readonly string[] };
-  readonly "page.changed": { readonly reason: "dom"; readonly revision: number };
+  readonly "page.changed": {
+    readonly reason: "dom";
+    readonly revision: number;
+    readonly annotationIds: readonly string[];
+  };
   readonly "bridge.error": {
     readonly code: "unsupported_frame" | "invalid_selection" | "navigation_changed" | "protocol_mismatch" | "internal";
     readonly message: string;
@@ -349,6 +365,9 @@ function validatePayload(kind: BrowserBridgeKind, payload: unknown): boolean {
         && isNumberInRange(payload.motionMs, 0, 2_000)
         && typeof payload.reducedMotion === "boolean";
     case "annotation.resolve":
+      return isRecordWithOptional(payload, ["annotationId", "target"], ["binding"])
+        && isBoundedId(payload.annotationId) && validateTarget(payload.target)
+        && (payload.binding === undefined || validateLiveNodeBinding(payload.binding));
     case "navigate.toTarget":
       return isExactRecord(payload, ["annotationId", "target"])
         && isBoundedId(payload.annotationId) && validateTarget(payload.target);
@@ -361,9 +380,10 @@ function validatePayload(kind: BrowserBridgeKind, payload: unknown): boolean {
       return isExactRecord(payload, ["annotationIds"])
         && validateIds(payload.annotationIds, 50);
     case "page.changed":
-      return isExactRecord(payload, ["reason", "revision"])
+      return isExactRecord(payload, ["reason", "revision", "annotationIds"])
         && payload.reason === "dom"
-        && isNonNegativeInteger(payload.revision);
+        && isNonNegativeInteger(payload.revision)
+        && validateIds(payload.annotationIds, 50);
     case "bridge.ready":
       return isExactRecord(payload, ["href", "top"])
         && isSafePageUrl(payload.href) && typeof payload.top === "boolean";
@@ -373,8 +393,9 @@ function validatePayload(kind: BrowserBridgeKind, payload: unknown): boolean {
         && isBoundedId(payload.candidateId) && isBoundedString(payload.label, 1_024)
         && validateRect(payload.rect) && isNonNegativeInteger(payload.depth);
     case "selection.result":
-      return isRecordWithOptional(payload, ["selectionId", "target"], ["captureGeometry"])
+      return isRecordWithOptional(payload, ["selectionId", "target"], ["captureGeometry", "binding"])
         && isBoundedId(payload.selectionId) && validateTarget(payload.target)
+        && (payload.binding === undefined || validateLiveNodeBinding(payload.binding))
         && (payload.captureGeometry === undefined
           || (isPlainRecord(payload.target) && payload.target.type === "region"
             && validateCaptureGeometry(payload.captureGeometry)));
@@ -413,10 +434,10 @@ function validateResolutionEvidence(value: unknown): value is WebAnnotationPageR
   if (!isRecordWithOptional(
     value,
     ["strategy", "score", "rects", "candidateCount", "truncated", "changedSignals"],
-    ["currentQuote", "candidateSummaries"],
+    ["currentQuote", "candidateSummaries", "binding"],
   )) return false;
   return isOneOf(value.strategy, [
-    "dom_range", "text_position", "exact_quote", "fuzzy_quote", "stable_dom_path", "unique_id",
+    "dom_range", "text_position", "exact_quote", "fuzzy_quote", "node_handle", "stable_dom_path", "unique_id",
     "image_src_alt", "role_name", "stable_attributes", "text_context", "frame_unavailable",
     "relative_region", "region_semantic_search", "coordinate_only_region",
   ])
@@ -431,6 +452,7 @@ function validateResolutionEvidence(value: unknown): value is WebAnnotationPageR
     && Array.isArray(value.changedSignals)
     && value.changedSignals.length <= 8
     && value.changedSignals.every((signal) => isBoundedString(signal, 64, 1))
+    && (value.binding === undefined || validateLiveNodeBinding(value.binding))
     && (value.candidateSummaries === undefined || (
       Array.isArray(value.candidateSummaries)
       && value.candidateSummaries.length <= 20
@@ -444,6 +466,12 @@ function validateResolutionEvidence(value: unknown): value is WebAnnotationPageR
         && isBoundedString(summary.tag, 64, 1)
         && (summary.role === undefined || isBoundedString(summary.role, 128, 1)))
     ));
+}
+
+function validateLiveNodeBinding(value: unknown): value is WebAnnotationLiveNodeBinding {
+  return isExactRecord(value, ["documentId", "nodeHandleId"])
+    && isBoundedId(value.documentId)
+    && isBoundedId(value.nodeHandleId);
 }
 
 function validateTarget(value: unknown): value is WebAnnotationTarget {

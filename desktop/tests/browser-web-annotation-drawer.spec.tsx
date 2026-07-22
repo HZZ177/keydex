@@ -287,6 +287,23 @@ describe("WebAnnotationDrawer", () => {
     expect(screen.getByText("Original orphan note")).not.toBeNull();
   });
 
+  it("shows location and material change as separate statuses", async () => {
+    const store = createWebAnnotationStore(client({
+      list: vi.fn().mockResolvedValue(page(item("annotation-1", "检查变化"))),
+    }));
+    await activate(store);
+
+    renderDrawer(store, session(), {
+      open: true,
+      resolutions: { "annotation-1": "resolved" },
+      resolutionDetails: { "annotation-1": changedResolution(["quote_changed", "heading_changed"]) },
+    });
+
+    expect(screen.getByText("已定位")).not.toBeNull();
+    expect(screen.getByText("文本变化")).not.toBeNull();
+    expect(screen.queryByText("内容变化")).toBeNull();
+  });
+
   it("enforces tag/property limits and keyboard cancellation without a second modal system", () => {
     const onCancel = vi.fn();
     const onSubmit = vi.fn();
@@ -496,5 +513,38 @@ function ambiguousResolution(): WebAnnotationCoordinatorResolution {
       },
       settledAt: "2026-07-22T00:00:00Z",
     },
+  };
+}
+
+function changedResolution(changedSignals: readonly string[]): WebAnnotationCoordinatorResolution {
+  const identity = {
+    resourceId: "resource-1",
+    annotationId: "annotation-1",
+    navigationId: "navigation-1",
+    frameRevision: 1,
+  };
+  const settled = {
+    status: "changed" as const,
+    identity,
+    frameKey: "main",
+    target: textTarget,
+    candidateIds: [],
+    evidence: {
+      strategy: "exact_quote" as const,
+      score: 1,
+      rects: textTarget.rects,
+      candidateCount: 1,
+      truncated: false,
+      changedSignals,
+    },
+    settledAt: "2026-07-22T00:00:00Z",
+  };
+  return {
+    status: "changed",
+    identity,
+    frameKey: "main",
+    reason: "content_changed",
+    lastKnown: settled,
+    settled,
   };
 }

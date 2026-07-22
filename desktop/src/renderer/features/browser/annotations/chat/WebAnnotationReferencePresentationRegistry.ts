@@ -1,4 +1,8 @@
-import type { WebAnnotationVisibleStatus } from "../domain";
+import {
+  summarizeWebAnnotationChanges,
+  type WebAnnotationChangeSummary,
+  type WebAnnotationVisibleStatus,
+} from "../domain";
 
 export interface WebAnnotationReferencePresentation {
   readonly annotationId: string;
@@ -7,6 +11,7 @@ export interface WebAnnotationReferencePresentation {
   readonly bodyMarkdown: string;
   readonly origin: string;
   readonly status?: WebAnnotationVisibleStatus;
+  readonly change?: WebAnnotationChangeSummary;
   readonly updatedAt: string;
 }
 
@@ -47,6 +52,7 @@ function normalizePresentation(
 ): WebAnnotationReferencePresentation {
   const annotationId = value.annotationId.trim();
   if (!annotationId) throw new Error("Web annotation presentation id is required");
+  const change = value.change ? summarizeWebAnnotationChanges(value.change.signals) : null;
   return Object.freeze({
     annotationId,
     title: value.title.trim().slice(0, 512),
@@ -54,6 +60,7 @@ function normalizePresentation(
     bodyMarkdown: value.bodyMarkdown.slice(0, 8_192),
     origin: value.origin.trim().slice(0, 2_048),
     ...(value.status ? { status: value.status } : {}),
+    ...(change?.signals.length ? { change } : {}),
     updatedAt: value.updatedAt,
   });
 }
@@ -68,5 +75,8 @@ function samePresentation(
     && left.bodyMarkdown === right.bodyMarkdown
     && left.origin === right.origin
     && left.status === right.status
+    && left.change?.material === right.change?.material
+    && left.change?.kinds.join("\u0000") === right.change?.kinds.join("\u0000")
+    && left.change?.signals.join("\u0000") === right.change?.signals.join("\u0000")
     && left.updatedAt === right.updatedAt;
 }

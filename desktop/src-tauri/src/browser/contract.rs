@@ -200,6 +200,7 @@ pub(crate) struct BrowserOverlayTokens {
 pub(crate) struct BrowserResolveTarget {
     pub(crate) annotation_id: String,
     pub(crate) target: serde_json::Value,
+    pub(crate) binding: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -595,6 +596,7 @@ pub(crate) struct SelectionResultPayload {
     pub(crate) selection_request_id: String,
     pub(crate) frame_key: String,
     pub(crate) target: Value,
+    pub(crate) binding: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1047,9 +1049,11 @@ fn validate_event_payload_keys(kind: &str, payload: &Value) -> Result<(), Browse
         "download.failed" => exact_payload(payload, &["downloadId", "errorCategory"], &[]),
         "capture.completed" => exact_payload(payload, &["captureRequestId", "asset"], &[]),
         "capture.failed" => exact_payload(payload, &["captureRequestId", "errorCategory"], &[]),
-        "selection.result" => {
-            exact_payload(payload, &["selectionRequestId", "frameKey", "target"], &[])
-        }
+        "selection.result" => exact_payload(
+            payload,
+            &["selectionRequestId", "frameKey", "target", "binding"],
+            &[],
+        ),
         "selection.cancelled" => exact_payload(payload, &["selectionRequestId", "reason"], &[]),
         "selection.failed" => exact_payload(
             payload,

@@ -10,7 +10,7 @@ use tauri::{Emitter, Manager, Url, Webview};
 
 use super::bridge::{
     attach_windows_web_message_broker, bridge_initialization_script, post_windows_bridge_envelope,
-    validate_web_annotation_target, BrowserBridgeBroker,
+    validate_live_node_binding, validate_web_annotation_target, BrowserBridgeBroker,
 };
 use super::capture::{
     capture_webview_png, crop_png_to_css_rect, BrowserCaptureManager, TakenIncognitoCapture,
@@ -239,10 +239,12 @@ pub(crate) async fn browser_create_surface(
                     selection_request_id,
                     frame_key,
                     target,
+                    binding,
                 } => BrowserEvent::SelectionResult(SelectionResultPayload {
                     selection_request_id,
                     frame_key,
                     target,
+                    binding,
                 }),
                 NativeInspectorEvent::Cancelled {
                     selection_request_id,
@@ -1363,6 +1365,13 @@ pub(crate) async fn browser_resolve_annotations(
         if validate_web_annotation_target(&target.target).is_err() {
             return host_failure(request_id, "Structured page resolver target is invalid");
         }
+        if target
+            .binding
+            .as_ref()
+            .is_some_and(|binding| validate_live_node_binding(binding).is_err())
+        {
+            return host_failure(request_id, "Structured page resolver binding is invalid");
+        }
         let desired_frame = annotation_target_frame_key(&target.target);
         let frame_key = if ready_frames.contains(&desired_frame) {
             desired_frame
@@ -1375,15 +1384,19 @@ pub(crate) async fn browser_resolve_annotations(
             "{}:{index}",
             truncate_bridge_request_id(&payload.resolve_request_id)
         );
+        let mut bridge_payload = serde_json::json!({
+            "annotationId": target.annotation_id.clone(),
+            "target": target.target.clone(),
+        });
+        if let Some(binding) = &target.binding {
+            bridge_payload["binding"] = binding.clone();
+        }
         let envelope = match state.bridge.prepare_host_envelope(
             &payload.surface,
             &frame_key,
             &bridge_request_id,
             "annotation.resolve",
-            serde_json::json!({
-                "annotationId": target.annotation_id.clone(),
-                "target": target.target.clone(),
-            }),
+            bridge_payload,
         ) {
             Ok(envelope) => envelope,
             Err(error) => return bridge_command_failure(request_id, error),

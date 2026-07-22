@@ -12,9 +12,15 @@
   let dirtySince = null;
   let timer = null;
   let revision = 0;
+  const dirtyAnnotationIds = new Set();
 
   const observer = new MutationObserver((mutations) => {
-    if (disposed || !mutations.some(isSignificantMutation)) return;
+    if (disposed) return;
+    const significant = mutations.filter(isSignificantMutation);
+    if (significant.length === 0) return;
+    const affected = window.KeydexAnnotationBridge?.nodeBindings?.affectedAnnotationIds(significant) ?? [];
+    if (affected.length === 0) return;
+    for (const annotationId of affected) dirtyAnnotationIds.add(annotationId);
     const now = resolverNow();
     if (dirtySince === null) dirtySince = now;
     if (timer !== null) clearTimeout(timer);
@@ -26,12 +32,15 @@
     timer = null;
     if (disposed || dirtySince === null) return;
     dirtySince = null;
+    const annotationIds = [...dirtyAnnotationIds].sort();
+    dirtyAnnotationIds.clear();
+    if (annotationIds.length === 0) return;
     revision += 1;
     responseTarget.dispatchEvent(new CustomEvent(responseEventName, {
       detail: {
         kind: "page.changed",
         requestId: `page-change-${revision}`,
-        payload: { reason: "dom", revision },
+        payload: { reason: "dom", revision, annotationIds },
       },
     }));
   };
@@ -59,6 +68,7 @@
     if (timer !== null) clearTimeout(timer);
     timer = null;
     dirtySince = null;
+    dirtyAnnotationIds.clear();
   };
 
   observer.observe(document, {

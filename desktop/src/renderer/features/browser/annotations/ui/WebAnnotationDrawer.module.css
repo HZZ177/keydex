@@ -330,6 +330,7 @@
 
 .targetBadge,
 .statusBadge,
+.changeBadge,
 .tags span {
   display: inline-flex;
   min-height: 20px;
@@ -361,6 +362,17 @@
 
 .statusBadge[data-status="orphaned"] {
   color: var(--color-danger);
+}
+
+.changeBadge {
+  border: 1px solid color-mix(in srgb, var(--color-warning) 28%, var(--color-border-subtle));
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 8%, var(--surface-muted));
+}
+
+.changeBadge[data-change-kind="content"],
+.changeBadge[data-change-kind="structure"] {
+  border-color: color-mix(in srgb, var(--color-warning) 38%, var(--color-border-subtle));
 }
 
 .body {

@@ -119,6 +119,7 @@ export interface BrowserCommandPayloadByKind {
     readonly targets: readonly {
       readonly annotationId: string;
       readonly target: unknown;
+      readonly binding?: BrowserLiveNodeBinding;
     }[];
   };
   readonly browser_render_highlights: BrowserSurfaceRef & {
@@ -176,6 +177,11 @@ export interface BrowserCommandError {
 export interface BrowserNativeDomPathSegment {
   readonly childIndex: number;
   readonly shadowRoot: boolean;
+}
+
+export interface BrowserLiveNodeBinding {
+  readonly documentId: string;
+  readonly nodeHandleId: string;
 }
 
 export interface BrowserNativeElementTarget {
@@ -271,6 +277,7 @@ export interface BrowserEventPayloadByKind {
     readonly selectionRequestId: string;
     readonly frameKey: string;
     readonly target: BrowserNativeElementTarget;
+    readonly binding: BrowserLiveNodeBinding;
   };
   readonly "selection.cancelled": {
     readonly selectionRequestId: string;
@@ -392,7 +399,8 @@ const commandValidators: Readonly<Record<BrowserCommandKind, Validator>> = {
       objectValidator(["annotationId", "target"], {
         annotationId: idValidator,
         target: recordValidator,
-      }),
+        binding: liveNodeBindingValidator,
+      }, ["binding"]),
       MAX_COLLECTION_SIZE,
     ),
   }),
@@ -509,10 +517,11 @@ const eventValidators: Readonly<Record<BrowserEventKind, Validator>> = {
     captureRequestId: idValidator,
     errorCategory: stringValidator(1, 128),
   }),
-  "selection.result": objectValidator(["selectionRequestId", "frameKey", "target"], {
+  "selection.result": objectValidator(["selectionRequestId", "frameKey", "target", "binding"], {
     selectionRequestId: idValidator,
     frameKey: idValidator,
     target: nativeElementTargetValidator,
+    binding: liveNodeBindingValidator,
   }),
   "selection.cancelled": objectValidator(["selectionRequestId", "reason"], {
     selectionRequestId: idValidator,
@@ -710,6 +719,13 @@ function nativeElementTargetValidator(value: unknown, path: string): void {
   if (frame.parentElementPath !== undefined) {
     nativeDomPathValidator(frame.parentElementPath, `${path}.frame.parentElementPath`);
   }
+}
+
+function liveNodeBindingValidator(value: unknown, path: string): void {
+  objectValidator(["documentId", "nodeHandleId"], {
+    documentId: idValidator,
+    nodeHandleId: idValidator,
+  })(value, path);
 }
 
 function nativeDomPathValidator(value: unknown, path: string): void {

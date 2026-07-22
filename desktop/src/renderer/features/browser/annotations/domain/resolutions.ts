@@ -34,6 +34,85 @@ export type WebAnnotationSettledStatus = "resolved" | "changed" | "ambiguous" | 
 export type WebAnnotationTransientStatus = "pending" | "resolving" | "temporarily_unavailable";
 export type WebAnnotationVisibleStatus = WebAnnotationSettledStatus | WebAnnotationTransientStatus;
 
+export type WebAnnotationChangeKind =
+  | "content"
+  | "structure"
+  | "attributes"
+  | "visual"
+  | "layout"
+  | "context"
+  | "unknown";
+
+export interface WebAnnotationChangeSummary {
+  readonly kinds: readonly WebAnnotationChangeKind[];
+  readonly materialKinds: readonly WebAnnotationChangeKind[];
+  readonly signals: readonly string[];
+  readonly material: boolean;
+}
+
+const CHANGE_KIND_ORDER: readonly WebAnnotationChangeKind[] = [
+  "content",
+  "structure",
+  "attributes",
+  "visual",
+  "layout",
+  "context",
+  "unknown",
+];
+
+const CHANGE_SIGNAL_KINDS: Readonly<Record<string, WebAnnotationChangeKind>> = Object.freeze({
+  quote_changed: "content",
+  accessible_name_changed: "content",
+  text_changed: "content",
+  anchor_name_changed: "content",
+  anchor_text_changed: "content",
+  tag_changed: "structure",
+  role_changed: "structure",
+  anchor_tag_changed: "structure",
+  anchor_role_changed: "structure",
+  stable_attributes_changed: "attributes",
+  anchor_attributes_changed: "attributes",
+  local_fingerprint_changed: "visual",
+  anchor_position_changed: "layout",
+  anchor_size_changed: "layout",
+  prefix_changed: "context",
+  suffix_changed: "context",
+  container_changed: "context",
+  heading_changed: "context",
+});
+
+const MATERIAL_CHANGE_KINDS = new Set<WebAnnotationChangeKind>([
+  "content",
+  "structure",
+  "attributes",
+  "visual",
+  "unknown",
+]);
+
+export function summarizeWebAnnotationChanges(
+  signals: readonly string[] | null | undefined,
+): WebAnnotationChangeSummary {
+  const normalizedSignals = [...new Set(
+    (signals ?? []).map((signal) => signal.trim()).filter(Boolean),
+  )].sort((left, right) => left.localeCompare(right));
+  const kinds = CHANGE_KIND_ORDER.filter((kind) => normalizedSignals.some(
+    (signal) => (CHANGE_SIGNAL_KINDS[signal] ?? "unknown") === kind,
+  ));
+  const materialKinds = kinds.filter((kind) => MATERIAL_CHANGE_KINDS.has(kind));
+  return Object.freeze({
+    kinds: Object.freeze(kinds),
+    materialKinds: Object.freeze(materialKinds),
+    signals: Object.freeze(normalizedSignals),
+    material: materialKinds.length > 0,
+  });
+}
+
+export function visibleWebAnnotationStatus(
+  status: WebAnnotationSettledStatus | WebAnnotationTransientStatus,
+): WebAnnotationVisibleStatus {
+  return status === "changed" ? "resolved" : status;
+}
+
 export interface WebAnnotationResolutionIdentity {
   readonly resourceId: string;
   readonly annotationId: string;
@@ -173,8 +252,8 @@ export function orphanWebAnnotationResolution(
 export function visibleWebAnnotationResolutionStatus(
   state: WebAnnotationResolutionState,
 ): WebAnnotationVisibleStatus {
-  if (isSettledResolution(state)) return state.status;
-  return state.lastKnown?.status ?? state.status;
+  if (isSettledResolution(state)) return visibleWebAnnotationStatus(state.status);
+  return visibleWebAnnotationStatus(state.lastKnown?.status ?? state.status);
 }
 
 export function isWebAnnotationResolutionCurrent(

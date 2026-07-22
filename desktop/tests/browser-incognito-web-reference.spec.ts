@@ -237,6 +237,7 @@ function textDraft(): WebAnnotationDraft {
     },
     navigationId: "navigation-private",
     frameKey: "main",
+    liveBinding: null,
     dirty: true,
     evidence: null,
     createdAt: NOW,

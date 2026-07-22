@@ -119,6 +119,7 @@ describe("BrowserHost wire contract", () => {
       payload: {
         selectionRequestId: "selection-1",
         frameKey: "devtools:iframe-session-1",
+        binding: { documentId: "document-1", nodeHandleId: "node-1" },
         target: {
           type: "element",
           tag: "canvas",

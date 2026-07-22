@@ -2,6 +2,7 @@ import type { FormEvent, Ref } from "react";
 import {
   ArrowLeft,
   ArrowRight,
+  BanknoteArrowDown,
   Download,
   EyeOff,
   Globe,
@@ -9,7 +10,6 @@ import {
   RefreshCw,
   Search,
   Square,
-  StickyNote,
   ZoomIn,
 } from "lucide-react";
 
@@ -150,7 +150,7 @@ export function BrowserToolbar({
             disabled={disabled}
             onClick={onAnnotationList}
           >
-            <StickyNote size={14} />
+            <BanknoteArrowDown size={14} />
             {annotationCount ? <span className={styles.toolbarCount}>{annotationCount > 99 ? "99+" : annotationCount}</span> : null}
           </ToolbarButton>
         ) : null}

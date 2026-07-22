@@ -22,6 +22,28 @@ afterEach(() => {
 });
 
 describe("page bridge semantic element resolver", () => {
+  it("keeps the exact selected DOM node ahead of a now-ambiguous persisted anchor", () => {
+    const run = createRun("<main><button>Open</button></main>");
+    const originalButton = run.document.querySelector("button")!;
+    run.rect(originalButton, 10, 80, 120, 32);
+    const selection = run.selectWithBinding(originalButton);
+    const clone = run.document.createElement("button");
+    clone.textContent = "Open";
+    run.document.querySelector("main")!.prepend(clone);
+    run.rect(clone, 10, 20, 120, 32);
+
+    const result = run.resolve(selection.target, selection.binding);
+
+    expect(result.payload).toMatchObject({
+      status: "resolved",
+      evidence: {
+        strategy: "node_handle",
+        rects: [{ x: 10, y: 80, width: 120, height: 32 }],
+        binding: selection.binding,
+      },
+    });
+  });
+
   it("prefers a stable DOM path and returns a fresh semantic target", () => {
     const run = createRun("<button id='save'>Save</button>");
     const button = run.document.querySelector("button")!;
@@ -222,20 +244,32 @@ function installRun(window: DOMWindow) {
       value: () => ({ x, y, width, height, left: x, top: y, right: x + width, bottom: y + height }),
     });
   };
-  const select = (element: Element): WebElementTarget => {
+  const selectWithBinding = (element: Element) => {
     const requestId = `selection-${++requestSequence}`;
     send("selection.start", requestId, { selectionId: requestId, mode: "element" });
     element.dispatchEvent(new window.MouseEvent("click", { bubbles: true, composed: true, cancelable: true }));
     const result = message("selection.result", requestId);
     if (!result) throw new Error("Expected selection result");
-    return result.payload.target as WebElementTarget;
+    if (!result.payload.binding) throw new Error("Expected live node binding");
+    return {
+      target: result.payload.target as WebElementTarget,
+      binding: result.payload.binding,
+    };
   };
-  const resolveTarget = (target: WebElementTarget) => {
+  const select = (element: Element): WebElementTarget => selectWithBinding(element).target;
+  const resolveTarget = (
+    target: WebElementTarget,
+    binding?: BrowserBridgeEnvelope<"selection.result">["payload"]["binding"],
+  ) => {
     const requestId = `resolve-${++requestSequence}`;
-    send("annotation.resolve", requestId, { annotationId: "annotation-1", target });
+    send("annotation.resolve", requestId, {
+      annotationId: "annotation-1",
+      target,
+      ...(binding ? { binding } : {}),
+    });
     const result = message("resolution.result", requestId);
     if (!result) throw new Error("Expected resolution result");
     return result;
   };
-  return { window, document: window.document, rect, select, resolve: resolveTarget };
+  return { window, document: window.document, rect, select, selectWithBinding, resolve: resolveTarget };
 }

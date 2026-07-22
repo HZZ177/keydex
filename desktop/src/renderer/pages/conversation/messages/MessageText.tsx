@@ -26,7 +26,10 @@ import {
 } from "@/renderer/providers/PreviewProvider";
 import { useCopyFeedback } from "@/renderer/hooks/useCopyFeedback";
 import { emitNavigateToWebAnnotation } from "@/renderer/events/webAnnotationContext";
-import { webAnnotationSnapshotFromContextItem } from "@/renderer/features/browser/annotations";
+import {
+  webAnnotationSnapshotFromContextItem,
+  type WebAnnotationContextSnapshot,
+} from "@/renderer/features/browser/annotations";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import { ImageResourceRuntime } from "@/renderer/markdownRuntime/resources";
@@ -973,7 +976,7 @@ function MessageWebAnnotationContextChip({ item }: { item: AgentContextItem }) {
   const label = snapshot.source.title
     ? `网页批注 · ${snapshot.source.title}`
     : item.label || "网页批注";
-  const status = webAnnotationSnapshotStatusLabel(snapshot.target.resolution);
+  const status = webAnnotationSnapshotStatusLabel(snapshot);
   const description = [
     snapshot.source.url,
     `${snapshot.target.summary} · ${status}`,
@@ -1009,10 +1012,14 @@ function MessageWebAnnotationContextChip({ item }: { item: AgentContextItem }) {
   );
 }
 
-function webAnnotationSnapshotStatusLabel(status: string): string {
-  if (status === "resolved") return "发送时已定位";
-  if (status === "changed") return "发送时内容有变化";
-  if (status === "ambiguous") return "发送时存在多个候选";
+function webAnnotationSnapshotStatusLabel(snapshot: WebAnnotationContextSnapshot): string {
+  if (snapshot.target.resolution === "resolved") {
+    return snapshot.perception.resolution.change.material
+      ? "发送时已定位，目标有变化"
+      : "发送时已定位";
+  }
+  if (snapshot.target.resolution === "changed") return "发送时已定位，目标有变化";
+  if (snapshot.target.resolution === "ambiguous") return "发送时存在多个候选";
   return "发送时仅保留原始证据";
 }
 

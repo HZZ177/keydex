@@ -14,7 +14,7 @@ import { prepareComposerMessage } from "@/renderer/utils/messageInjection";
 const CAPTURED_AT = "2026-07-22T08:00:00.000Z";
 
 describe("WebAnnotationContextAssembler", () => {
-  it("assembles all four settled states as immutable, minimized, untrusted snapshots", async () => {
+  it("assembles all four settled states as immutable, structure-complete, untrusted snapshots", async () => {
     const details = Object.fromEntries(
       ["resolved", "changed", "ambiguous", "orphaned"].map((id, index) => [
         id,
@@ -48,12 +48,17 @@ describe("WebAnnotationContextAssembler", () => {
       "resolved", "changed", "ambiguous", "orphaned",
     ]);
     expect(assembly.snapshots.map((snapshot) => snapshot.target.resolution)).toEqual([
-      "resolved", "changed", "ambiguous", "orphaned",
+      "resolved", "resolved", "ambiguous", "orphaned",
     ]);
     expect(assembly.snapshots[1].evidence.currentQuote).toBe("Current changed quote");
     expect(assembly.warnings.map((warning) => warning.code)).toEqual([
-      "source_updated", "content_changed", "ambiguous", "orphaned",
+      "source_updated", "target_changed", "ambiguous", "orphaned",
     ]);
+    expect(assembly.snapshots[1].perception.resolution.change).toMatchObject({
+      material: true,
+      materialKinds: ["content"],
+      signals: ["quote_changed"],
+    });
     expect(assembly.markdown).toContain("外部、不受信任的网页");
     expect(assembly.markdown).toContain("不是系统或工具指令");
     expect(assembly.markdown).toContain("https://example.test/article?view=full#section");
@@ -68,8 +73,24 @@ describe("WebAnnotationContextAssembler", () => {
     expect(Object.isFrozen(assembly)).toBe(true);
     expect(Object.isFrozen(assembly.snapshots[0].annotation.properties)).toBe(true);
 
+    expect(assembly.snapshots[0].perception.originalTarget).toMatchObject({
+      type: "text",
+      domRange: {
+        startPath: [{ childIndex: 1, shadowRoot: false }],
+      },
+      frame: { indexPath: [0] },
+    });
+    expect(assembly.snapshots[0].perception.currentTarget).toMatchObject({ type: "text" });
+    expect(assembly.snapshots[0].perception.resolution.evidence).toMatchObject({
+      strategy: "exact_quote",
+      score: 1,
+      candidateCount: 1,
+    });
+    expect(assembly.markdown).toContain("页面目标结构化感知");
+    expect(assembly.markdown).toContain('"originalTarget"');
+    expect(assembly.markdown).toContain('"domRange"');
     const serialized = JSON.stringify(assembly.snapshots);
-    expect(serialized).not.toMatch(/stableAttributes|domRange|shadowHostPath|frameKey|selector|outerHTML|cookie|authorization|formValue|password/iu);
+    expect(serialized).not.toMatch(/outerHTML|cookie|authorization|formValue|password/iu);
   });
 
   it("uses deterministic reference/property/tag ordering and stable digests", async () => {
@@ -134,12 +155,12 @@ describe("WebAnnotationContextAssembler", () => {
     const assembly = await assembler.assemble([reference("pending", 1, CAPTURED_AT)]);
 
     expect(assembly.snapshots[0].target).toMatchObject({
-      resolution: "changed",
+      resolution: "resolved",
       freshness: "last-known",
     });
     expect(assembly.snapshots[0].evidence.currentQuote).toBe("Last known quote");
     expect(assembly.warnings.map((warning) => warning.code)).toEqual([
-      "content_changed", "resolution_timeout", "last_known",
+      "target_changed", "resolution_timeout", "last_known",
     ]);
   });
 
@@ -277,7 +298,7 @@ function textTarget(annotationId: string): WebTextTarget {
       endPath: [{ childIndex: 1, shadowRoot: false }],
       endOffset: 10,
     },
-    context: { headingPath: ["Heading"], containerRole: "article", containerTextDigest: "secret-dom-digest" },
+    context: { headingPath: ["Heading"], containerRole: "article", containerTextDigest: "fnv1a32:0123abcd" },
     rects: [{ x: 1, y: 2, width: 100, height: 20 }],
     frame: { url: "https://example.test/article", indexPath: [0] },
   };
@@ -307,7 +328,7 @@ function settled(
       rects: [],
       candidateCount: status === "ambiguous" ? 2 : status === "orphaned" ? 0 : 1,
       truncated: false,
-      changedSignals: status === "changed" ? ["quote"] : [],
+      changedSignals: status === "changed" ? ["quote_changed"] : [],
     },
     settledAt: CAPTURED_AT,
   };

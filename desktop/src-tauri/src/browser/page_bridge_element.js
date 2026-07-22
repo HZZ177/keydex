@@ -21,6 +21,7 @@
     minimumScannedElements: 64,
     timeBudgetMs: 12,
   });
+  const nodeBindings = window.KeydexAnnotationBridge?.nodeBindings ?? null;
   let active = null;
   let animationFrame = null;
   let pendingPointerTarget = null;
@@ -184,9 +185,11 @@
       cancel("invalid_selection");
       return;
     }
+    const binding = nodeBindings?.bindSelection(request.selectionId, candidate) ?? null;
     respond("selection.result", request.requestId, {
       selectionId: request.selectionId,
       target,
+      ...(binding ? { binding } : {}),
     });
     stop(false);
   };
@@ -225,7 +228,7 @@
     try {
       respond("resolution.result", envelope.requestId, {
         annotationId,
-        ...resolveElementTarget(target, policy),
+        ...resolveElementTarget(annotationId, target, envelope.payload?.binding, policy),
       });
     } catch {
       respond("bridge.error", envelope.requestId, {
@@ -236,8 +239,17 @@
     }
   };
 
-  const resolveElementTarget = (target, policy) => {
+  const resolveElementTarget = (annotationId, target, preferredBinding, policy) => {
     const deadline = resolverNow() + resolverLimits.timeBudgetMs;
+    const bound = nodeBindings?.resolveAnnotation(annotationId, preferredBinding) ?? null;
+    if (bound) {
+      const candidate = createElementResolutionCandidate(bound.node, target, "node_handle", 0, policy);
+      if (candidate) {
+        candidate.binding = bound.binding;
+        return acceptedElementResolution(annotationId, candidate, 1, false);
+      }
+      nodeBindings?.releaseAnnotation(annotationId);
+    }
     const scanned = scanVisibleElements(deadline);
     const persistedAttributes = new Map((target.stableAttributes ?? []).map((entry) => [entry.name, entry.value]));
     const stages = [
@@ -301,11 +313,15 @@
       if (candidates.length === 0) continue;
       const decision = decideElementCandidates(candidates, policy);
       bestRejectedScore = Math.max(bestRejectedScore, decision.bestScore ?? 0);
-      if (decision.kind === "accepted") return acceptedElementResolution(decision.selected, candidates.length, scanned.truncated);
-      if (decision.kind === "ambiguous") {
-        return ambiguousElementResolution(decision.candidates, candidates.length, scanned.truncated);
-      }
-    }
+       if (decision.kind === "accepted") {
+         return acceptedElementResolution(annotationId, decision.selected, candidates.length, scanned.truncated);
+       }
+       if (decision.kind === "ambiguous") {
+         nodeBindings?.releaseAnnotation(annotationId);
+         return ambiguousElementResolution(decision.candidates, candidates.length, scanned.truncated);
+       }
+     }
+    nodeBindings?.releaseAnnotation(annotationId);
     return orphanedElementResolution(lastStrategy, attemptedCandidates, scanned.truncated, bestRejectedScore);
   };
 
@@ -330,6 +346,7 @@
     let score = scoreElementSignals(signals, policy);
     const idMatches = stableAttributeValue(original, "id")
       && stableAttributeValue(original, "id") === stableAttributeValue(current, "id");
+    if (strategy === "node_handle") score = 1;
     if (strategy === "stable_dom_path" && tagMatches && roleMatches) score = Math.max(score, 0.9);
     if (strategy === "unique_id" && idMatches && tagMatches && roleMatches) score = Math.max(score, 0.92);
     if (strategy === "image_src_alt" && tagMatches) score = Math.max(score, 0.9);
@@ -348,6 +365,7 @@
     const candidateId = `element:${strategy}:${index}`.slice(0, 128);
     return {
       candidateId,
+      element,
       target: current,
       score,
       changedSignals: changedSignals.slice(0, 8),
@@ -379,18 +397,22 @@
     return { kind: "accepted", bestScore: first.score, selected: first };
   };
 
-  const acceptedElementResolution = (candidate, candidateCount, truncated) => ({
-    status: candidate.changedSignals.length > 0 ? "changed" : "resolved",
-    target: candidate.target,
-    evidence: {
-      strategy: candidate.strategy,
-      score: candidate.score,
-      rects: [candidate.target.rect],
-      candidateCount: Math.min(256, candidateCount),
-      truncated,
-      changedSignals: candidate.changedSignals,
-    },
-  });
+  const acceptedElementResolution = (annotationId, candidate, candidateCount, truncated) => {
+    const binding = candidate.binding ?? nodeBindings?.bindAnnotation(annotationId, candidate.element) ?? null;
+    return {
+      status: hasMaterialAnnotationChange(candidate.changedSignals) ? "changed" : "resolved",
+      target: candidate.target,
+      evidence: {
+        strategy: candidate.strategy,
+        score: candidate.score,
+        rects: [candidate.target.rect],
+        candidateCount: Math.min(256, candidateCount),
+        truncated,
+        changedSignals: candidate.changedSignals,
+        ...(binding ? { binding } : {}),
+      },
+    };
+  };
 
   const ambiguousElementResolution = (candidates, candidateCount, truncated) => ({
     status: "ambiguous",

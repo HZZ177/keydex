@@ -2195,10 +2195,41 @@ function webAnnotationSnapshot() {
     target: {
       type: "text" as const,
       summary: "关键段落",
-      resolution: "changed" as const,
+      resolution: "resolved" as const,
       freshness: "last-known" as const,
     },
     evidence: { originalQuote: "旧内容", currentQuote: "新内容" },
+    perception: {
+      originalTarget: {
+        type: "text" as const,
+        quote: { exact: "旧内容", prefix: "", suffix: "" },
+        context: { headingPath: [] },
+        rects: [{ x: 0, y: 0, width: 80, height: 20 }],
+        frame: { url: "https://example.com/article", indexPath: [] },
+      },
+      currentTarget: {
+        type: "text" as const,
+        quote: { exact: "新内容", prefix: "", suffix: "" },
+        context: { headingPath: [] },
+        rects: [{ x: 0, y: 0, width: 80, height: 20 }],
+        frame: { url: "https://example.com/article", indexPath: [] },
+      },
+      resolution: {
+        navigationId: "navigation-history",
+        frameRevision: 2,
+        frameKey: "main",
+        reason: "content_changed",
+        settledAt: "2026-07-22T08:00:00Z",
+        candidateIds: [],
+        evidence: null,
+        change: {
+          kinds: ["content"] as const,
+          materialKinds: ["content"] as const,
+          signals: ["quote_changed"],
+          material: true,
+        },
+      },
+    },
     annotation: {
       bodyMarkdown: "发送时正文，不读取当前批注",
       tags: ["history"],

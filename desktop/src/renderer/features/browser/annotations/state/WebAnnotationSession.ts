@@ -8,6 +8,7 @@ import type {
 import type {
   BrowserBridgeEnvelope,
   CssRect,
+  WebAnnotationLiveNodeBinding,
   WebAnnotationTarget,
   WebSelectionMode,
 } from "../../runtime/bridgeProtocol";
@@ -41,6 +42,7 @@ export interface WebAnnotationDraft {
   readonly target: WebAnnotationTarget;
   readonly navigationId: string;
   readonly frameKey: string;
+  readonly liveBinding: WebAnnotationLiveNodeBinding | null;
   readonly dirty: true;
   readonly evidence: WebAnnotationRegionEvidence | null;
   readonly createdAt: string;
@@ -240,6 +242,7 @@ export class WebAnnotationSession {
             target: resultEnvelope.payload.target,
             navigationId: resultEnvelope.navigationId,
             frameKey: resultEnvelope.frameKey,
+            liveBinding: resultEnvelope.payload.binding ?? null,
             dirty: true,
             evidence: captureRequestId
               ? Object.freeze(captureGeometry
@@ -297,6 +300,7 @@ export class WebAnnotationSession {
           target: event.payload.target,
           navigationId: event.navigationId ?? request.requestId,
           frameKey: event.payload.frameKey,
+          liveBinding: event.payload.binding,
           dirty: true,
           evidence: null,
           createdAt: this.#now(),

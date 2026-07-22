@@ -15,8 +15,10 @@ import {
   WebAnnotationDrawer,
   webAnnotationPanelRegistry,
   webAnnotationReferencePresentations,
+  summarizeWebAnnotationChanges,
   WebAnnotationResolverCoordinator,
   WebAnnotationSession,
+  type WebAnnotationCoordinatorResolution,
   type WebAnnotationItem,
   type WebAnnotationNavigationPanel,
   type WebAnnotationVisibleStatus,
@@ -42,6 +44,11 @@ import {
 } from "@/renderer/features/browser/ui";
 import { openExternalProtocol } from "@/runtime/externalLinks";
 import { runtimeBridge } from "@/runtime";
+import { emitAddWebAnnotationToComposer } from "@/renderer/events/webAnnotationContext";
+import {
+  COMPOSER_NEW_CHAT_DRAFT_SCOPE,
+  composerNewWorkspaceDraftScope,
+} from "@/renderer/features/composer";
 import { useTheme } from "@/renderer/providers/ThemeProvider";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 
@@ -214,6 +221,9 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
   const [annotationResolver, setAnnotationResolver] = useState<WebAnnotationResolverCoordinator | null>(null);
   const [annotationResolutionStatuses, setAnnotationResolutionStatuses] = useState<
     Readonly<Record<string, WebAnnotationVisibleStatus | undefined>>
+  >({});
+  const [annotationResolutionDetails, setAnnotationResolutionDetails] = useState<
+    Readonly<Record<string, WebAnnotationCoordinatorResolution | undefined>>
   >({});
   const annotationStore = useMemo(
     () => createWebAnnotationStore(createWebAnnotationClient(runtimeBridge.http)),
@@ -474,6 +484,14 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
         target: snapshot.draft.target,
         bodyMarkdown,
       }).then((detail) => {
+        if (snapshot.draft.liveBinding) {
+          resolver.confirmCreatedAnnotation({
+            resourceId: detail.resource.id,
+            annotationId: detail.annotation.id,
+            target: detail.annotation.target,
+            binding: snapshot.draft.liveBinding,
+          });
+        }
         traceBrowserAnnotation("renderer.annotation.create.completed", {
           requestId: submission.requestId,
           selectionId: submission.payload.selectionId,
@@ -551,6 +569,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
     const unsubscribeResolver = resolver.subscribe(() => {
       const snapshot = resolver.getSnapshot();
       setAnnotationResolutionStatuses(snapshot.visibleStatuses);
+      setAnnotationResolutionDetails(snapshot.resolutions);
       void highlighter.sync(snapshot.resolutions).catch(() => undefined);
       webAnnotationPanelRegistry.notify();
     });
@@ -571,6 +590,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
       updateAnnotationModeActive(false);
       setAnnotationResolver((current) => current === resolver ? null : current);
       setAnnotationResolutionStatuses({});
+      setAnnotationResolutionDetails({});
     };
   }, [annotationsAvailable, surface?.generation, surface?.panelId, surface?.surfaceId]);
   useEffect(() => {
@@ -588,6 +608,9 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
   }, [annotationEntry?.items, annotationEntry?.resource, annotationResolver, annotationState.activePage]);
   useEffect(() => {
     for (const item of annotationEntry?.items ?? []) {
+      const settled = annotationResolutionDetails[item.annotation.id]?.settled
+        ?? annotationResolutionDetails[item.annotation.id]?.lastKnown
+        ?? null;
       webAnnotationReferencePresentations.upsert({
         annotationId: item.annotation.id,
         title: item.resource.title,
@@ -595,10 +618,11 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
         bodyMarkdown: item.annotation.bodyMarkdown,
         origin: item.resource.origin,
         status: annotationResolutionStatuses[item.annotation.id],
+        change: summarizeWebAnnotationChanges(settled?.evidence?.changedSignals),
         updatedAt: item.annotation.updatedAt,
       });
     }
-  }, [annotationEntry?.items, annotationResolutionStatuses]);
+  }, [annotationEntry?.items, annotationResolutionDetails, annotationResolutionStatuses]);
   useEffect(() => {
     if (
       !annotationsAvailable
@@ -929,15 +953,55 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
         <WebAnnotationDrawer
           open
           profileMode={state.profileMode}
+          resolutionDetails={annotationResolutionDetails}
           resolutions={annotationResolutionStatuses}
           session={annotationSession}
           showCreationActions={false}
           store={annotationStore}
+          onAddToComposer={(item) => {
+            const composerScopeKey = browserAnnotationComposerScopeKey(scopeKey);
+            if (!composerScopeKey) return "unhandled";
+            const settled = annotationResolutionDetails[item.annotation.id]?.settled
+              ?? annotationResolutionDetails[item.annotation.id]?.lastKnown
+              ?? null;
+            return emitAddWebAnnotationToComposer({
+              composerScopeKey,
+              reference: {
+                annotationId: item.annotation.id,
+                selectedRevision: item.annotation.revision,
+                selectedAt: new Date().toISOString(),
+                sourcePanelId: state.id,
+              },
+              presentation: {
+                annotationId: item.annotation.id,
+                title: item.resource.title,
+                summary: webAnnotationTargetSummary(item.annotation.target),
+                bodyMarkdown: item.annotation.bodyMarkdown,
+                origin: item.resource.origin,
+                status: annotationResolutionStatuses[item.annotation.id],
+                change: summarizeWebAnnotationChanges(settled?.evidence?.changedSignals),
+                updatedAt: item.annotation.updatedAt,
+              },
+            });
+          }}
           onClose={() => setAnnotationsOpen(false)}
         />
       ) : null}
     </div>
   );
+}
+
+export function browserAnnotationComposerScopeKey(scopeKey: string): string | null {
+  const normalized = scopeKey.trim();
+  if (normalized === "global") return COMPOSER_NEW_CHAT_DRAFT_SCOPE;
+  if (normalized.startsWith("session:")) {
+    return normalized.slice("session:".length).trim() ? normalized : null;
+  }
+  if (normalized.startsWith("workspace:")) {
+    const workspaceId = normalized.slice("workspace:".length).trim();
+    return workspaceId ? composerNewWorkspaceDraftScope(workspaceId) : null;
+  }
+  return null;
 }
 
 function webAnnotationScope(scopeKey: string): import("@/renderer/features/browser/annotations").WebAnnotationScope {

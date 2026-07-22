@@ -26,6 +26,22 @@ afterEach(() => {
 });
 
 describe("page bridge text resolver", () => {
+  it("keeps repeated text attached to the exact selected container in the current document", () => {
+    const run = createRun("<section><p>target</p></section>");
+    const selection = run.selectTextWithBinding("target");
+    const duplicate = run.document.createElement("section");
+    duplicate.innerHTML = "<p>target</p>";
+    run.document.body.prepend(duplicate);
+
+    const result = run.resolve(selection.target, selection.binding);
+
+    expect(result.payload).toMatchObject({
+      status: "resolved",
+      evidence: { strategy: "node_handle", binding: selection.binding },
+    });
+    expect((result.payload.target as WebTextTarget).position?.start).toBe(6);
+  });
+
   it("prefers a valid DOM Range and returns current quote, rects, and evidence", () => {
     const run = createRun("<h1>Guide</h1><p>prefix target suffix</p>");
     const original = run.selectText("target");
@@ -195,7 +211,7 @@ function installRun(window: DOMWindow) {
   };
   const message = <K extends BrowserBridgeEnvelope["kind"]>(kind: K, requestId: string) =>
     (messages.find((envelope) => envelope.kind === kind && envelope.requestId === requestId) ?? null) as BrowserBridgeEnvelope<K> | null;
-  const selectText = (value: string): WebTextTarget => {
+  const selectTextWithBinding = (value: string) => {
     const walker = window.document.createTreeWalker(window.document.body, window.NodeFilter.SHOW_TEXT);
     let node = walker.nextNode();
     while (node && !node.nodeValue?.includes(value)) node = walker.nextNode();
@@ -212,11 +228,23 @@ function installRun(window: DOMWindow) {
     window.document.dispatchEvent(new window.Event("pointerup", { bubbles: true }));
     const result = message("selection.result", requestId);
     if (!result) throw new Error("Expected selection result");
-    return result.payload.target as WebTextTarget;
+    if (!result.payload.binding) throw new Error("Expected live node binding");
+    return {
+      target: result.payload.target as WebTextTarget,
+      binding: result.payload.binding,
+    };
   };
-  const resolveTarget = (target: WebTextTarget) => {
+  const selectText = (value: string): WebTextTarget => selectTextWithBinding(value).target;
+  const resolveTarget = (
+    target: WebTextTarget,
+    binding?: BrowserBridgeEnvelope<"selection.result">["payload"]["binding"],
+  ) => {
     const requestId = `resolve-${++requestSequence}`;
-    send("annotation.resolve", requestId, { annotationId: "annotation-1", target });
+    send("annotation.resolve", requestId, {
+      annotationId: "annotation-1",
+      target,
+      ...(binding ? { binding } : {}),
+    });
     const result = message("resolution.result", requestId);
     if (!result) throw new Error("Expected resolution result");
     return result;
@@ -225,6 +253,7 @@ function installRun(window: DOMWindow) {
     window,
     document: window.document,
     selectText,
+    selectTextWithBinding,
     resolve: resolveTarget,
   };
 }

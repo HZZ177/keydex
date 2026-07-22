@@ -28,6 +28,7 @@
     maxCandidates: 20,
     timeBudgetMs: 12,
   });
+  const nodeBindings = window.KeydexAnnotationBridge?.nodeBindings ?? null;
   let active = null;
 
   const respond = (kind, requestId, payload) => {
@@ -116,6 +117,10 @@
       });
       return;
     }
+    const selectionAnchor = target.relativeElement ? resolvePath(target.relativeElement.path) : null;
+    const binding = selectionAnchor
+      ? nodeBindings?.bindSelection(request.selectionId, selectionAnchor) ?? null
+      : null;
     respond("selection.candidate", request.requestId, {
       selectionId: request.selectionId,
       mode: "region",
@@ -134,6 +139,7 @@
         selectionId: request.selectionId,
         target,
         captureGeometry,
+        ...(binding ? { binding } : {}),
       });
     }).catch(() => {
       respond("selection.cancelled", request.requestId, {
@@ -189,7 +195,7 @@
     try {
       respond("resolution.result", envelope.requestId, {
         annotationId,
-        ...resolveRegionTarget(target, policy),
+        ...resolveRegionTarget(annotationId, target, envelope.payload?.binding, policy),
       });
     } catch {
       respond("bridge.error", envelope.requestId, {
@@ -200,8 +206,9 @@
     }
   };
 
-  const resolveRegionTarget = (target, policy) => {
+  const resolveRegionTarget = (annotationId, target, preferredBinding, policy) => {
     if (!target.relativeElement) {
+      nodeBindings?.releaseAnnotation(annotationId);
       return orphanedRegionResolution(
         "coordinate_only_region",
         0,
@@ -210,10 +217,19 @@
       );
     }
     const deadline = resolverNow() + resolverLimits.timeBudgetMs;
+    const bound = nodeBindings?.resolveAnnotation(annotationId, preferredBinding) ?? null;
+    if (bound) {
+      const boundCandidate = createRegionAnchorCandidate(bound.node, target, "node_handle", 0, policy);
+      if (boundCandidate) {
+        boundCandidate.binding = bound.binding;
+        return acceptedRegionResolution(annotationId, boundCandidate, target, 1, false);
+      }
+      nodeBindings?.releaseAnnotation(annotationId);
+    }
     const pathElement = resolvePath(target.relativeElement.path);
     const pathCandidate = createRegionAnchorCandidate(pathElement, target, "relative_region", 0, policy);
     if (pathCandidate && pathCandidate.score >= policy.acceptThreshold) {
-      return acceptedRegionResolution(pathCandidate, target, 1, false);
+      return acceptedRegionResolution(annotationId, pathCandidate, target, 1, false);
     }
     const scan = scanRegionAnchorCandidates(target.relativeElement, deadline);
     const candidates = scan.elements.flatMap((element, index) => {
@@ -222,11 +238,13 @@
     });
     const decision = decideRegionCandidates(candidates, policy);
     if (decision.kind === "accepted") {
-      return acceptedRegionResolution(decision.selected, target, candidates.length, scan.truncated);
+      return acceptedRegionResolution(annotationId, decision.selected, target, candidates.length, scan.truncated);
     }
     if (decision.kind === "ambiguous") {
+      nodeBindings?.releaseAnnotation(annotationId);
       return ambiguousRegionResolution(decision.candidates, candidates.length, scan.truncated);
     }
+    nodeBindings?.releaseAnnotation(annotationId);
     return orphanedRegionResolution(
       "region_semantic_search",
       candidates.length,
@@ -257,6 +275,7 @@
         heading: 1,
         position: geometry,
       }, policy),
+      strategy === "node_handle" ? 1 : 0,
       strategy === "relative_region" && tagMatches && roleMatches ? 0.9 : 0,
       strategy === "region_semantic_search" && tagMatches && roleMatches
         && (nameScore === 1 || textScore === 1 || attributeScore === 1) ? 0.86 : 0,
@@ -282,6 +301,7 @@
     const candidateId = `region:${strategy}:${index}`.slice(0, 128);
     return {
       candidateId,
+      element,
       elementRect: currentRect,
       descriptor: current,
       localDigest: currentDigest,
@@ -297,7 +317,7 @@
     };
   };
 
-  const acceptedRegionResolution = (candidate, original, candidateCount, truncated) => {
+  const acceptedRegionResolution = (annotationId, candidate, original, candidateCount, truncated) => {
     const mappedRect = mapRelativeRegion(original.rect, original.relativeElement.rect, candidate.elementRect);
     const viewport = viewportSize();
     if (!mappedRect || !validRegion(mappedRect, viewport)) {
@@ -328,8 +348,9 @@
       },
       frame: frameLocator(),
     };
+    const binding = candidate.binding ?? nodeBindings?.bindAnnotation(annotationId, candidate.element) ?? null;
     return {
-      status: candidate.changedSignals.length > 0 ? "changed" : "resolved",
+      status: hasMaterialAnnotationChange(candidate.changedSignals) ? "changed" : "resolved",
       target,
       evidence: {
         strategy: candidate.strategy,
@@ -338,6 +359,7 @@
         candidateCount: Math.min(256, candidateCount),
         truncated,
         changedSignals: candidate.changedSignals,
+        ...(binding ? { binding } : {}),
       },
     };
   };

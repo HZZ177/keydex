@@ -29,7 +29,11 @@ describe("page bridge mutation scheduler", () => {
     await vi.advanceTimersByTimeAsync(1);
 
     expect(run.changes()).toHaveLength(1);
-    expect(run.changes()[0].payload).toEqual({ reason: "dom", revision: 1 });
+    expect(run.changes()[0].payload).toEqual({
+      reason: "dom",
+      revision: 1,
+      annotationIds: ["annotation-1"],
+    });
   });
 
   it("flushes continuous updates no later than the 2s maximum delay", async () => {
@@ -42,7 +46,11 @@ describe("page bridge mutation scheduler", () => {
     }
 
     expect(run.changes()).toHaveLength(1);
-    expect(run.changes()[0].payload).toEqual({ reason: "dom", revision: 1 });
+    expect(run.changes()[0].payload).toEqual({
+      reason: "dom",
+      revision: 1,
+      annotationIds: ["annotation-1"],
+    });
   });
 
   it("turns a 10 MiB dynamic-page update into one bounded dirty signal", async () => {
@@ -56,7 +64,11 @@ describe("page bridge mutation scheduler", () => {
     await vi.advanceTimersByTimeAsync(250);
 
     expect(run.changes()).toHaveLength(1);
-    expect(run.changes()[0].payload).toEqual({ reason: "dom", revision: 1 });
+    expect(run.changes()[0].payload).toEqual({
+      reason: "dom",
+      revision: 1,
+      annotationIds: ["annotation-1"],
+    });
   });
 
   it("ignores Keydex overlay mutations and cancels pending work on pagehide", async () => {
@@ -103,7 +115,7 @@ function createRun() {
       },
     },
   });
-  dom.window.eval(bridgeSource.replace("__KEYDEX_BRIDGE_BOOTSTRAP__", JSON.stringify({
+  dom.window.eval(`let __KEYDEX_BRIDGE_DIAGNOSTICS_POST__ = null;\n${bridgeSource.replace("__KEYDEX_BRIDGE_BOOTSTRAP__", JSON.stringify({
     panelId: "panel-1",
     surfaceId: "surface-1",
     generation: 2,
@@ -113,7 +125,12 @@ function createRun() {
       mutationMaxDelayMs: 2_000,
       sliceBudgetMs: 8,
     },
-  })));
+  }))}`);
+  (dom.window as unknown as {
+    KeydexAnnotationBridge: {
+      nodeBindings: { bindAnnotation(annotationId: string, node: Element): unknown };
+    };
+  }).KeydexAnnotationBridge.nodeBindings.bindAnnotation("annotation-1", dom.window.document.body);
   dom.window.eval(mutationSource);
   return {
     window: dom.window,

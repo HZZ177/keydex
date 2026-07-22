@@ -2,6 +2,7 @@ import { BROWSER_LIMITS } from "../../config";
 import type { BrowserSurfaceRef } from "../../domain";
 import type {
   BrowserBridgeEnvelope,
+  WebAnnotationLiveNodeBinding,
   WebAnnotationPageResolutionEvidence,
   WebAnnotationTarget,
 } from "../../runtime";
@@ -12,6 +13,7 @@ import type {
   WebAnnotationTransientStatus,
   WebAnnotationVisibleStatus,
 } from "../domain";
+import { visibleWebAnnotationStatus } from "../domain";
 
 export interface WebAnnotationResolverTarget {
   readonly resourceId: string;
@@ -60,6 +62,7 @@ export interface WebAnnotationResolverPort {
     readonly targets: readonly {
       readonly annotationId: string;
       readonly target: WebAnnotationTarget;
+      readonly binding?: WebAnnotationLiveNodeBinding;
     }[];
   }): Promise<void>;
 }
@@ -80,6 +83,13 @@ interface CachedResolution {
   readonly frameKey: string;
   readonly targetSignature: string;
   readonly resolution: WebAnnotationSettledPageResolution;
+}
+
+interface ConfirmedSelectionResolution {
+  readonly resourceId: string;
+  readonly targetSignature: string;
+  readonly target: WebAnnotationTarget;
+  readonly binding: WebAnnotationLiveNodeBinding;
 }
 
 const EMPTY_SNAPSHOT: WebAnnotationResolverSnapshot = Object.freeze({
@@ -103,7 +113,12 @@ export class WebAnnotationResolverCoordinator {
   readonly #cache = new Map<string, CachedResolution>();
   readonly #queue: string[] = [];
   readonly #queued = new Set<string>();
-  readonly #requestTargets = new Map<string, string>();
+  readonly #requestTargets = new Map<string, {
+    readonly annotationId: string;
+    readonly resolveRequestId: string;
+  }>();
+  readonly #liveBindings = new Map<string, WebAnnotationLiveNodeBinding>();
+  readonly #confirmedSelections = new Map<string, ConfirmedSelectionResolution>();
   #page: WebAnnotationResolverPage | null = null;
   #snapshot = EMPTY_SNAPSHOT;
   #sliceHandle: unknown = null;
@@ -129,16 +144,44 @@ export class WebAnnotationResolverCoordinator {
 
   getSnapshot = (): WebAnnotationResolverSnapshot => this.#snapshot;
 
+  confirmCreatedAnnotation(input: {
+    readonly resourceId: string;
+    readonly annotationId: string;
+    readonly target: WebAnnotationTarget;
+    readonly binding: WebAnnotationLiveNodeBinding;
+  }): void {
+    if (this.#disposed) return;
+    const confirmed = Object.freeze({
+      resourceId: input.resourceId,
+      targetSignature: targetSignature(input.target),
+      target: input.target,
+      binding: Object.freeze({ ...input.binding }),
+    });
+    this.#confirmedSelections.set(input.annotationId, confirmed);
+    this.#liveBindings.set(input.annotationId, confirmed.binding);
+    const annotation = this.#targets.get(input.annotationId);
+    if (annotation && this.#applyConfirmedSelection(annotation)) {
+      this.#queueAnnotation(input.annotationId, "dom_changed");
+      this.#publish();
+      this.#ensureSlice();
+    }
+  }
+
   activatePage(page: WebAnnotationResolverPage): void {
     if (this.#disposed) return;
-    const pageChanged = this.#page?.resourceId !== page.resourceId
-      || this.#page.hostNavigationId !== page.hostNavigationId;
+    const navigationChanged = this.#page !== null
+      && this.#page.hostNavigationId !== page.hostNavigationId;
+    const pageChanged = this.#page?.resourceId !== page.resourceId || navigationChanged;
     if (pageChanged) {
       this.#clearWork();
       this.#targets.clear();
       this.#targetSignatures.clear();
       this.#resolutions.clear();
       this.#cache.clear();
+      if (navigationChanged) {
+        this.#liveBindings.clear();
+        this.#confirmedSelections.clear();
+      }
     }
     this.#page = Object.freeze({ ...page, annotations: Object.freeze([...page.annotations]) });
     const nextIds = new Set(page.annotations.map((annotation) => annotation.annotationId));
@@ -149,6 +192,8 @@ export class WebAnnotationResolverCoordinator {
       this.#resolutions.delete(annotationId);
       this.#removeCachedAnnotation(annotationId);
       this.#queued.delete(annotationId);
+      this.#liveBindings.delete(annotationId);
+      this.#confirmedSelections.delete(annotationId);
     }
     for (const annotation of page.annotations) {
       const signature = targetSignature(annotation.target);
@@ -157,6 +202,14 @@ export class WebAnnotationResolverCoordinator {
       this.#targetSignatures.set(annotation.annotationId, signature);
       if (priorSignature !== undefined && priorSignature !== signature) {
         this.#removeCachedAnnotation(annotation.annotationId);
+      }
+      if (this.#applyConfirmedSelection(annotation)) {
+        // The user selected this exact live node moments ago, so expose that
+        // fact immediately. A background resolve still registers the new
+        // annotation id inside the page bridge and replaces this baseline with
+        // bridge-authenticated evidence when the native surface is available.
+        this.#queueAnnotation(annotation.annotationId, "dom_changed");
+        continue;
       }
       if (pageChanged || priorSignature !== signature || !this.#resolutions.has(annotation.annotationId)) {
         this.#queueAnnotation(annotation.annotationId, "annotation_set_changed");
@@ -172,6 +225,8 @@ export class WebAnnotationResolverCoordinator {
     this.#frames.clear();
     this.#cache.clear();
     this.#resolutions.clear();
+    this.#liveBindings.clear();
+    this.#confirmedSelections.clear();
     if (this.#page) {
       this.#page = Object.freeze({
         ...this.#page,
@@ -190,7 +245,17 @@ export class WebAnnotationResolverCoordinator {
     if (suspended) {
       this.#clearWork();
       for (const annotationId of this.#targets.keys()) {
-        this.#setUnavailable(annotationId, "surface_discarded");
+        const current = this.#resolutions.get(annotationId);
+        // Native suspension is a browser-resource lifecycle state (for
+        // example while the annotation drawer occludes the WebView), not a
+        // statement about whether the saved target can be located. Preserve
+        // settled/last-known locator state and leave never-resolved items
+        // pending until the surface resumes.
+        if (!current || (!current.lastKnown && (
+          current.status === "resolving" || current.status === "temporarily_unavailable"
+        ))) {
+          this.#setPending(annotationId, "bridge_not_ready");
+        }
       }
     } else {
       for (const annotationId of this.#targets.keys()) this.#queueAnnotation(annotationId, "bridge_ready");
@@ -216,8 +281,10 @@ export class WebAnnotationResolverCoordinator {
     const frame = this.#frames.get(envelope.frameKey);
     if (!frame || frame.navigationId !== envelope.navigationId) return false;
     if (envelope.kind === "page.changed") {
-      for (const [annotationId, annotation] of this.#targets) {
-        if (frameKeyForTarget(annotation.target) === envelope.frameKey) {
+      const pageChanged = envelope as BrowserBridgeEnvelope<"page.changed">;
+      for (const annotationId of pageChanged.payload.annotationIds) {
+        const annotation = this.#targets.get(annotationId);
+        if (annotation && frameKeyForTarget(annotation.target) === envelope.frameKey) {
           this.#queueAnnotation(annotationId, "dom_changed");
         }
       }
@@ -233,10 +300,22 @@ export class WebAnnotationResolverCoordinator {
       return true;
     }
     if (envelope.kind === "bridge.error") {
-      const annotationId = this.#requestTargets.get(envelope.requestId);
-      if (annotationId) {
+      const failure = envelope as BrowserBridgeEnvelope<"bridge.error">;
+      const request = this.#requestTargets.get(envelope.requestId);
+      if (request) {
         this.#requestTargets.delete(envelope.requestId);
-        this.#setUnavailable(annotationId, "resolver_timeout");
+        const current = this.#resolutions.get(request.annotationId);
+        if (current?.requestId === request.resolveRequestId) {
+          console.warn("[Keydex Browser Annotation] page resolver failed", {
+            requestId: envelope.requestId,
+            annotationId: request.annotationId,
+            code: failure.payload.code,
+            message: failure.payload.message,
+            retryable: failure.payload.retryable,
+          });
+          if (failure.payload.retryable) this.#setPending(request.annotationId, "bridge_not_ready");
+          else this.#setUnavailable(request.annotationId, "resolver_timeout");
+        }
         this.#publish();
       }
       return true;
@@ -253,16 +332,32 @@ export class WebAnnotationResolverCoordinator {
     this.#targetSignatures.clear();
     this.#resolutions.clear();
     this.#cache.clear();
+    this.#liveBindings.clear();
+    this.#confirmedSelections.clear();
     this.#listeners.clear();
     this.#snapshot = EMPTY_SNAPSHOT;
   }
 
   #handleBridgeReady(envelope: BrowserBridgeEnvelope<"bridge.ready">): void {
+    const currentFrame = this.#frames.get(envelope.frameKey);
+    if (currentFrame?.navigationId === envelope.navigationId) {
+      for (const [annotationId, annotation] of this.#targets) {
+        const resolution = this.#resolutions.get(annotationId);
+        if ((envelope.payload.top || frameKeyForTarget(annotation.target) === envelope.frameKey)
+          && (!resolution || resolution.status === "pending" || resolution.status === "temporarily_unavailable")) {
+          this.#queueAnnotation(annotationId, "bridge_ready");
+        }
+      }
+      this.#publish();
+      this.#ensureSlice();
+      return;
+    }
     if (envelope.payload.top) {
       this.#clearWork();
       this.#frames.clear();
       this.#cache.clear();
       this.#resolutions.clear();
+      this.#liveBindings.clear();
     } else {
       this.#removeCachedFrame(envelope.frameKey);
       for (const [annotationId, annotation] of this.#targets) {
@@ -287,7 +382,13 @@ export class WebAnnotationResolverCoordinator {
   ): void {
     const annotation = this.#targets.get(envelope.payload.annotationId);
     if (!annotation || !this.#page) return;
+    const request = this.#requestTargets.get(envelope.requestId);
     this.#requestTargets.delete(envelope.requestId);
+    const current = this.#resolutions.get(annotation.annotationId);
+    if (!request
+      || request.annotationId !== annotation.annotationId
+      || current?.status !== "resolving"
+      || current.requestId !== request.resolveRequestId) return;
     const identity = Object.freeze({
       resourceId: annotation.resourceId,
       annotationId: annotation.annotationId,
@@ -327,12 +428,19 @@ export class WebAnnotationResolverCoordinator {
       targetSignature: this.#targetSignatures.get(annotation.annotationId) ?? "",
       resolution: settled,
     });
+    const binding = settled.evidence?.binding;
+    if (binding && (settled.status === "resolved" || settled.status === "changed")) {
+      this.#liveBindings.set(annotation.annotationId, Object.freeze({ ...binding }));
+    } else {
+      this.#liveBindings.delete(annotation.annotationId);
+    }
     this.#publish();
   }
 
   #queueAnnotation(annotationId: string, reason: "bridge_ready" | "annotation_set_changed" | "dom_changed"): void {
     const annotation = this.#targets.get(annotationId);
     if (!annotation || !this.#page) return;
+    this.#invalidateRequests(annotationId);
     const route = this.#routingFrame(annotation.target);
     if (!route) {
       this.#setPending(annotationId, "bridge_not_ready");
@@ -385,6 +493,48 @@ export class WebAnnotationResolverCoordinator {
     }));
   }
 
+  #applyConfirmedSelection(annotation: WebAnnotationResolverTarget): boolean {
+    const confirmed = this.#confirmedSelections.get(annotation.annotationId);
+    if (!confirmed) return false;
+    if (confirmed.resourceId !== annotation.resourceId
+      || confirmed.targetSignature !== targetSignature(annotation.target)) {
+      this.#confirmedSelections.delete(annotation.annotationId);
+      this.#liveBindings.delete(annotation.annotationId);
+      return false;
+    }
+    const route = this.#routingFrame(annotation.target);
+    if (!route) return false;
+    const [frameKey, frame] = route;
+    const identity = resolutionIdentity(annotation, frame);
+    const settled: WebAnnotationSettledPageResolution = Object.freeze({
+      status: "resolved",
+      identity,
+      frameKey,
+      target: confirmed.target,
+      candidateIds: Object.freeze([]),
+      evidence: Object.freeze({
+        strategy: "node_handle",
+        score: 1,
+        rects: Object.freeze(targetRects(confirmed.target)),
+        candidateCount: 1,
+        truncated: false,
+        changedSignals: Object.freeze([]),
+        binding: confirmed.binding,
+      }),
+      settledAt: this.#scheduler.nowIso(),
+    });
+    this.#resolutions.set(annotation.annotationId, Object.freeze({
+      status: "resolved",
+      identity,
+      frameKey,
+      reason: "exact_match",
+      lastKnown: settled,
+      settled,
+    }));
+    this.#confirmedSelections.delete(annotation.annotationId);
+    return true;
+  }
+
   #routingFrame(target: WebAnnotationTarget): readonly [string, ResolverFrameState] | null {
     const expected = frameKeyForTarget(target);
     const exact = this.#frames.get(expected);
@@ -393,7 +543,7 @@ export class WebAnnotationResolverCoordinator {
     return main ? ["main", main] as const : null;
   }
 
-  #setUnavailable(annotationId: string, reason: "surface_discarded" | "resolver_timeout"): void {
+  #setUnavailable(annotationId: string, reason: "resolver_timeout"): void {
     const annotation = this.#targets.get(annotationId);
     if (!annotation) return;
     const frameKey = frameKeyForTarget(annotation.target);
@@ -420,7 +570,11 @@ export class WebAnnotationResolverCoordinator {
   #runSlice(): void {
     if (this.#disposed || this.#suspended || this.#paused) return;
     const startedAt = this.#scheduler.now();
-    const targets: { annotationId: string; target: WebAnnotationTarget }[] = [];
+    const targets: {
+      annotationId: string;
+      target: WebAnnotationTarget;
+      binding?: WebAnnotationLiveNodeBinding;
+    }[] = [];
     while (this.#queue.length > 0 && targets.length < BROWSER_LIMITS.resolveBatchSize) {
       if (targets.length > 0 && this.#scheduler.now() - startedAt >= BROWSER_LIMITS.resolveSliceBudgetMs) break;
       const annotationId = this.#queue.shift()!;
@@ -428,7 +582,12 @@ export class WebAnnotationResolverCoordinator {
       const annotation = this.#targets.get(annotationId);
       const route = annotation ? this.#routingFrame(annotation.target) : null;
       if (!annotation || !route) continue;
-      targets.push({ annotationId, target: annotation.target });
+      const binding = this.#liveBindings.get(annotationId);
+      targets.push({
+        annotationId,
+        target: annotation.target,
+        ...(binding ? { binding } : {}),
+      });
     }
     if (targets.length === 0) {
       this.#publish();
@@ -449,18 +608,32 @@ export class WebAnnotationResolverCoordinator {
         lastKnown: prior?.settled ?? prior?.lastKnown ?? null,
         settled: null,
       }));
-      this.#requestTargets.set(`${requestId}:${index}`, target.annotationId);
+      this.#requestTargets.set(`${requestId}:${index}`, {
+        annotationId: target.annotationId,
+        resolveRequestId: requestId,
+      });
     });
     this.#publish();
     void this.#port.resolveAnnotations({
       surface: this.#surface,
       resolveRequestId: requestId,
       targets,
-    }).catch(() => {
+    }).catch((error: unknown) => {
+      console.warn("[Keydex Browser Annotation] resolver dispatch failed", {
+        requestId,
+        annotationIds: targets.map((target) => target.annotationId),
+        error: error instanceof Error ? error.message : String(error),
+      });
       for (let index = 0; index < targets.length; index += 1) {
         this.#requestTargets.delete(`${requestId}:${index}`);
         const current = this.#resolutions.get(targets[index].annotationId);
-        if (current?.requestId === requestId) this.#setUnavailable(targets[index].annotationId, "resolver_timeout");
+        if (current?.requestId === requestId) {
+          // A rejected host dispatch says nothing about whether the target can
+          // be located. Keep the last exact result (if any) and wait for the
+          // next bridge-ready/resource-resume signal instead of fabricating a
+          // resolver timeout.
+          this.#setPending(targets[index].annotationId, "bridge_not_ready");
+        }
       }
       this.#publish();
     }).finally(() => this.#ensureSlice());
@@ -472,6 +645,12 @@ export class WebAnnotationResolverCoordinator {
     this.#queue.length = 0;
     this.#queued.clear();
     this.#requestTargets.clear();
+  }
+
+  #invalidateRequests(annotationId: string): void {
+    for (const [requestId, request] of this.#requestTargets) {
+      if (request.annotationId === annotationId) this.#requestTargets.delete(requestId);
+    }
   }
 
   #cancelSlice(): void {
@@ -498,9 +677,11 @@ export class WebAnnotationResolverCoordinator {
     const visibleStatuses: Record<string, WebAnnotationVisibleStatus> = {};
     for (const [annotationId, resolution] of this.#resolutions) {
       resolutions[annotationId] = resolution;
-      visibleStatuses[annotationId] = resolution.settled?.status
-        ?? resolution.lastKnown?.status
-        ?? resolution.status;
+      visibleStatuses[annotationId] = visibleWebAnnotationStatus(
+        resolution.settled?.status
+          ?? resolution.lastKnown?.status
+          ?? resolution.status,
+      );
     }
     this.#snapshot = Object.freeze({
       resolutions: Object.freeze(resolutions),
@@ -511,6 +692,11 @@ export class WebAnnotationResolverCoordinator {
     });
     for (const listener of this.#listeners) listener();
   }
+}
+
+function targetRects(target: WebAnnotationTarget): WebAnnotationPageResolutionEvidence["rects"] {
+  if (target.type === "text") return [...target.rects];
+  return [target.rect];
 }
 
 export function webAnnotationResolutionCacheKey(identity: WebAnnotationResolutionIdentity): string {

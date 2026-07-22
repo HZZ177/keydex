@@ -10,7 +10,8 @@ use serde_json::{json, Value};
 use std::{cell::RefCell, rc::Rc};
 
 use super::{
-    bridge::validate_web_annotation_target, contract::BrowserSurfaceRef,
+    bridge::{validate_live_node_binding, validate_web_annotation_target},
+    contract::BrowserSurfaceRef,
     ui_actor::NativeBrowserSurface,
 };
 
@@ -19,20 +20,28 @@ const ELEMENT_TARGET_FUNCTION: &str = include_str!("devtools_element_target.js")
 const NATIVE_SELECTION_FUNCTION: &str = r#"function (detail) {
   const view = this && this.ownerDocument && this.ownerDocument.defaultView;
   if (!view || !detail) return { opened: false, reason: 'target_realm_unavailable' };
+  const binding = view.KeydexAnnotationBridge?.nodeBindings?.bindSelection?.(
+    detail.selectionId,
+    this,
+  );
+  if (!binding) return { opened: false, reason: 'node_binding_unavailable' };
+  const nextDetail = { ...detail, binding };
   const api = view.KeydexAnnotationOverlay;
   if (api && typeof api.openNativeEditor === 'function') {
     return {
-      opened: api.openNativeEditor(detail) === true,
+      opened: api.openNativeEditor(nextDetail) === true,
       reason: 'direct_bridge',
+      binding,
     };
   }
   view.dispatchEvent(new view.CustomEvent('keydex:web-annotation-native-selection', {
-    detail: Object.freeze(detail),
+    detail: Object.freeze(nextDetail),
   }));
   const root = view.document.querySelector('[data-keydex-annotation-overlay-root="true"]');
   return {
     opened: Boolean(root && root.shadowRoot && root.shadowRoot.querySelector('[part="annotation-editor"]')),
     reason: 'event_fallback',
+    binding,
   };
 }"#;
 const ROOT_SESSION: &str = "";
@@ -43,6 +52,7 @@ pub(crate) enum NativeInspectorEvent {
         selection_request_id: String,
         frame_key: String,
         target: Value,
+        binding: Value,
     },
     Cancelled {
         selection_request_id: String,
@@ -934,6 +944,23 @@ fn present_native_selection(
                             );
                             return;
                         }
+                        let Some(binding) = value
+                            .get("result")
+                            .and_then(|result| result.get("value"))
+                            .and_then(|value| value.get("binding"))
+                            .cloned()
+                            .filter(|binding| validate_live_node_binding(binding).is_ok())
+                        else {
+                            finish_with_failure(
+                                &callback_inspector,
+                                &callback_surface,
+                                &callback_request,
+                                &callback_route,
+                                "node_binding_failed",
+                                "Chromium did not preserve the selected DOM node binding",
+                            );
+                            return;
+                        };
                         if callback_inspector.mark_draft_if_matches(
                             &callback_surface,
                             &callback_request,
@@ -947,6 +974,7 @@ fn present_native_selection(
                                     format!("devtools:{}", callback_session)
                                 },
                                 target: callback_target,
+                                binding,
                             });
                         }
                     }

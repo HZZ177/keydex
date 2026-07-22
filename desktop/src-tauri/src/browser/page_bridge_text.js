@@ -24,6 +24,7 @@
     guaranteedExactScanChars: 16 * 1024,
     timeBudgetMs: 12,
   });
+  const nodeBindings = window.KeydexAnnotationBridge?.nodeBindings ?? null;
   let active = null;
 
   const respond = (kind, requestId, payload) => {
@@ -91,6 +92,12 @@
       return;
     }
     const rect = target.rects[0];
+    const selection = window.getSelection();
+    const bindingNode = selection?.rangeCount
+      ? semanticContainer(selection.getRangeAt(0).commonAncestorContainer)
+        ?? selection.getRangeAt(0).commonAncestorContainer.parentElement
+      : null;
+    const binding = bindingNode ? nodeBindings?.bindSelection(request.selectionId, bindingNode) ?? null : null;
     respond("selection.candidate", request.requestId, {
       selectionId: request.selectionId,
       mode: "text",
@@ -102,6 +109,7 @@
     respond("selection.result", request.requestId, {
       selectionId: request.selectionId,
       target,
+      ...(binding ? { binding } : {}),
     });
     stop(false);
   };
@@ -128,7 +136,10 @@
       return;
     }
     try {
-      const resolution = resolveTextTarget(target, policy);
+      const resolution = resolveTextTarget(annotationId, target, envelope.payload?.binding, policy);
+      if (resolution.status === "ambiguous" || resolution.status === "orphaned") {
+        nodeBindings?.releaseAnnotation(annotationId);
+      }
       respond("resolution.result", envelope.requestId, { annotationId, ...resolution });
     } catch {
       respond("bridge.error", envelope.requestId, {
@@ -139,28 +150,44 @@
     }
   };
 
-  const resolveTextTarget = (target, policy) => {
+  const resolveTextTarget = (annotationId, target, preferredBinding, policy) => {
     const startedAt = resolverNow();
     const deadline = startedAt + resolverLimits.timeBudgetMs;
     const model = buildVisibleTextModel();
+    const bound = nodeBindings?.resolveAnnotation(annotationId, preferredBinding) ?? null;
+    const boundDecision = bound
+      ? candidateFromBoundNode(model, target, bound.node, policy, deadline)
+      : null;
+    if (boundDecision?.kind === "accepted") {
+      boundDecision.selected.binding = bound.binding;
+      return acceptedResolution(
+        annotationId,
+        boundDecision.selected,
+        "node_handle",
+        boundDecision.total,
+        boundDecision.selected.changedSignals.length > 0,
+        boundDecision.truncated,
+      );
+    }
     const domCandidate = candidateFromDomRange(model, target, policy, deadline);
     if (domCandidate && domCandidate.currentQuote === target.quote.exact) {
-      return acceptedResolution(domCandidate, "dom_range", 1, false);
+      return acceptedResolution(annotationId, domCandidate, "dom_range", 1, false);
     }
     const positionCandidate = candidateFromPosition(model, target, policy);
     if (positionCandidate && positionCandidate.currentQuote === target.quote.exact) {
-      return acceptedResolution(positionCandidate, "text_position", 1, false);
+      return acceptedResolution(annotationId, positionCandidate, "text_position", 1, false);
     }
 
     const exactSearch = exactQuoteCandidates(model, target, policy, deadline);
     if (exactSearch.candidates.length === 1 && !exactSearch.truncated) {
       const selected = exactSearch.candidates[0];
-      return acceptedResolution(selected, "exact_quote", 1, selected.changedSignals.length > 0);
+      return acceptedResolution(annotationId, selected, "exact_quote", 1, selected.changedSignals.length > 0);
     }
     if (exactSearch.candidates.length > 1 || exactSearch.truncated) {
       const exactDecision = decideCandidates(exactSearch.candidates, policy);
       if (exactDecision.kind === "accepted") {
         return acceptedResolution(
+          annotationId,
           exactDecision.selected,
           "exact_quote",
           exactSearch.total,
@@ -180,6 +207,7 @@
     const fuzzyDecision = decideCandidates(fuzzySearch.candidates, policy);
     if (fuzzyDecision.kind === "accepted") {
       return acceptedResolution(
+        annotationId,
         fuzzyDecision.selected,
         "fuzzy_quote",
         fuzzySearch.total,
@@ -196,6 +224,36 @@
       fuzzySearch.truncated,
       fuzzyDecision.bestScore,
     );
+  };
+
+  const candidateFromBoundNode = (model, target, boundNode, policy, deadline) => {
+    const scoped = buildVisibleTextModel(boundNode);
+    const candidates = [];
+    let cursor = 0;
+    let total = 0;
+    let truncated = false;
+    while (cursor <= scoped.text.length - target.quote.exact.length) {
+      if (resolverNow() >= deadline) {
+        truncated = true;
+        break;
+      }
+      const start = scoped.text.indexOf(target.quote.exact, cursor);
+      if (start < 0) break;
+      total += 1;
+      const range = rangeFromLogical(scoped, start, start + target.quote.exact.length);
+      const projection = range ? projectRange(model, range) : null;
+      const candidate = range && projection
+        ? createResolutionCandidate(model, target, range, projection, "node_handle", false, policy)
+        : null;
+      if (candidate) candidates.push(candidate);
+      cursor = start + 1;
+      if (candidates.length >= resolverLimits.maxExactMatches) {
+        truncated = scoped.text.indexOf(target.quote.exact, cursor) >= 0;
+        break;
+      }
+    }
+    const decision = decideCandidates(candidates, policy);
+    return { ...decision, total, truncated };
   };
 
   const candidateFromDomRange = (model, target, policy, deadline) => {
@@ -376,6 +434,7 @@
       currentQuote,
       score,
       changedSignals: contextSignals.slice(0, 8),
+      bindingNode: container ?? range.commonAncestorContainer.parentElement,
       target: {
         type: "text",
         quote: { exact: currentQuote, prefix, suffix },
@@ -403,16 +462,22 @@
     };
   };
 
-  const acceptedResolution = (candidate, strategy, candidateCount, changed, truncated = false) => ({
-    status: changed || candidate.fuzzy ? "changed" : "resolved",
-    target: candidate.target,
-    evidence: {
-      ...candidate.evidence,
-      strategy,
-      candidateCount: Math.min(256, candidateCount),
-      truncated,
-    },
-  });
+  const acceptedResolution = (annotationId, candidate, strategy, candidateCount, _changed, truncated = false) => {
+    const binding = candidate.binding ?? (candidate.bindingNode
+      ? nodeBindings?.bindAnnotation(annotationId, candidate.bindingNode) ?? null
+      : null);
+    return {
+      status: hasMaterialAnnotationChange(candidate.changedSignals) || candidate.fuzzy ? "changed" : "resolved",
+      target: candidate.target,
+      evidence: {
+        ...candidate.evidence,
+        strategy,
+        candidateCount: Math.min(256, candidateCount),
+        truncated,
+        ...(binding ? { binding } : {}),
+      },
+    };
+  };
 
   const ambiguousResolution = (candidates, strategy, candidateCount, truncated) => ({
     status: "ambiguous",
@@ -666,8 +731,8 @@
     };
   };
 
-  const buildVisibleTextModel = () => {
-    const root = document.body ?? document.documentElement;
+  const buildVisibleTextModel = (scope) => {
+    const root = scope ?? document.body ?? document.documentElement;
     const nodes = [];
     let text = "";
     if (!root) return { text, nodes };

@@ -1,6 +1,9 @@
 import type { AgentContextItem } from "@/types/protocol";
 
-import type { WebAnnotationVisibleStatus } from "../domain";
+import {
+  summarizeWebAnnotationChanges,
+  visibleWebAnnotationStatus,
+} from "../domain";
 import type { WebAnnotationContextSnapshot } from "./WebAnnotationContextAssembler";
 import type { WebAnnotationReferencePresentation } from "./WebAnnotationReferencePresentationRegistry";
 
@@ -27,6 +30,10 @@ export function webAnnotationSnapshotFromContextItem(
   const source = record(snapshot?.source);
   const target = record(snapshot?.target);
   const evidence = record(snapshot?.evidence);
+  const perception = record(snapshot?.perception);
+  const originalTarget = record(perception?.originalTarget);
+  const perceptionResolution = record(perception?.resolution);
+  const perceptionChange = record(perceptionResolution?.change);
   const annotation = record(snapshot?.annotation);
   if (
     snapshot?.schemaVersion !== 1
@@ -46,6 +53,17 @@ export function webAnnotationSnapshotFromContextItem(
     || !settledStatus(target.resolution)
     || (target.freshness !== "current" && target.freshness !== "last-known")
     || !evidence
+    || !perception
+    || !originalTarget
+    || !webAnnotationTargetType(originalTarget.type)
+    || (perception.currentTarget !== null && !webAnnotationTargetType(record(perception.currentTarget)?.type))
+    || !perceptionResolution
+    || !Array.isArray(perceptionResolution.candidateIds)
+    || !perceptionChange
+    || !stringArray(perceptionChange.kinds)
+    || !stringArray(perceptionChange.materialKinds)
+    || !stringArray(perceptionChange.signals)
+    || typeof perceptionChange.material !== "boolean"
     || !annotation
     || typeof annotation.bodyMarkdown !== "string"
     || !stringArray(annotation.tags)
@@ -73,7 +91,8 @@ export function webAnnotationPresentationFromSnapshot(
     summary: snapshot.target.summary,
     bodyMarkdown: snapshot.annotation.bodyMarkdown,
     origin: snapshot.source.origin,
-    status: snapshot.target.resolution as WebAnnotationVisibleStatus,
+    status: visibleWebAnnotationStatus(snapshot.target.resolution),
+    change: summarizeWebAnnotationChanges(snapshot.perception.resolution.change.signals),
     updatedAt: snapshot.capturedAt,
   };
 }
