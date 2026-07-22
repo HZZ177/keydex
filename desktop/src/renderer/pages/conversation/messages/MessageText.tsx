@@ -1,4 +1,4 @@
-import { Check, ChevronDown, CircleAlert, Copy, CornerDownLeft, GitBranchPlus, Target, Undo2 } from "lucide-react";
+import { Check, ChevronDown, CircleAlert, Copy, CornerDownLeft, GitBranchPlus, StickyNote, Target, Undo2 } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -25,6 +25,8 @@ import {
   type PreviewRenderContext,
 } from "@/renderer/providers/PreviewProvider";
 import { useCopyFeedback } from "@/renderer/hooks/useCopyFeedback";
+import { emitNavigateToWebAnnotation } from "@/renderer/events/webAnnotationContext";
+import { webAnnotationSnapshotFromContextItem } from "@/renderer/features/browser/annotations";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import { ImageResourceRuntime } from "@/renderer/markdownRuntime/resources";
@@ -731,6 +733,9 @@ function MessageContextChip({
   if (item.type === "quote") {
     return <MessageQuoteContextChip item={item} />;
   }
+  if (item.type === "web_annotation") {
+    return <MessageWebAnnotationContextChip item={item} />;
+  }
   return <MessagePlainContextChip item={item} />;
 }
 
@@ -960,6 +965,55 @@ function MessageQuoteContextChip({ item }: { item: AgentContextItem }) {
       </span>
     </FloatingQuotePreview>
   );
+}
+
+function MessageWebAnnotationContextChip({ item }: { item: AgentContextItem }) {
+  const snapshot = webAnnotationSnapshotFromContextItem(item);
+  if (!snapshot) return <MessagePlainContextChip item={item} />;
+  const label = snapshot.source.title
+    ? `网页批注 · ${snapshot.source.title}`
+    : item.label || "网页批注";
+  const status = webAnnotationSnapshotStatusLabel(snapshot.target.resolution);
+  const description = [
+    snapshot.source.url,
+    `${snapshot.target.summary} · ${status}`,
+    snapshot.annotation.bodyMarkdown,
+  ].filter(Boolean).join("\n\n");
+  return (
+    <FloatingQuotePreview
+      quoteText={description}
+      titleText={label}
+      wrapperClassName={styles.contextItemWrapper}
+      chipClassName={styles.contextItemChip}
+      cardClassName={styles.contextItemCard}
+      titleClassName={styles.contextItemPathTitle}
+      bodyClassName={styles.contextItemBody}
+      chipElement="button"
+      chipButtonProps={{
+        type: "button",
+        "aria-label": `打开网页批注来源 ${snapshot.source.title || snapshot.source.origin}`,
+        onClick: () => emitNavigateToWebAnnotation(snapshot),
+      }}
+      chipProps={{
+        "data-clickable": "true",
+        "data-context-type": "web_annotation",
+        "data-annotation-resolution": snapshot.target.resolution,
+      }}
+      showCopyAction={false}
+    >
+      <span className={styles.contextItemIcon} data-context-chip-icon="web_annotation" aria-hidden="true">
+        <StickyNote size={13} strokeWidth={2} />
+      </span>
+      <span className={styles.contextItemLabel}>{label}</span>
+    </FloatingQuotePreview>
+  );
+}
+
+function webAnnotationSnapshotStatusLabel(status: string): string {
+  if (status === "resolved") return "发送时已定位";
+  if (status === "changed") return "发送时内容有变化";
+  if (status === "ambiguous") return "发送时存在多个候选";
+  return "发送时仅保留原始证据";
 }
 
 function MessagePlainContextChip({ item }: { item: AgentContextItem }) {

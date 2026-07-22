@@ -42,9 +42,21 @@ import {
   type AgentSessionRuntimeState,
 } from "@/renderer/stores/agentSessionStore";
 import type { ConversationRuntimeState } from "@/renderer/stores/conversationStore";
-import { prepareComposerMessage } from "@/renderer/utils/messageInjection";
+import {
+  prepareComposerMessage,
+  prepareReplayedContextItems,
+} from "@/renderer/utils/messageInjection";
 import { assembleAnnotationContexts, type AssembledAnnotationContext } from "@/renderer/features/annotations/chat/AnnotationContextAssembler";
 import { annotationDocumentRegistry } from "@/renderer/features/annotations/chat/AnnotationDocumentRegistry";
+import {
+  createWebAnnotationSendCoordinator,
+  incognitoWebReferenceRegistry,
+  isIncognitoWebAnnotationId,
+  replayedWebAnnotationContexts,
+  WebAnnotationContextError,
+  type SelectedWebAnnotationReference,
+  type WebAnnotationSendCoordinator,
+} from "@/renderer/features/browser/annotations";
 import type {
   AgentActionEnvelope,
   AgentContextItem,
@@ -101,11 +113,39 @@ export interface UseAgentSessionControllerOptions {
   conversationSendDefaultMode?: PendingInputMode;
   composerDraftScopeKey?: string | null;
   ensureSession?: (request: AgentSessionControllerEnsureSessionRequest) => Promise<AgentSessionControllerEnsureSessionResult>;
+  beforeSendToCreatedSession?: (sessionId: string) => Promise<void>;
+  webAnnotationSendCoordinator?: WebAnnotationSendCoordinator;
   subagentContext?: {
     parentSessionId: string;
     runId: string;
     childSessionId: string;
   } | null;
+}
+
+export interface AgentSessionDeferredSendContext {
+  readonly message?: string;
+  readonly contextItems?: ChatPayload["contextItems"];
+  readonly runtimeParams?: ChatPayload["runtime_params"];
+  readonly attachments?: ChatPayload["attachments"];
+}
+
+export interface AgentSessionSendTextOptions {
+  readonly clearDraft?: boolean;
+  readonly contextItems?: ChatPayload["contextItems"];
+  readonly runtimeParams?: ChatPayload["runtime_params"];
+  readonly attachments?: ChatPayload["attachments"];
+  readonly skipOptimistic?: boolean;
+  readonly allowWhileBusy?: boolean;
+  readonly deliveryMode?: PendingInputMode;
+  readonly reverseDeliveryMode?: boolean;
+  readonly targetSessionId?: string | null;
+  readonly createdSessionForSend?: boolean;
+  readonly webAnnotations?: readonly SelectedWebAnnotationReference[];
+  readonly prepareAfterSession?: (
+    sessionId: string,
+    signal: AbortSignal,
+  ) => Promise<AgentSessionDeferredSendContext>;
+  readonly onTransportAccepted?: (sessionId: string) => void;
 }
 
 export interface AgentSessionController {
@@ -147,17 +187,7 @@ export interface AgentSessionController {
   sendText: (
     text: string,
     model: RuntimeSelectedModel | null,
-    options?: {
-      clearDraft?: boolean;
-      contextItems?: ChatPayload["contextItems"];
-      runtimeParams?: ChatPayload["runtime_params"];
-      attachments?: ChatPayload["attachments"];
-      skipOptimistic?: boolean;
-      allowWhileBusy?: boolean;
-      deliveryMode?: PendingInputMode;
-      reverseDeliveryMode?: boolean;
-      targetSessionId?: string | null;
-    },
+    options?: AgentSessionSendTextOptions,
   ) => Promise<boolean>;
   send: (
     files?: SelectedFile[],
@@ -165,6 +195,7 @@ export interface AgentSessionController {
     attachments?: SelectedImageAttachment[],
     model?: RuntimeSelectedModel | null,
     options?: { reverseDeliveryMode?: boolean; deliveryMode?: PendingInputMode },
+    webAnnotations?: SelectedWebAnnotationReference[],
   ) => Promise<boolean>;
   updatePendingInputMode: (pendingInputId: string, mode: PendingInputMode) => Promise<void>;
   reorderPendingInputs: (pendingInputIds: string[]) => Promise<void>;
@@ -194,6 +225,8 @@ export interface AgentSessionControllerComposerDraft {
   files?: SelectedFile[];
   quotes?: SelectedQuote[];
   attachments?: SelectedImageAttachment[];
+  webAnnotations?: SelectedWebAnnotationReference[];
+  replayedContextItems?: AgentContextItem[];
   selectedSkill?: SkillSummary | null;
 }
 
@@ -212,6 +245,8 @@ export function useAgentSessionController({
   conversationSendDefaultMode = "steer",
   composerDraftScopeKey,
   ensureSession,
+  beforeSendToCreatedSession,
+  webAnnotationSendCoordinator: providedWebAnnotationSendCoordinator,
   subagentContext = null,
 }: UseAgentSessionControllerOptions): AgentSessionController {
   const optionalAgentRuntime = useOptionalAgentSessionRuntime();
@@ -245,6 +280,13 @@ export function useAgentSessionController({
   const [approvalSubmitting, setApprovalSubmitting] = useState(false);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const channelRef = useRef<ChatChannel | null>(null);
+  const sendPreparationAbortRef = useRef<AbortController | null>(null);
+  const webAnnotationSendTransactionRef = useRef(false);
+  const [sendPreparing, setSendPreparing] = useState(false);
+  const webAnnotationSendCoordinator = useMemo(
+    () => providedWebAnnotationSendCoordinator ?? createWebAnnotationSendCoordinator(runtime),
+    [providedWebAnnotationSendCoordinator, runtime],
+  );
   const syncPersistedHistoryRef = useRef<() => void>(() => undefined);
   const syncThreadTasksRef = useRef<() => void>(() => undefined);
   const state = sharedRuntimeContext?.state ?? localState;
@@ -270,7 +312,15 @@ export function useAgentSessionController({
   );
   const connectionReady = wsStatus === "open";
   const canSend = draft.trim().length > 0 && runtimeState !== "cancelling" && connectionReady && Boolean(sessionId || ensureSession);
-  const canStop = runtimeState === "running" && connectionReady && Boolean(sessionId);
+  const canStop = (
+    (runtimeState === "running" && Boolean(sessionId))
+    || sendPreparing
+  ) && connectionReady;
+
+  useEffect(() => () => {
+    sendPreparationAbortRef.current?.abort();
+    webAnnotationSendCoordinator.clear();
+  }, [webAnnotationSendCoordinator]);
 
   const loadSessionHistory = useCallback(
     async (options: Parameters<RuntimeBridge["conversation"]["loadHistory"]>[1] = {}) => {
@@ -654,6 +704,8 @@ export function useAgentSessionController({
       files: nextDraft.files ?? [],
       quotes: nextDraft.quotes ?? [],
       attachments: nextDraft.attachments ?? [],
+      webAnnotations: nextDraft.webAnnotations ?? [],
+      replayedContextItems: nextDraft.replayedContextItems ?? [],
     });
     setComposerContextRequest((current) => ({
       requestId: (current?.requestId ?? 0) + 1,
@@ -693,26 +745,33 @@ export function useAgentSessionController({
     async (
       text: string,
       model: RuntimeSelectedModel | null,
-      options: {
-        clearDraft?: boolean;
-        contextItems?: ChatPayload["contextItems"];
-        runtimeParams?: ChatPayload["runtime_params"];
-        attachments?: ChatPayload["attachments"];
-        skipOptimistic?: boolean;
-        allowWhileBusy?: boolean;
-        deliveryMode?: PendingInputMode;
-        reverseDeliveryMode?: boolean;
-        targetSessionId?: string | null;
-      } = {},
+      options: AgentSessionSendTextOptions = {},
     ) => {
-      const trimmedText = text.trim();
+      let preparedText = text.trim();
       const providerId = model?.providerId.trim() ?? "";
       const trimmedModel = model?.model.trim() ?? "";
-      const contextItems = options.contextItems ?? [];
-      const attachments = options.attachments ?? [];
+      let contextItems = options.contextItems ?? [];
+      let attachments = options.attachments ?? [];
+      let preparedRuntimeParams = options.runtimeParams;
+      const webAnnotations = options.webAnnotations ?? [];
+      const prepareAfterSession = options.prepareAfterSession ?? (webAnnotations.length
+        ? async (targetSessionId: string, signal: AbortSignal): Promise<AgentSessionDeferredSendContext> => {
+            const assembly = await webAnnotationSendCoordinator.prepare(webAnnotations, {
+              sessionId: targetSessionId,
+              signal,
+            });
+            for (const warning of assembly.warnings) onNotice?.(warning.message, "warning");
+            const webPrepared = prepareComposerMessage("", [], { webAnnotationContexts: assembly.snapshots });
+            return {
+              contextItems: [...contextItems, ...webPrepared.contextItems],
+              runtimeParams: mergeRuntimeParams(preparedRuntimeParams, webPrepared.runtimeParams),
+              attachments: [...attachments, ...assembly.attachments],
+            };
+          }
+        : undefined);
       const busy = isBusy(runtimeState);
       if (
-        (!trimmedText && !contextItems.length && !attachments.length) ||
+        (!preparedText && !contextItems.length && !attachments.length && !prepareAfterSession) ||
         runtimeState === "cancelling" ||
         (!options.allowWhileBusy && busy)
       ) {
@@ -733,9 +792,10 @@ export function useAgentSessionController({
       }
 
       let targetSessionId: string | null = options.targetSessionId?.trim() || sessionId || null;
+      const createsSessionForSend = options.createdSessionForSend === true || !targetSessionId;
       if (!targetSessionId) {
         try {
-          targetSessionId = await resolveSessionId(trimmedText, contextItems, model);
+          targetSessionId = await resolveSessionId(preparedText, contextItems, model);
         } catch (reason) {
           const message = publicRuntimeDetail(errorMessage(reason));
           setRuntimeDetail(message);
@@ -746,10 +806,49 @@ export function useAgentSessionController({
       if (!targetSessionId) {
         return false;
       }
+      if (createsSessionForSend && beforeSendToCreatedSession) {
+        try {
+          await beforeSendToCreatedSession(targetSessionId);
+        } catch (reason) {
+          const message = publicRuntimeDetail(errorMessage(reason));
+          setRuntimeDetail(message);
+          onNotice?.(message, "error");
+          return false;
+        }
+      }
       const targetDraftScopeKey = composerSessionDraftScope(targetSessionId);
       if (!sessionId && composerDraftBinding.scopeKey && composerDraftBinding.scopeKey !== targetDraftScopeKey) {
         composerDraftBinding.copyTo(targetDraftScopeKey);
       }
+
+      if (prepareAfterSession) {
+        const abortController = new AbortController();
+        sendPreparationAbortRef.current?.abort();
+        sendPreparationAbortRef.current = abortController;
+        setSendPreparing(true);
+        try {
+          const deferred = await prepareAfterSession(targetSessionId, abortController.signal);
+          if (abortController.signal.aborted) return false;
+          preparedText = deferred.message === undefined ? preparedText : deferred.message.trim();
+          contextItems = deferred.contextItems ?? contextItems;
+          attachments = deferred.attachments ?? attachments;
+          preparedRuntimeParams = deferred.runtimeParams ?? preparedRuntimeParams;
+        } catch (reason) {
+          if (abortController.signal.aborted || (reason instanceof WebAnnotationContextError && reason.code === "cancelled")) {
+            return false;
+          }
+          const message = publicRuntimeDetail(errorMessage(reason));
+          setRuntimeDetail(message);
+          onNotice?.(message, "error");
+          return false;
+        } finally {
+          if (sendPreparationAbortRef.current === abortController) {
+            sendPreparationAbortRef.current = null;
+            setSendPreparing(false);
+          }
+        }
+      }
+      if (!preparedText && !contextItems.length && !attachments.length) return false;
 
       setRuntimeDetail(null);
       try {
@@ -763,7 +862,7 @@ export function useAgentSessionController({
           dispatch({
             type: "message/addUser",
             sessionId: targetSessionId,
-            content: trimmedText,
+            content: preparedText,
             contextItems,
             attachments,
           });
@@ -772,12 +871,12 @@ export function useAgentSessionController({
           dispatch({ type: "runtime/setState", sessionId: targetSessionId, runtimeState: "running" });
         }
         const runtimeParams = {
-          ...(options.runtimeParams ?? {}),
+          ...(preparedRuntimeParams ?? {}),
           ...(contextItems.length ? { message_context_items: contextItems } : {}),
         };
         const payload: ChatPayload = {
           session_id: targetSessionId,
-          message: trimmedText,
+          message: preparedText,
           provider_id: providerId,
           model: trimmedModel,
           delivery_mode: deliveryMode,
@@ -794,6 +893,10 @@ export function useAgentSessionController({
           }
           channel.chat(payload);
         }
+        if (webAnnotations.length) {
+          webAnnotationSendCoordinator.acknowledge(webAnnotations, targetSessionId);
+        }
+        options.onTransportAccepted?.(targetSessionId);
         emitSessionUpdated({ id: targetSessionId, updated_at: new Date().toISOString() });
         onAfterSend?.();
         if (options.clearDraft) {
@@ -824,10 +927,12 @@ export function useAgentSessionController({
       sharedRuntimeContext,
       conversationSendDefaultMode,
       clearComposerDraft,
+      beforeSendToCreatedSession,
       composerDraftBinding.clearScope,
       composerDraftBinding.copyTo,
       composerDraftBinding.scopeKey,
       wsStatus,
+      webAnnotationSendCoordinator,
     ],
   );
 
@@ -838,36 +943,116 @@ export function useAgentSessionController({
       imageAttachments: SelectedImageAttachment[] = [],
       model: RuntimeSelectedModel | null = null,
       options: { reverseDeliveryMode?: boolean; deliveryMode?: PendingInputMode } = {},
+      webAnnotations: SelectedWebAnnotationReference[] = [],
     ) => {
-      let annotationContexts: readonly AssembledAnnotationContext[];
+      const run = async () => {
+        let annotationContexts: readonly AssembledAnnotationContext[];
+        try {
+          annotationContexts = assembleSelectedAnnotationContexts(files);
+        } catch (reason) {
+          const message = errorMessage(reason);
+          setRuntimeDetail(message);
+          onNotice?.(message, "error");
+          return false;
+        }
+        const prepared = prepareComposerMessage(draft, files, { annotationContexts, quotes, selectedSkill });
+        const replay = selectReplayedWebAnnotationContext(
+          composerDraft.replayedContextItems,
+          webAnnotations,
+        );
+        const incognitoReferences = webAnnotations.filter((reference) => (
+          isIncognitoWebAnnotationId(reference.annotationId)
+        ));
+        const liveReferences = replay.liveReferences.filter((reference) => (
+          !isIncognitoWebAnnotationId(reference.annotationId)
+        ));
+        const stableReplayItems = replay.contextItems.filter((item) => {
+          const snapshot = replayedWebAnnotationContexts([item])[0]?.snapshot;
+          return !snapshot || !isIncognitoWebAnnotationId(snapshot.annotationId);
+        });
+        const replayPrepared = prepareReplayedContextItems(stableReplayItems);
+        const preparedContextItems = [...prepared.contextItems, ...replayPrepared.contextItems];
+        const preparedRuntimeParams = mergeRuntimeParams(
+          prepared.runtimeParams,
+          replayPrepared.runtimeParams,
+        );
+        const attachments = imageAttachments.map(agentAttachmentFromSelected);
+        const deferredWebContext = liveReferences.length > 0 || incognitoReferences.length > 0;
+        if (!prepared.message && !preparedContextItems.length && !attachments.length && !deferredWebContext) {
+          return false;
+        }
+        const sent = await sendText(prepared.message, model, {
+          clearDraft: true,
+          contextItems: preparedContextItems,
+          runtimeParams: preparedRuntimeParams,
+          attachments,
+          allowWhileBusy: true,
+          deliveryMode: options.deliveryMode,
+          reverseDeliveryMode: options.reverseDeliveryMode,
+          ...(liveReferences.length ? { webAnnotations: liveReferences } : {}),
+          ...(deferredWebContext ? {
+            prepareAfterSession: async (targetSessionId, signal) => {
+              let contextItems = [...preparedContextItems];
+              let runtimeParams = preparedRuntimeParams;
+              const deferredAttachments = [...attachments];
+              if (liveReferences.length) {
+                const assembly = await webAnnotationSendCoordinator.prepare(liveReferences, {
+                  sessionId: targetSessionId,
+                  signal,
+                });
+                for (const warning of assembly.warnings) onNotice?.(warning.message, "warning");
+                const webPrepared = prepareComposerMessage("", [], {
+                  webAnnotationContexts: assembly.snapshots,
+                });
+                contextItems.push(...webPrepared.contextItems);
+                runtimeParams = mergeRuntimeParams(runtimeParams, webPrepared.runtimeParams);
+                deferredAttachments.push(...assembly.attachments);
+              }
+              if (incognitoReferences.length) {
+                const incognito = await incognitoWebReferenceRegistry.prepare(
+                  incognitoReferences,
+                  runtime,
+                  targetSessionId,
+                  signal,
+                );
+                const incognitoPrepared = prepareReplayedContextItems(incognito.contextItems);
+                contextItems.push(...incognitoPrepared.contextItems);
+                runtimeParams = mergeRuntimeParams(runtimeParams, incognitoPrepared.runtimeParams);
+                deferredAttachments.push(...incognito.attachments);
+              }
+              return { contextItems, runtimeParams, attachments: deferredAttachments };
+            },
+          } : {}),
+          ...(incognitoReferences.length ? {
+            onTransportAccepted: () => {
+              incognitoWebReferenceRegistry.acknowledge(incognitoReferences);
+            },
+          } : {}),
+        });
+        if (sent) {
+          setSelectedSkill(null);
+        }
+        return sent;
+      };
+      if (!webAnnotations.length) return run();
+      if (webAnnotationSendTransactionRef.current) return false;
+      webAnnotationSendTransactionRef.current = true;
       try {
-        annotationContexts = assembleSelectedAnnotationContexts(files);
-      } catch (reason) {
-        const message = errorMessage(reason);
-        setRuntimeDetail(message);
-        onNotice?.(message, "error");
-        return false;
+        return await run();
+      } finally {
+        webAnnotationSendTransactionRef.current = false;
       }
-      const prepared = prepareComposerMessage(draft, files, { annotationContexts, quotes, selectedSkill });
-      const attachments = imageAttachments.map(agentAttachmentFromSelected);
-      if (!prepared.message && !prepared.contextItems.length && !attachments.length) {
-        return false;
-      }
-      const sent = await sendText(prepared.message, model, {
-        clearDraft: true,
-        contextItems: prepared.contextItems,
-        runtimeParams: prepared.runtimeParams,
-        attachments,
-        allowWhileBusy: true,
-        deliveryMode: options.deliveryMode,
-        reverseDeliveryMode: options.reverseDeliveryMode,
-      });
-      if (sent) {
-        setSelectedSkill(null);
-      }
-      return sent;
     },
-    [draft, onNotice, selectedSkill, sendText, setRuntimeDetail],
+    [
+      composerDraft.replayedContextItems,
+      draft,
+      onNotice,
+      runtime,
+      selectedSkill,
+      sendText,
+      setRuntimeDetail,
+      webAnnotationSendCoordinator,
+    ],
   );
 
   const updatePendingInputMode = useCallback(
@@ -969,6 +1154,10 @@ export function useAgentSessionController({
   }, [cancelPendingInput]);
 
   const stop = useCallback(() => {
+    if (sendPreparationAbortRef.current) {
+      sendPreparationAbortRef.current.abort();
+      return;
+    }
     if (!sessionId || !canStop) {
       return;
     }
@@ -1312,6 +1501,53 @@ function isBusy(state: ConversationRuntimeState): boolean {
 
 function reversePendingInputMode(mode: PendingInputMode): PendingInputMode {
   return mode === "steer" ? "queue" : "steer";
+}
+
+function selectReplayedWebAnnotationContext(
+  storedItems: readonly AgentContextItem[],
+  references: readonly SelectedWebAnnotationReference[],
+): {
+  readonly contextItems: AgentContextItem[];
+  readonly liveReferences: SelectedWebAnnotationReference[];
+} {
+  const replayByRevision = new Map(
+    replayedWebAnnotationContexts(storedItems).map(({ item, snapshot }) => [
+      `${snapshot.annotationId}:${snapshot.annotationRevision}`,
+      item,
+    ]),
+  );
+  const contextItems: AgentContextItem[] = [];
+  const liveReferences: SelectedWebAnnotationReference[] = [];
+  const replayedIds = new Set<string>();
+  references.forEach((reference) => {
+    const item = replayByRevision.get(`${reference.annotationId}:${reference.selectedRevision}`);
+    if (!item || replayedIds.has(item.id)) {
+      liveReferences.push(reference);
+      return;
+    }
+    replayedIds.add(item.id);
+    contextItems.push(item);
+  });
+  return { contextItems, liveReferences };
+}
+
+function mergeRuntimeParams(
+  base: ChatPayload["runtime_params"],
+  addition: ChatPayload["runtime_params"],
+): ChatPayload["runtime_params"] {
+  if (!base) return addition;
+  if (!addition) return base;
+  const baseInjection = Array.isArray(base.message_injection) ? base.message_injection : [];
+  const additionalInjection = Array.isArray(addition.message_injection) ? addition.message_injection : [];
+  return {
+    ...base,
+    ...addition,
+    ...(
+      baseInjection.length || additionalInjection.length
+        ? { message_injection: [...baseInjection, ...additionalInjection] }
+        : {}
+    ),
+  };
 }
 
 function createClientInputId(): string {

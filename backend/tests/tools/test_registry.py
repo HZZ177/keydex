@@ -186,6 +186,11 @@ async def test_langchain_tool_failure_payload_includes_tool_context(tmp_path) ->
 def test_default_tool_registry_exposes_phase_one_tool_contracts(tmp_path) -> None:
     registry = create_default_tool_registry()
 
+    assert not any(
+        name.startswith("browser_") or "web_annotation" in name
+        for name in registry.names(include_disabled=True)
+    )
+
     assert registry.names() == [
         "apply_patch",
         "create_file",

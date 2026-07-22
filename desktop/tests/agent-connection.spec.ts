@@ -76,6 +76,7 @@ describe("agentConnection", () => {
 
     expect(connection.base_url).toBe("http://127.0.0.1:9234");
     expect(calls).toEqual([
+      { command: "resolve_dev_agent_connection", args: undefined },
       { command: "allocate_port", args: undefined },
       { command: "start_sidecar", args: { port: 9234 } },
       { command: "wait_for_health", args: { host: "127.0.0.1", port: 9234, timeoutMs: 60_000 } },
@@ -109,11 +110,60 @@ describe("agentConnection", () => {
       "启动 Keydex 本地服务失败：health timeout",
     );
     expect(calls).toEqual([
+      { command: "resolve_dev_agent_connection", args: undefined },
       { command: "allocate_port", args: undefined },
       { command: "start_sidecar", args: { port: 9234 } },
       { command: "wait_for_health", args: { host: "127.0.0.1", port: 9234, timeoutMs: 60_000 } },
       { command: "stop_sidecar", args: undefined },
     ]);
+  });
+
+  it("uses the debug external backend without starting or owning a sidecar", async () => {
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    const invoke: TauriInvoke = async <T,>(command: string, args?: Record<string, unknown>): Promise<T> => {
+      calls.push({ command, args });
+      if (command === "resolve_dev_agent_connection") {
+        return {
+          host: "127.0.0.1",
+          port: 8765,
+          base_url: "http://127.0.0.1:8765",
+          data_dir: "",
+        } as T;
+      }
+      return undefined as T;
+    };
+
+    const connection = await resolveAgentConnection({ invoke, isTauriRuntime: () => true });
+
+    expect(connection.base_url).toBe("http://127.0.0.1:8765");
+    expect(calls).toEqual([
+      { command: "resolve_dev_agent_connection", args: undefined },
+      { command: "wait_for_health", args: { host: "127.0.0.1", port: 8765, timeoutMs: 60_000 } },
+    ]);
+  });
+
+  it("does not stop an external backend when its health check fails", async () => {
+    const calls: string[] = [];
+    const invoke: TauriInvoke = async <T,>(command: string): Promise<T> => {
+      calls.push(command);
+      if (command === "resolve_dev_agent_connection") {
+        return {
+          host: "127.0.0.1",
+          port: 8765,
+          base_url: "http://127.0.0.1:8765",
+          data_dir: "",
+        } as T;
+      }
+      if (command === "wait_for_health") {
+        throw new Error("health timeout");
+      }
+      return undefined as T;
+    };
+
+    await expect(resolveAgentConnection({ invoke, isTauriRuntime: () => true })).rejects.toThrow(
+      "启动 Keydex 本地服务失败：health timeout",
+    );
+    expect(calls).toEqual(["resolve_dev_agent_connection", "wait_for_health"]);
   });
 
   it("does not fall back to the dev backend when Tauri API is unavailable", async () => {

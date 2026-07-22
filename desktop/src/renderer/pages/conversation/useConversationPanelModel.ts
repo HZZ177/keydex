@@ -23,6 +23,12 @@ import {
 } from "@/renderer/components/chat/SendBox";
 import { emitSessionCreated } from "@/renderer/events/sessionEvents";
 import {
+  replayedWebAnnotationContexts,
+  webAnnotationPresentationFromSnapshot,
+  webAnnotationReferencePresentations,
+  type SelectedWebAnnotationReference,
+} from "@/renderer/features/browser/annotations";
+import {
   skillSelectionStatus,
   useEffectiveSkills,
 } from "@/renderer/hooks/useEffectiveSkills";
@@ -361,9 +367,9 @@ export function useConversationPanelModel({
       }
       if (event.action === "middleware_progress") {
         const data = event.data as AgentMiddlewareProgressData;
-        const contextStatus = contextWindowUsageFromProgress(data, sessionId);
-        if (contextStatus) {
-          setContextWindowUsage(contextStatus);
+        const contextUsageUpdate = contextWindowUsageUpdateFromProgress(data, sessionId);
+        if (contextUsageUpdate !== undefined) {
+          setContextWindowUsage(contextUsageUpdate);
         }
         const message = contextCompressionFailureMessage(data);
         if (message) {
@@ -1151,13 +1157,31 @@ function contextCompressionFailureMessage(data: AgentMiddlewareProgressData): st
   return "";
 }
 
-function contextWindowUsageFromProgress(
+export function contextWindowUsageUpdateFromProgress(
   data: AgentMiddlewareProgressData,
   currentSessionId: string,
-): ContextWindowUsageStatus | null {
+): ContextWindowUsageStatus | null | undefined {
+  if (isContextCompressionCompletedForSession(data, currentSessionId)) {
+    return null;
+  }
   return contextWindowUsageFromSnapshot(data, currentSessionId, Date.now(), {
     requireProgressMarker: true,
-  });
+  }) ?? undefined;
+}
+
+function isContextCompressionCompletedForSession(
+  data: AgentMiddlewareProgressData,
+  currentSessionId: string,
+): boolean {
+  if (
+    data.middleware !== "ContextCompressionMiddleware" ||
+    data.stage !== "compression_completed"
+  ) {
+    return false;
+  }
+  const payloadSessionId = stringValue(data.session_id);
+  const payloadActiveSessionId = stringValue(data.active_session_id);
+  return payloadSessionId === currentSessionId || payloadActiveSessionId === currentSessionId;
 }
 
 function contextWindowUsageFromSession(
@@ -1307,7 +1331,10 @@ function contextItemsFromMessagePayload(payload: Record<string, unknown>): Agent
 
 function composerDraftContextFromItems(
   items: AgentContextItem[],
-): Pick<AgentSessionControllerComposerDraft, "files" | "quotes" | "selectedSkill"> {
+): Pick<
+  AgentSessionControllerComposerDraft,
+  "files" | "quotes" | "selectedSkill" | "webAnnotations" | "replayedContextItems"
+> {
   const files: SelectedFile[] = [];
   const quotes: SelectedQuote[] = [];
   let selectedSkill: SkillSummary | null = null;
@@ -1334,7 +1361,22 @@ function composerDraftContextFromItems(
     }
   });
 
-  return { files, quotes, selectedSkill };
+  const replayedContexts = replayedWebAnnotationContexts(items);
+  const webAnnotations: SelectedWebAnnotationReference[] = replayedContexts.map(({ snapshot }) => {
+    webAnnotationReferencePresentations.upsert(webAnnotationPresentationFromSnapshot(snapshot));
+    return {
+      annotationId: snapshot.annotationId,
+      selectedRevision: snapshot.annotationRevision,
+      selectedAt: snapshot.capturedAt,
+    };
+  });
+  return {
+    files,
+    quotes,
+    selectedSkill,
+    webAnnotations,
+    replayedContextItems: replayedContexts.map(({ item }) => item),
+  };
 }
 
 function contextItemType(item: AgentContextItem, metadata: Record<string, unknown> | null): string {

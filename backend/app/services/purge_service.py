@@ -51,6 +51,10 @@ class PurgePlanner:
         ("thread_task_runs", ("session_id",)),
         ("subagent_run", ("parent_session_id", "child_session_id")),
         ("session_forks", ("source_session_id", "target_session_id")),
+        ("right_sidebar_scope_states", ("session_id",)),
+        ("right_sidebar_scope_promotions", ("target_session_id",)),
+        ("web_annotation_resources", ("session_id",)),
+        ("web_annotation_attachment_clones", ("session_id",)),
         ("attachments", ("session_id",)),
         ("message_events", ("session_id",)),
         ("session_pending_inputs", ("session_id",)),
@@ -75,9 +79,7 @@ class PurgePlanner:
     # These tables are session-owned through a parent row rather than a direct
     # session id. Keeping them in the immutable purge snapshot prevents a child
     # row inserted between plan and execute from bypassing stale-plan checks.
-    SESSION_INDIRECT_RELATIONS: tuple[
-        tuple[str, str, str, str, tuple[str, ...]], ...
-    ] = (
+    SESSION_INDIRECT_RELATIONS: tuple[tuple[str, str, str, str, tuple[str, ...]], ...] = (
         (
             "file_history_snapshot_entries",
             "snapshot_id",
@@ -106,7 +108,23 @@ class PurgePlanner:
             "id",
             ("session_id", "active_session_id"),
         ),
+        (
+            "web_annotations",
+            "resource_id",
+            "web_annotation_resources",
+            "id",
+            ("session_id",),
+        ),
+        (
+            "web_annotation_assets",
+            "resource_id",
+            "web_annotation_resources",
+            "id",
+            ("session_id",),
+        ),
     )
+
+    SESSION_TRANSITIVE_RELATIONS: tuple[str, ...] = ("web_annotation_target_history",)
 
     SESSION_THREAD_RELATIONS: tuple[str, ...] = (
         "checkpoints_v2",
@@ -178,10 +196,9 @@ class PurgePlanner:
         )
 
     def plan_workspace_sessions(self, workspace_id: str) -> PurgePlan:
-        workspace = (
-            self._repositories.workspaces.get(workspace_id)
-            or self._repositories.workspaces.get_archived(workspace_id)
-        )
+        workspace = self._repositories.workspaces.get(
+            workspace_id
+        ) or self._repositories.workspaces.get_archived(workspace_id)
         if workspace is None:
             raise ArchiveLifecycleError(
                 "not_found",
@@ -222,23 +239,35 @@ class PurgePlanner:
             signatures = self._session_signatures(conn, session_ids)
             counts = self._relation_counts(conn, session_ids)
             artifact_rows = self._artifact_rows_for_purge(conn, session_ids)
+            web_asset_rows = self._web_annotation_asset_rows_for_purge(
+                conn,
+                session_ids=session_ids,
+                workspace_id=entity_id if entity_type == "workspace" else None,
+            )
             if entity_type == "workspace":
+                for table, total in self._workspace_scope_counts(conn, entity_id).items():
+                    counts[table] = counts.get(table, 0) + total
                 counts["workspace_annotations"] = int(
                     conn.execute(
-                        "select count(*) as total from workspace_annotations where workspace_id = ?",
+                        "select count(*) as total from workspace_annotations "
+                        "where workspace_id = ?",
                         (entity_id,),
                     ).fetchone()["total"]
                 )
                 counts["workspaces"] = 1
             counts["sessions"] = len(session_ids)
-            attachments = conn.execute(
-                self._select_for_sessions(
-                    "select id, path from attachments where {predicate}",
-                    "session_id",
-                    session_ids,
-                )[0],
-                self._select_for_sessions("", "session_id", session_ids)[1],
-            ).fetchall() if session_ids else []
+            attachments = (
+                conn.execute(
+                    self._select_for_sessions(
+                        "select id, path from attachments where {predicate}",
+                        "session_id",
+                        session_ids,
+                    )[0],
+                    self._select_for_sessions("", "session_id", session_ids)[1],
+                ).fetchall()
+                if session_ids
+                else []
+            )
         assets: list[PurgeAsset] = []
         for session_id in session_ids:
             for relative in (
@@ -250,6 +279,11 @@ class PurgePlanner:
         for row in attachments:
             candidate = Path(str(row["path"])).expanduser()
             registered_root = self.data_dir / "attachments" / str(row["id"])
+            assets.append(self._classify(candidate, registered_root=registered_root))
+        for row in web_asset_rows:
+            relative = Path(str(row["storage_path"]))
+            candidate = self.data_dir / relative.parent
+            registered_root = self.data_dir / "browser" / "captures" / "staged" / str(row["id"])
             assets.append(self._classify(candidate, registered_root=registered_root))
         seen_artifact_paths: set[Path] = set()
         for row in artifact_rows:
@@ -318,6 +352,70 @@ class PurgePlanner:
             [*session_ids, *session_ids, *session_ids],
         ).fetchall()
 
+    @staticmethod
+    def _web_annotation_asset_rows_for_purge(
+        conn,
+        *,
+        session_ids: tuple[str, ...],
+        workspace_id: str | None,
+    ):
+        predicates: list[str] = []
+        params: list[str] = []
+        if session_ids:
+            placeholders = ", ".join("?" for _ in session_ids)
+            predicates.append(
+                f"(resource.scope_kind = 'session' and resource.session_id in ({placeholders}))"
+            )
+            params.extend(session_ids)
+        if workspace_id is not None:
+            predicates.append("(resource.scope_kind = 'workspace' and resource.workspace_id = ?)")
+            params.append(workspace_id)
+        if not predicates:
+            return []
+        return conn.execute(
+            f"""
+            select asset.id, asset.storage_path, asset.size_bytes
+            from web_annotation_assets asset
+            join web_annotation_resources resource on resource.id = asset.resource_id
+            where {" or ".join(predicates)}
+            order by asset.created_at asc, asset.id asc
+            """,
+            params,
+        ).fetchall()
+
+    @staticmethod
+    def _workspace_scope_counts(conn, workspace_id: str) -> dict[str, int]:
+        rows = conn.execute(
+            """
+            select
+              (select count(*) from right_sidebar_scope_states
+                where scope_kind = 'workspace' and workspace_id = ?) as sidebar_total,
+              (select count(*) from web_annotation_resources
+                where scope_kind = 'workspace' and workspace_id = ?) as resource_total,
+              (select count(*) from web_annotations annotation
+                join web_annotation_resources resource on resource.id = annotation.resource_id
+                where resource.scope_kind = 'workspace' and resource.workspace_id = ?)
+                as annotation_total,
+              (select count(*) from web_annotation_target_history history
+                join web_annotations annotation on annotation.id = history.annotation_id
+                join web_annotation_resources resource on resource.id = annotation.resource_id
+                where resource.scope_kind = 'workspace' and resource.workspace_id = ?)
+                as history_total,
+              (select count(*) from web_annotation_assets asset
+                join web_annotation_resources resource on resource.id = asset.resource_id
+                where resource.scope_kind = 'workspace' and resource.workspace_id = ?)
+                as asset_total
+            """,
+            (workspace_id, workspace_id, workspace_id, workspace_id, workspace_id),
+        ).fetchone()
+        return {
+            "right_sidebar_scope_states": int(rows["sidebar_total"]),
+            "web_annotation_resources": int(rows["resource_total"]),
+            "web_annotations": int(rows["annotation_total"]),
+            "web_annotation_target_history": int(rows["history_total"]),
+            "web_annotation_assets": int(rows["asset_total"]),
+        }
+
     def _classify(self, candidate: Path, *, registered_root: Path) -> PurgeAsset:
         token = hashlib.sha256(str(candidate).encode("utf-8")).hexdigest()[:16]
         try:
@@ -332,9 +430,7 @@ class PurgePlanner:
                 token,
                 self._safe_size(candidate),
             )
-        if lexical_candidate == lexical_data_dir or self._has_link_or_reparse(
-            lexical_candidate
-        ):
+        if lexical_candidate == lexical_data_dir or self._has_link_or_reparse(lexical_candidate):
             return PurgeAsset(candidate, "invalid", token, self._safe_size(candidate))
         try:
             resolved = candidate.resolve(strict=False)
@@ -355,6 +451,7 @@ class PurgePlanner:
                 for table in (
                     *(table for table, _ in cls.SESSION_RELATIONS),
                     *(relation[0] for relation in cls.SESSION_INDIRECT_RELATIONS),
+                    *cls.SESSION_TRANSITIVE_RELATIONS,
                     *cls.SESSION_THREAD_RELATIONS,
                 )
             }
@@ -407,12 +504,24 @@ class PurgePlanner:
                 where {child_column} in (
                   select {parent_column}
                   from {parent_table}
-                  where {' or '.join(parent_predicates)}
+                  where {" or ".join(parent_predicates)}
                 )
                 """,
                 params,
             ).fetchone()
             counts[table] = int(row["total"])
+        history_row = conn.execute(
+            f"""
+            select count(*) as total
+            from web_annotation_target_history history
+            join web_annotations annotation on annotation.id = history.annotation_id
+            join web_annotation_resources resource on resource.id = annotation.resource_id
+            where resource.scope_kind = 'session'
+              and resource.session_id in ({placeholders})
+            """,
+            session_ids,
+        ).fetchone()
+        counts["web_annotation_target_history"] = int(history_row["total"])
         thread_placeholders = ", ".join("?" for _ in session_ids)
         for table in cls.SESSION_THREAD_RELATIONS:
             row = conn.execute(
@@ -470,9 +579,7 @@ class PurgePlanner:
 
     def _has_link_or_reparse(self, path: Path) -> bool:
         try:
-            relative = Path(os.path.abspath(path)).relative_to(
-                Path(os.path.abspath(self.data_dir))
-            )
+            relative = Path(os.path.abspath(path)).relative_to(Path(os.path.abspath(self.data_dir)))
         except (OSError, ValueError):
             return True
         current = self.data_dir
@@ -561,7 +668,10 @@ class LifecycleQuarantine:
         return resolved
 
     def _operation_dir(self, token: str) -> Path:
-        if not token or any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for character in token):
+        if not token or any(
+            character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+            for character in token
+        ):
             raise ArchiveLifecycleError("quarantine_token_invalid", "隔离 token 无效")
         candidate = (self.root / token).resolve(strict=False)
         if candidate.parent != self.root.resolve(strict=False):
@@ -634,6 +744,12 @@ class PurgeDatabaseExecutor:
             self._validate_plan(conn, plan)
             counts = self._delete_session_relations(conn, plan)
             if plan.entity_type == "workspace":
+                workspace_scope_counts = self._delete_workspace_scope_relations(
+                    conn,
+                    plan.entity_id,
+                )
+                for table, total in workspace_scope_counts.items():
+                    counts[table] = counts.get(table, 0) + total
                 counts["workspace_annotations"] = conn.execute(
                     "delete from workspace_annotations where workspace_id = ?",
                     (plan.entity_id,),
@@ -660,13 +776,10 @@ class PurgeDatabaseExecutor:
             if plan.entity_type == "workspace" and workspace["archived_at"] is None:
                 raise ArchiveLifecycleError("not_archived", "项目不再处于归档状态")
             archived_only = (
-                " and archived_at is not null"
-                if plan.entity_type == "workspace_sessions"
-                else ""
+                " and archived_at is not null" if plan.entity_type == "workspace_sessions" else ""
             )
             sessions_query = (
-                "select id from sessions "
-                f"where workspace_id = ?{archived_only} order by id asc"
+                f"select id from sessions where workspace_id = ?{archived_only} order by id asc"
             )
             current_ids = tuple(
                 str(row["id"])
@@ -687,12 +800,17 @@ class PurgeDatabaseExecutor:
             if int(plan.database_counts.get("workspace_annotations", 0)) != annotation_total:
                 raise ArchiveLifecycleError("purge_plan_stale", "项目关联数据已变化，请重试")
         current_counts = PurgePlanner._relation_counts(conn, plan.session_ids)
+        if plan.entity_type == "workspace":
+            for table, total in PurgePlanner._workspace_scope_counts(
+                conn,
+                plan.entity_id,
+            ).items():
+                current_counts[table] = current_counts.get(table, 0) + total
         for table, total in current_counts.items():
             if int(plan.database_counts.get(table, 0)) != total:
                 raise ArchiveLifecycleError("purge_plan_stale", "彻底删除依赖已变化，请重试")
         current_artifact_ids = tuple(
-            str(row["id"])
-            for row in PurgePlanner._artifact_rows_for_purge(conn, plan.session_ids)
+            str(row["id"]) for row in PurgePlanner._artifact_rows_for_purge(conn, plan.session_ids)
         )
         if current_artifact_ids != plan.artifact_ids:
             raise ArchiveLifecycleError("purge_plan_stale", "工具结果引用已变化，请重试")
@@ -701,6 +819,8 @@ class PurgeDatabaseExecutor:
         predicate, params = self._session_predicate(plan, "session_id")
         active_predicate, active_params = self._session_predicate(plan, "active_session_id")
         counts: dict[str, int] = {}
+
+        counts.update(self._delete_session_web_annotation_relations(conn, plan))
 
         counts["tool_result_artifact_grants"] = conn.execute(
             f"delete from tool_result_artifact_grants where {predicate}",
@@ -790,7 +910,8 @@ class PurgeDatabaseExecutor:
             [*snapshot_params, *snapshot_active_params],
         ).rowcount
         counts["file_history_snapshots"] = conn.execute(
-            f"delete from file_history_snapshots where {snapshot_predicate} or {snapshot_active_predicate}",
+            "delete from file_history_snapshots "
+            f"where {snapshot_predicate} or {snapshot_active_predicate}",
             [*snapshot_params, *snapshot_active_params],
         ).rowcount
 
@@ -799,12 +920,8 @@ class PurgeDatabaseExecutor:
                 f"delete from {table} where {predicate}",
                 params,
             ).rowcount
-        run_parent_predicate, run_parent_params = self._session_predicate(
-            plan, "parent_session_id"
-        )
-        run_child_predicate, run_child_params = self._session_predicate(
-            plan, "child_session_id"
-        )
+        run_parent_predicate, run_parent_params = self._session_predicate(plan, "parent_session_id")
+        run_child_predicate, run_child_params = self._session_predicate(plan, "child_session_id")
         counts["subagent_run"] = conn.execute(
             f"delete from subagent_run where {run_parent_predicate} or {run_child_predicate}",
             [*run_parent_params, *run_child_params],
@@ -827,9 +944,22 @@ class PurgeDatabaseExecutor:
             f"delete from a2ui_interactions where {predicate} or {active_predicate}",
             [*params, *active_params],
         ).rowcount
+        promotion_predicate, promotion_params = self._session_predicate(
+            plan,
+            "target_session_id",
+        )
+        counts["right_sidebar_scope_promotions"] = conn.execute(
+            f"delete from right_sidebar_scope_promotions where {promotion_predicate}",
+            promotion_params,
+        ).rowcount
+        counts["right_sidebar_scope_states"] = conn.execute(
+            f"delete from right_sidebar_scope_states where {predicate}",
+            params,
+        ).rowcount
         for table in (
             "session_pending_inputs",
             "message_events",
+            "web_annotation_attachment_clones",
             "attachments",
             "mcp_session_tool_usage",
             "mcp_trust_rules",
@@ -887,12 +1017,18 @@ class PurgeDatabaseExecutor:
         conn.execute(
             f"""
             update sessions
-            set parent_session_id = case when {parent_predicate} then null else parent_session_id end,
-                child_session_id = case when {child_predicate} then null else child_session_id end,
-                source_trace_id = case when {source_active_predicate} then null else source_trace_id end,
-                source_active_session_id = case when {source_active_predicate} then null else source_active_session_id end,
-                source_checkpoint_id = case when {source_active_predicate} then null else source_checkpoint_id end,
-                source_checkpoint_ns = case when {source_active_predicate} then null else source_checkpoint_ns end
+            set parent_session_id = case
+                  when {parent_predicate} then null else parent_session_id end,
+                child_session_id = case
+                  when {child_predicate} then null else child_session_id end,
+                source_trace_id = case
+                  when {source_active_predicate} then null else source_trace_id end,
+                source_active_session_id = case
+                  when {source_active_predicate} then null else source_active_session_id end,
+                source_checkpoint_id = case
+                  when {source_active_predicate} then null else source_checkpoint_id end,
+                source_checkpoint_ns = case
+                  when {source_active_predicate} then null else source_checkpoint_ns end
             where ({parent_predicate} or {child_predicate} or {source_active_predicate})
               and not ({session_id_predicate})
               and agent_kind != 'subagent'
@@ -925,6 +1061,73 @@ class PurgeDatabaseExecutor:
         ).rowcount
         counts["sessions"] = int(internal_deleted or 0) + int(visible_deleted or 0)
         return counts
+
+    def _delete_session_web_annotation_relations(
+        self,
+        conn,
+        plan: PurgePlan,
+    ) -> dict[str, int]:
+        predicate, params = self._session_predicate(plan, "session_id")
+        resource_filter = f"scope_kind = 'session' and {predicate}"
+        annotation_ids = (
+            "select id from web_annotations where resource_id in "
+            f"(select id from web_annotation_resources where {resource_filter})"
+        )
+        resource_ids = f"select id from web_annotation_resources where {resource_filter}"
+        counts = {
+            "web_annotation_target_history": conn.execute(
+                "delete from web_annotation_target_history "
+                f"where annotation_id in ({annotation_ids})",
+                params,
+            ).rowcount,
+            "web_annotation_assets": conn.execute(
+                f"delete from web_annotation_assets where resource_id in ({resource_ids})",
+                params,
+            ).rowcount,
+            "web_annotations": conn.execute(
+                f"delete from web_annotations where resource_id in ({resource_ids})",
+                params,
+            ).rowcount,
+            "web_annotation_resources": conn.execute(
+                f"delete from web_annotation_resources where {resource_filter}",
+                params,
+            ).rowcount,
+        }
+        return {key: int(value or 0) for key, value in counts.items()}
+
+    @staticmethod
+    def _delete_workspace_scope_relations(conn, workspace_id: str) -> dict[str, int]:
+        resource_filter = "scope_kind = 'workspace' and workspace_id = ?"
+        annotation_ids = (
+            "select id from web_annotations where resource_id in "
+            f"(select id from web_annotation_resources where {resource_filter})"
+        )
+        resource_ids = f"select id from web_annotation_resources where {resource_filter}"
+        counts = {
+            "right_sidebar_scope_states": conn.execute(
+                "delete from right_sidebar_scope_states "
+                "where scope_kind = 'workspace' and workspace_id = ?",
+                (workspace_id,),
+            ).rowcount,
+            "web_annotation_target_history": conn.execute(
+                "delete from web_annotation_target_history "
+                f"where annotation_id in ({annotation_ids})",
+                (workspace_id,),
+            ).rowcount,
+            "web_annotation_assets": conn.execute(
+                f"delete from web_annotation_assets where resource_id in ({resource_ids})",
+                (workspace_id,),
+            ).rowcount,
+            "web_annotations": conn.execute(
+                f"delete from web_annotations where resource_id in ({resource_ids})",
+                (workspace_id,),
+            ).rowcount,
+            "web_annotation_resources": conn.execute(
+                f"delete from web_annotation_resources where {resource_filter}",
+                (workspace_id,),
+            ).rowcount,
+        }
+        return {key: int(value or 0) for key, value in counts.items()}
 
     @staticmethod
     def _session_predicate(plan: PurgePlan, column: str) -> tuple[str, list[str]]:
@@ -1011,10 +1214,9 @@ class PurgeService:
         request_id: str,
         confirmation_name: str,
     ) -> dict[str, Any]:
-        workspace = (
-            self._repositories.workspaces.get(workspace_id)
-            or self._repositories.workspaces.get_archived(workspace_id)
-        )
+        workspace = self._repositories.workspaces.get(
+            workspace_id
+        ) or self._repositories.workspaces.get_archived(workspace_id)
         if workspace is not None and unicodedata.normalize(
             "NFC", confirmation_name
         ) != unicodedata.normalize("NFC", workspace.name):
@@ -1182,7 +1384,9 @@ class PurgeService:
         operation: LifecycleOperationRecord,
         scopes: list[tuple[str, str]],
     ) -> None:
-        for entity_type, entity_id in sorted(scopes, key=lambda item: (item[0] != "workspace", item[1])):
+        for entity_type, entity_id in sorted(
+            scopes, key=lambda item: (item[0] != "workspace", item[1])
+        ):
             if not self._operations.acquire_lock(
                 operation_id=operation.id,
                 entity_type=entity_type,

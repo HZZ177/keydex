@@ -34,9 +34,18 @@ describe("TerminalSurface and TerminalXtermRegistry", () => {
     expect(factory).toHaveBeenCalledTimes(1);
 
     const host = document.createElement("div");
+    const nextHost = document.createElement("div");
+    const element = document.createElement("div");
+    Object.defineProperty(first.terminal, "element", { configurable: true, value: element });
     registry.open(first, host);
+    host.appendChild(element);
     registry.open(first, host);
     expect(first.terminal.open).toHaveBeenCalledTimes(1);
+    registry.open(first, nextHost);
+    expect(first.terminal.open).toHaveBeenCalledTimes(1);
+    expect(nextHost.contains(element)).toBe(true);
+    expect(first.host).toBe(nextHost);
+    expect(first.terminal.refresh).toHaveBeenCalledWith(0, 23);
     registry.getOrCreate("terminal-2", link);
     registry.disposeMissing(["terminal-2"]);
     expect(first.dispose).toHaveBeenCalledTimes(1);
@@ -67,6 +76,33 @@ describe("TerminalSurface and TerminalXtermRegistry", () => {
     unmount();
     expect(attachmentDispose).toHaveBeenCalledTimes(1);
     expect(handle.listenerDisposables.every((dispose) => dispose.mock.calls.length === 1)).toBe(true);
+  });
+
+  it("advances the replay cursor only after xterm finishes parsing the output chunk", async () => {
+    const snapshot = fakeSnapshot();
+    const store = createTerminalStore({ storage: null });
+    store.getState().upsertSnapshot(snapshot, { activate: true });
+    const handle = fakeHandle(snapshot.terminalId);
+    let parsed: (() => void) | undefined;
+    vi.mocked(handle.terminal.write).mockImplementation((_data, callback) => {
+      parsed = callback;
+    });
+    render(
+      <NotificationProvider>
+        <TerminalSessionScopeProvider>
+          <TerminalProvider runtime={fakeRuntime(snapshot, vi.fn())} store={store}>
+            <TerminalSurface snapshot={snapshot} active visible registry={new TerminalXtermRegistry(() => handle)} />
+          </TerminalProvider>
+        </TerminalSessionScopeProvider>
+      </NotificationProvider>,
+    );
+
+    await waitFor(() => expect(handle.terminal.write).toHaveBeenCalledTimes(1));
+    expect(store.getState().sessionsById[snapshot.sessionId]?.cursorByTerminalId[snapshot.terminalId] ?? 0).toBe(0);
+    parsed?.();
+    await waitFor(() =>
+      expect(store.getState().sessionsById[snapshot.sessionId]?.cursorByTerminalId[snapshot.terminalId]).toBe(1),
+    );
   });
 
   it("forwards Ctrl+C, arrow and Tab sequences as raw terminal input without agent mediation", async () => {
@@ -154,19 +190,17 @@ function fakeRuntime(snapshot: TerminalSnapshot, dispose: () => void): TerminalR
     listProfiles: async () => [],
     create: async () => snapshot,
     list: async () => [snapshot],
-    attach: async (): Promise<TerminalAttachment> => ({
-      snapshot,
-      replay: [
-        {
+    attach: async (_terminalId, options): Promise<TerminalAttachment> => {
+      const ready = Promise.resolve(
+        options.onEvent({
           event: "output",
           terminalId: snapshot.terminalId,
           seq: 1,
           data: new TextEncoder().encode("中文"),
-        },
-      ],
-      cursor: 1,
-      dispose,
-    }),
+        }),
+      );
+      return { snapshot, cursor: 1, ready, dispose };
+    },
     write: async () => undefined,
     resize: async () => undefined,
     kill: async () => undefined,
@@ -181,13 +215,14 @@ function fakeHandle(terminalId: string): TerminalXtermHandle & { listenerDisposa
   const listenerDisposables = [vi.fn(), vi.fn()];
   const terminal = {
     open: vi.fn(),
-    write: vi.fn(),
+    write: vi.fn((_data: string | Uint8Array, callback?: () => void) => callback?.()),
     onData: vi.fn(() => ({ dispose: listenerDisposables[0] })),
     onBinary: vi.fn(() => ({ dispose: listenerDisposables[1] })),
     hasSelection: vi.fn(() => false),
     getSelection: vi.fn(() => ""),
     paste: vi.fn(),
     focus: vi.fn(),
+    refresh: vi.fn(),
     dispose: vi.fn(),
     cols: 80,
     rows: 24,
@@ -211,7 +246,7 @@ function fakeHandle(terminalId: string): TerminalXtermHandle & { listenerDisposa
 
 function fakeSnapshot(): TerminalSnapshot {
   return {
-    contractVersion: 1,
+    contractVersion: 2,
     terminalId: "terminal-1",
     sessionId: "session-1",
     profileId: "powershell",

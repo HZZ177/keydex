@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import mimetypes
 import re
+import shutil
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -59,6 +60,11 @@ class LocalFileResponse(BaseModel):
     path: str
     mime_type: str
     size: int
+
+
+class AttachmentDiscardResponse(BaseModel):
+    attachment_id: str
+    deleted: bool
 
 
 class RegisterPathRequest(BaseModel):
@@ -272,6 +278,61 @@ def read_attachment_media(
     )
 
 
+@router.delete(
+    "/{attachment_id}/unreferenced-web-annotation",
+    response_model=AttachmentDiscardResponse,
+)
+def discard_unreferenced_web_annotation_attachment(
+    attachment_id: str,
+    repositories: StorageRepositories = RepositoriesDep,
+    settings: AppSettings = SettingsDep,
+) -> AttachmentDiscardResponse:
+    record = repositories.attachments.get(attachment_id)
+    if record is None:
+        return AttachmentDiscardResponse(attachment_id=attachment_id, deleted=False)
+    if record.source != "web_annotation":
+        raise _attachment_error(
+            status.HTTP_409_CONFLICT,
+            "attachment_discard_source_forbidden",
+            "只能清理尚未发送的网页引用附件",
+        )
+    managed_directory = _managed_attachment_directory(settings, record)
+    outcome, deleted_record = (
+        repositories.attachments.hard_delete_unreferenced_web_annotation(attachment_id)
+    )
+    if outcome == "not_found":
+        return AttachmentDiscardResponse(attachment_id=attachment_id, deleted=False)
+    if outcome == "source_forbidden":
+        raise _attachment_error(
+            status.HTTP_409_CONFLICT,
+            "attachment_discard_source_forbidden",
+            "只能清理尚未发送的网页引用附件",
+        )
+    if outcome == "referenced":
+        raise _attachment_error(
+            status.HTTP_409_CONFLICT,
+            "attachment_discard_referenced",
+            "网页引用附件已经进入任务记录，不能清理",
+        )
+    if deleted_record is None:
+        raise RuntimeError("删除网页引用附件后缺少附件记录")
+    try:
+        shutil.rmtree(managed_directory)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.warning(
+            "[AttachmentsAPI] 清理网页引用附件文件失败 | "
+            f"attachment_id={attachment_id} | error={exc}"
+        )
+        raise _attachment_error(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "attachment_discard_file_failed",
+            "网页引用附件记录已清理，但临时文件删除失败",
+        ) from exc
+    return AttachmentDiscardResponse(attachment_id=attachment_id, deleted=True)
+
+
 def _attachment_response(record: AttachmentRecord) -> AttachmentResponse:
     return AttachmentResponse(
         id=record.id,
@@ -376,6 +437,20 @@ def _stored_attachment_path(settings: AppSettings, attachment_id: str, name: str
 
 def _stored_local_file_path(settings: AppSettings, local_file_id: str, name: str) -> Path:
     return settings.data_dir / "local-files" / local_file_id / name
+
+
+def _managed_attachment_directory(settings: AppSettings, record: AttachmentRecord) -> Path:
+    root = (settings.data_dir / "attachments").resolve()
+    directory = (root / record.id).resolve()
+    target = Path(record.path).resolve()
+    expected_target = (directory / record.name).resolve()
+    if directory.parent != root or target != expected_target:
+        raise _attachment_error(
+            status.HTTP_409_CONFLICT,
+            "attachment_discard_unmanaged_path",
+            "网页引用附件不在 Keydex 受管目录中，拒绝清理",
+        )
+    return directory
 
 
 def _resolve_existing_file(path: str) -> Path:

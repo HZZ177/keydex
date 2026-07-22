@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from backend.app.right_sidebar.models import RightSidebarScopeStateDocument
 from backend.app.services.archive_lifecycle_service import ArchiveLifecycleError
 from backend.app.services.purge_service import (
     LifecycleQuarantine,
@@ -15,6 +16,7 @@ from backend.app.services.purge_service import (
     PurgeService,
 )
 from backend.app.storage import StorageRepositories, init_database
+from backend.app.web_annotations.models import WebAnnotationCreateRequest, WebAnnotationScope
 
 
 def _repositories(tmp_path) -> StorageRepositories:
@@ -107,11 +109,172 @@ def _record_tool_result_artifact(
     return path
 
 
+def _record_web_annotation_scope(
+    repositories,
+    data_dir: Path,
+    *,
+    scope: WebAnnotationScope,
+    label: str,
+):
+    url = f"https://example.com/{label}#note"
+    request = WebAnnotationCreateRequest.model_validate(
+        {
+            "scope": scope.model_dump(mode="json"),
+            "source": {"url": url, "title": label, "profile_mode": "persistent"},
+            "target": {
+                "type": "text",
+                "quote": {"exact": label, "prefix": "", "suffix": ""},
+                "position": {"start": 0, "end": len(label), "text_model_version": 1},
+                "context": {"heading_path": []},
+                "rects": [{"x": 1.0, "y": 1.0, "width": 20.0, "height": 10.0}],
+                "frame": {"url": url.split("#", 1)[0], "index_path": []},
+            },
+            "body_markdown": label,
+            "tags": [],
+            "properties": [],
+            "staged_asset_ids": [],
+        }
+    )
+    web = repositories.web_annotations
+    resource = web.resources.create(
+        scope=scope,
+        identity=request.source.identity(),
+        resource_id=f"resource-{label}",
+    )
+    annotation = web.annotations.create(
+        resource_id=resource.id,
+        target=request.target,
+        body_markdown=label,
+        tags=[],
+        properties=[],
+        annotation_id=f"annotation-{label}",
+    )
+    history = web.target_history.append(
+        annotation_id=annotation.id,
+        prior_revision=1,
+        target=annotation.target,
+        reason="migration",
+        history_id=f"history-{label}",
+    )
+    asset_id = f"asset-{label}"
+    directory = data_dir / "browser" / "captures" / "staged" / asset_id
+    directory.mkdir(parents=True)
+    (directory / "capture.png").write_bytes(f"capture-{label}".encode())
+    (directory / ".keydex-browser-capture.json").write_text(
+        f'{{"assetId":"{asset_id}"}}',
+        encoding="utf-8",
+    )
+    staged = web.assets.stage(
+        resource_id=resource.id,
+        storage_path=f"browser/captures/staged/{asset_id}/capture.png",
+        mime_type="image/png",
+        size_bytes=(directory / "capture.png").stat().st_size,
+        sha256=hashlib.sha256((directory / "capture.png").read_bytes()).hexdigest(),
+        width=10,
+        height=10,
+        expires_at="2026-07-23T00:00:00Z",
+        asset_id=asset_id,
+    )
+    attached = web.assets.attach(
+        asset_id=staged.id,
+        annotation_id=annotation.id,
+        resource_id=resource.id,
+    )
+    assert attached is not None
+    return resource, annotation, history, attached, directory
+
+
+def _sidebar_state() -> RightSidebarScopeStateDocument:
+    return RightSidebarScopeStateDocument.model_validate(
+        {
+            "version": 2,
+            "activePanelId": "files-1",
+            "panelOrder": ["files-1"],
+            "panels": {"files-1": {"id": "files-1", "kind": "files", "schemaVersion": 1}},
+            "nextPanelSeq": 2,
+        }
+    )
+
+
 def _insert_all_session_relation_rows(conn, *, session_id: str, prefix: str) -> None:
     """Insert one valid row in every table owned by a session purge."""
 
     now = "2026-07-14T00:00:00Z"
     server_id = "mcp-purge-inventory"
+    conn.execute(
+        """
+        insert into right_sidebar_scope_states (
+          id, scope_kind, session_id, schema_version, state_json,
+          revision, created_at, updated_at
+        ) values (?, 'session', ?, 2,
+                  '{"version":2,"activePanelId":null,"panelOrder":[],"panels":{},"nextPanelSeq":0}',
+                  1, ?, ?)
+        """,
+        (f"sidebar-{prefix}", session_id, now, now),
+    )
+    conn.execute(
+        """
+        insert into right_sidebar_scope_promotions (
+          id, source_scope_kind, source_scope_key, source_revision,
+          target_session_id, response_json, created_at
+        ) values (?, 'global', ?, 1, ?, '{}', ?)
+        """,
+        (f"sidebar-promotion-{prefix}", f"global-{prefix}", session_id, now),
+    )
+    resource_id = f"web-resource-{prefix}"
+    annotation_id = f"web-annotation-{prefix}"
+    conn.execute(
+        """
+        insert into web_annotation_resources (
+          id, scope_kind, session_id, normalization_version, url_key,
+          url_normalized, document_url, origin, title, created_at, updated_at
+        ) values (?, 'session', ?, 1, ?, ?, ?, 'https://example.com', '', ?, ?)
+        """,
+        (
+            resource_id,
+            session_id,
+            prefix.ljust(64, "0")[:64],
+            f"https://example.com/{prefix}",
+            f"https://example.com/{prefix}",
+            now,
+            now,
+        ),
+    )
+    conn.execute(
+        """
+        insert into web_annotations (
+          id, resource_id, target_type, target_schema_version, target_json,
+          body_markdown, tags_json, properties_json, revision, created_at, updated_at
+        ) values (?, ?, 'text', 1, '{}', 'note', '[]', '[]', 1, ?, ?)
+        """,
+        (annotation_id, resource_id, now, now),
+    )
+    conn.execute(
+        """
+        insert into web_annotation_target_history (
+          id, annotation_id, prior_revision, target_type,
+          target_schema_version, target_json, reason, created_at
+        ) values (?, ?, 1, 'text', 1, '{}', 'migration', ?)
+        """,
+        (f"web-history-{prefix}", annotation_id, now),
+    )
+    conn.execute(
+        """
+        insert into web_annotation_assets (
+          id, resource_id, asset_kind, state, storage_path, mime_type,
+          size_bytes, sha256, width, height, expires_at, created_at, updated_at
+        ) values (?, ?, 'region_screenshot', 'staged', ?, 'image/png',
+                  1, ?, 1, 1, '2026-07-15T00:00:00Z', ?, ?)
+        """,
+        (
+            f"web-asset-{prefix}",
+            resource_id,
+            f"browser/captures/staged/web-asset-{prefix}/capture.png",
+            prefix.ljust(64, "0")[:64],
+            now,
+            now,
+        ),
+    )
     conn.execute(
         """
         insert into tool_result_artifacts (
@@ -236,6 +399,23 @@ def _insert_all_session_relation_rows(conn, *, session_id: str, prefix: str) -> 
             f"{prefix}.bin",
             f"X:/external/{prefix}.bin",
             now,
+            now,
+        ),
+    )
+    conn.execute(
+        """
+        insert into web_annotation_attachment_clones (
+          id, session_id, annotation_id, asset_id, context_digest,
+          attachment_id, created_at
+        ) values (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            f"web-clone-{prefix}",
+            session_id,
+            annotation_id,
+            f"web-asset-{prefix}",
+            prefix.ljust(64, "0")[:64],
+            f"attachment-{prefix}",
             now,
         ),
     )
@@ -414,8 +594,8 @@ def _insert_all_session_relation_rows(conn, *, session_id: str, prefix: str) -> 
           scope_kind, scope_identity, scope_root, scope_label,
           canonical_path, display_path, mutation_kind, before_state,
           after_state, status, created_at, updated_at
-        ) values (?, ?, ?, ?, ?, 'workspace', ?, 'D:/inventory', 'inventory', ?, ?, 'update', 'missing', 'missing',
-                  'committed', ?, ?)
+        ) values (?, ?, ?, ?, ?, 'workspace', ?, 'D:/inventory', 'inventory',
+                  ?, ?, 'update', 'missing', 'missing', 'committed', ?, ?)
         """,
         (
             mutation_id,
@@ -473,7 +653,8 @@ def _insert_all_session_relation_rows(conn, *, session_id: str, prefix: str) -> 
           operation_id, scope_kind, scope_identity, scope_root, scope_label,
           canonical_path, display_path, preview_current_state,
           target_state, classification, writer_session_id, updated_at
-        ) values (?, 'workspace', ?, 'D:/inventory', 'inventory', ?, ?, 'missing', 'missing', 'ready', ?, ?)
+        ) values (?, 'workspace', ?, 'D:/inventory', 'inventory', ?, ?,
+                  'missing', 'missing', 'ready', ?, ?)
         """,
         (
             operation_id,
@@ -521,10 +702,7 @@ def _schema_session_owned_tables(conn) -> set[str]:
     }
     owned = {"sessions", *PurgePlanner.SESSION_THREAD_RELATIONS}
     for table in tables:
-        columns = {
-            str(row["name"])
-            for row in conn.execute(f'pragma table_info("{table}")')
-        }
+        columns = {str(row["name"]) for row in conn.execute(f'pragma table_info("{table}")')}
         if any(column == "session_id" or column.endswith("_session_id") for column in columns):
             owned.add(table)
 
@@ -534,8 +712,7 @@ def _schema_session_owned_tables(conn) -> set[str]:
         for table in tables - owned:
             foreign_keys = conn.execute(f'pragma foreign_key_list("{table}")').fetchall()
             if any(
-                str(row["table"]) in owned
-                and str(row["on_delete"]).upper() != "SET NULL"
+                str(row["table"]) in owned and str(row["on_delete"]).upper() != "SET NULL"
                 for row in foreign_keys
             ):
                 owned.add(table)
@@ -549,6 +726,7 @@ def test_purge_inventory_matches_every_current_session_owned_table(tmp_path) -> 
         "sessions",
         *(table for table, _ in PurgePlanner.SESSION_RELATIONS),
         *(relation[0] for relation in PurgePlanner.SESSION_INDIRECT_RELATIONS),
+        *PurgePlanner.SESSION_TRANSITIVE_RELATIONS,
         *PurgePlanner.SESSION_THREAD_RELATIONS,
     }
 
@@ -581,16 +759,8 @@ def test_session_database_purge_covers_complete_inventory_and_preserves_neighbor
     # every legacy direct and indirect relation remains populated here.
     assert target_before["subagent_run"] == 0
     assert neighbor_before["subagent_run"] == 0
-    assert all(
-        total == 1
-        for table, total in target_before.items()
-        if table != "subagent_run"
-    )
-    assert all(
-        total == 1
-        for table, total in neighbor_before.items()
-        if table != "subagent_run"
-    )
+    assert all(total == 1 for table, total in target_before.items() if table != "subagent_run")
+    assert all(total == 1 for table, total in neighbor_before.items() if table != "subagent_run")
 
     deleted = PurgeDatabaseExecutor(repositories).execute(plan)
 
@@ -721,17 +891,20 @@ def test_session_purge_removes_secondary_active_session_and_trace_relations(tmp_
 
     plan = PurgePlanner(repositories, data_dir=tmp_path / "data").plan_session(target.id)
 
-    assert plan.database_counts.items() >= {
-        "a2ui_interactions": 1,
-        "file_history_snapshots": 1,
-        "file_history_snapshot_entries": 1,
-        "file_history_mutations": 1,
-        "file_history_operations": 1,
-        "file_history_operation_files": 1,
-        "file_history_locks": 1,
-        "trace_record": 1,
-        "trace_event_log": 1,
-    }.items()
+    assert (
+        plan.database_counts.items()
+        >= {
+            "a2ui_interactions": 1,
+            "file_history_snapshots": 1,
+            "file_history_snapshot_entries": 1,
+            "file_history_mutations": 1,
+            "file_history_operations": 1,
+            "file_history_operation_files": 1,
+            "file_history_locks": 1,
+            "trace_record": 1,
+            "trace_event_log": 1,
+        }.items()
+    )
 
     deleted = PurgeDatabaseExecutor(repositories).execute(plan)
 
@@ -805,6 +978,207 @@ def test_purge_planner_counts_dependencies_and_classifies_asset_ownership(tmp_pa
     assert repositories.sessions.get_archived(session.id) is not None
     assert managed.read_bytes() == b"managed"
     assert external.read_bytes() == b"external"
+
+
+def test_session_archive_preserves_web_annotations_and_purge_removes_exact_scope(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    data_dir = tmp_path / "data"
+    target = _session(repositories, "ses-web-purge")
+    neighbor = _session(repositories, "ses-web-neighbor")
+    repositories.right_sidebar_scopes.put(
+        scope_kind="session",
+        scope_id=target.id,
+        state=_sidebar_state(),
+        expected_revision=0,
+    )
+    target_records = _record_web_annotation_scope(
+        repositories,
+        data_dir,
+        scope=WebAnnotationScope(kind="session", id=target.id),
+        label="session-purge",
+    )
+    neighbor_records = _record_web_annotation_scope(
+        repositories,
+        data_dir,
+        scope=WebAnnotationScope(kind="session", id=neighbor.id),
+        label="session-neighbor",
+    )
+    _archive_session(repositories, target.id)
+
+    # Archive is a visibility/lifecycle transition, not a data deletion.
+    assert repositories.web_annotations.resources.get(target_records[0].id) is not None
+    assert target_records[4].exists()
+
+    planner = PurgePlanner(repositories, data_dir=data_dir)
+    plan = planner.plan_session(target.id)
+    managed = next(asset for asset in plan.assets if asset.path == target_records[4])
+    expected_asset_size = sum(item.stat().st_size for item in target_records[4].iterdir())
+    result = PurgeService(repositories, data_dir=data_dir).purge_session(
+        target.id,
+        request_id="req-web-session-purge",
+        confirmed=True,
+    )
+
+    assert (
+        plan.database_counts.items()
+        >= {
+            "right_sidebar_scope_states": 1,
+            "web_annotation_resources": 1,
+            "web_annotations": 1,
+            "web_annotation_target_history": 1,
+            "web_annotation_assets": 1,
+        }.items()
+    )
+    assert managed.classification == "managed_delete"
+    assert managed.size == expected_asset_size
+    assert (
+        result["counts"].items()
+        >= {
+            "right_sidebar_scope_states": 1,
+            "web_annotation_resources": 1,
+            "web_annotations": 1,
+            "web_annotation_target_history": 1,
+            "web_annotation_assets": 1,
+        }.items()
+    )
+    assert repositories.sessions.get_archived(target.id) is None
+    assert repositories.web_annotations.resources.get(target_records[0].id) is None
+    assert not target_records[4].exists()
+    assert repositories.sessions.get(neighbor.id) is not None
+    assert repositories.web_annotations.resources.get(neighbor_records[0].id) is not None
+    assert neighbor_records[4].exists()
+
+
+def test_workspace_purge_includes_workspace_and_child_session_web_scopes(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    data_dir = tmp_path / "data"
+    workspace = _workspace(repositories, tmp_path, "ws-web-purge")
+    neighbor_workspace = _workspace(repositories, tmp_path, "ws-web-neighbor")
+    child = _session(repositories, "ses-web-child", workspace.id)
+    _archive_session(repositories, child.id, "project")
+    repositories.right_sidebar_scopes.put(
+        scope_kind="workspace",
+        scope_id=workspace.id,
+        state=_sidebar_state(),
+        expected_revision=0,
+    )
+    workspace_records = _record_web_annotation_scope(
+        repositories,
+        data_dir,
+        scope=WebAnnotationScope(kind="workspace", id=workspace.id),
+        label="workspace-purge",
+    )
+    child_records = _record_web_annotation_scope(
+        repositories,
+        data_dir,
+        scope=WebAnnotationScope(kind="session", id=child.id),
+        label="workspace-child",
+    )
+    neighbor_records = _record_web_annotation_scope(
+        repositories,
+        data_dir,
+        scope=WebAnnotationScope(kind="workspace", id=neighbor_workspace.id),
+        label="workspace-neighbor",
+    )
+    with repositories.db.transaction() as conn:
+        conn.execute(
+            "update workspaces set archived_at = '2026-07-14T08:00:00Z' where id = ?",
+            (workspace.id,),
+        )
+
+    plan = PurgePlanner(repositories, data_dir=data_dir).plan_workspace(workspace.id)
+    result = PurgeService(repositories, data_dir=data_dir).purge_workspace(
+        workspace.id,
+        request_id="req-web-workspace-purge",
+        confirmation_name=workspace.name,
+    )
+
+    assert (
+        plan.database_counts.items()
+        >= {
+            "right_sidebar_scope_states": 1,
+            "web_annotation_resources": 2,
+            "web_annotations": 2,
+            "web_annotation_target_history": 2,
+            "web_annotation_assets": 2,
+        }.items()
+    )
+    assert (
+        result["counts"].items()
+        >= {
+            "right_sidebar_scope_states": 1,
+            "web_annotation_resources": 2,
+            "web_annotations": 2,
+            "web_annotation_target_history": 2,
+            "web_annotation_assets": 2,
+        }.items()
+    )
+    assert repositories.workspaces.get_archived(workspace.id) is None
+    assert repositories.web_annotations.resources.get(workspace_records[0].id) is None
+    assert repositories.web_annotations.resources.get(child_records[0].id) is None
+    assert not workspace_records[4].exists()
+    assert not child_records[4].exists()
+    assert repositories.workspaces.get(neighbor_workspace.id) is not None
+    assert repositories.web_annotations.resources.get(neighbor_records[0].id) is not None
+    assert neighbor_records[4].exists()
+
+
+def test_web_annotation_purge_plan_drift_is_stale_and_quarantine_rolls_back(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    data_dir = tmp_path / "data"
+    stale_session = _session(repositories, "ses-web-stale")
+    stale_records = _record_web_annotation_scope(
+        repositories,
+        data_dir,
+        scope=WebAnnotationScope(kind="session", id=stale_session.id),
+        label="web-stale",
+    )
+    _archive_session(repositories, stale_session.id)
+    stale_plan = PurgePlanner(repositories, data_dir=data_dir).plan_session(stale_session.id)
+    repositories.web_annotations.annotations.create(
+        resource_id=stale_records[0].id,
+        target=stale_records[1].target,
+        body_markdown="drift",
+        tags=[],
+        properties=[],
+        annotation_id="annotation-web-stale-drift",
+    )
+
+    with pytest.raises(ArchiveLifecycleError) as stale:
+        PurgeDatabaseExecutor(repositories).execute(stale_plan)
+
+    assert stale.value.code == "purge_plan_stale"
+    assert repositories.sessions.get_archived(stale_session.id) is not None
+    assert stale_records[4].exists()
+
+    rollback_session = _session(repositories, "ses-web-rollback")
+    rollback_records = _record_web_annotation_scope(
+        repositories,
+        data_dir,
+        scope=WebAnnotationScope(kind="session", id=rollback_session.id),
+        label="web-rollback",
+    )
+    _archive_session(repositories, rollback_session.id)
+
+    def fail_database(phase: str) -> None:
+        if phase == "database":
+            raise RuntimeError("database unavailable")
+
+    service = PurgeService(
+        repositories,
+        data_dir=data_dir,
+        fault_injector=fail_database,
+    )
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        service.purge_session(
+            rollback_session.id,
+            request_id="req-web-rollback",
+            confirmed=True,
+        )
+
+    assert repositories.sessions.get_archived(rollback_session.id) is not None
+    assert repositories.web_annotations.resources.get(rollback_records[0].id) is not None
+    assert rollback_records[4].exists()
 
 
 def test_purge_planner_rejects_active_targets_and_inconsistent_workspace_children(tmp_path) -> None:
@@ -922,10 +1296,13 @@ def test_purge_executor_rejects_stale_plan_without_writes(tmp_path) -> None:
     assert stale.value.code == "purge_plan_stale"
     assert repositories.sessions.get_archived(session.id) is not None
     with repositories.db.connect() as conn:
-        assert conn.execute(
-            "select count(*) as total from message_events where session_id = ?",
-            (session.id,),
-        ).fetchone()["total"] == 1
+        assert (
+            conn.execute(
+                "select count(*) as total from message_events where session_id = ?",
+                (session.id,),
+            ).fetchone()["total"]
+            == 1
+        )
 
 
 def test_workspace_purge_rejects_annotation_drift_without_deleting_project(tmp_path) -> None:
@@ -1089,10 +1466,13 @@ def test_project_database_purge_is_set_based_and_never_deletes_workspace_root(tm
     assert repositories.workspaces.get_archived(workspace.id) is None
     assert repositories.workspaces.get(neighbor_workspace.id) is not None
     with repositories.db.connect() as conn:
-        assert conn.execute(
-            "select count(*) as total from workspace_annotations where workspace_id = ?",
-            (neighbor_workspace.id,),
-        ).fetchone()["total"] == 1
+        assert (
+            conn.execute(
+                "select count(*) as total from workspace_annotations where workspace_id = ?",
+                (neighbor_workspace.id,),
+            ).fetchone()["total"]
+            == 1
+        )
         assert conn.execute("pragma foreign_key_check").fetchall() == []
     assert local_file.read_text(encoding="utf-8") == "keep"
 
@@ -1226,7 +1606,9 @@ def test_purge_quarantines_and_deletes_last_grant_artifact(tmp_path) -> None:
     assert not artifact_path.exists()
 
 
-def test_purge_service_success_preserves_external_file_and_replays_anonymous_audit(tmp_path) -> None:
+def test_purge_service_success_preserves_external_file_and_replays_anonymous_audit(
+    tmp_path,
+) -> None:
     repositories = _repositories(tmp_path)
     data_dir = tmp_path / "data"
     session = _session(repositories, "ses-purge-success")

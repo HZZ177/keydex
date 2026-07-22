@@ -12,6 +12,7 @@ import {
 import { LineChangeTicker } from "@/renderer/pages/conversation/messages/LineChangeTicker";
 import { MessageText } from "@/renderer/pages/conversation/messages";
 import { conversationMarkdownRuntimeEnabled } from "@/renderer/pages/conversation/messages/MessageText";
+import { subscribeNavigateToWebAnnotation } from "@/renderer/events/webAnnotationContext";
 import { PreviewProvider, usePreview, type PreviewRenderContext } from "@/renderer/providers/PreviewProvider";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import type { RuntimeBridge } from "@/runtime";
@@ -179,6 +180,43 @@ describe("MessageText", () => {
     expect(bubble.textContent).toContain("please review");
     expect(bubble.textContent).not.toContain("@README.md");
     expect(screen.getByTestId("message-text").textContent).toContain("@README.md");
+  });
+
+  it("renders an immutable web annotation snapshot and requests source navigation only on click", async () => {
+    const snapshot = webAnnotationSnapshot();
+    const navigate = vi.fn();
+    const unsubscribe = subscribeNavigateToWebAnnotation(({ snapshot: selected }) => navigate(selected));
+    render(
+      <MessageText
+        message={message("user", "检查这处网页内容", "completed", {
+          contextItems: [{
+            id: `web-annotation:${snapshot.annotationId}:${snapshot.digest}`,
+            type: "web_annotation",
+            label: "网页批注 · Example article",
+            content: "发送时快照",
+            metadata: {
+              annotation_id: snapshot.annotationId,
+              snapshot_digest: snapshot.digest,
+              snapshot,
+            },
+          }],
+        })}
+      />,
+    );
+
+    const chip = screen.getByRole("button", { name: "打开网页批注来源 Example article" });
+    expect(chip.textContent).toContain("网页批注 · Example article");
+    expect(navigate).not.toHaveBeenCalled();
+    fireEvent.mouseEnter(chip.closest("[data-preview-open]") ?? chip);
+    await waitFor(() => expect(
+      document.querySelector("[data-floating-ready='true']")?.textContent,
+    ).toContain("发送时正文，不读取当前批注"));
+
+    fireEvent.click(chip);
+
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledWith(snapshot);
+    unsubscribe();
   });
 
   it("renders restored goal context as a compact hover capsule below the user bubble", async () => {
@@ -2138,6 +2176,35 @@ function message(
     payload,
     createdAt: "2026-06-17T10:00:00Z",
     updatedAt: "2026-06-17T10:01:00Z",
+  };
+}
+
+function webAnnotationSnapshot() {
+  return {
+    schemaVersion: 1 as const,
+    type: "web_annotation" as const,
+    annotationId: "annotation-history-1",
+    annotationRevision: 4,
+    capturedAt: "2026-07-22T08:00:00Z",
+    source: {
+      title: "Example article",
+      url: "https://example.com/article",
+      urlKey: "https://example.com/article",
+      origin: "https://example.com",
+    },
+    target: {
+      type: "text" as const,
+      summary: "关键段落",
+      resolution: "changed" as const,
+      freshness: "last-known" as const,
+    },
+    evidence: { originalQuote: "旧内容", currentQuote: "新内容" },
+    annotation: {
+      bodyMarkdown: "发送时正文，不读取当前批注",
+      tags: ["history"],
+      properties: [],
+    },
+    digest: "digest-history-1",
   };
 }
 

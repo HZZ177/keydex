@@ -353,6 +353,14 @@ async def test_context_compression_before_model_runs_blocking_compression(tmp_pa
         scene_id="desktop-agent",
         title="源会话",
     )
+    repositories.sessions.update_context_window_usage(
+        session.id,
+        {
+            "stage": "context_window_snapshot",
+            "token_count": 900,
+            "context_window": 1000,
+        },
+    )
     events: list[DomainEvent] = []
 
     async def collect(event: DomainEvent) -> None:
@@ -424,7 +432,10 @@ async def test_context_compression_before_model_runs_blocking_compression(tmp_pa
     }
     assert len(compression_notice_ids) == 1
     assert next(iter(compression_notice_ids)).startswith("context-compression:trace_1:")
-    assert repositories.sessions.get(session.id).context_compression_epoch == 1
+    persisted_session = repositories.sessions.get(session.id)
+    assert persisted_session is not None
+    assert persisted_session.context_compression_epoch == 1
+    assert persisted_session.context_window_usage is None
 
 
 @pytest.mark.asyncio

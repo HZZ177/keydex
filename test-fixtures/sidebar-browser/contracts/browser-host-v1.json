@@ -1,0 +1,314 @@
+{
+  "schemaVersion": 1,
+  "commands": [
+    {
+      "schemaVersion": 1,
+      "requestId": "req-create-1",
+      "command": "browser_create_surface",
+      "payload": {
+        "panelId": "browser-panel-1",
+        "generation": 1,
+        "profileMode": "persistent",
+        "initialUrl": "https://example.com/"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "requestId": "req-nav-1",
+      "command": "browser_navigate",
+      "payload": {
+        "panelId": "browser-panel-1",
+        "surfaceId": "surface-1",
+        "generation": 1,
+        "navigationId": "navigation-1",
+        "url": "https://example.com/docs"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "requestId": "req-permission-1",
+      "command": "browser_respond_permission",
+      "payload": {
+        "panelId": "browser-panel-1",
+        "surfaceId": "surface-1",
+        "generation": 1,
+        "permissionRequestId": "permission-1",
+        "origin": "https://example.com",
+        "decision": "deny"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "requestId": "req-download-1",
+      "command": "browser_respond_download",
+      "payload": {
+        "panelId": "browser-panel-1",
+        "surfaceId": "surface-1",
+        "generation": 1,
+        "downloadId": "download-1",
+        "decision": "cancel"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "requestId": "req-selection-1",
+      "command": "browser_start_selection",
+      "payload": {
+        "panelId": "browser-panel-1",
+        "surfaceId": "surface-1",
+        "generation": 1,
+        "selectionRequestId": "selection-1",
+        "mode": "element"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "requestId": "req-overlay-theme-1",
+      "command": "browser_configure_overlay",
+      "payload": {
+        "panelId": "browser-panel-1",
+        "surfaceId": "surface-1",
+        "generation": 1,
+        "theme": "dark",
+        "tokens": {
+          "accent": "rgb(255, 121, 198)",
+          "surface": "rgb(40, 42, 54)",
+          "text": "rgb(248, 248, 242)",
+          "border": "rgb(89, 100, 131)",
+          "focus": "rgb(255, 121, 198)",
+          "warning": "rgb(255, 184, 108)",
+          "danger": "rgb(255, 85, 85)"
+        },
+        "radiusPx": 4,
+        "motionMs": 0,
+        "reducedMotion": true
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "requestId": "req-resolve-1",
+      "command": "browser_resolve_annotations",
+      "payload": {
+        "panelId": "browser-panel-1",
+        "surfaceId": "surface-1",
+        "generation": 1,
+        "resolveRequestId": "resolve-batch-1",
+        "targets": [
+          {
+            "annotationId": "annotation-1",
+            "target": {
+              "type": "element",
+              "tag": "button",
+              "role": "button",
+              "accessibleName": "Save",
+              "textSummary": "Save",
+              "stableAttributes": [{ "name": "id", "value": "save" }],
+              "path": [{ "childIndex": 1, "shadowRoot": false }],
+              "context": { "headingPath": [] },
+              "rect": { "x": 20, "y": 30, "width": 100, "height": 32 },
+              "frame": { "url": "https://example.com/", "indexPath": [] }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "requestId": "req-render-highlight-1",
+      "command": "browser_render_highlights",
+      "payload": {
+        "panelId": "browser-panel-1",
+        "surfaceId": "surface-1",
+        "generation": 1,
+        "resolutions": [
+          {
+            "annotationId": "annotation-1",
+            "state": "resolved",
+            "target": {
+              "type": "element",
+              "tag": "button",
+              "role": "button",
+              "accessibleName": "Save",
+              "textSummary": "Save",
+              "stableAttributes": [{ "name": "id", "value": "save" }],
+              "path": [{ "childIndex": 1, "shadowRoot": false }],
+              "context": { "headingPath": [] },
+              "rect": { "x": 20, "y": 30, "width": 100, "height": 32 },
+              "frame": { "url": "https://example.com/", "indexPath": [] }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "requestId": "req-clear-highlight-1",
+      "command": "browser_clear_highlights",
+      "payload": {
+        "panelId": "browser-panel-1",
+        "surfaceId": "surface-1",
+        "generation": 1,
+        "annotationIds": ["annotation-1"]
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "requestId": "req-navigate-annotation-1",
+      "command": "browser_navigate_to_annotation_target",
+      "payload": {
+        "panelId": "browser-panel-1",
+        "surfaceId": "surface-1",
+        "generation": 1,
+        "annotationId": "annotation-1",
+        "target": {
+          "type": "element",
+          "tag": "button",
+          "role": "button",
+          "accessibleName": "Save",
+          "textSummary": "Save",
+          "stableAttributes": [{ "name": "id", "value": "save" }],
+          "path": [{ "childIndex": 1, "shadowRoot": false }],
+          "context": { "headingPath": [] },
+          "rect": { "x": 20, "y": 30, "width": 100, "height": 32 },
+          "frame": { "url": "https://example.com/", "indexPath": [] }
+        }
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "requestId": "req-capture-1",
+      "command": "browser_capture_region",
+      "payload": {
+        "panelId": "browser-panel-1",
+        "surfaceId": "surface-1",
+        "generation": 1,
+        "captureRequestId": "capture-1",
+        "rect": { "x": 10, "y": 20, "width": 320, "height": 180 },
+        "viewport": { "width": 1280, "height": 720 }
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "requestId": "req-discard-capture-1",
+      "command": "browser_discard_capture",
+      "payload": {
+        "panelId": "browser-panel-1",
+        "surfaceId": "surface-1",
+        "generation": 1,
+        "captureRequestId": "capture-1"
+      }
+    }
+  ],
+  "responses": [
+    { "ok": true, "requestId": "req-create-1" },
+    {
+      "ok": false,
+      "requestId": "req-nav-1",
+      "error": {
+        "code": "policy_denied",
+        "message": "Navigation scheme is not allowed",
+        "retryable": false
+      }
+    }
+  ],
+  "events": [
+    {
+      "schemaVersion": 1,
+      "kind": "surface.ready",
+      "panelId": "browser-panel-1",
+      "surfaceId": "surface-1",
+      "generation": 1,
+      "sequence": 1,
+      "occurredAt": "2026-07-21T12:00:00.000Z",
+      "payload": { "profileMode": "persistent", "capabilities": ["navigation", "selection"] }
+    },
+    {
+      "schemaVersion": 1,
+      "kind": "navigation.started",
+      "panelId": "browser-panel-1",
+      "surfaceId": "surface-1",
+      "generation": 1,
+      "sequence": 2,
+      "navigationId": "navigation-1",
+      "occurredAt": "2026-07-21T12:00:01.000Z",
+      "payload": { "url": "https://example.com/docs", "isMainFrame": true }
+    },
+    {
+      "schemaVersion": 1,
+      "kind": "permission.requested",
+      "panelId": "browser-panel-1",
+      "surfaceId": "surface-1",
+      "generation": 1,
+      "sequence": 3,
+      "navigationId": "navigation-1",
+      "occurredAt": "2026-07-21T12:00:02.000Z",
+      "payload": {
+        "permissionRequestId": "permission-1",
+        "origin": "https://example.com",
+        "permission": "notifications",
+        "deadline": "2026-07-21T12:00:32.000Z"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "kind": "download.requested",
+      "panelId": "browser-panel-1",
+      "surfaceId": "surface-1",
+      "generation": 1,
+      "sequence": 4,
+      "navigationId": "navigation-1",
+      "occurredAt": "2026-07-21T12:00:03.000Z",
+      "payload": {
+        "downloadId": "download-1",
+        "url": "https://example.com/manual.pdf",
+        "suggestedFilename": "manual.pdf",
+        "totalBytes": 1024
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "kind": "bridge.message",
+      "panelId": "browser-panel-1",
+      "surfaceId": "surface-1",
+      "generation": 1,
+      "sequence": 5,
+      "navigationId": "navigation-1",
+      "occurredAt": "2026-07-21T12:00:04.000Z",
+      "payload": { "bridgeEnvelope": { "schemaVersion": 1, "kind": "selection.result" } }
+    },
+    {
+      "schemaVersion": 1,
+      "kind": "resource.state_changed",
+      "panelId": "browser-panel-1",
+      "surfaceId": "surface-1",
+      "generation": 1,
+      "sequence": 6,
+      "occurredAt": "2026-07-21T12:00:05.000Z",
+      "payload": { "prior": "visible", "next": "warm", "reason": "inactive_tab" }
+    },
+    {
+      "schemaVersion": 1,
+      "kind": "capture.completed",
+      "panelId": "browser-panel-1",
+      "surfaceId": "surface-1",
+      "generation": 1,
+      "sequence": 7,
+      "navigationId": "navigation-1",
+      "occurredAt": "2026-07-21T12:00:06.000Z",
+      "payload": {
+        "captureRequestId": "capture-1",
+        "asset": {
+          "assetId": "web-capture-1",
+          "kind": "staged",
+          "mimeType": "image/png",
+          "width": 320,
+          "height": 180,
+          "byteLength": 4096,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "perceptualHash": "dhash64:0123456789abcdef",
+          "expiresAt": "2026-07-22T12:00:06.000Z"
+        }
+      }
+    }
+  ]
+}

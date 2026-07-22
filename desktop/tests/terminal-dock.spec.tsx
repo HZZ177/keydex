@@ -67,6 +67,7 @@ describe("TerminalDock", () => {
     const create = vi.fn(async () => snapshot("terminal-2", "CMD 1"));
     renderDock(store, runtime({
       create,
+      list: async () => [snapshot("terminal-1", "PowerShell 1")],
       listProfiles: async () => [
         { id: "powershell", label: "PowerShell", available: true, executable: "pwsh.exe", args: [], unavailableReason: null },
         { id: "cmd", label: "CMD", available: true, executable: "cmd.exe", args: [], unavailableReason: null },
@@ -82,6 +83,39 @@ describe("TerminalDock", () => {
     fireEvent.click(within(screen.getByRole("toolbar", { name: "终端操作" }))
       .getByRole("button", { name: "新建终端" }));
     await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ profile: "cmd" })));
+  });
+
+  it("auto-creates the default profile once after an opened empty session is hydrated", async () => {
+    const store = createTerminalStore({ storage: null });
+    store.getState().setDockOpen(true);
+    const create = vi.fn(async () => snapshot("terminal-1", "PowerShell 1"));
+    renderDock(store, runtime({ create, list: async () => [] }));
+
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "session-1",
+      profile: "powershell",
+    }));
+    await waitFor(() => expect(store.getState().sessionsById["session-1"]?.terminalIds).toEqual(["terminal-1"]));
+  });
+
+  it("does not auto-create while hydration finds an existing terminal", async () => {
+    const store = createTerminalStore({ storage: null });
+    store.getState().setDockOpen(true);
+    const create = vi.fn(async () => snapshot("terminal-2", "PowerShell 2"));
+    let resolveList: ((snapshots: TerminalSnapshot[]) => void) | null = null;
+    const list = vi.fn(() => new Promise<TerminalSnapshot[]>((resolve) => { resolveList = resolve; }));
+    renderDock(store, runtime({ create, list }));
+
+    await waitFor(() => expect(list).toHaveBeenCalledWith("session-1"));
+    expect(create).not.toHaveBeenCalled();
+    act(() => resolveList?.([snapshot("terminal-1", "PowerShell 1")]));
+    await screen.findByText("PowerShell 1");
+    expect(create).not.toHaveBeenCalled();
+
+    act(() => store.getState().removeTerminal("terminal-1"));
+    await waitFor(() => expect(store.getState().sessionsById["session-1"]?.terminalIds).toEqual([]));
+    expect(create).not.toHaveBeenCalled();
   });
 
   it("confirms and closes every terminal in the current session", async () => {
@@ -173,7 +207,7 @@ function runtime(overrides: Partial<TerminalRuntime> = {}): TerminalRuntime {
     }],
     create: async () => snapshot("terminal-1", "PowerShell 1"),
     list: async () => [],
-    attach: async () => ({ snapshot: snapshot("terminal-1", "PowerShell 1"), replay: [], cursor: 0, dispose() {} }),
+    attach: async () => ({ snapshot: snapshot("terminal-1", "PowerShell 1"), cursor: 0, ready: Promise.resolve(), dispose() {} }),
     write: async () => undefined,
     resize: async () => undefined,
     kill: async () => undefined,
@@ -187,7 +221,7 @@ function runtime(overrides: Partial<TerminalRuntime> = {}): TerminalRuntime {
 
 function snapshot(terminalId: string, title: string): TerminalSnapshot {
   return {
-    contractVersion: 1,
+    contractVersion: 2,
     terminalId,
     sessionId: "session-1",
     profileId: "powershell",

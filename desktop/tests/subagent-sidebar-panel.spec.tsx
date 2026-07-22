@@ -229,7 +229,16 @@ describe("Subagent sidebar", () => {
 
   it("offers the Sub-Agent workspace as a dedicated initial-page menu", async () => {
     const onOpenSubagents = vi.fn();
-    render(<RightSidebarInitialPage canOpenSubagents onOpenSubagents={onOpenSubagents} />);
+    render(
+      <RightSidebarInitialPage
+        actions={[{
+          id: "subagents",
+          label: "子智能体",
+          icon: <span aria-hidden="true">S</span>,
+          onSelect: onOpenSubagents,
+        }]}
+      />,
+    );
 
     await userEvent.click(screen.getByRole("button", { name: "子智能体" }));
     expect(onOpenSubagents).toHaveBeenCalledTimes(1);

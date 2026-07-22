@@ -84,6 +84,14 @@ describe("composer draft store", () => {
           previewUrl: "blob:keydex-draft-preview",
         },
       ],
+      webAnnotations: [
+        {
+          annotationId: "annotation-1",
+          selectedRevision: 3,
+          selectedAt: "2026-07-22T08:00:00Z",
+          sourcePanelId: "right-sidebar:browser:1",
+        },
+      ],
     });
     store.flush();
     store.dispose();
@@ -96,6 +104,7 @@ describe("composer draft store", () => {
       files: [{ path: "D:/repo/README.md" }],
       quotes: [{ id: "quote-1", text: "保留这段引用" }],
       attachments: [{ attachment_id: "attachment-1", previewUrl: null }],
+      webAnnotations: [{ annotationId: "annotation-1", selectedRevision: 3 }],
     });
     expect(JSON.parse(storage.getItem(COMPOSER_DRAFT_STORAGE_KEY) ?? "null")).toMatchObject({
       version: 1,
@@ -117,6 +126,108 @@ describe("composer draft store", () => {
     expect(store.getDraft(sessionA).text).toBe("");
     expect(store.getDraft(sessionB).text).toBe("会话 B 草稿");
     expect(store.getDraft(newWorkspace).text).toBe("新会话草稿");
+  });
+
+  it("normalizes and deduplicates persisted web annotation references without persisting presentation content", () => {
+    const storage = new MemoryStorage();
+    const scope = composerSessionDraftScope("ses-web-annotations");
+    const store = createComposerDraftStore({ storage, persistDelayMs: 0 });
+
+    store.updateDraft(scope, {
+      webAnnotations: [
+        {
+          annotationId: " annotation-1 ",
+          selectedRevision: 2,
+          selectedAt: "2026-07-22T08:00:00Z",
+          sourcePanelId: " browser-1 ",
+        },
+        {
+          annotationId: "annotation-1",
+          selectedRevision: 99,
+          selectedAt: "2026-07-22T09:00:00Z",
+        },
+      ],
+    });
+    store.flush();
+
+    expect(store.getDraft(scope).webAnnotations).toEqual([{
+      annotationId: "annotation-1",
+      selectedRevision: 2,
+      selectedAt: "2026-07-22T08:00:00Z",
+      sourcePanelId: "browser-1",
+    }]);
+    const persisted = storage.getItem(COMPOSER_DRAFT_STORAGE_KEY) ?? "";
+    expect(persisted).not.toContain("bodyMarkdown");
+    expect(persisted).not.toContain("documentUrl");
+  });
+
+  it("persists an immutable replay snapshot separately from live annotation references", () => {
+    const storage = new MemoryStorage();
+    const scope = composerSessionDraftScope("ses-web-annotation-retry");
+    const store = createComposerDraftStore({ storage, persistDelayMs: 0 });
+    const snapshot = replaySnapshot();
+
+    store.updateDraft(scope, {
+      text: "重新发送",
+      webAnnotations: [{
+        annotationId: snapshot.annotationId,
+        selectedRevision: snapshot.annotationRevision,
+        selectedAt: snapshot.capturedAt,
+      }],
+      replayedContextItems: [{
+        id: `web-annotation:${snapshot.annotationId}:${snapshot.digest}`,
+        type: "web_annotation",
+        label: "网页批注 · History",
+        content: "发送时内容",
+        metadata: {
+          annotation_id: snapshot.annotationId,
+          snapshot_digest: snapshot.digest,
+          snapshot,
+        },
+      }],
+    });
+    store.flush();
+
+    const restored = createComposerDraftStore({ storage }).getDraft(scope);
+    expect(restored.replayedContextItems).toHaveLength(1);
+    expect(restored.replayedContextItems[0].metadata?.snapshot).toEqual(snapshot);
+  });
+
+  it("keeps incognito web references in runtime memory and excludes them from browser storage", () => {
+    const storage = new MemoryStorage();
+    const scope = composerSessionDraftScope("ses-incognito-runtime-only");
+    const store = createComposerDraftStore({ storage, persistDelayMs: 0 });
+    const snapshot = {
+      ...replaySnapshot(),
+      annotationId: "incognito-web:runtime-only",
+    };
+    const contextItem = {
+      id: `web-annotation:${snapshot.annotationId}:${snapshot.digest}`,
+      type: "web_annotation",
+      label: "无痕网页引用 · History",
+      content: "仅在运行内存保存",
+      metadata: {
+        annotation_id: snapshot.annotationId,
+        snapshot_digest: snapshot.digest,
+        incognito_source: true,
+        snapshot,
+      },
+    };
+
+    store.updateDraft(scope, {
+      webAnnotations: [{
+        annotationId: snapshot.annotationId,
+        selectedRevision: snapshot.annotationRevision,
+        selectedAt: snapshot.capturedAt,
+      }],
+      replayedContextItems: [contextItem],
+    });
+    store.flush();
+
+    expect(store.getDraft(scope).webAnnotations).toHaveLength(1);
+    expect(store.getDraft(scope).replayedContextItems).toHaveLength(1);
+    expect(storage.getItem(COMPOSER_DRAFT_STORAGE_KEY)).toBeNull();
+    expect(createComposerDraftStore({ storage }).getDraft(scope).webAnnotations).toEqual([]);
   });
 
   it("persists folded paste ranges without duplicating their raw text", () => {
@@ -148,3 +259,28 @@ describe("composer draft store", () => {
     expect(store.getDraft(composerSessionDraftScope("ses-1")).text).toBe("");
   });
 });
+
+function replaySnapshot() {
+  return {
+    schemaVersion: 1 as const,
+    type: "web_annotation" as const,
+    annotationId: "annotation-replay-1",
+    annotationRevision: 2,
+    capturedAt: "2026-07-22T08:00:00Z",
+    source: {
+      title: "History",
+      url: "https://example.test/history",
+      urlKey: "c".repeat(64),
+      origin: "https://example.test",
+    },
+    target: {
+      type: "text" as const,
+      summary: "历史片段",
+      resolution: "resolved" as const,
+      freshness: "current" as const,
+    },
+    evidence: { originalQuote: "历史片段" },
+    annotation: { bodyMarkdown: "发送时正文", tags: [], properties: [] },
+    digest: "digest-replay-1",
+  };
+}

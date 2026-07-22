@@ -1,5 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    keydex_desktop_lib::run();
+    let exit_code = keydex_desktop_lib::run_entrypoint();
+    if exit_code != 0 {
+        std::process::exit(exit_code);
+    }
 }

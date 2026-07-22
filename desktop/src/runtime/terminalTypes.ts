@@ -1,4 +1,9 @@
-export const TERMINAL_CONTRACT_VERSION = 1 as const;
+export const TERMINAL_CONTRACT_VERSION = 2 as const;
+export const TERMINAL_REPLAY_LIMIT_BYTES = 1024 * 1024;
+export const TERMINAL_REPLAY_LIMIT_CHUNKS = 4096;
+export const TERMINAL_MAX_OUTPUT_CHUNK_BYTES = 32 * 1024;
+export const TERMINAL_DELIVERY_WINDOW_BYTES = 256 * 1024;
+export const TERMINAL_DELIVERY_WINDOW_CHUNKS = 64;
 
 export type TerminalStatus = "starting" | "running" | "exited" | "failed" | "closing";
 
@@ -54,6 +59,7 @@ export interface TerminalAttachSnapshot {
   snapshot: TerminalSnapshot;
   replay: TerminalEvent[];
   cursor: number;
+  subscriptionId: string;
 }
 
 export function decodeTerminalProfile(value: unknown): TerminalProfileSnapshot {
@@ -81,10 +87,14 @@ export function decodeTerminalAttachSnapshot(value: unknown): TerminalAttachSnap
   if (!Array.isArray(record.replay)) {
     throw new Error("replay 不是数组");
   }
+  if (record.replay.length > TERMINAL_REPLAY_LIMIT_CHUNKS + 1) {
+    throw new Error("replay 超过安全块数上限");
+  }
   return {
     snapshot: decodeTerminalSnapshot(record.snapshot),
     replay: record.replay.map(decodeTerminalEvent),
     cursor: safeIntegerValue(record.cursor, "cursor"),
+    subscriptionId: stringValue(record.subscriptionId, "subscriptionId"),
   };
 }
 

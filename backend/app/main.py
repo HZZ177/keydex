@@ -32,13 +32,13 @@ from backend.app.api.mcp import router as mcp_router
 from backend.app.api.model_providers import router as model_providers_router
 from backend.app.api.models import router as models_router
 from backend.app.api.sessions import router as sessions_router
-from backend.app.api.subagents import router as subagents_router
 from backend.app.api.settings import (
     load_effective_model_settings,
     load_general_settings,
     load_model_settings,
 )
 from backend.app.api.settings import router as settings_router
+from backend.app.api.subagents import router as subagents_router
 from backend.app.api.thread_tasks import router as thread_tasks_router
 from backend.app.api.usage import router as usage_router
 from backend.app.api.web_settings import router as web_settings_router
@@ -61,6 +61,7 @@ from backend.app.mcp.manager import McpManager
 from backend.app.mcp.sampling import McpOpenAICompatibleSamplingBridge, McpSamplingService
 from backend.app.model import OpenAICompatibleProviderClient
 from backend.app.model.e2e_transport import create_e2e_model_transport
+from backend.app.right_sidebar.api import router as right_sidebar_router
 from backend.app.runtime import create_desktop_runtime
 from backend.app.services.agent_runtime import AgentRuntimeProvider, LazyChatService
 from backend.app.services.chat_stream_manager import ChatStreamManager
@@ -78,6 +79,8 @@ from backend.app.tools import create_default_tool_registry
 from backend.app.tools.command_runtime import command_process_manager
 from backend.app.web.registry import build_default_web_provider_registry
 from backend.app.web.service import WebService
+from backend.app.web_annotations.api import router as web_annotations_router
+from backend.app.web_annotations.assets import WebAnnotationAssetService
 
 
 def create_app(
@@ -101,9 +104,31 @@ def create_app(
             except Exception:
                 pass
 
+        async def run_web_annotation_asset_cleanup() -> None:
+            while True:
+                await asyncio.sleep(60 * 60)
+                result = await asyncio.to_thread(
+                    app.state.web_annotation_asset_service.cleanup_expired
+                )
+                if result["scanned"] or result["failed"]:
+                    logger.info(
+                        "[WebAnnotations] periodic staged asset cleanup complete | "
+                        f"scanned={result['scanned']} | deleted={result['deleted']} | "
+                        f"failed={result['failed']}"
+                    )
+
         await app.state.chat_stream_manager.recover_interrupted_sessions()
         await app.state.subagent_runtime.reconcile_interrupted_runs()
         await app.state.mcp_manager.start()
+        asset_cleanup = await asyncio.to_thread(
+            app.state.web_annotation_asset_service.cleanup_expired
+        )
+        if asset_cleanup["scanned"] or asset_cleanup["failed"]:
+            logger.info(
+                "[WebAnnotations] expired staged asset cleanup complete | "
+                f"scanned={asset_cleanup['scanned']} | "
+                f"deleted={asset_cleanup['deleted']} | failed={asset_cleanup['failed']}"
+            )
         if app.state.file_history_service.enabled:
             recovered = await asyncio.to_thread(
                 app.state.file_history_service.recover_incomplete_operations
@@ -120,6 +145,7 @@ def create_app(
                 f"usage_bytes={cleanup['usage_bytes']}"
             )
         warmup_task = asyncio.create_task(run_warmup())
+        web_annotation_asset_cleanup_task = asyncio.create_task(run_web_annotation_asset_cleanup())
         app.state.thread_task_elapsed_ticker.start()
         try:
             yield
@@ -133,9 +159,7 @@ def create_app(
             try:
                 await app.state.file_change_hub.close()
             except Exception as exc:
-                logger.opt(exception=True).error(
-                    f"[App] FileChangeHub 关闭失败 | error={exc}"
-                )
+                logger.opt(exception=True).error(f"[App] FileChangeHub 关闭失败 | error={exc}")
             try:
                 await app.state.git_metadata_event_service.close()
             except Exception as exc:
@@ -145,6 +169,9 @@ def create_app(
             await app.state.thread_task_elapsed_ticker.stop()
             await app.state.subagent_runtime.shutdown()
             await app.state.mcp_manager.shutdown()
+            web_annotation_asset_cleanup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await web_annotation_asset_cleanup_task
             if not warmup_task.done():
                 warmup_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -182,6 +209,10 @@ def create_app(
         default_workspace_root=resolved_settings.workspace_root,
     )
     app.state.repositories = StorageRepositories(app.state.database)
+    app.state.web_annotation_asset_service = WebAnnotationAssetService(
+        app.state.repositories,
+        data_dir=resolved_settings.data_dir,
+    )
     app.state.system_proxy_state = SystemProxyState()
     app.state.agent_factory = AgentFactory(
         system_proxy_state=app.state.system_proxy_state,
@@ -360,9 +391,7 @@ def create_app(
     )
     app.state.git_query_service = get_or_create_git_query_service(app)
     app.state.git_metadata_event_service = GitMetadataEventService(
-        invalidate=lambda repository_id: (
-            app.state.git_query_service.invalidate(repository_id)
-        )
+        invalidate=lambda repository_id: app.state.git_query_service.invalidate(repository_id)
     )
     app.state.runtime = create_desktop_runtime(
         settings=resolved_settings,
@@ -384,6 +413,8 @@ def create_app(
     app.include_router(health_router)
     app.include_router(git_router)
     app.include_router(annotations_router)
+    app.include_router(right_sidebar_router)
+    app.include_router(web_annotations_router)
     app.include_router(approvals_router)
     app.include_router(archive_router)
     app.include_router(attachments_router)

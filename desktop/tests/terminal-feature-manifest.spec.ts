@@ -8,15 +8,18 @@ import { TERMINAL_FEATURE_MANIFEST } from "@/renderer/features/terminal/terminal
 describe("terminal feature manifest", () => {
   it("freezes the first-release platform, profiles and resource limits", () => {
     expect(TERMINAL_FEATURE_MANIFEST).toMatchObject({
-      contractVersion: 1,
+      contractVersion: 2,
       supportedPlatforms: ["windows"],
       profiles: ["git-bash", "powershell", "cmd"],
       limits: {
         terminalsPerSession: 8,
         terminalsGlobal: 24,
         replayBytesPerTerminal: 1024 * 1024,
+        replayChunksPerTerminal: 4096,
         scrollbackLines: 5000,
         maxOutputChunkBytes: 32 * 1024,
+        deliveryWindowBytes: 256 * 1024,
+        deliveryWindowChunks: 64,
         maxInputBytes: 64 * 1024,
       },
     });

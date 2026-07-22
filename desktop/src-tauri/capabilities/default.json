@@ -1,8 +1,9 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "default",
-  "description": "Default desktop window permissions.",
-  "windows": ["main"],
+  "identifier": "main-webview",
+  "description": "Permissions for the trusted Keydex main UI only.",
+  "local": true,
+  "webviews": ["main"],
   "permissions": [
     "core:default",
     "process:default",

@@ -1,5 +1,4 @@
 .preview {
-  --annotation-accent: #d87575;
   display: grid;
   min-height: 0;
   overflow-x: auto;
@@ -1453,39 +1452,69 @@
 }
 
 .markdownPane [data-code-token-kind="keyword"] {
-  color: #7c3aed;
+  color: var(--syntax-keyword);
   font-weight: 600;
 }
 
 .markdownPane [data-code-token-kind="literal"] {
-  color: #2563eb;
+  color: var(--syntax-atom);
 }
 
 .markdownPane [data-code-token-kind="number"] {
-  color: #0f766e;
+  color: var(--syntax-number);
 }
 
 .markdownPane [data-code-token-kind="string"] {
-  color: #15803d;
+  color: var(--syntax-string);
 }
 
 .markdownPane [data-code-token-kind="comment"] {
-  color: var(--color-text-tertiary);
+  color: var(--syntax-comment);
   font-style: italic;
 }
 
 .markdownPane [data-code-token-kind="function"] {
-  color: #0f68a8;
+  color: var(--syntax-function);
 }
 
 .markdownPane [data-code-token-kind="property"],
 .markdownPane [data-code-token-kind="attribute"] {
-  color: #1d4ed8;
+  color: var(--syntax-property);
 }
 
-.markdownPane [data-code-token-kind="tag"] {
-  color: #b45309;
+.markdownPane [data-code-token-kind="tag"],
+.markdownPane [data-code-token-kind="type"] {
+  color: var(--syntax-type);
   font-weight: 600;
+}
+
+.markdownPane [data-code-token-kind="variable"] {
+  color: var(--syntax-variable);
+}
+
+.markdownPane [data-code-token-kind="operator"] {
+  color: var(--syntax-operator);
+}
+
+.markdownPane [data-code-token-kind="punctuation"] {
+  color: var(--syntax-punctuation);
+}
+
+.markdownPane [data-code-token-kind="regexp"] {
+  color: var(--syntax-regexp);
+}
+
+.markdownPane [data-code-token-kind="meta"],
+.markdownPane [data-code-token-kind="selector"] {
+  color: var(--color-accent);
+}
+
+.markdownPane [data-code-token-kind="addition"] {
+  color: var(--color-success-6);
+}
+
+.markdownPane [data-code-token-kind="deletion"] {
+  color: var(--color-danger-6);
 }
 
 .splitPane {

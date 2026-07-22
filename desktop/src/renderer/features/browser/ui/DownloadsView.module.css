@@ -1,0 +1,60 @@
+.list {
+  display: grid;
+  gap: 7px;
+}
+
+.item {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+  color: var(--color-text-2);
+  padding: 9px;
+}
+
+.item[data-state="failed"] .icon {
+  color: var(--color-danger);
+}
+
+.item[data-state="completed"] .icon {
+  color: var(--color-accent);
+}
+
+.icon {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--color-text-3);
+}
+
+.details {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.details strong {
+  overflow: hidden;
+  color: var(--color-text-1);
+  font-size: 11px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.details small,
+.empty {
+  color: var(--color-text-3);
+  font-size: 10px;
+}
+
+.empty {
+  display: grid;
+  min-height: 180px;
+  align-content: center;
+  justify-items: center;
+  gap: 8px;
+}

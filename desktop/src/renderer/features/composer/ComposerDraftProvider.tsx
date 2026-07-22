@@ -22,6 +22,9 @@ import {
   type ComposerDraftUpdate,
 } from "./composerDraftStore";
 import { subscribeLifecycleEvents } from "@/renderer/events/lifecycleEvents";
+import { subscribeAddWebAnnotationToComposer } from "@/renderer/events/webAnnotationContext";
+import { BROWSER_LIMITS } from "@/renderer/features/browser/config";
+import { incognitoWebReferenceRegistry } from "@/renderer/features/browser/annotations/chat";
 
 const ComposerDraftContext = createContext<ComposerDraftStore | null>(null);
 
@@ -45,7 +48,10 @@ export function ComposerDraftProvider({
   );
 
   useEffect(() => {
-    const flush = () => store.flush();
+    const flush = () => {
+      store.flush();
+      incognitoWebReferenceRegistry.clear();
+    };
     const unsubscribeLifecycle = subscribeLifecycleEvents((event) => {
       if (event.type === "session_purged" && event.session_id) {
         store.clearDraft(composerSessionDraftScope(event.session_id));
@@ -54,11 +60,36 @@ export function ComposerDraftProvider({
         store.clearDraft(composerNewWorkspaceDraftScope(event.workspace_id));
       }
     });
+    const unsubscribeWebAnnotations = subscribeAddWebAnnotationToComposer((detail) => {
+      const scopeKey = detail.composerScopeKey.trim();
+      if (!scopeKey) {
+        detail.result = "unhandled";
+        return;
+      }
+      const current = store.getDraft(scopeKey);
+      if (current.webAnnotations.some((item) => item.annotationId === detail.reference.annotationId)) {
+        detail.result = "duplicate";
+        return;
+      }
+      if (current.webAnnotations.length >= BROWSER_LIMITS.maxContextItems) {
+        detail.result = "limit";
+        return;
+      }
+      store.updateDraft(scopeKey, {
+        webAnnotations: [...current.webAnnotations, detail.reference],
+        ...(detail.replayedContextItem
+          ? { replayedContextItems: [...current.replayedContextItems, detail.replayedContextItem] }
+          : {}),
+      });
+      detail.result = "added";
+    });
     window.addEventListener("pagehide", flush);
     return () => {
       unsubscribeLifecycle();
+      unsubscribeWebAnnotations();
       window.removeEventListener("pagehide", flush);
       store.dispose();
+      incognitoWebReferenceRegistry.clear();
     };
   }, [store]);
 

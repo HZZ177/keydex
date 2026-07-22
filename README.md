@@ -124,6 +124,18 @@ AI 在回复过程中，你可以实时看到：
 
 <!-- 截图占位：右侧预览面板截图，展示 Markdown 分屏预览 -->
 
+### 侧边栏浏览器与网页批注
+
+Keydex 在右侧面板中提供完整的原生浏览器，可与会话、文件和审阅面板并列使用：
+
+- 支持多标签、前进/后退/刷新、地址搜索、页内查找、缩放、上传、下载和网站权限提示
+- 支持普通与无痕 Profile；无痕标签不写入工作区恢复状态
+- 可选择网页文本、元素或区域，创建带结构化定位信息的批注
+- 批注可以附加到会话；发送时生成不可变引用快照，后续编辑不会改写已发送消息
+- 浏览器和批注默认启用，但不会向 Agent 暴露点击、输入或导航等网页自动化能力
+
+浏览器页面由 Tauri/WebView2 原生 Surface 承载，因此需要通过 Keydex 桌面运行时使用；单独启动 Vite 的 `pnpm run dev` 只包含渲染层，不能承载任意站点。详细使用方式、隐私边界和故障处理见[侧边栏浏览器与网页批注](docs/sidebar-browser.md)。
+
 ### Workbench 模式
 
 Workbench 模式提供了一种"边看代码边对话"的工作方式：
@@ -279,6 +291,20 @@ pnpm run dev:frontend   # 前端 http://127.0.0.1:5173
 cd .\desktop
 pnpm run dev
 ```
+
+#### Tauri 壳连接已运行的 PyCharm 后端
+
+需要验证原生浏览器、系统托盘等 Tauri 能力，同时复用 PyCharm 中实时运行的后端时，先确认后端监听在 `127.0.0.1:8765`，再从另一个 PowerShell 启动壳：
+
+```powershell
+cd .\desktop
+$env:KEYDEX_DEV_AGENT_BASE_URL = "http://127.0.0.1:8765"
+pnpm run tauri:dev
+```
+
+`KEYDEX_DEV_AGENT_BASE_URL` 由 Tauri Debug 进程在运行时读取，不是 Vite 变量。设置后，壳会跳过内置 `agent-server.exe`，只连接并等待指定后端；退出壳不会停止 PyCharm 后端。它只接受带显式端口的本机 `http://127.0.0.1` 或 `http://localhost` 地址，Release 构建始终忽略该变量。
+
+如需同时隔离桌面壳的本地状态，先在仓库根目录的一个终端运行 `pnpm run dev:frontend`，再在另一个终端按上面方式设置变量并运行 `pnpm run tauri:dev:isolated`；隔离配置不会自行启动 Vite。要恢复壳自行启动 sidecar，可关闭当前壳后执行 `Remove-Item Env:KEYDEX_DEV_AGENT_BASE_URL`，再重新运行 Tauri。界面显示的 `0.1.0` 是桌面壳自身版本，不代表连接的后端版本；数据内容由 PyCharm 后端实际使用的 `KEYDEX_DATA_DIR`（未设置时为后端默认数据目录）决定，可在后端启动日志的 `data_dir` 字段确认。
 
 ### 测试
 

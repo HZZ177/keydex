@@ -65,6 +65,25 @@ pub fn terminal_attach(
 }
 
 #[tauri::command]
+pub fn terminal_ack(
+    state: State<'_, TerminalManager>,
+    terminal_id: String,
+    subscription_id: String,
+    seq: u64,
+) -> Result<(), TerminalError> {
+    state.acknowledge(&terminal_id, &subscription_id, seq)
+}
+
+#[tauri::command]
+pub fn terminal_detach(
+    state: State<'_, TerminalManager>,
+    terminal_id: String,
+    subscription_id: String,
+) -> Result<(), TerminalError> {
+    state.detach(&terminal_id, &subscription_id)
+}
+
+#[tauri::command]
 pub async fn terminal_write(
     state: State<'_, TerminalManager>,
     terminal_id: String,

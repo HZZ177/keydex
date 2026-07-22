@@ -36,7 +36,16 @@ export class TerminalXtermRegistry {
   }
 
   open(handle: TerminalXtermHandle, host: HTMLElement): void {
-    if (handle.opened) return;
+    if (handle.opened) {
+      if (handle.host === host) return;
+      const element = handle.terminal.element;
+      if (element) {
+        host.appendChild(element);
+        handle.host = host;
+        handle.terminal.refresh(0, Math.max(0, handle.terminal.rows - 1));
+      }
+      return;
+    }
     handle.terminal.open(host);
     handle.opened = true;
     handle.host = host;

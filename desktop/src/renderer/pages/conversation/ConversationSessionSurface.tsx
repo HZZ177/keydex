@@ -23,6 +23,10 @@ import {
 import { AppDialog, ConfirmDialog, DialogButton } from "@/renderer/components/dialog";
 import { useRuntimeModelSelection, type RuntimeSelectedModel } from "@/renderer/components/model";
 import { useAgentSessionController } from "@/renderer/hooks/useAgentSessionController";
+import {
+  replayedWebAnnotationContexts,
+  type SelectedWebAnnotationReference,
+} from "@/renderer/features/browser/annotations";
 import { useOptionalRightSidebarConversation } from "@/renderer/components/layout/RightSidebarConversationContext";
 import { emitLifecycleEvent } from "@/renderer/events/lifecycleEvents";
 import { emitSessionCreated, emitSessionUpdated } from "@/renderer/events/sessionEvents";
@@ -596,7 +600,8 @@ export function ConversationSessionSurface({
       quotes: SelectedQuote[] = [],
       attachments: SelectedImageAttachment[] = [],
       options?: { reverseDeliveryMode?: boolean; deliveryMode?: PendingInputMode },
-    ) => controller.send(files, quotes, attachments, modelSelection.selectedModel, options),
+      webAnnotations: SelectedWebAnnotationReference[] = [],
+    ) => controller.send(files, quotes, attachments, modelSelection.selectedModel, options, webAnnotations),
     [controller, modelSelection.selectedModel],
   );
 
@@ -612,6 +617,24 @@ export function ConversationSessionSurface({
   const handlePastedTextFragmentsChange = useCallback(
     (pastedTextFragments: PastedTextFragment[], value: string) =>
       controller.setComposerDraft({ text: value, pastedTextFragments }),
+    [controller.setComposerDraft],
+  );
+  const handleSelectedWebAnnotationsChange = useCallback(
+    (webAnnotations: SelectedWebAnnotationReference[]) => {
+      controller.setComposerDraft((current) => {
+        const selectedRevisions = new Set(
+          webAnnotations.map((reference) => `${reference.annotationId}:${reference.selectedRevision}`),
+        );
+        return {
+          webAnnotations,
+          replayedContextItems: replayedWebAnnotationContexts(current.replayedContextItems)
+            .filter(({ snapshot }) => selectedRevisions.has(
+              `${snapshot.annotationId}:${snapshot.annotationRevision}`,
+            ))
+            .map(({ item }) => item),
+        };
+      });
+    },
     [controller.setComposerDraft],
   );
 
@@ -711,7 +734,12 @@ export function ConversationSessionSurface({
     setGoalError(null);
   }, [goalCreating]);
 
-  const createGoalTask = useCallback(async (files: SelectedFile[] = [], quotes: SelectedQuote[] = [], imageAttachments: SelectedImageAttachment[] = []) => {
+  const createGoalTask = useCallback(async (
+    files: SelectedFile[] = [],
+    quotes: SelectedQuote[] = [],
+    imageAttachments: SelectedImageAttachment[] = [],
+    webAnnotations: SelectedWebAnnotationReference[] = [],
+  ) => {
     const prepared = prepareComposerMessage(draft, files, { quotes, selectedSkill });
     const attachments = imageAttachments.map(agentAttachmentFromSelected);
     const objective = prepared.message;
@@ -755,6 +783,7 @@ export function ConversationSessionSurface({
         contextItems: [...prepared.contextItems, goalItem],
         runtimeParams,
         attachments,
+        ...(webAnnotations.length ? { webAnnotations } : {}),
       });
       if (!sent) {
         await runtime.conversation.deleteThreadTask(threadId, task.id).catch(() => null);
@@ -800,11 +829,12 @@ export function ConversationSessionSurface({
       quotes: SelectedQuote[] = [],
       attachments: SelectedImageAttachment[] = [],
       options?: { reverseDeliveryMode?: boolean; deliveryMode?: PendingInputMode },
+      webAnnotations: SelectedWebAnnotationReference[] = [],
     ) => {
       if (goalComposerOpen) {
-        return createGoalTask(files, quotes, attachments);
+        return createGoalTask(files, quotes, attachments, webAnnotations);
       }
-      return send(files, quotes, attachments, options);
+      return send(files, quotes, attachments, options, webAnnotations);
     },
     [createGoalTask, goalComposerOpen, send],
   );
@@ -941,6 +971,7 @@ export function ConversationSessionSurface({
         selectedSkill={selectedSkill}
         selectedFiles={composerDraft.files}
         selectedQuotes={composerDraft.quotes}
+        selectedWebAnnotations={composerDraft.webAnnotations}
         selectedImageAttachments={composerDraft.attachments}
         pastedTextFragments={composerDraft.pastedTextFragments}
         runtime={runtime}
@@ -953,6 +984,7 @@ export function ConversationSessionSurface({
         onChange={handleDraftChange}
         onSelectedFilesChange={(files) => controller.setComposerDraft({ files })}
         onSelectedQuotesChange={(quotes) => controller.setComposerDraft({ quotes })}
+        onSelectedWebAnnotationsChange={handleSelectedWebAnnotationsChange}
         onSelectedImageAttachmentsChange={(attachments) => controller.setComposerDraft({ attachments })}
         onPastedTextFragmentsChange={handlePastedTextFragmentsChange}
         onSkillChange={setSelectedSkill}

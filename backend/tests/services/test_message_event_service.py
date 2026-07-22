@@ -1016,6 +1016,75 @@ def test_message_event_service_restores_context_items_from_user_message_payload(
     assert messages[0]["contextItems"] == [context_item]
 
 
+def test_message_event_service_restores_web_annotation_snapshot_and_attachment_verbatim(
+    tmp_path,
+) -> None:
+    repositories = _repositories(tmp_path)
+    service = MessageEventService(repositories.message_events)
+    snapshot = {
+        "schemaVersion": 1,
+        "type": "web_annotation",
+        "annotationId": "annotation-history",
+        "annotationRevision": 3,
+        "capturedAt": "2026-07-22T08:00:00Z",
+        "source": {
+            "title": "Historical page",
+            "url": "https://example.test/history",
+            "urlKey": "e" * 64,
+            "origin": "https://example.test",
+        },
+        "target": {
+            "type": "region",
+            "summary": "Historical region",
+            "resolution": "changed",
+            "freshness": "last-known",
+        },
+        "evidence": {"attachmentId": "attachment-history"},
+        "annotation": {
+            "bodyMarkdown": "Immutable historical note",
+            "tags": ["history"],
+            "properties": [],
+        },
+        "digest": "history-digest",
+    }
+    context_item = {
+        "id": "web-annotation:annotation-history:history-digest",
+        "type": "web_annotation",
+        "label": "网页批注 · Historical page",
+        "content": "Immutable historical context",
+        "metadata": {
+            "annotation_id": "annotation-history",
+            "snapshot_digest": "history-digest",
+            "snapshot": snapshot,
+        },
+    }
+    attachment = {
+        "id": "attachment-history",
+        "attachment_id": "attachment-history",
+        "type": "image",
+        "source": "web_annotation",
+        "name": "web-annotation.png",
+        "mime_type": "image/png",
+        "size": 128,
+    }
+    _append(
+        repositories,
+        "evt_web_annotation_history",
+        "user_message",
+        {
+            "content": "Review historical evidence",
+            "contextItems": [context_item],
+            "attachments": [attachment],
+        },
+    )
+
+    messages = service.get_display_messages("ses_history")
+
+    assert messages[0]["contextItems"] == [context_item]
+    assert messages[0]["contextItems"][0]["metadata"]["snapshot"] == snapshot
+    assert messages[0]["attachments"] == [attachment]
+
+
 def test_message_event_service_pairs_subagent_tools(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     service = MessageEventService(repositories.message_events)

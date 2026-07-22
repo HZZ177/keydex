@@ -4602,12 +4602,15 @@ class SessionsRepository:
         return int(row["context_compression_epoch"] or 0)
 
     def increment_context_compression_epoch(self, session_id: str) -> int:
+        # A completed compression invalidates the pre-compression usage snapshot.
+        # Clear it atomically with the epoch change so history reloads cannot restore stale progress.
         now = to_iso_z(utc_now())
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 """
                 update sessions
                 set context_compression_epoch = context_compression_epoch + 1,
+                    context_window_usage_json = null,
                     updated_at = ?
                 where id = ? and archived_at is null
                 """,
@@ -5375,6 +5378,7 @@ class AttachmentsRepository:
         path: str,
         mime_type: str,
         size: int,
+        connection: sqlite3.Connection | None = None,
     ) -> AttachmentRecord:
         cleaned_type = type.strip() or "file"
         if cleaned_type not in self.VALID_TYPES:
@@ -5387,7 +5391,8 @@ class AttachmentsRepository:
             raise ValueError("attachment path must not be empty")
         now = to_iso_z(utc_now())
         record_id = attachment_id or new_id()
-        with self.db.transaction() as conn:
+        transaction = nullcontext(connection) if connection is not None else self.db.transaction()
+        with transaction as conn:
             conn.execute(
                 """
                 insert into attachments (
@@ -5409,17 +5414,27 @@ class AttachmentsRepository:
                     now,
                 ),
             )
-        record = self.get(record_id)
-        if record is None:
+            row = conn.execute(
+                "select * from attachments where id = ?",
+                (record_id,),
+            ).fetchone()
+        if row is None:
             raise RuntimeError(f"创建 attachment 后无法读取: {record_id}")
-        return record
+        return self._from_row(row)
 
-    def get(self, attachment_id: str, *, include_deleted: bool = False) -> AttachmentRecord | None:
+    def get(
+        self,
+        attachment_id: str,
+        *,
+        include_deleted: bool = False,
+        connection: sqlite3.Connection | None = None,
+    ) -> AttachmentRecord | None:
         query = "select * from attachments where id = ?"
         params: list[Any] = [attachment_id]
         if not include_deleted:
             query += " and is_deleted = 0"
-        with self.db.connect() as conn:
+        transaction = nullcontext(connection) if connection is not None else self.db.connect()
+        with transaction as conn:
             row = conn.execute(query, params).fetchone()
         return self._from_row(row) if row else None
 
@@ -5479,6 +5494,53 @@ class AttachmentsRepository:
                 (now, attachment_id),
             )
         return cursor.rowcount > 0
+
+    def hard_delete_unreferenced_web_annotation(
+        self,
+        attachment_id: str,
+    ) -> tuple[str, AttachmentRecord | None]:
+        """Delete only an unattached, transient web-annotation upload.
+
+        The broad string checks are intentionally conservative: an attachment id
+        found anywhere in a history or pending-input payload protects the record,
+        even if a future payload schema moves the exact attachment field.
+        """
+
+        with self.db.transaction(immediate=True) as conn:
+            row = conn.execute(
+                "select * from attachments where id = ? and is_deleted = 0",
+                (attachment_id,),
+            ).fetchone()
+            if row is None:
+                return "not_found", None
+            record = self._from_row(row)
+            if record.source != "web_annotation":
+                return "source_forbidden", record
+            protected_queries = (
+                """
+                select 1 from web_annotation_attachment_clones
+                where attachment_id = ? limit 1
+                """,
+                """
+                select 1 from message_events
+                where is_deleted = 0 and instr(coalesce(data_json, ''), ?) > 0
+                limit 1
+                """,
+                """
+                select 1 from session_pending_inputs
+                where is_deleted = 0 and instr(coalesce(attachments_json, ''), ?) > 0
+                limit 1
+                """,
+            )
+            if any(conn.execute(query, (attachment_id,)).fetchone() for query in protected_queries):
+                return "referenced", record
+            cursor = conn.execute(
+                "delete from attachments where id = ? and source = 'web_annotation'",
+                (attachment_id,),
+            )
+            if cursor.rowcount != 1:
+                return "not_found", None
+        return "deleted", record
 
     @staticmethod
     def _from_row(row: sqlite3.Row) -> AttachmentRecord:
@@ -9191,7 +9253,9 @@ class StorageRepositories:
 
     def __init__(self, db: Database) -> None:
         from backend.app.annotations.repository import WorkspaceAnnotationsRepository
+        from backend.app.right_sidebar.repository import RightSidebarScopeRepository
         from backend.app.storage.file_history_repository import FileHistoryRepository
+        from backend.app.web_annotations.repository import WebAnnotationRepositories
 
         self.db = db
         self.mcp_servers = McpServersRepository(db)
@@ -9215,6 +9279,8 @@ class StorageRepositories:
         self.session_forks = SessionForksRepository(db)
         self.attachments = AttachmentsRepository(db)
         self.annotations = WorkspaceAnnotationsRepository(db)
+        self.right_sidebar_scopes = RightSidebarScopeRepository(db)
+        self.web_annotations = WebAnnotationRepositories(db)
         self.a2ui_interactions = A2UIInteractionsRepository(db)
         self.message_events = MessageEventsRepository(db)
         self.pending_inputs = PendingInputsRepository(db)

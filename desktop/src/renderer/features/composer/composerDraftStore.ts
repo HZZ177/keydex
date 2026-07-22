@@ -3,6 +3,13 @@ import type { SelectedFile } from "@/renderer/components/chat/SendBox/fileSelect
 import type { SelectedImageAttachment } from "@/renderer/components/chat/SendBox/imageAttachments";
 import type { SelectedQuote } from "@/renderer/components/chat/SendBox/quoteSelection";
 import {
+  incognitoWebReferenceRegistry,
+  isIncognitoWebAnnotationId,
+  webAnnotationSnapshotFromContextItem,
+  type SelectedWebAnnotationReference,
+} from "@/renderer/features/browser/annotations/chat";
+import type { AgentContextItem } from "@/types/protocol";
+import {
   normalizePastedTextFragments,
   type PastedTextFragment,
 } from "@/renderer/components/chat/SendBox/collapsiblePaste";
@@ -21,6 +28,8 @@ export interface ComposerDraft {
   files: SelectedFile[];
   quotes: SelectedQuote[];
   attachments: SelectedImageAttachment[];
+  webAnnotations: SelectedWebAnnotationReference[];
+  replayedContextItems: AgentContextItem[];
   updatedAt: number;
 }
 
@@ -58,6 +67,8 @@ export const EMPTY_COMPOSER_DRAFT: ComposerDraft = Object.freeze({
   files: [],
   quotes: [],
   attachments: [],
+  webAnnotations: [],
+  replayedContextItems: [],
   updatedAt: 0,
 });
 
@@ -103,6 +114,21 @@ export function createComposerDraftStore(options: ComposerDraftStoreOptions = {}
       return;
     }
     const normalized = normalizeDraft(draft, now());
+    const retainedWebAnnotationIds = new Set(
+      normalized.webAnnotations.map((reference) => reference.annotationId),
+    );
+    for (const reference of drafts[normalizedScopeKey]?.webAnnotations ?? []) {
+      if (
+        isIncognitoWebAnnotationId(reference.annotationId)
+        && !retainedWebAnnotationIds.has(reference.annotationId)
+        && !Object.entries(drafts).some(([draftScopeKey, existing]) => (
+          draftScopeKey !== normalizedScopeKey
+          && existing.webAnnotations.some((item) => item.annotationId === reference.annotationId)
+        ))
+      ) {
+        incognitoWebReferenceRegistry.discard(reference.annotationId);
+      }
+    }
     if (!composerDraftHasContent(normalized)) {
       if (!(normalizedScopeKey in drafts)) {
         return;
@@ -166,7 +192,9 @@ export function composerDraftHasContent(draft: ComposerDraft): boolean {
       draft.selectedSkill ||
       draft.files.length ||
       draft.quotes.length ||
-      draft.attachments.length,
+      draft.attachments.length ||
+      draft.webAnnotations.length ||
+      draft.replayedContextItems.length,
   );
 }
 
@@ -209,6 +237,7 @@ function writePersistedDrafts(
   currentTime: number,
 ) {
   const entries = Object.entries(drafts)
+    .map(([scopeKey, draft]) => [scopeKey, persistableDraft(draft)] as const)
     .filter(([, draft]) => currentTime - draft.updatedAt <= DRAFT_TTL_MS && composerDraftHasContent(draft))
     .sort((left, right) => right[1].updatedAt - left[1].updatedAt)
     .slice(0, MAX_PERSISTED_DRAFTS);
@@ -221,7 +250,7 @@ function writePersistedDrafts(
       COMPOSER_DRAFT_STORAGE_KEY,
       JSON.stringify({
         version: COMPOSER_DRAFT_SCHEMA_VERSION,
-        drafts: Object.fromEntries(entries.map(([scopeKey, draft]) => [scopeKey, persistableDraft(draft)])),
+        drafts: Object.fromEntries(entries),
       }),
     );
   } catch {
@@ -238,6 +267,8 @@ function normalizeDraft(draft: ComposerDraft, updatedAt: number): ComposerDraft 
     files: recordArray<SelectedFile>(draft.files),
     quotes: recordArray<SelectedQuote>(draft.quotes),
     attachments: recordArray<SelectedImageAttachment>(draft.attachments).map(normalizeRuntimeAttachment),
+    webAnnotations: normalizeWebAnnotationReferences(draft.webAnnotations),
+    replayedContextItems: normalizeReplayedContextItems(draft.replayedContextItems),
     updatedAt,
   };
 }
@@ -259,17 +290,35 @@ function decodeDraft(value: unknown): ComposerDraft | null {
     files: recordArray<SelectedFile>(raw.files),
     quotes: recordArray<SelectedQuote>(raw.quotes),
     attachments: recordArray<SelectedImageAttachment>(raw.attachments).map(stripAttachmentPreview),
+    webAnnotations: normalizeWebAnnotationReferences(raw.webAnnotations)
+      .filter((reference) => !isIncognitoWebAnnotationId(reference.annotationId)),
+    replayedContextItems: normalizeReplayedContextItems(raw.replayedContextItems)
+      .filter((item) => {
+        const snapshot = webAnnotationSnapshotFromContextItem(item);
+        return !snapshot || !isIncognitoWebAnnotationId(snapshot.annotationId);
+      }),
     updatedAt,
   };
 }
 
 function persistableDraft(draft: ComposerDraft): ComposerDraft {
+  const webAnnotations = draft.webAnnotations
+    .filter((reference) => !isIncognitoWebAnnotationId(reference.annotationId));
+  const replayedContextItems = draft.replayedContextItems.filter((item) => {
+    const snapshot = webAnnotationSnapshotFromContextItem(item);
+    return !snapshot || !isIncognitoWebAnnotationId(snapshot.annotationId);
+  });
   return {
     ...draft,
     pastedTextFragments: draft.pastedTextFragments.map((fragment) => ({ ...fragment })),
     files: draft.files.map((file) => ({ ...file })),
     quotes: draft.quotes.map((quote) => ({ ...quote })),
     attachments: draft.attachments.map(stripAttachmentPreview),
+    webAnnotations: webAnnotations.map((reference) => ({ ...reference })),
+    replayedContextItems: replayedContextItems.map((item) => ({
+      ...item,
+      ...(item.metadata ? { metadata: { ...item.metadata } } : {}),
+    })),
   };
 }
 
@@ -306,4 +355,42 @@ function recordArray<T extends object>(value: unknown): T[] {
   return Array.isArray(value)
     ? value.filter((item): item is T => Boolean(item && typeof item === "object")).map((item) => ({ ...item }))
     : [];
+}
+
+function normalizeWebAnnotationReferences(value: unknown): SelectedWebAnnotationReference[] {
+  if (!Array.isArray(value)) return [];
+  const ids = new Set<string>();
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const raw = item as Partial<SelectedWebAnnotationReference>;
+    const annotationId = typeof raw.annotationId === "string" ? raw.annotationId.trim() : "";
+    const selectedAt = typeof raw.selectedAt === "string" ? raw.selectedAt.trim() : "";
+    const sourcePanelId = typeof raw.sourcePanelId === "string" ? raw.sourcePanelId.trim() : "";
+    if (
+      !annotationId
+      || annotationId.length > 128
+      || ids.has(annotationId)
+      || !Number.isInteger(raw.selectedRevision)
+      || (raw.selectedRevision ?? 0) < 1
+      || !selectedAt
+      || selectedAt.length > 64
+    ) return [];
+    ids.add(annotationId);
+    return [{
+      annotationId,
+      selectedRevision: raw.selectedRevision!,
+      selectedAt,
+      ...(sourcePanelId ? { sourcePanelId: sourcePanelId.slice(0, 128) } : {}),
+    }];
+  });
+}
+
+function normalizeReplayedContextItems(value: unknown): AgentContextItem[] {
+  return recordArray<AgentContextItem>(value).flatMap((item) => {
+    const normalized = {
+      ...item,
+      ...(item.metadata ? { metadata: { ...item.metadata } } : {}),
+    };
+    return webAnnotationSnapshotFromContextItem(normalized) ? [normalized] : [];
+  });
 }

@@ -10,6 +10,7 @@ import {
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
+import { useBrowserOcclusionToken } from "@/renderer/features/browser/runtime";
 
 import styles from "./FloatingLayer.module.css";
 
@@ -62,6 +63,7 @@ export function FloatingLayer({
   viewportPadding = DEFAULT_VIEWPORT_PADDING,
   ...props
 }: FloatingLayerProps) {
+  useBrowserOcclusionToken(true, "menu");
   const layerRef = useRef<HTMLDivElement | null>(null);
   const frameRef = useRef<number | null>(null);
   const [position, setPosition] = useState<FloatingPosition>(() => ({

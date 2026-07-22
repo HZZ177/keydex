@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { openExternalUrl } from "@/runtime/externalLinks";
+import { openExternalProtocol, openExternalUrl } from "@/runtime/externalLinks";
 
 describe("openExternalUrl", () => {
   it("uses the native Tauri shell instead of a WebView popup", async () => {
@@ -65,5 +65,22 @@ describe("openExternalUrl", () => {
       isTauriRuntime: () => false,
       openWindow: vi.fn().mockReturnValue(null),
     })).rejects.toThrow("浏览器阻止了新窗口");
+  });
+});
+
+describe("openExternalProtocol", () => {
+  it.each(["mailto:test@example.com", "tel:+8613800138000"])("opens an explicitly confirmed safe protocol: %s", async (target) => {
+    const nativeOpen = vi.fn().mockResolvedValue(undefined);
+    await openExternalProtocol(target, { isTauriRuntime: () => true, shellApi: { open: nativeOpen } });
+    expect(nativeOpen).toHaveBeenCalledWith(target);
+  });
+
+  it.each(["https://example.com", "javascript:alert(1)", "custom:value"])("rejects a non-confirmable protocol: %s", async (target) => {
+    const nativeOpen = vi.fn();
+    await expect(openExternalProtocol(target, {
+      isTauriRuntime: () => true,
+      shellApi: { open: nativeOpen },
+    })).rejects.toThrow();
+    expect(nativeOpen).not.toHaveBeenCalled();
   });
 });

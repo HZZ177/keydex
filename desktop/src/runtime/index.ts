@@ -58,6 +58,7 @@ export { createAnnotationsRuntime } from "./annotations";
 export { createMcpRuntime } from "./mcp";
 export { createKeydexRuntime, createSkillRuntime } from "./skills";
 export { createGitRuntime } from "./git";
+export { createRightSidebarRuntime, rightSidebarScopePath } from "./rightSidebar";
 export {
   canUseAppUpdater,
   checkForAppUpdate,
@@ -84,6 +85,15 @@ export type {
   RuntimeHttpErrorParams,
 } from "./errors";
 export type { RuntimeBridge, RuntimeBridgeOptions } from "./bridge";
+export type {
+  RightSidebarPromotionRequest,
+  RightSidebarPromotionResponse,
+  RightSidebarPromotionSourceKind,
+  RightSidebarRuntime,
+  RightSidebarScopeKind,
+  RightSidebarScopeRecord,
+  RightSidebarScopeRef,
+} from "./rightSidebar";
 export type {
   GitBranchCommand,
   GitCheckoutCommand,

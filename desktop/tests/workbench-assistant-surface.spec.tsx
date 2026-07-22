@@ -2961,6 +2961,8 @@ function composerDraft(
     files: [],
     quotes: [],
     attachments: [],
+    webAnnotations: [],
+    replayedContextItems: [],
     updatedAt: 0,
     ...overrides,
   };

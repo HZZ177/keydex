@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "protocols": {
+    "rightSidebarState": 2,
+    "browserHost": 1,
+    "webAnnotation": 1,
+    "webAnnotationBridge": 1
+  },
+  "releaseFeatureFlags": {
+    "browserEnabled": true,
+    "annotationsEnabled": true,
+    "internalProbeEnabled": false
+  },
+  "limits": {
+    "maxPanelMetadata": 20,
+    "maxLiveSurfaces": 10,
+    "maxWarmSurfaces": 5,
+    "permissionTimeoutMs": 30000,
+    "bridgeMaxMessageBytes": 262144,
+    "resolveBatchSize": 50,
+    "resolveMutationDebounceMs": 250,
+    "resolveMutationMaxDelayMs": 2000,
+    "resolveSliceBudgetMs": 8,
+    "crashLoopCount": 3,
+    "crashLoopWindowMs": 300000,
+    "stagedAssetTtlHours": 24,
+    "maxContextItems": 20,
+    "maxContextBytes": 131072
+  }
+}

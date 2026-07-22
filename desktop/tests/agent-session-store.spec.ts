@@ -3206,6 +3206,33 @@ describe("agentSessionStore reducer", () => {
     ]);
   });
 
+  it("clears persisted context window usage when compression completes", () => {
+    let state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "history/loaded",
+      sessionId: "ses-1",
+      history: {
+        ...history([]),
+        session: {
+          ...session("ses-1", "2026-06-18T09:00:00Z"),
+          context_window_usage: contextWindowUsage("ses-1", 5371),
+        },
+      },
+    });
+
+    state = reduceAgentWsEvent(state, {
+      action: "middleware_progress",
+      data: {
+        session_id: "ses-1",
+        active_session_id: "ses-1",
+        middleware: "ContextCompressionMiddleware",
+        stage: "compression_completed",
+        notice_id: "context-compression:ses-1:run-1",
+      },
+    });
+
+    expect(selectAgentSessions(state)[0].context_window_usage).toBeNull();
+  });
+
   it("updates one LLM retry notice through retrying and recovered states", () => {
     let state = createInitialAgentConversationState();
     state = reduceAgentWsEvent(state, {

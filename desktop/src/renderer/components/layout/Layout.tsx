@@ -1,10 +1,6 @@
 import {
-  Bot,
-  FileDiff,
   FileText,
-  Folder,
   Maximize2,
-  MessageSquare,
   Minimize2,
   PanelLeftClose,
   PanelLeftOpen,
@@ -31,6 +27,13 @@ import {
 import { flushSync } from "react-dom";
 
 import { runtimeBridge, type RuntimeBridge } from "@/runtime";
+import { BROWSER_LIMITS } from "@/renderer/features/browser/config";
+import {
+  createWebAnnotationClient,
+  webAnnotationNavigator,
+  type WebAnnotationContextSnapshot,
+} from "@/renderer/features/browser/annotations";
+import { subscribeNavigateToWebAnnotation } from "@/renderer/events/webAnnotationContext";
 import { useLayoutState } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { useHeldActiveFlag } from "@/renderer/hooks/useHeldActiveFlag";
 import {
@@ -52,8 +55,7 @@ import { useOptionalActiveProjectState } from "@/renderer/providers/ActiveProjec
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 import { ConnectionStatus } from "@/renderer/components/runtime";
 import { LoadingSkeleton } from "@/renderer/components/loading";
-import { AgentReviewDiffPanel } from "@/renderer/components/review/AgentReviewDiffPanel";
-import type { KeydexDiffDocument } from "@/renderer/components/diff/model";
+import { AppTooltipLayer } from "@/renderer/components/tooltip";
 import {
   GitToolWindow,
   type GitProjectSelectorProps,
@@ -79,11 +81,6 @@ import {
 import type { AgentSession, Workspace } from "@/types/protocol";
 import type { SubagentRunSnapshot } from "@/types/subagents";
 import {
-  SubagentInvocationDetail,
-  SubagentPanelHeader,
-  SubagentRunList,
-} from "@/renderer/pages/conversation/subagents/SubagentSidebarPanel";
-import {
   TerminalDock,
   TerminalDockAction,
   useTerminalStore,
@@ -105,22 +102,54 @@ import { ProductShowcaseOverlay, type ProductShowcaseOverlayPhase } from "./Prod
 import styles from "./Layout.module.css";
 import type { SiderEntry } from "./Sider";
 import type { WorkbenchWorkspaceSelectorProps } from "./workbenchWorkspaceSelector";
+import {
+  rightSidebarDefinitionRegistry,
+  type ConversationPanelQuoteRequest,
+  type ConversationPanelState,
+  type FilesPanelState,
+  type JsonObject,
+  type ReviewPanelState,
+  type RightSidebarPanelKind,
+  type RightSidebarPanelState,
+} from "./rightSidebarRegistry";
+import {
+  conversationPanelCreateInput,
+  normalizeConversationPanelState,
+} from "./rightSidebar/panels/conversation";
+import {
+  filesPanelCreateInput,
+  normalizeFilesPanelState,
+  serializeFilesPanelState,
+} from "./rightSidebar/panels/files";
+import {
+  normalizeReviewPanelState,
+  reviewPanelCreateInput,
+  serializeReviewPanelState,
+} from "./rightSidebar/panels/review";
+import {
+  RightSidebarRegisteredPanelHost,
+  RightSidebarRegisteredTab,
+} from "./rightSidebar/RightSidebarHost";
+import { RightSidebarPanelIconGlyph } from "./rightSidebar/icons";
+import {
+  panelIdsByKind,
+  removeRegisteredPanels,
+  replaceRegisteredPanel,
+  previewScopePanelIds,
+  type PreviewScopePanelState,
+} from "./rightSidebar/scopeAdapter";
+import {
+  persistableRightSidebarScopeKey,
+  rightSidebarPersistenceForRuntime,
+  serializePersistableRightSidebarState,
+} from "./rightSidebar/persistence";
 
-const LazyWorkspaceFileBrowser = lazy(() =>
-  import("@/renderer/components/workspace/WorkspaceFileBrowser").then((module) => ({
-    default: module.WorkspaceFileBrowser,
-  })),
-);
 const LazyFilePreview = lazy(() =>
   import("@/renderer/components/workspace/FilePreview").then((module) => ({ default: module.FilePreview })),
 );
-const LazyConversationSessionSurface = lazy(() =>
-  import("@/renderer/pages/conversation/ConversationSessionSurface").then((module) => ({
-    default: module.ConversationSessionSurface,
-  })),
-);
 
 const LEGACY_FILES_PANEL_ID = "right-sidebar:files";
+const LEGACY_RIGHT_SIDEBAR_PANEL_TIMESTAMP = "1970-01-01T00:00:00.000Z";
 const FILES_PANEL_ID_PREFIX = "right-sidebar:files:";
 const INITIAL_PANEL_ID_PREFIX = "right-sidebar:initial:";
 const CONVERSATION_PANEL_ID_PREFIX = "right-sidebar:conversation:";
@@ -139,73 +168,29 @@ interface LayoutUiState {
   rightSidebarPanelStateByScope: Record<string, RightSidebarScopePanelState>;
 }
 
-interface RightSidebarFilePanelState {
-  id: string;
-  filePreviewPath: string | null;
-  filePreviewRequestId: number;
-  filePreviewRevealTarget: PreviewFileRevealTarget | null;
-  directoryRevealPath: string | null;
-  directoryRevealRequestId: number;
-}
+type RightSidebarFilePanelState = FilesPanelState;
 
-interface RightSidebarConversationPanelState {
-  id: string;
-  kind: "conversation" | "subagent";
-  status: "opening" | "ready";
-  sessionId: string;
-  title: string;
-  sourceSessionId: string | null;
-  parentSessionId: string | null;
-  quoteRequest: RightSidebarConversationQuoteRequest | null;
-  loadedHistoryTurnCount: number | null;
-  subagentRun: SubagentRunSnapshot | null;
-  subagentInvocation: SubagentInvocationPanelDetails | null;
-}
+type RightSidebarConversationPanelState = ConversationPanelState;
 
-interface RightSidebarReviewPanelState {
-  id: string;
-  title: string;
-  files: FileReviewChange[];
-  document: KeydexDiffDocument | null;
-  focusedPath: string | null;
-  panelKey: string;
-  sourceMessageId: string | null;
-  toolCallId: string | null;
-  requestId: number;
-}
+type RightSidebarReviewPanelState = ReviewPanelState;
 
-interface RightSidebarConversationQuoteRequest {
-  requestId: number;
-  quote: SelectedQuote;
-}
-
-interface RightSidebarScopePanelState {
-  activePanelId: string | null;
-  panelOrder: string[];
-  filePanelIds: string[];
-  filePanels: Record<string, RightSidebarFilePanelState>;
-  conversationPanelIds: string[];
-  conversationPanels: Record<string, RightSidebarConversationPanelState>;
-  reviewPanelIds: string[];
-  reviewPanels: Record<string, RightSidebarReviewPanelState>;
-  initialPanelIds: string[];
-  nextPanelSeq: number;
-}
+type RightSidebarScopePanelState = PreviewScopePanelState;
 
 interface RightSidebarTabMenuState {
   panelId: string;
   position: CSSProperties;
 }
 
+interface WebAnnotationNavigationRequest {
+  readonly requestId: number;
+  readonly snapshot: WebAnnotationContextSnapshot;
+}
+
 const EMPTY_RIGHT_SIDEBAR_SCOPE_STATE: RightSidebarScopePanelState = {
+  version: 2,
   activePanelId: null,
   panelOrder: [],
-  filePanelIds: [],
-  filePanels: {},
-  conversationPanelIds: [],
-  conversationPanels: {},
-  reviewPanelIds: [],
-  reviewPanels: {},
+  panels: {},
   initialPanelIds: [],
   nextPanelSeq: 0,
 };
@@ -372,6 +357,9 @@ export function Layout({
   const [rightSidebarResizeActive, setRightSidebarResizeActive] = useState(false);
   const [localPrimarySurface, setLocalPrimarySurface] = useState<"content" | "git">("content");
   const [pendingSessionNavigation, setPendingSessionNavigation] = useState<PendingSessionNavigation | null>(null);
+  const [webAnnotationNavigationRequest, setWebAnnotationNavigationRequest] = useState<
+    WebAnnotationNavigationRequest | null
+  >(null);
   const sessionNavigationPending = Boolean(
     pendingSessionNavigation
       && sameNavigationPath(activePath, pendingSessionNavigation.sourcePath)
@@ -390,6 +378,13 @@ export function Layout({
   const [rightSidebarPanelStateByScope, setRightSidebarPanelStateByScope] = useState<
     Record<string, RightSidebarScopePanelState>
   >(initialLayoutUiState?.rightSidebarPanelStateByScope ?? {});
+  const rightSidebarPanelStateByScopeRef = useRef(rightSidebarPanelStateByScope);
+  rightSidebarPanelStateByScopeRef.current = rightSidebarPanelStateByScope;
+  const loadedRightSidebarScopesRef = useRef(new Set<string>());
+  const rightSidebarPersistence = useMemo(
+    () => rightSidebarPersistenceForRuntime(runtime),
+    [runtime],
+  );
   const [productShowcasePhase, setProductShowcasePhase] = useState<ProductShowcaseOverlayPhase | null>(null);
   const { state, actions } = useLayoutState();
   const runtimeConnection = useOptionalRuntimeConnection();
@@ -564,6 +559,58 @@ export function Layout({
     });
   }, [layoutUiStateCache, rightSidebarMode, rightSidebarPanelStateByScope]);
 
+  const persistentRightSidebarScopeKey = globalRightSidebarEnabled && primarySurface !== "git"
+    ? persistableRightSidebarScopeKey(
+      previewContext?.activeScopeKey ?? GLOBAL_RIGHT_SIDEBAR_SCOPE,
+    )
+    : null;
+  useEffect(() => {
+    const scopeKey = persistentRightSidebarScopeKey;
+    if (!scopeKey) return;
+    let cancelled = false;
+    void rightSidebarPersistence
+      .load(scopeKey)
+      .then((loaded) => {
+        if (cancelled) return;
+        const current = normalizeRightSidebarScopePanelState(
+          rightSidebarPanelStateByScopeRef.current[scopeKey],
+        );
+        const restored: RightSidebarScopePanelState = loaded.exists
+          ? { ...loaded.state, initialPanelIds: [] }
+          : current;
+        loadedRightSidebarScopesRef.current.add(scopeKey);
+        setRightSidebarPanelStateByScope((states) => {
+          const previous = normalizeRightSidebarScopePanelState(states[scopeKey]);
+          if (sameRightSidebarScopePanelState(previous, restored)) return states;
+          return { ...states, [scopeKey]: restored };
+        });
+        if (!loaded.exists && Object.keys(serializePersistableRightSidebarState(current).panels).length) {
+          rightSidebarPersistence.queueSave(scopeKey, current);
+        }
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) notifications.error(errorMessage(reason));
+      });
+    return () => {
+      cancelled = true;
+      if (loadedRightSidebarScopesRef.current.has(scopeKey)) {
+        void rightSidebarPersistence.flush(scopeKey).catch(() => undefined);
+      }
+    };
+  }, [notifications, persistentRightSidebarScopeKey, rightSidebarPersistence]);
+
+  useEffect(() => {
+    if (!persistentRightSidebarScopeKey) return;
+    if (!loadedRightSidebarScopesRef.current.has(persistentRightSidebarScopeKey)) return;
+    const current = rightSidebarPanelStateByScope[persistentRightSidebarScopeKey];
+    if (!current) return;
+    rightSidebarPersistence.queueSave(persistentRightSidebarScopeKey, current);
+  }, [
+    persistentRightSidebarScopeKey,
+    rightSidebarPanelStateByScope,
+    rightSidebarPersistence,
+  ]);
+
   useEffect(() => {
     const activeScopeKey = previewContext?.activeScopeKey ?? null;
     if (lastPreviewScopeKeyRef.current === activeScopeKey) {
@@ -719,6 +766,14 @@ export function Layout({
     }
     actions.setRightSidebarOpen(true);
   }, [actions, globalRightSidebarEnabled, startRightSidebarMotion]);
+
+  useEffect(() => subscribeNavigateToWebAnnotation(({ snapshot }) => {
+    setWebAnnotationNavigationRequest((current) => ({
+      requestId: (current?.requestId ?? 0) + 1,
+      snapshot,
+    }));
+    openRightSidebar();
+  }), [openRightSidebar]);
 
   const gitEnabled = Boolean(activeProjectState && activeProjectState.status !== "none");
   const openGitToolWindow = useCallback(() => {
@@ -1277,6 +1332,7 @@ export function Layout({
                   a2uiRenderSuspended={a2uiRenderSuspendedForLayoutResize}
                   panelStateByScope={rightSidebarPanelStateByScope}
                   setPanelStateByScope={setRightSidebarPanelStateByScope}
+                  webAnnotationNavigationRequest={webAnnotationNavigationRequest}
                   onNavigateToConversation={(sessionId) => onNavigate?.(resolveSessionPath(sessionId, getSessionPath))}
                   onOpenModelSettings={() => onNavigate?.("/settings/model-defaults")}
                   onClose={closeRightSidebar}
@@ -1308,6 +1364,7 @@ function RightSidebarPanel({
   a2uiRenderSuspended,
   panelStateByScope,
   setPanelStateByScope,
+  webAnnotationNavigationRequest,
   onNavigateToConversation,
   onOpenModelSettings,
   onClose,
@@ -1321,6 +1378,7 @@ function RightSidebarPanel({
   a2uiRenderSuspended: boolean;
   panelStateByScope: Record<string, RightSidebarScopePanelState>;
   setPanelStateByScope: Dispatch<SetStateAction<Record<string, RightSidebarScopePanelState>>>;
+  webAnnotationNavigationRequest: WebAnnotationNavigationRequest | null;
   onNavigateToConversation?: (sessionId: string) => void;
   onOpenModelSettings?: () => void;
   onClose: () => void;
@@ -1328,6 +1386,7 @@ function RightSidebarPanel({
   onRestore: () => void;
 }) {
   const previewContext = useOptionalPreview();
+  const notifications = useNotifications();
   const rightSidebarConversation = useOptionalRightSidebarConversation();
   const activeScopeKey = previewContext?.activeScopeKey ?? GLOBAL_RIGHT_SIDEBAR_SCOPE;
   const syncedPreviewOpenStampsRef = useRef<Set<string>>(new Set());
@@ -1353,12 +1412,9 @@ function RightSidebarPanel({
   const hostContext = previewContext?.hostContext ?? null;
   const scopedPanelState = normalizeRightSidebarScopePanelState(panelStateByScope[activeScopeKey]);
   const activePanelId = scopedPanelState.activePanelId;
-  const filePanelIds = scopedPanelState.filePanelIds;
-  const filePanels = scopedPanelState.filePanels;
-  const conversationPanelIds = scopedPanelState.conversationPanelIds;
-  const conversationPanels = scopedPanelState.conversationPanels;
-  const reviewPanelIds = scopedPanelState.reviewPanelIds;
-  const reviewPanels = scopedPanelState.reviewPanels;
+  const filePanelIds = panelIdsByKind(scopedPanelState, "files");
+  const conversationPanelIds = panelIdsByKind(scopedPanelState, "conversation");
+  const reviewPanelIds = panelIdsByKind(scopedPanelState, "review");
   const initialPanelIds = scopedPanelState.initialPanelIds;
   const entryIds = entries.map((entry) => entry.id);
   const orderedPanelIds = orderedRightSidebarPanelIds(scopedPanelState, entryIds);
@@ -1369,16 +1425,13 @@ function RightSidebarPanel({
   );
   const canOpenBtwConversation = Boolean(hostContext?.sessionId && hostContext.runtime);
   const canOpenSubagents = Boolean(hostContext?.sessionId);
-  const canOpenReview = true;
   const resolvedActivePanelId = activePanelId ?? activeEntryId ?? orderedPanelIds[0] ?? null;
-  const activeFilePanel = resolvedActivePanelId ? (filePanels[resolvedActivePanelId] ?? null) : null;
-  const activeConversationPanel = resolvedActivePanelId ? (conversationPanels[resolvedActivePanelId] ?? null) : null;
-  const activeReviewPanel = resolvedActivePanelId ? (reviewPanels[resolvedActivePanelId] ?? null) : null;
+  const activeRegisteredPanel = resolvedActivePanelId
+    ? scopedPanelState.panels[resolvedActivePanelId] ?? null
+    : null;
   const activePreviewEntry =
     resolvedActivePanelId &&
-    !activeFilePanel &&
-    !activeConversationPanel &&
-    !activeReviewPanel &&
+    !activeRegisteredPanel &&
     !initialPanelIds.includes(resolvedActivePanelId)
       ? entries.find((entry) => entry.id === resolvedActivePanelId) ?? null
       : null;
@@ -1393,15 +1446,6 @@ function RightSidebarPanel({
     }) : undefined,
     [activePreviewEntry],
   );
-  const filePanelQuoteSelection = useCallback(
-    (request: PreviewQuoteSelectionRequest) => {
-      filePanelRenderContext?.onQuoteSelection?.(request);
-      if (maximized) {
-        onRestore();
-      }
-    },
-    [filePanelRenderContext?.onQuoteSelection, maximized, onRestore],
-  );
   const activePreviewQuoteSelection = useCallback(
     (request: PreviewQuoteSelectionRequest) => {
       activeRenderContext?.onQuoteSelection?.(request);
@@ -1411,15 +1455,10 @@ function RightSidebarPanel({
     },
     [activeRenderContext?.onQuoteSelection, maximized, onRestore],
   );
-  const showFilesPanel = Boolean(activeFilePanel);
-  const showConversationPanel = Boolean(activeConversationPanel);
-  const showReviewPanel = Boolean(activeReviewPanel);
   const panelActivePreviewEntryId =
     open &&
     resolvedActivePanelId &&
-    !activeFilePanel &&
-    !activeConversationPanel &&
-    !activeReviewPanel &&
+    !activeRegisteredPanel &&
     !initialPanelIds.includes(resolvedActivePanelId)
       ? activePreviewEntry?.id ?? (resolvedActivePanelId === activeEntryId ? activeEntryId : null)
       : null;
@@ -1534,18 +1573,13 @@ function RightSidebarPanel({
       return;
     }
     updateActiveScopePanelState((current) => {
-      const activeFilePanelId = activeFilePanelIdForState(current);
-      const nextPanelOrder = current.panelOrder.filter((id) => !current.filePanels[id]);
-      const activePanelId =
-        activeFilePanelId && current.activePanelId === activeFilePanelId
-          ? activeEntryId ?? nextPanelOrder[0] ?? null
-          : current.activePanelId;
+      const fileIds = new Set(panelIdsByKind(current, "files"));
+      const next = removeRegisteredPanels(current, fileIds);
       return {
-        ...current,
-        activePanelId,
-        panelOrder: nextPanelOrder,
-        filePanelIds: [],
-        filePanels: {},
+        ...next,
+        activePanelId: current.activePanelId && fileIds.has(current.activePanelId)
+          ? activeEntryId ?? next.activePanelId
+          : next.activePanelId,
       };
     });
   }, [activeEntryId, canOpenFiles, filePanelIds.length, updateActiveScopePanelState]);
@@ -1583,29 +1617,93 @@ function RightSidebarPanel({
     );
   }, [reviewPanelRequest, updateActiveScopePanelState]);
 
-  const openFilesPanel = useCallback(() => {
-    if (!canOpenFiles) {
-      return;
-    }
-    updateActiveScopePanelState((current) => activateOrCreateFilePanel(current));
-  }, [canOpenFiles, updateActiveScopePanelState]);
+  const openDefaultRegisteredPanel = useCallback(
+    (kind: RightSidebarPanelKind, forceNew = false, input?: JsonObject) => {
+      updateActiveScopePanelState((current) => {
+        const activePanel = current.activePanelId
+          ? current.panels[current.activePanelId]
+          : null;
+        if (!forceNew && activePanel?.kind === kind) return current;
+        if (kind === "browser") {
+          const browserPanelIds = panelIdsByKind(current, "browser");
+          if (browserPanelIds.length >= BROWSER_LIMITS.maxPanelMetadata) {
+            return { ...current, activePanelId: browserPanelIds.at(-1) ?? current.activePanelId };
+          }
+        }
+        const definition = rightSidebarDefinitionRegistry.get(kind);
+        const singletonPanelId = definition.multiplicity === "singleton"
+          ? panelIdsByKind(current, kind)[0] ?? null
+          : null;
+        if (singletonPanelId) {
+          return { ...current, activePanelId: singletonPanelId };
+        }
+        const activeInitialPanelId = activeInitialPanelIdForState(current);
+        const nextPanelSeq = activeInitialPanelId
+          ? current.nextPanelSeq
+          : current.nextPanelSeq + 1;
+        const panelId = activeInitialPanelId ?? rightSidebarDefinitionRegistry.panelId(
+          kind,
+          nextPanelSeq,
+        );
+        const panel = rightSidebarDefinitionRegistry.create(kind, {
+          id: panelId,
+          sequence: nextPanelSeq,
+          now: new Date().toISOString(),
+          input,
+        });
+        return {
+          ...current,
+          activePanelId: panelId,
+          panelOrder: activeInitialPanelId
+            ? current.panelOrder
+            : [...current.panelOrder, panelId],
+          panels: { ...current.panels, [panelId]: panel },
+          initialPanelIds: activeInitialPanelId
+            ? current.initialPanelIds.filter((id) => id !== activeInitialPanelId)
+            : current.initialPanelIds,
+          nextPanelSeq,
+        };
+      });
+    },
+    [updateActiveScopePanelState],
+  );
 
-  const openReviewPanel = useCallback(() => {
-    updateActiveScopePanelState((current) =>
-      activateOrCreateReviewPanel(current, {
-        requestId: 0,
-        scopeKey: activeScopeKey,
-        files: [],
-        document: null,
-        focusedPath: null,
-        panelKey: "manual",
-        sourceMessageId: null,
-        title: "审阅",
-        toolCallId: null,
-        renderContext: null,
-      }),
+  const lastWebAnnotationNavigationRequestRef = useRef(0);
+  useEffect(() => {
+    if (
+      !webAnnotationNavigationRequest
+      || webAnnotationNavigationRequest.requestId === lastWebAnnotationNavigationRequestRef.current
+    ) return;
+    lastWebAnnotationNavigationRequestRef.current = webAnnotationNavigationRequest.requestId;
+    const snapshot = webAnnotationNavigationRequest.snapshot;
+    const openSourcePanel = (documentUrl: string) => openDefaultRegisteredPanel(
+      "browser",
+      true,
+      { restoreUrl: documentUrl },
     );
-  }, [activeScopeKey, updateActiveScopePanelState]);
+    void createWebAnnotationClient(runtime.http).get(snapshot.annotationId)
+      .then((detail) => webAnnotationNavigator.navigate({
+        scopeKey: activeScopeKey,
+        target: {
+          annotationId: detail.annotation.id,
+          resourceId: detail.resource.id,
+          urlKey: detail.resource.urlKey,
+          documentUrl: detail.resource.documentUrl,
+        },
+        createPanel: openSourcePanel,
+      }))
+      .then((result) => {
+        if (result.status === "evidence_only") {
+          notifications.warning("已打开网页来源；当前页面无法唯一定位该批注，历史快照保持不变");
+        } else if (result.status === "unavailable") {
+          notifications.warning(`暂时无法定位网页批注：${result.reason}`);
+        }
+      })
+      .catch(() => {
+        openSourcePanel(snapshot.source.url);
+        notifications.warning("源批注已删除或暂时不可用，已打开发送时页面；历史快照保持不变");
+      });
+  }, [activeScopeKey, notifications, openDefaultRegisteredPanel, runtime.http, webAnnotationNavigationRequest]);
 
   const openBtwConversationFromHost = useCallback(() => {
     const sessionId = hostContext?.sessionId?.trim() ?? "";
@@ -1624,60 +1722,6 @@ function RightSidebarPanel({
     if (!sessionId) return;
     rightSidebarConversation?.openSubagentList(sessionId);
   }, [hostContext?.sessionId, rightSidebarConversation]);
-
-  const closeFilesPanel = useCallback(
-    (panelId: string) => {
-      const remainingFilePanelIds = filePanelIds.filter((id) => id !== panelId);
-      const shouldCloseSidebar =
-        entries.length === 0 &&
-        initialPanelIds.length === 0 &&
-        conversationPanelIds.length === 0 &&
-        reviewPanelIds.length === 0 &&
-        remainingFilePanelIds.length === 0 &&
-        resolvedActivePanelId === panelId;
-      updateActiveScopePanelState((current) => {
-        const nextFilePanelIds = current.filePanelIds.filter((id) => id !== panelId);
-        const nextFilePanels = { ...current.filePanels };
-        delete nextFilePanels[panelId];
-        if (current.activePanelId !== panelId) {
-          return {
-            ...current,
-            panelOrder: current.panelOrder.filter((id) => id !== panelId),
-            filePanelIds: nextFilePanelIds,
-            filePanels: nextFilePanels,
-          };
-        }
-        const nextPanelId = nextPanelIdAfterRemoval(current.panelOrder, panelId);
-        return {
-          ...current,
-          activePanelId:
-            nextPanelId ??
-            activeEntryId ??
-            entries[0]?.id ??
-            current.reviewPanelIds[0] ??
-            current.conversationPanelIds[0] ??
-            null,
-          panelOrder: current.panelOrder.filter((id) => id !== panelId),
-          filePanelIds: nextFilePanelIds,
-          filePanels: nextFilePanels,
-        };
-      });
-      if (shouldCloseSidebar) {
-        onClose();
-      }
-    },
-    [
-      activeEntryId,
-      entries,
-      conversationPanelIds.length,
-      filePanelIds,
-      initialPanelIds.length,
-      onClose,
-      resolvedActivePanelId,
-      reviewPanelIds.length,
-      updateActiveScopePanelState,
-    ],
-  );
 
   const closePreviewEntry = useCallback(
     (entryId: string) => {
@@ -1703,9 +1747,6 @@ function RightSidebarPanel({
           activePanelId:
             nextEntry?.id ??
             nextPanelIdAfterRemoval(current.panelOrder, entryId) ??
-            current.filePanelIds[0] ??
-            current.reviewPanelIds[0] ??
-            current.conversationPanelIds[0] ??
             null,
           panelOrder: current.panelOrder.filter((id) => id !== entryId),
         };
@@ -1739,140 +1780,15 @@ function RightSidebarPanel({
     [previewContext, updateActiveScopePanelState],
   );
 
-  const activateFilesPanel = useCallback(
+  const activateRegisteredPanel = useCallback(
     (panelId: string) => {
-      updateActiveScopePanelState((current) =>
-        current.filePanels[panelId] ? { ...current, activePanelId: panelId } : current,
-      );
+      updateActiveScopePanelState((current) => (
+        current.panels[panelId]
+          ? { ...current, activePanelId: panelId }
+          : current
+      ));
     },
     [updateActiveScopePanelState],
-  );
-
-  const activateConversationPanel = useCallback(
-    (panelId: string) => {
-      updateActiveScopePanelState((current) =>
-        current.conversationPanels[panelId] ? { ...current, activePanelId: panelId } : current,
-      );
-    },
-    [updateActiveScopePanelState],
-  );
-
-  const activateReviewPanel = useCallback(
-    (panelId: string) => {
-      updateActiveScopePanelState((current) =>
-        current.reviewPanels[panelId] ? { ...current, activePanelId: panelId } : current,
-      );
-    },
-    [updateActiveScopePanelState],
-  );
-
-  const closeReviewPanel = useCallback(
-    (panelId: string) => {
-      const remainingReviewPanelIds = reviewPanelIds.filter((id) => id !== panelId);
-      const shouldCloseSidebar =
-        resolvedActivePanelId === panelId &&
-        remainingReviewPanelIds.length === 0 &&
-        conversationPanelIds.length === 0 &&
-        filePanelIds.length === 0 &&
-        initialPanelIds.length === 0 &&
-        entries.length === 0;
-      updateActiveScopePanelState((current) => {
-        const nextReviewPanelIds = current.reviewPanelIds.filter((id) => id !== panelId);
-        const nextReviewPanels = { ...current.reviewPanels };
-        delete nextReviewPanels[panelId];
-        if (current.activePanelId !== panelId) {
-          return {
-            ...current,
-            panelOrder: current.panelOrder.filter((id) => id !== panelId),
-            reviewPanelIds: nextReviewPanelIds,
-            reviewPanels: nextReviewPanels,
-          };
-        }
-        const nextPanelId = nextPanelIdAfterRemoval(current.panelOrder, panelId);
-        return {
-          ...current,
-          activePanelId:
-            nextPanelId ??
-            activeEntryId ??
-            entries[0]?.id ??
-            current.filePanelIds[0] ??
-            nextReviewPanelIds[0] ??
-            current.conversationPanelIds[0] ??
-            null,
-          panelOrder: current.panelOrder.filter((id) => id !== panelId),
-          reviewPanelIds: nextReviewPanelIds,
-          reviewPanels: nextReviewPanels,
-        };
-      });
-      if (shouldCloseSidebar) {
-        onClose();
-      }
-    },
-    [
-      activeEntryId,
-      entries,
-      conversationPanelIds.length,
-      filePanelIds.length,
-      initialPanelIds.length,
-      onClose,
-      resolvedActivePanelId,
-      reviewPanelIds,
-      updateActiveScopePanelState,
-    ],
-  );
-
-  const closeConversationPanel = useCallback(
-    (panelId: string) => {
-      const remainingConversationPanelIds = conversationPanelIds.filter((id) => id !== panelId);
-      const shouldCloseSidebar =
-        resolvedActivePanelId === panelId &&
-        remainingConversationPanelIds.length === 0 &&
-        filePanelIds.length === 0 &&
-        reviewPanelIds.length === 0 &&
-        initialPanelIds.length === 0 &&
-        entries.length === 0;
-      updateActiveScopePanelState((current) => {
-        const nextConversationPanelIds = current.conversationPanelIds.filter((id) => id !== panelId);
-        const nextConversationPanels = { ...current.conversationPanels };
-        delete nextConversationPanels[panelId];
-        if (current.activePanelId !== panelId) {
-          return {
-            ...current,
-            panelOrder: current.panelOrder.filter((id) => id !== panelId),
-            conversationPanelIds: nextConversationPanelIds,
-            conversationPanels: nextConversationPanels,
-          };
-        }
-        const nextPanelId = nextPanelIdAfterRemoval(current.panelOrder, panelId);
-        return {
-          ...current,
-          activePanelId:
-            nextPanelId ??
-            activeEntryId ??
-            entries[0]?.id ??
-            current.filePanelIds[0] ??
-            current.reviewPanelIds[0] ??
-            null,
-          panelOrder: current.panelOrder.filter((id) => id !== panelId),
-          conversationPanelIds: nextConversationPanelIds,
-          conversationPanels: nextConversationPanels,
-        };
-      });
-      if (shouldCloseSidebar) {
-        onClose();
-      }
-    },
-    [
-      activeEntryId,
-      conversationPanelIds,
-      entries,
-      filePanelIds.length,
-      initialPanelIds.length,
-      onClose,
-      resolvedActivePanelId,
-      reviewPanelIds.length,
-      updateActiveScopePanelState,
-    ],
   );
 
   const openInitialPanel = useCallback(() => {
@@ -1922,9 +1838,6 @@ function RightSidebarPanel({
             nextPanelId ??
             activeEntryId ??
             entries[0]?.id ??
-            current.filePanelIds[0] ??
-            current.reviewPanelIds[0] ??
-            current.conversationPanelIds[0] ??
             null,
           panelOrder: current.panelOrder.filter((id) => id !== panelId),
           initialPanelIds: nextInitialPanelIds,
@@ -1968,16 +1881,11 @@ function RightSidebarPanel({
           currentActivePanelId && remainingPanelIdSet.has(currentActivePanelId)
             ? currentActivePanelId
             : nextPanelIdAfterBulkRemoval(orderedPanelIds, closeSet, currentActivePanelId) ?? null;
+        const withoutRegistered = removeRegisteredPanels(current, closeSet);
         return {
-          ...current,
+          ...withoutRegistered,
           activePanelId: nextActivePanelId,
           panelOrder: nextPanelOrder,
-          filePanelIds: current.filePanelIds.filter((panelId) => !closeSet.has(panelId)),
-          filePanels: omitRecordKeys(current.filePanels, closeSet),
-          conversationPanelIds: current.conversationPanelIds.filter((panelId) => !closeSet.has(panelId)),
-          conversationPanels: omitRecordKeys(current.conversationPanels, closeSet),
-          reviewPanelIds: current.reviewPanelIds.filter((panelId) => !closeSet.has(panelId)),
-          reviewPanels: omitRecordKeys(current.reviewPanels, closeSet),
           initialPanelIds: current.initialPanelIds.filter((panelId) => !closeSet.has(panelId)),
         };
       });
@@ -2015,58 +1923,16 @@ function RightSidebarPanel({
     [closeRightSidebarPanels, closeRightSidebarTabMenu],
   );
 
-  const updateFilePanelPreviewPath = useCallback(
-    (path: string | null) => {
-      const panelId = activeFilePanel?.id;
-      if (!panelId) {
-        return;
-      }
+  const updateRegisteredPanelState = useCallback(
+    (nextPanel: RightSidebarPanelState) => {
       updateActiveScopePanelState((current) => {
-        const panel = current.filePanels[panelId];
-        if (!panel) {
-          return current;
-        }
-        return {
-          ...current,
-          filePanels: {
-            ...current.filePanels,
-            [panelId]: {
-              ...panel,
-              filePreviewPath: path,
-              filePreviewRequestId: panel.filePreviewRequestId + 1,
-              filePreviewRevealTarget: null,
-            },
-          },
-        };
+        const previousPanel = current.panels[nextPanel.id];
+        return previousPanel?.kind === nextPanel.kind
+          ? replaceRegisteredPanel(current, nextPanel)
+          : current;
       });
     },
-    [activeFilePanel?.id, updateActiveScopePanelState],
-  );
-
-  const updateReviewPanelFocusedPath = useCallback(
-    (path: string) => {
-      const panelId = activeReviewPanel?.id;
-      if (!panelId) {
-        return;
-      }
-      updateActiveScopePanelState((current) => {
-        const panel = current.reviewPanels[panelId];
-        if (!panel) {
-          return current;
-        }
-        return {
-          ...current,
-          reviewPanels: {
-            ...current.reviewPanels,
-            [panelId]: {
-              ...panel,
-              focusedPath: path,
-            },
-          },
-        };
-      });
-    },
-    [activeReviewPanel?.id, updateActiveScopePanelState],
+    [updateActiveScopePanelState],
   );
 
   const openReviewFile = useCallback(
@@ -2082,24 +1948,44 @@ function RightSidebarPanel({
   const handleConversationQuoteRequestHandled = useCallback(
     (panelId: string, requestId: number) => {
       updateActiveScopePanelState((current) => {
-        const panel = current.conversationPanels[panelId];
-        if (!panel?.quoteRequest || panel.quoteRequest.requestId !== requestId) {
+        const panel = current.panels[panelId];
+        if (panel?.kind !== "conversation" || !panel.quoteRequest || panel.quoteRequest.requestId !== requestId) {
           return current;
         }
-        return {
-          ...current,
-          conversationPanels: {
-            ...current.conversationPanels,
-            [panelId]: {
-              ...panel,
-              quoteRequest: null,
-            },
-          },
-        };
+        return replaceRegisteredPanel(current, { ...panel, quoteRequest: null });
       });
     },
     [updateActiveScopePanelState],
   );
+
+  const initialActionOverrides: Record<
+    string,
+    { available: boolean; onSelect(): void }
+  > = {
+    conversation: {
+      available: canOpenBtwConversation,
+      onSelect: openBtwConversationFromHost,
+    },
+    subagents: {
+      available: canOpenSubagents,
+      onSelect: openSubagentsFromHost,
+    },
+  };
+  const defaultPanelAvailability: Partial<Record<RightSidebarPanelKind, boolean>> = {
+    files: canOpenFiles,
+  };
+  const initialPageActions = rightSidebarDefinitionRegistry.listInitialActions().flatMap((action) => {
+    const actionState = initialActionOverrides[action.id] ?? {
+      available: defaultPanelAvailability[action.kind] ?? true,
+      onSelect: () => openDefaultRegisteredPanel(action.kind),
+    };
+    return actionState.available ? [{
+      id: action.id,
+      label: action.label,
+      icon: <RightSidebarPanelIconGlyph icon={action.icon} size={14} strokeWidth={1.9} />,
+      onSelect: actionState.onSelect,
+    }] : [];
+  });
 
   const controls = (
     <RightSidebarControls
@@ -2116,119 +2002,32 @@ function RightSidebarPanel({
     <aside className={styles.rightSidebar} aria-label={panelLabel} aria-hidden={!open}>
       {open ? (
         <>
-          <div className={styles.rightSidebarTopbar}>
+          <AppTooltipLayer
+            defaultPlacement="bottom"
+            delayMs={260}
+            ownerId="right-sidebar-chrome"
+            scopeSelector="[data-right-sidebar-chrome-tooltips='true']"
+          />
+          <div
+            className={styles.rightSidebarTopbar}
+            data-app-tooltip-owner="right-sidebar-chrome"
+            data-right-sidebar-chrome-tooltips="true"
+          >
             <div className={styles.rightSidebarTabArea}>
               <div className={styles.rightSidebarTabs} role="tablist" aria-label="侧边栏窗口">
                 {orderedPanelIds.map((panelId) => {
-                  const filePanel = filePanels[panelId];
-                  if (filePanel) {
-                    const active = resolvedActivePanelId === panelId;
+                  const registeredPanel = scopedPanelState.panels[panelId];
+                  if (registeredPanel) {
                     return (
-                      <div
-                        className={styles.rightSidebarTab}
-                        data-active={active ? "true" : "false"}
-                        data-app-context-menu="local"
-                        data-menu-open={rightSidebarTabMenu?.panelId === panelId ? "true" : undefined}
+                      <RightSidebarRegisteredTab
+                        active={resolvedActivePanelId === panelId}
                         key={panelId}
+                        menuOpen={rightSidebarTabMenu?.panelId === panelId}
+                        panel={registeredPanel}
+                        onActivate={() => activateRegisteredPanel(panelId)}
+                        onClose={() => closeRightSidebarPanels([panelId])}
                         onContextMenu={(event) => openRightSidebarTabMenu(event, panelId)}
-                      >
-                        <button
-                          className={styles.rightSidebarTabMain}
-                          type="button"
-                          role="tab"
-                          aria-selected={active}
-                          onClick={() => activateFilesPanel(panelId)}
-                        >
-                          <Folder size={12} />
-                          <span>文件</span>
-                        </button>
-                        <button
-                          className={styles.rightSidebarTabClose}
-                          type="button"
-                          aria-label="关闭侧边栏窗口 文件"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            closeFilesPanel(panelId);
-                          }}
-                        >
-                          <X size={11} />
-                        </button>
-                      </div>
-                    );
-                  }
-                  const conversationPanel = conversationPanels[panelId];
-                  if (conversationPanel) {
-                    const active = resolvedActivePanelId === panelId;
-                    const title = conversationPanel.title || "旁路对话";
-                    const ConversationIcon = conversationPanel.kind === "subagent" ? Bot : MessageSquare;
-                    return (
-                      <div
-                        className={styles.rightSidebarTab}
-                        data-active={active ? "true" : "false"}
-                        data-app-context-menu="local"
-                        data-menu-open={rightSidebarTabMenu?.panelId === panelId ? "true" : undefined}
-                        key={panelId}
-                        onContextMenu={(event) => openRightSidebarTabMenu(event, panelId)}
-                      >
-                        <button
-                          className={styles.rightSidebarTabMain}
-                          type="button"
-                          role="tab"
-                          aria-selected={active}
-                          onClick={() => activateConversationPanel(panelId)}
-                        >
-                          <ConversationIcon size={12} />
-                          <span>{title}</span>
-                        </button>
-                        <button
-                          className={styles.rightSidebarTabClose}
-                          type="button"
-                          aria-label={`关闭侧边栏窗口 ${title}`}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            closeConversationPanel(panelId);
-                          }}
-                        >
-                          <X size={11} />
-                        </button>
-                      </div>
-                    );
-                  }
-                  const reviewPanel = reviewPanels[panelId];
-                  if (reviewPanel) {
-                    const active = resolvedActivePanelId === panelId;
-                    const title = reviewPanel.title || "审阅";
-                    return (
-                      <div
-                        className={styles.rightSidebarTab}
-                        data-active={active ? "true" : "false"}
-                        data-app-context-menu="local"
-                        data-menu-open={rightSidebarTabMenu?.panelId === panelId ? "true" : undefined}
-                        key={panelId}
-                        onContextMenu={(event) => openRightSidebarTabMenu(event, panelId)}
-                      >
-                        <button
-                          className={styles.rightSidebarTabMain}
-                          type="button"
-                          role="tab"
-                          aria-selected={active}
-                          onClick={() => activateReviewPanel(panelId)}
-                        >
-                          <FileDiff size={12} />
-                          <span>审阅</span>
-                        </button>
-                        <button
-                          className={styles.rightSidebarTabClose}
-                          type="button"
-                          aria-label="关闭侧边栏窗口 审阅"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            closeReviewPanel(panelId);
-                          }}
-                        >
-                          <X size={11} />
-                        </button>
-                      </div>
+                      />
                     );
                   }
                   if (initialPanelIds.includes(panelId)) {
@@ -2248,6 +2047,7 @@ function RightSidebarPanel({
                           type="button"
                           role="tab"
                           aria-selected={active}
+                          data-tooltip-label={title}
                           onClick={() => activateInitialPanel(panelId)}
                         >
                           <FileText size={12} />
@@ -2257,6 +2057,7 @@ function RightSidebarPanel({
                           className={styles.rightSidebarTabClose}
                           type="button"
                           aria-label={`关闭侧边栏窗口 ${title}`}
+                          data-tooltip-label={`关闭 ${title}`}
                           onClick={(event) => {
                             event.stopPropagation();
                             closeInitialPanel(panelId);
@@ -2286,6 +2087,7 @@ function RightSidebarPanel({
                         type="button"
                         role="tab"
                         aria-selected={active}
+                        data-tooltip-label={entry.title}
                         onClick={() => openPanelEntry(entry.id)}
                       >
                         <FileText size={12} />
@@ -2295,6 +2097,7 @@ function RightSidebarPanel({
                         className={styles.rightSidebarTabClose}
                         type="button"
                         aria-label={`关闭侧边栏窗口 ${entry.title}`}
+                        data-tooltip-label={`关闭 ${entry.title}`}
                         onClick={(event) => {
                           event.stopPropagation();
                           closePreviewEntry(entry.id);
@@ -2310,6 +2113,7 @@ function RightSidebarPanel({
                 className={styles.rightSidebarAddTab}
                 type="button"
                 aria-label="新建侧边栏页面"
+                data-tooltip-label="新建侧边栏页面"
                 onClick={openInitialPanel}
               >
                 <Plus size={15} />
@@ -2372,115 +2176,46 @@ function RightSidebarPanel({
               </button>
             </div>
           ) : null}
-          {conversationPanelIds.map((panelId) => {
-            const conversationPanel = conversationPanels[panelId];
-            if (!conversationPanel) {
-              return null;
+          <RightSidebarRegisteredPanelHost
+            browserHostContext={{
+              onCreatePanel: (url) => openDefaultRegisteredPanel(
+                "browser",
+                true,
+                url ? { restoreUrl: url } : undefined,
+              ),
+              onActivatePanel: activateRegisteredPanel,
+              onClosePanel: (panelId) => closeRightSidebarPanels([panelId]),
+            }}
+            activePanelId={resolvedActivePanelId}
+            conversationHostContext={{
+              runtime,
+              a2uiRenderSuspended,
+              onNavigateToConversation,
+              onOpenModelSettings,
+              onQuoteRequestHandled: handleConversationQuoteRequestHandled,
+              onOpenSubagentList: (parentSessionId) =>
+                rightSidebarConversation?.openSubagentList(parentSessionId),
+            }}
+            filesHostContext={
+              filePanelRenderContext?.runtime &&
+              (filePanelRenderContext.sessionId || filePanelRenderContext.workspaceId)
+                ? {
+                    maximized,
+                    renderContext: filePanelRenderContext,
+                    onRestore,
+                  }
+                : null
             }
-            return (
-              <div
-                className={styles.rightSidebarBody}
-                data-content={conversationPanel.kind === "subagent" ? "subagent" : "conversation"}
-                hidden={resolvedActivePanelId !== panelId}
-                key={panelId}
-              >
-                {conversationPanel.status === "opening" ? (
-                  <RightSidebarLoading label="正在打开旁路对话" />
-                ) : conversationPanel.kind === "subagent" ? (
-                  conversationPanel.subagentRun ? (
-                    <div className={styles.subagentPanel}>
-                      <SubagentPanelHeader
-                        role={conversationPanel.subagentRun.role}
-                        onBack={() => rightSidebarConversation?.openSubagentList(
-                          conversationPanel.parentSessionId ?? conversationPanel.subagentRun?.parent_session_id ?? "",
-                        )}
-                      />
-                      <div className={styles.subagentConversation}>
-                        <Suspense fallback={<RightSidebarLoading label="正在加载 Sub-Agent 对话" />}>
-                          <LazyConversationSessionSurface
-                            threadId={conversationPanel.subagentRun.child_session_id}
-                            runtime={runtime}
-                            mode="sidecar"
-                            previewPanelScopeKey={activeScopeKey}
-                            sidecarQuoteRequest={null}
-                            sidecarLoadedHistoryTurnCount={null}
-                            subagentRun={conversationPanel.subagentRun}
-                            a2uiRenderSuspended={a2uiRenderSuspended}
-                            onNavigateToConversation={onNavigateToConversation}
-                            onOpenModelSettings={onOpenModelSettings}
-                          />
-                        </Suspense>
-                      </div>
-                    </div>
-                  ) : conversationPanel.subagentInvocation ? (
-                    <SubagentInvocationDetail
-                      details={conversationPanel.subagentInvocation}
-                      onBack={() => rightSidebarConversation?.openSubagentList(
-                        conversationPanel.parentSessionId ?? conversationPanel.subagentInvocation?.parentSessionId ?? "",
-                      )}
-                    />
-                  ) : (
-                    <SubagentRunList parentSessionId={conversationPanel.parentSessionId ?? ""} />
-                  )
-                ) : (
-                  <Suspense fallback={<RightSidebarLoading label="正在加载旁路对话" />}>
-                    <LazyConversationSessionSurface
-                      threadId={conversationPanel.sessionId}
-                      runtime={runtime}
-                      mode="sidecar"
-                      previewPanelScopeKey={activeScopeKey}
-                      sidecarQuoteRequest={conversationPanel.quoteRequest}
-                      sidecarLoadedHistoryTurnCount={conversationPanel.loadedHistoryTurnCount}
-                      subagentRun={conversationPanel.subagentRun}
-                      a2uiRenderSuspended={a2uiRenderSuspended}
-                      onSidecarQuoteRequestHandled={(requestId) =>
-                        handleConversationQuoteRequestHandled(panelId, requestId)
-                      }
-                      onNavigateToConversation={onNavigateToConversation}
-                      onOpenModelSettings={onOpenModelSettings}
-                    />
-                  </Suspense>
-                )}
-              </div>
-            );
-          })}
-          {!showConversationPanel ? (
-            showReviewPanel && activeReviewPanel ? (
-              <div className={styles.rightSidebarBody} data-content="review">
-                <AgentReviewDiffPanel
-                  files={activeReviewPanel.files}
-                  document={activeReviewPanel.document}
-                  focusedPath={activeReviewPanel.focusedPath}
-                  title={activeReviewPanel.title}
-                  scopeKey={`${activeScopeKey}:${activeReviewPanel.id}`}
-                  onFocusPath={updateReviewPanelFocusedPath}
-                  onOpenFile={canOpenFiles ? openReviewFile : undefined}
-                />
-              </div>
-            ) : showFilesPanel &&
-            filePanelRenderContext?.runtime &&
-            (filePanelRenderContext.sessionId || filePanelRenderContext.workspaceId) ? (
-              <div className={styles.rightSidebarBody} data-content="files">
-                <Suspense fallback={<RightSidebarLoading label="正在加载文件" />}>
-                  <LazyWorkspaceFileBrowser
-                    key={`${activeScopeKey}:${activeFilePanel?.id ?? "files"}`}
-                    label={filePanelRenderContext.workspaceLabel}
-                    runtime={filePanelRenderContext.runtime}
-                    workspaceId={filePanelRenderContext.workspaceId}
-                    workspaceRootPath={filePanelRenderContext.workspaceRootPath}
-                    sessionId={filePanelRenderContext.sessionId}
-                    previewPath={activeFilePanel?.filePreviewPath ?? null}
-                    previewRequestId={activeFilePanel?.filePreviewRequestId ?? 0}
-                    previewRevealTarget={activeFilePanel?.filePreviewRevealTarget ?? null}
-                    directoryRevealPath={activeFilePanel?.directoryRevealPath ?? null}
-                    directoryRevealRequestId={activeFilePanel?.directoryRevealRequestId ?? 0}
-                    onQuoteSelection={filePanelRenderContext.onQuoteSelection ? filePanelQuoteSelection : undefined}
-                    onStartChatFromAnnotation={filePanelRenderContext.onStartChatFromAnnotation}
-                    onPreviewPathChange={updateFilePanelPreviewPath}
-                  />
-                </Suspense>
-              </div>
-            ) : activeRequest ? (
+            panelOrder={orderedPanelIds}
+            panels={scopedPanelState.panels}
+            reviewHostContext={{
+              onOpenFile: canOpenFiles ? openReviewFile : undefined,
+            }}
+            scopeKey={activeScopeKey}
+            onUpdatePanel={updateRegisteredPanelState}
+          />
+          {!activeRegisteredPanel ? (
+            activeRequest ? (
               <div className={styles.rightSidebarBody} data-content="preview">
                 <Suspense fallback={<RightSidebarLoading label="正在加载预览" />}>
                   <LazyFilePreview
@@ -2512,14 +2247,7 @@ function RightSidebarPanel({
             ) : (
               <div className={styles.rightSidebarBody} data-content="empty">
                 <RightSidebarInitialPage
-                  canOpenFiles={canOpenFiles}
-                  canOpenBtwConversation={canOpenBtwConversation}
-                  canOpenSubagents={canOpenSubagents}
-                  canOpenReview={canOpenReview}
-                  onOpenFiles={openFilesPanel}
-                  onOpenBtwConversation={openBtwConversationFromHost}
-                  onOpenSubagents={openSubagentsFromHost}
-                  onOpenReview={openReviewPanel}
+                  actions={initialPageActions}
                 />
               </div>
             )
@@ -2554,17 +2282,32 @@ function sameRightSidebarScopePanelState(
     left.activePanelId === right.activePanelId &&
     left.nextPanelSeq === right.nextPanelSeq &&
     sameStringArray(left.panelOrder, right.panelOrder) &&
-    sameStringArray(left.filePanelIds, right.filePanelIds) &&
-    sameStringArray(left.conversationPanelIds, right.conversationPanelIds) &&
-    sameStringArray(left.reviewPanelIds, right.reviewPanelIds) &&
-    sameFilePanels(left, right) &&
-    sameConversationPanels(left, right) &&
-    sameReviewPanels(left, right) &&
+    sameRegisteredPanels(left.panels, right.panels) &&
     sameStringArray(left.initialPanelIds, right.initialPanelIds)
   );
 }
 
-type LegacyRightSidebarScopePanelState = Partial<RightSidebarScopePanelState> & {
+function sameRegisteredPanels(
+  left: Record<string, RightSidebarPanelState>,
+  right: Record<string, RightSidebarPanelState>,
+): boolean {
+  const leftIds = Object.keys(left).sort();
+  const rightIds = Object.keys(right).sort();
+  return sameStringArray(leftIds, rightIds) && leftIds.every((panelId) =>
+    JSON.stringify(rightSidebarDefinitionRegistry.serializePanel(left[panelId])) ===
+    JSON.stringify(rightSidebarDefinitionRegistry.serializePanel(right[panelId])),
+  );
+}
+
+export type LegacyRightSidebarScopePanelState = Partial<RightSidebarScopePanelState> & {
+  filePanelIds?: string[];
+  filePanels?: Record<string, Partial<RightSidebarFilePanelState>>;
+  conversationPanelIds?: string[];
+  conversationPanels?: Record<string, Partial<Omit<RightSidebarConversationPanelState, "kind">> & {
+    kind?: "conversation" | "subagent";
+  }>;
+  reviewPanelIds?: string[];
+  reviewPanels?: Record<string, Partial<RightSidebarReviewPanelState>>;
   filesOpen?: boolean;
   initialPanelSeq?: number;
   filePreviewPath?: string | null;
@@ -2573,90 +2316,155 @@ type LegacyRightSidebarScopePanelState = Partial<RightSidebarScopePanelState> & 
   toolPanels?: Record<string, unknown>;
 };
 
-function normalizeRightSidebarScopePanelState(
+export function normalizeRightSidebarScopePanelState(
   state: LegacyRightSidebarScopePanelState | null | undefined,
 ): RightSidebarScopePanelState {
-  const {
-    toolPanelIds: retiredToolPanelIdsRaw = [],
-    toolPanels: retiredToolPanels,
-    ...supportedState
-  } = state ?? {};
-  void retiredToolPanels;
+  const retiredToolPanelIdsRaw = state?.toolPanelIds ?? [];
   const filePanels = Object.fromEntries(
-    Object.entries(state?.filePanels ?? {}).map(([panelId, panel]) => [
-      panelId,
-      {
-        ...panel,
+    Object.entries(state?.filePanels ?? {}).flatMap(([panelId, panel]) => {
+      const normalized = normalizeFilesPanelState({
+        id: panel.id ?? panelId,
+        kind: "files",
+        schemaVersion: 1,
+        filePreviewPath: panel.filePreviewPath ?? null,
+        filePreviewRequestId: panel.filePreviewRequestId ?? 0,
+        filePreviewRevealTarget: panel.filePreviewRevealTarget ?? null,
         directoryRevealPath: panel.directoryRevealPath ?? null,
         directoryRevealRequestId: panel.directoryRevealRequestId ?? 0,
-      },
-    ]),
+        createdAt: panel.createdAt ?? LEGACY_RIGHT_SIDEBAR_PANEL_TIMESTAMP,
+        lastActivatedAt: panel.lastActivatedAt ?? LEGACY_RIGHT_SIDEBAR_PANEL_TIMESTAMP,
+      });
+      return normalized?.id === panelId ? [[panelId, normalized] as const] : [];
+    }),
   );
   let filePanelIds = state?.filePanelIds ?? [];
   if (filePanelIds.length === 0 && state?.filesOpen) {
     filePanelIds = [LEGACY_FILES_PANEL_ID];
-    filePanels[LEGACY_FILES_PANEL_ID] = {
+    filePanels[LEGACY_FILES_PANEL_ID] = rightSidebarDefinitionRegistry.create("files", {
       id: LEGACY_FILES_PANEL_ID,
-      filePreviewPath: state.filePreviewPath ?? null,
-      filePreviewRequestId: state.filePreviewRequestId ?? 0,
-      filePreviewRevealTarget: null,
-      directoryRevealPath: null,
-      directoryRevealRequestId: 0,
-    };
+      sequence: 0,
+      now: LEGACY_RIGHT_SIDEBAR_PANEL_TIMESTAMP,
+      input: filesPanelCreateInput({
+        path: state.filePreviewPath ?? null,
+        requestId: state.filePreviewRequestId ?? 0,
+      }),
+    });
   }
   const conversationPanelIds = state?.conversationPanelIds ?? [];
   const conversationPanels = Object.fromEntries(
-    Object.entries(state?.conversationPanels ?? {}).map(([panelId, panel]) => [
-      panelId,
-      {
-        ...panel,
-        kind: panel.kind ?? (panel.subagentRun ? "subagent" : "conversation"),
-        status: panel.status ?? "ready",
-        parentSessionId: panel.parentSessionId ?? panel.subagentRun?.parent_session_id ?? null,
-        quoteRequest: panel.quoteRequest ?? null,
-        loadedHistoryTurnCount: panel.loadedHistoryTurnCount ?? null,
-        subagentRun: panel.subagentRun ?? null,
-        subagentInvocation: panel.subagentInvocation ?? null,
-      },
-    ]),
+    Object.entries(state?.conversationPanels ?? {}).flatMap(([panelId, panel]) => {
+      const legacyKind = (panel as unknown as { kind?: unknown }).kind;
+      try {
+        const normalized = rightSidebarDefinitionRegistry.create("conversation", {
+          id: panel.id ?? panelId,
+          sequence: maxPanelSeq([panelId]),
+          now: panel.createdAt ?? LEGACY_RIGHT_SIDEBAR_PANEL_TIMESTAMP,
+          input: conversationPanelCreateInput({
+            conversationKind: panel.conversationKind ?? (
+              legacyKind === "subagent" || panel.subagentRun ? "subagent" : "conversation"
+            ),
+            status: panel.status ?? "ready",
+            sessionId: panel.sessionId ?? "",
+            title: panel.title || (legacyKind === "subagent" ? "子智能体" : BTW_CONVERSATION_TITLE),
+            sourceSessionId: panel.sourceSessionId ?? null,
+            parentSessionId: panel.parentSessionId ?? panel.subagentRun?.parent_session_id ?? null,
+            quoteRequest: panel.quoteRequest ?? null,
+            loadedHistoryTurnCount: panel.loadedHistoryTurnCount ?? null,
+            subagentRun: panel.subagentRun ?? null,
+            subagentInvocation: panel.subagentInvocation ?? null,
+          }),
+        });
+        return normalized.id === panelId ? [[panelId, normalized] as const] : [];
+      } catch {
+        return [];
+      }
+    }),
   );
   const reviewPanelIds = state?.reviewPanelIds ?? [];
-  const reviewPanels = { ...(state?.reviewPanels ?? {}) };
+  const reviewPanels = Object.fromEntries(
+    Object.entries(state?.reviewPanels ?? {}).flatMap(([panelId, panel]) => {
+      try {
+        const normalized = rightSidebarDefinitionRegistry.create("review", {
+          id: panel.id ?? panelId,
+          sequence: maxPanelSeq([panelId]),
+          now: panel.createdAt ?? LEGACY_RIGHT_SIDEBAR_PANEL_TIMESTAMP,
+          input: reviewPanelCreateInput({
+            title: panel.title || "审阅",
+            files: panel.files ?? [],
+            document: panel.document ?? null,
+            focusedPath: panel.focusedPath ?? null,
+            panelKey: panel.panelKey || panelId,
+            sourceMessageId: panel.sourceMessageId ?? null,
+            toolCallId: panel.toolCallId ?? null,
+            requestId: panel.requestId ?? 0,
+          }),
+        });
+        return normalized.id === panelId ? [[panelId, normalized] as const] : [];
+      } catch {
+        return [];
+      }
+    }),
+  );
   const retiredToolPanelIds = new Set(retiredToolPanelIdsRaw);
+  const currentPanels = Object.fromEntries(
+    Object.entries(state?.panels ?? {}).flatMap(([panelId, panel]) => {
+      const normalized = rightSidebarDefinitionRegistry.normalizePanel(panel, {
+        now: LEGACY_RIGHT_SIDEBAR_PANEL_TIMESTAMP,
+        source: "migration",
+      });
+      return normalized?.id === panelId ? [[panelId, normalized] as const] : [];
+    }),
+  );
+  const panels: Record<string, RightSidebarPanelState> = {
+    ...currentPanels,
+    ...filePanels,
+    ...conversationPanels,
+    ...reviewPanels,
+  };
   const initialPanelIds = state?.initialPanelIds ?? [];
+  const invalidPersistedPanelIds = new Set([
+    ...Object.keys(state?.panels ?? {}),
+    ...Object.keys(state?.filePanels ?? {}),
+    ...Object.keys(state?.conversationPanels ?? {}),
+    ...Object.keys(state?.reviewPanels ?? {}),
+    ...filePanelIds,
+    ...conversationPanelIds,
+    ...reviewPanelIds,
+  ].filter((panelId) => !panels[panelId]));
+  const externalPanelIds = (state?.panelOrder ?? []).filter(
+    (panelId) => !invalidPersistedPanelIds.has(panelId) && !retiredToolPanelIds.has(panelId),
+  );
   const nextPanelSeq = Math.max(
     state?.nextPanelSeq ?? state?.initialPanelSeq ?? 0,
     maxPanelSeq([
       ...filePanelIds,
       ...conversationPanelIds,
       ...reviewPanelIds,
+      ...Object.keys(currentPanels),
       ...initialPanelIds,
     ]),
   );
   const panelOrder = orderedUniquePanelIds(
     (state?.panelOrder ?? []).filter((panelId) => !retiredToolPanelIds.has(panelId)),
     [
-      ...filePanelIds,
-      ...conversationPanelIds,
-      ...reviewPanelIds,
+      ...Object.keys(filePanels),
+      ...Object.keys(conversationPanels),
+      ...Object.keys(reviewPanels),
+      ...Object.keys(currentPanels),
       ...initialPanelIds,
+      ...externalPanelIds,
     ],
   );
-  const activePanelId = state?.activePanelId && retiredToolPanelIds.has(state.activePanelId)
-    ? null
-    : state?.activePanelId ?? null;
+  const requestedActivePanelId = state?.activePanelId ?? null;
+  const activePanelId = requestedActivePanelId && panelOrder.includes(requestedActivePanelId)
+    ? requestedActivePanelId
+    : panelOrder[0] ?? null;
 
   return {
-    ...EMPTY_RIGHT_SIDEBAR_SCOPE_STATE,
-    ...supportedState,
+    version: 2,
     activePanelId,
     panelOrder,
-    filePanelIds,
-    filePanels,
-    conversationPanelIds,
-    conversationPanels,
-    reviewPanelIds,
-    reviewPanels,
+    panels,
     initialPanelIds,
     nextPanelSeq,
   };
@@ -2673,7 +2481,9 @@ function activateOrCreateFilePanel(
   } = {},
 ): RightSidebarScopePanelState {
   const activeFilePanelId = activeFilePanelIdForState(state);
-  const reusableFilePanelId = activeFilePanelId ?? (options.preferExisting ? state.filePanelIds[0] : null);
+  const reusableFilePanelId = activeFilePanelId ?? (
+    options.preferExisting ? panelIdsByKind(state, "files")[0] : null
+  );
   if (reusableFilePanelId) {
     return activateExistingFilePanel(state, reusableFilePanelId, options);
   }
@@ -2681,21 +2491,19 @@ function activateOrCreateFilePanel(
   const activeInitialPanelId = activeInitialPanelIdForState(state);
   const nextPanelSeq = activeInitialPanelId ? state.nextPanelSeq : state.nextPanelSeq + 1;
   const panelId = activeInitialPanelId ?? `${FILES_PANEL_ID_PREFIX}${nextPanelSeq}`;
+  const panel = rightSidebarDefinitionRegistry.create("files", {
+    id: panelId,
+    sequence: nextPanelSeq,
+    now: new Date().toISOString(),
+    input: filesPanelCreateInput(options),
+  });
   return {
     ...state,
     activePanelId: panelId,
     panelOrder: activeInitialPanelId ? state.panelOrder : [...state.panelOrder, panelId],
-    filePanelIds: [...state.filePanelIds, panelId],
-    filePanels: {
-      ...state.filePanels,
-      [panelId]: {
-        id: panelId,
-        filePreviewPath: hasPanelPathOption(options) ? options.path ?? null : null,
-        filePreviewRequestId: hasPanelPathOption(options) ? options.requestId ?? 0 : 0,
-        filePreviewRevealTarget: options.revealTarget ?? null,
-        directoryRevealPath: options.directoryRevealPath ?? null,
-        directoryRevealRequestId: options.directoryRevealPath ? options.requestId ?? 0 : 0,
-      },
+    panels: {
+      ...state.panels,
+      [panelId]: panel,
     },
     initialPanelIds: activeInitialPanelId
       ? state.initialPanelIds.filter((id) => id !== activeInitialPanelId)
@@ -2714,42 +2522,45 @@ function activateExistingFilePanel(
     revealTarget?: PreviewFileRevealTarget | null;
   },
 ): RightSidebarScopePanelState {
-  const panel = state.filePanels[panelId];
-  if (!panel) {
+  const panel = state.panels[panelId];
+  if (panel?.kind !== "files") {
     return state;
   }
   if (!hasPanelPathOption(options) && !options.requestId && !options.directoryRevealPath) {
     return { ...state, activePanelId: panelId };
   }
+  const nextPanel = normalizeFilesPanelState({
+    ...serializeFilesPanelState(panel),
+    filePreviewPath: hasPanelPathOption(options) ? options.path ?? null : panel.filePreviewPath,
+    filePreviewRequestId: options.requestId
+      ? hasPanelPathOption(options)
+        ? Math.max(panel.filePreviewRequestId + 1, options.requestId)
+        : panel.filePreviewRequestId
+      : panel.filePreviewRequestId,
+    filePreviewRevealTarget: Object.prototype.hasOwnProperty.call(options, "revealTarget")
+      ? options.revealTarget ?? null
+      : panel.filePreviewRevealTarget,
+    directoryRevealPath: Object.prototype.hasOwnProperty.call(options, "directoryRevealPath")
+      ? options.directoryRevealPath ?? null
+      : panel.directoryRevealPath,
+    directoryRevealRequestId: options.directoryRevealPath && options.requestId
+      ? Math.max(panel.directoryRevealRequestId + 1, options.requestId)
+      : panel.directoryRevealRequestId,
+    lastActivatedAt: new Date().toISOString(),
+  });
+  if (!nextPanel) {
+    return state;
+  }
   return {
-    ...state,
+    ...replaceRegisteredPanel(state, nextPanel),
     activePanelId: panelId,
-    filePanels: {
-      ...state.filePanels,
-      [panelId]: {
-        ...panel,
-        filePreviewPath: hasPanelPathOption(options) ? options.path ?? null : panel.filePreviewPath,
-        filePreviewRequestId: options.requestId
-          ? hasPanelPathOption(options)
-            ? Math.max(panel.filePreviewRequestId + 1, options.requestId)
-            : panel.filePreviewRequestId
-          : panel.filePreviewRequestId,
-        filePreviewRevealTarget: Object.prototype.hasOwnProperty.call(options, "revealTarget")
-          ? options.revealTarget ?? null
-          : panel.filePreviewRevealTarget,
-        directoryRevealPath: Object.prototype.hasOwnProperty.call(options, "directoryRevealPath")
-          ? options.directoryRevealPath ?? null
-          : panel.directoryRevealPath,
-        directoryRevealRequestId: options.directoryRevealPath && options.requestId
-          ? Math.max(panel.directoryRevealRequestId + 1, options.requestId)
-          : panel.directoryRevealRequestId,
-      },
-    },
   };
 }
 
 function activeFilePanelIdForState(state: RightSidebarScopePanelState): string | null {
-  return state.activePanelId && state.filePanels[state.activePanelId] ? state.activePanelId : null;
+  return state.activePanelId && state.panels[state.activePanelId]?.kind === "files"
+    ? state.activePanelId
+    : null;
 }
 
 function activeInitialPanelIdForState(state: RightSidebarScopePanelState): string | null {
@@ -2761,7 +2572,10 @@ function activateOrCreateReviewPanel(
   request: ReviewPanelRequest,
 ): RightSidebarScopePanelState {
   const existingPanelId =
-    state.reviewPanelIds.find((panelId) => state.reviewPanels[panelId]?.panelKey === request.panelKey) ?? null;
+    panelIdsByKind(state, "review").find((panelId) => {
+      const panel = state.panels[panelId];
+      return panel?.kind === "review" && panel.panelKey === request.panelKey;
+    }) ?? null;
   if (existingPanelId) {
     return activateExistingReviewPanel(state, existingPanelId, request);
   }
@@ -2773,9 +2587,8 @@ function activateOrCreateReviewPanel(
     ...state,
     activePanelId: panelId,
     panelOrder: activeInitialPanelId ? state.panelOrder : [...state.panelOrder, panelId],
-    reviewPanelIds: [...state.reviewPanelIds, panelId],
-    reviewPanels: {
-      ...state.reviewPanels,
+    panels: {
+      ...state.panels,
       [panelId]: reviewPanelState(panelId, request),
     },
     initialPanelIds: activeInitialPanelId
@@ -2790,41 +2603,46 @@ function activateExistingReviewPanel(
   panelId: string,
   request: ReviewPanelRequest,
 ): RightSidebarScopePanelState {
-  const panel = state.reviewPanels[panelId];
-  if (!panel) {
+  const panel = state.panels[panelId];
+  if (panel?.kind !== "review") {
+    return state;
+  }
+  const nextPanel = normalizeReviewPanelState({
+    ...serializeReviewPanelState(panel),
+    title: request.title || panel.title,
+    files: request.files,
+    document: request.document,
+    focusedPath: request.focusedPath ?? request.files[0]?.path ?? panel.focusedPath,
+    sourceMessageId: request.sourceMessageId,
+    toolCallId: request.toolCallId,
+    requestId: Math.max(panel.requestId + 1, request.requestId),
+    lastActivatedAt: new Date().toISOString(),
+  });
+  if (!nextPanel) {
     return state;
   }
   return {
-    ...state,
+    ...replaceRegisteredPanel(state, nextPanel),
     activePanelId: panelId,
-    reviewPanels: {
-      ...state.reviewPanels,
-      [panelId]: {
-        ...panel,
-        title: request.title || panel.title,
-        files: request.files,
-        document: request.document,
-        focusedPath: request.focusedPath ?? request.files[0]?.path ?? panel.focusedPath,
-        sourceMessageId: request.sourceMessageId,
-        toolCallId: request.toolCallId,
-        requestId: Math.max(panel.requestId + 1, request.requestId),
-      },
-    },
   };
 }
 
 function reviewPanelState(panelId: string, request: ReviewPanelRequest): RightSidebarReviewPanelState {
-  return {
+  return rightSidebarDefinitionRegistry.create("review", {
     id: panelId,
-    title: request.title || "审阅",
-    files: request.files,
-    document: request.document,
-    focusedPath: request.focusedPath ?? request.files[0]?.path ?? null,
-    panelKey: request.panelKey,
-    sourceMessageId: request.sourceMessageId,
-    toolCallId: request.toolCallId,
-    requestId: request.requestId,
-  };
+    sequence: maxPanelSeq([panelId]),
+    now: new Date().toISOString(),
+    input: reviewPanelCreateInput({
+      title: request.title || "审阅",
+      files: request.files,
+      document: request.document,
+      focusedPath: request.focusedPath ?? request.files[0]?.path ?? null,
+      panelKey: request.panelKey,
+      sourceMessageId: request.sourceMessageId,
+      toolCallId: request.toolCallId,
+      requestId: request.requestId,
+    }),
+  });
 }
 
 function activateOrCreateConversationPanel(
@@ -2842,7 +2660,10 @@ function activateOrCreateConversationPanel(
     return state;
   }
   const existingPanelId =
-    state.conversationPanelIds.find((panelId) => state.conversationPanels[panelId]?.sessionId === sessionId) ?? null;
+    panelIdsByKind(state, "conversation").find((panelId) => {
+      const panel = state.panels[panelId];
+      return panel?.kind === "conversation" && panel.sessionId === sessionId;
+    }) ?? null;
   if (existingPanelId) {
     return activateExistingConversationPanel(state, existingPanelId, options);
   }
@@ -2854,9 +2675,8 @@ function activateOrCreateConversationPanel(
     ...state,
     activePanelId: panelId,
     panelOrder: activeInitialPanelId ? state.panelOrder : [...state.panelOrder, panelId],
-    conversationPanelIds: [...state.conversationPanelIds, panelId],
-    conversationPanels: {
-      ...state.conversationPanels,
+    panels: {
+      ...state.panels,
       [panelId]: conversationPanelState(panelId, options),
     },
     initialPanelIds: activeInitialPanelId
@@ -2877,28 +2697,24 @@ function activateExistingConversationPanel(
     loadedHistoryTurnCount?: number | null;
   },
 ): RightSidebarScopePanelState {
-  const panel = state.conversationPanels[panelId];
-  if (!panel) {
+  const panel = state.panels[panelId];
+  if (panel?.kind !== "conversation") {
     return state;
   }
   return {
-    ...state,
+    ...replaceRegisteredPanel(state, {
+      ...panel,
+      conversationKind: "conversation",
+      status: "ready",
+      title: conversationPanelTitle(options),
+      sourceSessionId: options.sourceSessionId ?? panel.sourceSessionId,
+      parentSessionId: null,
+      quoteRequest: options.quote ? nextConversationQuoteRequest(options.quote, panel.quoteRequest) : panel.quoteRequest,
+      loadedHistoryTurnCount: options.loadedHistoryTurnCount ?? panel.loadedHistoryTurnCount,
+      subagentRun: null,
+      subagentInvocation: null,
+    }),
     activePanelId: panelId,
-    conversationPanels: {
-      ...state.conversationPanels,
-      [panelId]: {
-        ...panel,
-        kind: "conversation",
-        status: "ready",
-        title: conversationPanelTitle(options),
-        sourceSessionId: options.sourceSessionId ?? panel.sourceSessionId,
-        parentSessionId: null,
-        quoteRequest: options.quote ? nextConversationQuoteRequest(options.quote, panel.quoteRequest) : panel.quoteRequest,
-        loadedHistoryTurnCount: options.loadedHistoryTurnCount ?? panel.loadedHistoryTurnCount,
-        subagentRun: null,
-        subagentInvocation: null,
-      },
-    },
   };
 }
 
@@ -2912,9 +2728,8 @@ function conversationPanelState(
     loadedHistoryTurnCount?: number | null;
   },
 ): RightSidebarConversationPanelState {
-  return {
-    id: panelId,
-    kind: "conversation",
+  return createConversationPanelViaDefinition(panelId, {
+    conversationKind: "conversation",
     status: "ready",
     sessionId: options.session.id,
     title: conversationPanelTitle(options),
@@ -2924,7 +2739,19 @@ function conversationPanelState(
     loadedHistoryTurnCount: options.loadedHistoryTurnCount ?? null,
     subagentRun: null,
     subagentInvocation: null,
-  };
+  });
+}
+
+function createConversationPanelViaDefinition(
+  panelId: string,
+  options: Parameters<typeof conversationPanelCreateInput>[0],
+): RightSidebarConversationPanelState {
+  return rightSidebarDefinitionRegistry.create("conversation", {
+    id: panelId,
+    sequence: maxPanelSeq([panelId]),
+    now: new Date().toISOString(),
+    input: conversationPanelCreateInput(options),
+  });
 }
 
 function activateOrCreateSubagentPanel(
@@ -2932,33 +2759,32 @@ function activateOrCreateSubagentPanel(
   run: SubagentRunSnapshot,
 ): RightSidebarScopePanelState {
   const existingPanelId =
-    state.conversationPanelIds.find(
+    panelIdsByKind(state, "conversation").find(
       (panelId) => {
-        const panel = state.conversationPanels[panelId];
-        return panel?.kind === "subagent" && panel.parentSessionId === run.parent_session_id;
+        const panel = state.panels[panelId];
+        return panel?.kind === "conversation" &&
+          panel.conversationKind === "subagent" &&
+          panel.parentSessionId === run.parent_session_id;
       },
     ) ?? null;
   if (existingPanelId) {
-    const panel = state.conversationPanels[existingPanelId];
+    const panel = state.panels[existingPanelId];
+    if (panel?.kind !== "conversation") return state;
     return {
-      ...state,
+      ...replaceRegisteredPanel(state, {
+        ...panel,
+        conversationKind: "subagent",
+        status: "ready",
+        title: subagentPanelTitle(run),
+        sessionId: run.child_session_id,
+        sourceSessionId: run.parent_session_id,
+        parentSessionId: run.parent_session_id,
+        quoteRequest: null,
+        loadedHistoryTurnCount: null,
+        subagentRun: run,
+        subagentInvocation: null,
+      }),
       activePanelId: existingPanelId,
-      conversationPanels: {
-        ...state.conversationPanels,
-        [existingPanelId]: {
-          ...panel,
-          kind: "subagent",
-          status: "ready",
-          title: subagentPanelTitle(run),
-          sessionId: run.child_session_id,
-          sourceSessionId: run.parent_session_id,
-          parentSessionId: run.parent_session_id,
-          quoteRequest: null,
-          loadedHistoryTurnCount: null,
-          subagentRun: run,
-          subagentInvocation: null,
-        },
-      },
     };
   }
   const activeInitialPanelId = activeInitialPanelIdForState(state);
@@ -2968,12 +2794,10 @@ function activateOrCreateSubagentPanel(
     ...state,
     activePanelId: panelId,
     panelOrder: activeInitialPanelId ? state.panelOrder : [...state.panelOrder, panelId],
-    conversationPanelIds: [...state.conversationPanelIds, panelId],
-    conversationPanels: {
-      ...state.conversationPanels,
-      [panelId]: {
-        id: panelId,
-        kind: "subagent",
+    panels: {
+      ...state.panels,
+      [panelId]: createConversationPanelViaDefinition(panelId, {
+        conversationKind: "subagent",
         status: "ready",
         sessionId: run.child_session_id,
         title: subagentPanelTitle(run),
@@ -2983,7 +2807,7 @@ function activateOrCreateSubagentPanel(
         loadedHistoryTurnCount: null,
         subagentRun: run,
         subagentInvocation: null,
-      },
+      }),
     },
     initialPanelIds: activeInitialPanelId
       ? state.initialPanelIds.filter((id) => id !== activeInitialPanelId)
@@ -3019,29 +2843,28 @@ function activateOrCreateSubagentWorkspace(
   parentSessionId: string,
   selection: Pick<RightSidebarConversationPanelState, "sessionId" | "subagentRun" | "subagentInvocation">,
 ): RightSidebarScopePanelState {
-  const existingPanelId = state.conversationPanelIds.find((panelId) => {
-    const panel = state.conversationPanels[panelId];
-    return panel?.kind === "subagent" && panel.parentSessionId === parentSessionId;
+  const existingPanelId = panelIdsByKind(state, "conversation").find((panelId) => {
+    const panel = state.panels[panelId];
+    return panel?.kind === "conversation" &&
+      panel.conversationKind === "subagent" &&
+      panel.parentSessionId === parentSessionId;
   }) ?? null;
   if (existingPanelId) {
-    const panel = state.conversationPanels[existingPanelId];
+    const panel = state.panels[existingPanelId];
+    if (panel?.kind !== "conversation") return state;
     return {
-      ...state,
+      ...replaceRegisteredPanel(state, {
+        ...panel,
+        ...selection,
+        conversationKind: "subagent",
+        status: "ready",
+        title: "子智能体",
+        sourceSessionId: parentSessionId,
+        parentSessionId,
+        quoteRequest: null,
+        loadedHistoryTurnCount: null,
+      }),
       activePanelId: existingPanelId,
-      conversationPanels: {
-        ...state.conversationPanels,
-        [existingPanelId]: {
-          ...panel,
-          ...selection,
-          kind: "subagent",
-          status: "ready",
-          title: "子智能体",
-          sourceSessionId: parentSessionId,
-          parentSessionId,
-          quoteRequest: null,
-          loadedHistoryTurnCount: null,
-        },
-      },
     };
   }
   const activeInitialPanelId = activeInitialPanelIdForState(state);
@@ -3051,12 +2874,10 @@ function activateOrCreateSubagentWorkspace(
     ...state,
     activePanelId: panelId,
     panelOrder: activeInitialPanelId ? state.panelOrder : [...state.panelOrder, panelId],
-    conversationPanelIds: [...state.conversationPanelIds, panelId],
-    conversationPanels: {
-      ...state.conversationPanels,
-      [panelId]: {
-        id: panelId,
-        kind: "subagent",
+    panels: {
+      ...state.panels,
+      [panelId]: createConversationPanelViaDefinition(panelId, {
+        conversationKind: "subagent",
         status: "ready",
         title: "子智能体",
         sourceSessionId: parentSessionId,
@@ -3064,7 +2885,7 @@ function activateOrCreateSubagentWorkspace(
         quoteRequest: null,
         loadedHistoryTurnCount: null,
         ...selection,
-      },
+      }),
     },
     initialPanelIds: activeInitialPanelId
       ? state.initialPanelIds.filter((id) => id !== activeInitialPanelId)
@@ -3093,9 +2914,8 @@ function activateOrCreateOpeningConversationPanel(
       ...state,
       activePanelId: panelId,
       panelOrder: activeInitialPanelId ? state.panelOrder : [...state.panelOrder, panelId],
-      conversationPanelIds: [...state.conversationPanelIds, panelId],
-      conversationPanels: {
-        ...state.conversationPanels,
+      panels: {
+        ...state.panels,
         [panelId]: openingConversationPanelState(panelId, options),
       },
       initialPanelIds: activeInitialPanelId
@@ -3113,9 +2933,8 @@ function openingConversationPanelState(
     quote?: SelectedQuote | null;
   },
 ): RightSidebarConversationPanelState {
-  return {
-    id: panelId,
-    kind: "conversation",
+  return createConversationPanelViaDefinition(panelId, {
+    conversationKind: "conversation",
     status: "opening",
     sessionId: "",
     title: BTW_CONVERSATION_TITLE,
@@ -3125,7 +2944,7 @@ function openingConversationPanelState(
     loadedHistoryTurnCount: null,
     subagentRun: null,
     subagentInvocation: null,
-  };
+  });
 }
 
 function resolveOpeningConversationPanel(
@@ -3138,28 +2957,24 @@ function resolveOpeningConversationPanel(
     loadedHistoryTurnCount?: number | null;
   },
 ): RightSidebarScopePanelState {
-  const panel = state.conversationPanels[panelId];
-  if (!panel || panel.status !== "opening") {
+  const panel = state.panels[panelId];
+  if (panel?.kind !== "conversation" || panel.status !== "opening") {
     return state;
   }
   return {
-    ...state,
+    ...replaceRegisteredPanel(state, {
+      ...panel,
+      conversationKind: "conversation",
+      status: "ready",
+      sessionId: options.session.id,
+      title: conversationPanelTitle(options),
+      sourceSessionId: options.sourceSessionId ?? panel.sourceSessionId,
+      parentSessionId: null,
+      loadedHistoryTurnCount: options.loadedHistoryTurnCount ?? panel.loadedHistoryTurnCount,
+      subagentRun: null,
+      subagentInvocation: null,
+    }),
     activePanelId: state.activePanelId ?? panelId,
-    conversationPanels: {
-      ...state.conversationPanels,
-      [panelId]: {
-        ...panel,
-        kind: "conversation",
-        status: "ready",
-        sessionId: options.session.id,
-        title: conversationPanelTitle(options),
-        sourceSessionId: options.sourceSessionId ?? panel.sourceSessionId,
-        parentSessionId: null,
-        loadedHistoryTurnCount: options.loadedHistoryTurnCount ?? panel.loadedHistoryTurnCount,
-        subagentRun: null,
-        subagentInvocation: null,
-      },
-    },
   };
 }
 
@@ -3167,26 +2982,22 @@ function removeConversationPanelFromState(
   state: RightSidebarScopePanelState,
   panelId: string,
 ): RightSidebarScopePanelState {
-  if (!state.conversationPanels[panelId]) {
+  if (state.panels[panelId]?.kind !== "conversation") {
     return state;
   }
-  const nextConversationPanelIds = state.conversationPanelIds.filter((id) => id !== panelId);
-  const nextConversationPanels = { ...state.conversationPanels };
-  delete nextConversationPanels[panelId];
   const nextPanelOrder = state.panelOrder.filter((id) => id !== panelId);
+  const next = removeRegisteredPanels(state, new Set([panelId]));
   return {
-    ...state,
+    ...next,
     activePanelId: state.activePanelId === panelId ? nextPanelIdAfterRemoval(state.panelOrder, panelId) : state.activePanelId,
     panelOrder: nextPanelOrder,
-    conversationPanelIds: nextConversationPanelIds,
-    conversationPanels: nextConversationPanels,
   };
 }
 
 function nextConversationQuoteRequest(
   quote: SelectedQuote,
-  previous: RightSidebarConversationQuoteRequest | null,
-): RightSidebarConversationQuoteRequest {
+  previous: ConversationPanelQuoteRequest | null,
+): ConversationPanelQuoteRequest {
   return {
     requestId: (previous?.requestId ?? 0) + 1,
     quote,
@@ -3198,13 +3009,7 @@ function conversationPanelTitle(options: { session: AgentSession; title?: string
 }
 
 function orderedRightSidebarPanelIds(state: RightSidebarScopePanelState, entryIds: string[]): string[] {
-  return orderedUniquePanelIds(state.panelOrder, [
-    ...state.filePanelIds,
-    ...state.conversationPanelIds,
-    ...state.reviewPanelIds,
-    ...state.initialPanelIds,
-    ...entryIds,
-  ]);
+  return previewScopePanelIds(state, entryIds);
 }
 
 function orderedUniquePanelIds(preferredOrder: string[], panelIds: string[]): string[] {
@@ -3301,41 +3106,11 @@ function sameStringArray(left: string[], right: string[]): boolean {
 }
 
 function sameFilePanels(left: RightSidebarScopePanelState, right: RightSidebarScopePanelState): boolean {
-  return left.filePanelIds.every((panelId) => {
-    const leftPanel = left.filePanels[panelId];
-    const rightPanel = right.filePanels[panelId];
-    return (
-      Boolean(leftPanel) &&
-      Boolean(rightPanel) &&
-      leftPanel.filePreviewPath === rightPanel.filePreviewPath &&
-      leftPanel.filePreviewRequestId === rightPanel.filePreviewRequestId &&
-      samePreviewFileRevealTarget(leftPanel.filePreviewRevealTarget, rightPanel.filePreviewRevealTarget) &&
-      leftPanel.directoryRevealPath === rightPanel.directoryRevealPath &&
-      leftPanel.directoryRevealRequestId === rightPanel.directoryRevealRequestId
-    );
-  });
+  return sameRegisteredPanels(left.panels, right.panels);
 }
 
 function sameConversationPanels(left: RightSidebarScopePanelState, right: RightSidebarScopePanelState): boolean {
-  return left.conversationPanelIds.every((panelId) => {
-    const leftPanel = left.conversationPanels[panelId];
-    const rightPanel = right.conversationPanels[panelId];
-    return (
-      Boolean(leftPanel) &&
-      Boolean(rightPanel) &&
-      leftPanel.kind === rightPanel.kind &&
-      leftPanel.status === rightPanel.status &&
-      leftPanel.sessionId === rightPanel.sessionId &&
-      leftPanel.title === rightPanel.title &&
-      leftPanel.sourceSessionId === rightPanel.sourceSessionId &&
-      leftPanel.parentSessionId === rightPanel.parentSessionId &&
-      leftPanel.loadedHistoryTurnCount === rightPanel.loadedHistoryTurnCount &&
-      leftPanel.subagentRun?.run_id === rightPanel.subagentRun?.run_id &&
-      leftPanel.subagentRun?.version === rightPanel.subagentRun?.version &&
-      sameSubagentInvocation(leftPanel.subagentInvocation, rightPanel.subagentInvocation) &&
-      sameConversationQuoteRequest(leftPanel.quoteRequest, rightPanel.quoteRequest)
-    );
-  });
+  return sameRegisteredPanels(left.panels, right.panels);
 }
 
 function sameSubagentInvocation(
@@ -3355,24 +3130,10 @@ function sameSubagentInvocation(
 }
 
 function sameReviewPanels(left: RightSidebarScopePanelState, right: RightSidebarScopePanelState): boolean {
-  return left.reviewPanelIds.every((panelId) => {
-    const leftPanel = left.reviewPanels[panelId];
-    const rightPanel = right.reviewPanels[panelId];
-    return (
-      Boolean(leftPanel) &&
-      Boolean(rightPanel) &&
-      leftPanel.title === rightPanel.title &&
-      leftPanel.focusedPath === rightPanel.focusedPath &&
-      leftPanel.panelKey === rightPanel.panelKey &&
-      leftPanel.sourceMessageId === rightPanel.sourceMessageId &&
-      leftPanel.toolCallId === rightPanel.toolCallId &&
-      leftPanel.requestId === rightPanel.requestId &&
-      sameFileReviewChanges(leftPanel.files, rightPanel.files)
-    );
-  });
+  return sameRegisteredPanels(left.panels, right.panels);
 }
 
-function sameFileReviewChanges(left: FileReviewChange[], right: FileReviewChange[]): boolean {
+function sameFileReviewChanges(left: readonly FileReviewChange[], right: readonly FileReviewChange[]): boolean {
   return (
     left.length === right.length &&
     left.every((leftFile, index) => {
@@ -3393,8 +3154,8 @@ function sameFileReviewChanges(left: FileReviewChange[], right: FileReviewChange
 }
 
 function sameConversationQuoteRequest(
-  left: RightSidebarConversationQuoteRequest | null,
-  right: RightSidebarConversationQuoteRequest | null,
+  left: ConversationPanelQuoteRequest | null,
+  right: ConversationPanelQuoteRequest | null,
 ): boolean {
   return (
     (left?.requestId ?? null) === (right?.requestId ?? null) &&
@@ -3457,7 +3218,7 @@ function RightSidebarControls({
         data-icon={maximized ? "minimize-2" : "maximize-2"}
         type="button"
         aria-label={maximized ? `缩小${placementLabel}` : `展开${placementLabel}到对话区域`}
-        title={maximized ? `缩小${placementLabel}` : `展开${placementLabel}到对话区域`}
+        data-tooltip-label={maximized ? `缩小${placementLabel}` : `展开${placementLabel}到对话区域`}
         onClick={maximized ? onRestore : onMaximize}
       >
         {maximized ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
@@ -3467,7 +3228,7 @@ function RightSidebarControls({
         data-icon={onLeft ? "panel-left-close" : "panel-right-close"}
         type="button"
         aria-label={`折叠${placementLabel}`}
-        title={`折叠${placementLabel}`}
+        data-tooltip-label={`折叠${placementLabel}`}
         onClick={onClose}
       >
         <CloseIcon size={17} strokeWidth={2.1} />

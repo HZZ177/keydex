@@ -1491,6 +1491,13 @@ function handleMiddlewareProgress(
   };
 
   const next = cloneState(state);
+  const existingSession = next.sessionsById[sessionId];
+  if (stage === "compression_completed" && existingSession) {
+    next.sessionsById = {
+      ...next.sessionsById,
+      [sessionId]: { ...existingSession, context_window_usage: null },
+    };
+  }
   const view = ensureSessionState(next, sessionId);
   const existingIndex = view.messages.findIndex(
     (message) => compressionNoticeIdFromMessage(message) === noticeId,

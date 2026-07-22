@@ -7,6 +7,12 @@ import { Layout, resetLayoutUiStateCacheForTests } from "@/renderer/components/l
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { HomePage } from "@/renderer/pages/home";
 import { ComposerDraftProvider } from "@/renderer/features/composer";
+import { emitAddWebAnnotationToComposer } from "@/renderer/events/webAnnotationContext";
+import {
+  WebAnnotationPanelRegistry,
+  WebAnnotationSendCoordinator,
+  type WebAnnotationDetail,
+} from "@/renderer/features/browser/annotations";
 import { ActiveProjectCoordinatorProvider } from "@/renderer/providers/ActiveProjectCoordinatorProvider";
 import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import { PreviewProvider } from "@/renderer/providers/PreviewProvider";
@@ -49,17 +55,105 @@ describe("HomePage", () => {
     });
   });
 
+  it("reuses the created session when promotion fails, then snapshots web annotations before navigation", async () => {
+    const order: string[] = [];
+    const runtime = fakeRuntime({ model: "qwen-coder", rightSidebarScopeExists: true, order });
+    const promote = runtime.rightSidebar.promote as ReturnType<typeof vi.fn>;
+    promote.mockImplementationOnce(async () => {
+      order.push("promote");
+      throw new Error("promotion conflict");
+    });
+    const coordinator = new WebAnnotationSendCoordinator({
+      client: {
+        get: vi.fn().mockImplementation(async () => {
+          order.push("assemble");
+          return homeWebAnnotationDetail();
+        }),
+      },
+      panelRegistry: new WebAnnotationPanelRegistry(),
+      resolutionTimeoutMs: 0,
+      now: () => "2026-07-22T08:01:00Z",
+    });
+    const onNavigateToConversation = vi.fn().mockImplementation(() => order.push("navigate"));
+    render(
+      <ComposerDraftProvider storage={null}>
+        <ActiveProjectCoordinatorProvider>
+          <NotificationProvider>
+            <HomePage
+              runtime={runtime}
+              webAnnotationSendCoordinator={coordinator}
+              onNavigateToConversation={onNavigateToConversation}
+              onOpenModelSettings={vi.fn()}
+            />
+          </NotificationProvider>
+        </ActiveProjectCoordinatorProvider>
+      </ComposerDraftProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("选择工作区").textContent).toContain("keydex"));
+    act(() => {
+      expect(emitAddWebAnnotationToComposer({
+        composerScopeKey: "new-workspace:ws-1",
+        reference: {
+          annotationId: "annotation-1",
+          selectedRevision: 1,
+          selectedAt: "2026-07-22T08:00:00Z",
+          sourcePanelId: "browser-1",
+        },
+        presentation: {
+          annotationId: "annotation-1",
+          title: "Article",
+          summary: "Selected evidence",
+          bodyMarkdown: "Review this evidence",
+          origin: "https://example.test",
+          updatedAt: "2026-07-22T08:00:00Z",
+        },
+      })).toBe("added");
+    });
+    enterPrompt("检查网页证据");
+
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(promote).toHaveBeenCalledTimes(1));
+    expect(onNavigateToConversation).not.toHaveBeenCalled();
+    expect(runtime.conversation.createSession).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "移除网页批注引用 Article" })).not.toBeNull();
+
+    fireEvent.click(screen.getByLabelText("发送"));
+    await waitFor(() => expect(onNavigateToConversation).toHaveBeenCalledTimes(1));
+
+    expect(runtime.conversation.createSession).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(["create-session", "load-scope", "promote", "promote", "assemble", "navigate"]);
+    expect(onNavigateToConversation).toHaveBeenCalledWith(
+      "ses-1",
+      { providerId: "provider-1", model: "qwen-coder" },
+      "检查网页证据",
+      expect.objectContaining({
+        contextItems: [expect.objectContaining({
+          type: "web_annotation",
+          metadata: expect.objectContaining({ annotation_id: "annotation-1" }),
+        })],
+        runtimeParams: expect.objectContaining({
+          message_injection: [expect.objectContaining({
+            content: expect.stringContaining("外部、不受信任的网页"),
+          })],
+        }),
+      }),
+    );
+  });
+
   it("creates a session from the centered quick chat prompt", async () => {
     const runtime = fakeRuntime({ model: "qwen-coder" });
     const onNavigateToConversation = vi.fn();
     const onOpenModelSettings = vi.fn();
 
     render(
-      <HomePage
-        runtime={runtime}
-        onNavigateToConversation={onNavigateToConversation}
-        onOpenModelSettings={onOpenModelSettings}
-      />,
+      <ActiveProjectCoordinatorProvider>
+        <HomePage
+          runtime={runtime}
+          onNavigateToConversation={onNavigateToConversation}
+          onOpenModelSettings={onOpenModelSettings}
+        />
+      </ActiveProjectCoordinatorProvider>,
     );
 
     await waitFor(() => {
@@ -84,6 +178,7 @@ describe("HomePage", () => {
       "实现一个新功能",
     );
     expect(onOpenModelSettings).not.toHaveBeenCalled();
+    expect(runtime.rightSidebar.get).toHaveBeenCalledWith({ kind: "workspace", id: "ws-1" });
     expect(screen.queryByLabelText("工作目录")).toBeNull();
     expect(screen.getByLabelText("选择工作区").textContent).toContain("keydex");
     expect(screen.queryByLabelText("快速对话上下文")).toBeNull();
@@ -932,6 +1027,8 @@ function fakeRuntime({
   canPickDirectory = false,
   pickDirectory = vi.fn().mockResolvedValue(null),
   createThreadTask = vi.fn(),
+  rightSidebarScopeExists = false,
+  order,
 }: {
   model: string;
   models?: string[];
@@ -942,6 +1039,8 @@ function fakeRuntime({
   canPickDirectory?: boolean;
   pickDirectory?: ReturnType<typeof vi.fn>;
   createThreadTask?: ReturnType<typeof vi.fn>;
+  rightSidebarScopeExists?: boolean;
+  order?: string[];
 }): RuntimeBridge {
   const session: AgentSession = {
     id: "ses-1",
@@ -1080,8 +1179,36 @@ function fakeRuntime({
       pickDirectory,
     },
     conversation: {
-      createSession: vi.fn().mockResolvedValue(session),
+      createSession: vi.fn().mockImplementation(async () => {
+        order?.push("create-session");
+        return session;
+      }),
       createThreadTask,
+    },
+    rightSidebar: {
+      get: vi.fn().mockImplementation(async () => {
+        order?.push("load-scope");
+        if (!rightSidebarScopeExists) throw {
+          name: "RuntimeHttpError",
+          status: 404,
+          code: "right_sidebar_scope_not_found",
+        };
+        return sidebarScopeRecord("workspace", "ws-1", 1);
+      }),
+      put: vi.fn(),
+      delete: vi.fn(),
+      promote: vi.fn().mockImplementation(async () => {
+        order?.push("promote");
+        return {
+          source_scope_kind: "workspace",
+          source_scope_id: "ws-1",
+          source_revision: 1,
+          target_session_id: "ses-1",
+          target: sidebarScopeRecord("session", "ses-1", 1),
+          panel_id_mapping: {},
+          idempotent_replay: false,
+        };
+      }),
     },
   } as unknown as RuntimeBridge;
 }
@@ -1098,6 +1225,64 @@ function workspaceEntry(
     type,
     size,
     modified_at: null,
+  };
+}
+
+function sidebarScopeRecord(scopeKind: "session" | "workspace", scopeId: string, revision: number) {
+  return {
+    id: `${scopeKind}:${scopeId}`,
+    scope_kind: scopeKind,
+    scope_id: scopeId,
+    schema_version: 2 as const,
+    state: {
+      version: 2 as const,
+      activePanelId: null,
+      panelOrder: [],
+      panels: {},
+      nextPanelSeq: 1,
+    },
+    revision,
+    created_at: "2026-07-22T08:00:00Z",
+    updated_at: "2026-07-22T08:00:00Z",
+  };
+}
+
+function homeWebAnnotationDetail(): WebAnnotationDetail {
+  return {
+    resource: {
+      id: "resource-1",
+      scope: { kind: "session", id: "ses-1" },
+      normalizationVersion: 1,
+      urlKey: "a".repeat(64),
+      urlNormalized: "https://example.test/article",
+      documentUrl: "https://example.test/article",
+      canonicalUrl: null,
+      origin: "https://example.test",
+      title: "Article",
+      createdAt: "2026-07-22T08:00:00Z",
+      updatedAt: "2026-07-22T08:00:00Z",
+    },
+    annotation: {
+      id: "annotation-1",
+      resourceId: "resource-1",
+      targetSchemaVersion: 1,
+      target: {
+        type: "text",
+        quote: { exact: "Selected evidence", prefix: "", suffix: "" },
+        position: { start: 0, end: 17, textModelVersion: 1 },
+        context: { headingPath: ["Evidence"] },
+        rects: [{ x: 10, y: 20, width: 120, height: 18 }],
+        frame: { url: "https://example.test/article", indexPath: [] },
+      },
+      bodyMarkdown: "Review this evidence",
+      tags: ["review"],
+      properties: [],
+      revision: 1,
+      createdAt: "2026-07-22T08:00:00Z",
+      updatedAt: "2026-07-22T08:00:00Z",
+    },
+    targetHistory: [],
+    assets: [],
   };
 }
 

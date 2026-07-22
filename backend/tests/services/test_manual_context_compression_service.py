@@ -52,6 +52,14 @@ async def test_manual_context_compression_replaces_active_checkpoint_in_place(tm
         scene_id="desktop-agent",
         title="源会话",
     )
+    repositories.sessions.update_context_window_usage(
+        session.id,
+        {
+            "stage": "context_window_snapshot",
+            "token_count": 900,
+            "context_window": 1000,
+        },
+    )
     saver = SQLiteCheckpointSaver(repositories.db)
     messages = [
         HumanMessage(content="旧问题", id="h1"),
@@ -86,6 +94,7 @@ async def test_manual_context_compression_replaces_active_checkpoint_in_place(tm
     assert source is not None
     assert source.active_session_id == session.id
     assert source.context_compression_epoch == 1
+    assert source.context_window_usage is None
     assert [record.id for record in repositories.sessions.list(user_id="local-user")] == [
         session.id
     ]

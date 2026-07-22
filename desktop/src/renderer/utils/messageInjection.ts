@@ -3,6 +3,10 @@ import type { SelectedFile } from "@/renderer/components/chat/SendBox/fileSelect
 import { selectedQuotePreview, type SelectedQuote } from "@/renderer/components/chat/SendBox/quoteSelection";
 import type { AgentContextItem } from "@/types/protocol";
 import type { AssembledAnnotationContext } from "@/renderer/features/annotations/chat/AnnotationContextAssembler";
+import {
+  renderWebAnnotationContextSnapshot,
+  type WebAnnotationContextSnapshot,
+} from "@/renderer/features/browser/annotations/chat";
 
 export interface RuntimeMessageInjectionItem {
   type: "follow" | "slot";
@@ -31,6 +35,7 @@ export interface PreparedComposerMessage {
 
 export interface PrepareComposerMessageOptions {
   annotationContexts?: readonly AssembledAnnotationContext[];
+  webAnnotationContexts?: readonly WebAnnotationContextSnapshot[];
   quotes?: SelectedQuote[];
   selectedSkill?: SkillSummary | null;
 }
@@ -44,9 +49,10 @@ export function prepareComposerMessage(
   const quoteItems = quoteContextItems(options.quotes ?? []);
   const fileItems = files.filter((file) => !file.annotationReference).map(fileContextItem);
   const annotationItems = (options.annotationContexts ?? []).map(annotationContextItem);
+  const webAnnotationItems = (options.webAnnotationContexts ?? []).map(webAnnotationContextItemFromSnapshot);
   const skillItems = options.selectedSkill ? [skillContextItem(options.selectedSkill)] : [];
-  const contextItems = [...skillItems, ...quoteItems, ...fileItems, ...annotationItems];
-  const injectableContextItems = [...quoteItems, ...fileItems, ...annotationItems];
+  const contextItems = [...skillItems, ...quoteItems, ...fileItems, ...annotationItems, ...webAnnotationItems];
+  const injectableContextItems = [...quoteItems, ...fileItems, ...annotationItems, ...webAnnotationItems];
   const messageInjection = injectableContextItems.map(contextItemToFollowInjection);
   const runtimeParams: RuntimeParamsWithInjection = {};
   if (messageInjection.length) {
@@ -63,6 +69,45 @@ export function prepareComposerMessage(
     message,
     contextItems,
     runtimeParams: Object.keys(runtimeParams).length ? runtimeParams : undefined,
+  };
+}
+
+export function prepareReplayedContextItems(
+  items: readonly AgentContextItem[],
+): PreparedComposerMessage {
+  const contextItems = [...items];
+  const messageInjection = contextItems.map(contextItemToFollowInjection);
+  return {
+    message: "",
+    contextItems,
+    runtimeParams: messageInjection.length ? { message_injection: messageInjection } : undefined,
+  };
+}
+
+export function webAnnotationContextItemFromSnapshot(
+  snapshot: WebAnnotationContextSnapshot,
+): AgentContextItem {
+  const content = renderWebAnnotationContextSnapshot(snapshot);
+  return {
+    id: `web-annotation:${snapshot.annotationId}:${snapshot.digest}`,
+    type: "web_annotation",
+    label: `网页批注 · ${snapshot.source.title || snapshot.source.origin}`,
+    content,
+    description: snapshot.annotation.bodyMarkdown,
+    role: "HumanMessage",
+    source: "follow",
+    metadata: {
+      schema_version: snapshot.schemaVersion,
+      annotation_id: snapshot.annotationId,
+      annotation_revision: snapshot.annotationRevision,
+      snapshot_digest: snapshot.digest,
+      resolution: snapshot.target.resolution,
+      freshness: snapshot.target.freshness,
+      url_key: snapshot.source.urlKey,
+      source_url: snapshot.source.url,
+      attachment_id: snapshot.evidence.attachmentId ?? null,
+      snapshot,
+    },
   };
 }
 
@@ -230,6 +275,7 @@ function contextItemToFollowInjection(item: AgentContextItem): RuntimeMessageInj
 }
 
 function injectionContent(item: AgentContextItem): string {
+  if (item.type === "web_annotation") return item.content;
   if (item.type === "annotation") {
     const kind = item.metadata?.annotation_kind === "document" ? "全文批注" : "选区批注";
     return `用户引用了当前文档中的${kind}。\n文件：${item.path || item.label}\n批注：${item.description || ""}\n当前内容：\n${item.content}\n文档版本：${normalizedOptionalText(item.metadata?.document_revision)}\n请只依据这次发送时解析出的当前内容处理该批注。`;

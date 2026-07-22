@@ -29,6 +29,21 @@ export async function openExternalUrl(rawUrl: string, options: OpenExternalUrlOp
   }
 }
 
+export async function openExternalProtocol(
+  rawUrl: string,
+  options: Pick<OpenExternalUrlOptions, "shellApi" | "importShellApi" | "isTauriRuntime"> = {},
+): Promise<void> {
+  const target = normalizeExternalProtocolUrl(rawUrl);
+  if (!isLikelyTauriRuntime(options)) {
+    throw new Error("外部协议仅可在 Keydex 桌面应用中打开");
+  }
+  const shellApi = options.shellApi ?? await loadShellApi(options);
+  if (typeof shellApi.open !== "function") {
+    throw new Error("系统应用桥接不可用，请重新启动 Keydex");
+  }
+  await shellApi.open(target);
+}
+
 function normalizeExternalUrl(rawUrl: string, allowHttp: boolean): string {
   try {
     const target = new URL(rawUrl);
@@ -41,6 +56,19 @@ function normalizeExternalUrl(rawUrl: string, allowHttp: boolean): string {
       throw reason;
     }
     throw new Error("外部链接格式无效");
+  }
+}
+
+function normalizeExternalProtocolUrl(rawUrl: string): string {
+  try {
+    const target = new URL(rawUrl);
+    if (target.protocol !== "mailto:" && target.protocol !== "tel:") {
+      throw new Error("只允许打开 mailto 或 tel 外部协议");
+    }
+    return target.toString();
+  } catch (reason) {
+    if (reason instanceof Error && reason.message.startsWith("只允许打开")) throw reason;
+    throw new Error("外部协议格式无效");
   }
 }
 

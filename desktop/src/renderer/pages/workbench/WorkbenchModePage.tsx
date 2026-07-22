@@ -26,6 +26,7 @@ import {
 import { evictFileMarkdownRuntimeEntry } from "@/renderer/components/workspace/fileMarkdownRuntime";
 import { emitSessionCreated } from "@/renderer/events/sessionEvents";
 import { composerNewWorkspaceDraftScope } from "@/renderer/features/composer";
+import { rightSidebarPersistenceForRuntime } from "@/renderer/components/layout/rightSidebar/persistence";
 import { useLayoutState } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { clampWorkbenchAssistantDrawerWidth } from "@/renderer/hooks/layout/layoutStore";
 import {
@@ -369,6 +370,16 @@ export function WorkbenchModePage({
     }
     onRequestNewSession?.();
   }, [onRequestNewSession, workspaceId]);
+  const promoteWorkbenchSidebarDraft = useCallback(
+    async (targetSessionId: string) => {
+      if (!workspaceId) return;
+      await rightSidebarPersistenceForRuntime(runtime).promote(
+        `workspace:${workspaceId}`,
+        targetSessionId,
+      );
+    },
+    [runtime, workspaceId],
+  );
   const assistantController = useAgentSessionController({
     runtime,
     sessionId: selectedSessionId ?? "",
@@ -379,6 +390,7 @@ export function WorkbenchModePage({
         ? composerNewWorkspaceDraftScope(workspaceId)
         : null,
     ensureSession: ensureWorkbenchSession,
+    beforeSendToCreatedSession: promoteWorkbenchSidebarDraft,
     conversationSendDefaultMode,
   });
   const terminalSessionScope = useMemo(

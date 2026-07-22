@@ -62,6 +62,7 @@ describe("terminal store", () => {
     expect(store.getState().sessionsById["session-a"]).toMatchObject({
       terminalIds: ["a-1", "a-2"],
       activeTerminalId: "a-2",
+      hydrated: true,
     });
     expect(store.getState().sessionsById["session-b"]).toMatchObject({
       terminalIds: ["b-1"],
@@ -150,7 +151,7 @@ function snapshot(
   status: TerminalSnapshot["status"] = "running",
 ): TerminalSnapshot {
   return {
-    contractVersion: 1,
+    contractVersion: 2,
     terminalId,
     sessionId,
     profileId: "powershell",

@@ -11,6 +11,7 @@ import {
   type PastedTextFragment,
   type SelectedQuote,
 } from "@/renderer/components/chat/SendBox";
+import type { SelectedWebAnnotationReference } from "@/renderer/features/browser/annotations";
 import type { SlashCommand } from "@/renderer/components/chat/SlashCommandMenu";
 import { RuntimeModelSelector, type RuntimeModelSelection } from "@/renderer/components/model";
 import {
@@ -45,6 +46,7 @@ export interface ConversationComposerProps {
   allowContextCompressionSlashCommand?: boolean;
   selectedFiles?: SelectedFile[];
   selectedQuotes?: SelectedQuote[];
+  selectedWebAnnotations?: SelectedWebAnnotationReference[];
   selectedImageAttachments?: SelectedImageAttachment[];
   pastedTextFragments?: PastedTextFragment[];
   onSearchWorkspace?: (query: string, options?: { signal?: AbortSignal }) => Promise<WorkspaceSearchResult[]>;
@@ -52,6 +54,7 @@ export interface ConversationComposerProps {
   onOpenModelSettings?: () => void;
   onSelectedFilesChange?: (files: SelectedFile[]) => void;
   onSelectedQuotesChange?: (quotes: SelectedQuote[]) => void;
+  onSelectedWebAnnotationsChange?: (references: SelectedWebAnnotationReference[]) => void;
   onSelectedImageAttachmentsChange?: (attachments: SelectedImageAttachment[]) => void;
   onPastedTextFragmentsChange?: (fragments: PastedTextFragment[], value: string) => void;
   onChange: (value: string) => void;
@@ -61,6 +64,7 @@ export interface ConversationComposerProps {
     quotes?: SelectedQuote[],
     attachments?: SelectedImageAttachment[],
     options?: SendBoxSubmitOptions,
+    webAnnotations?: SelectedWebAnnotationReference[],
   ) => boolean | void | Promise<boolean | void>;
   onStop: () => void;
   onEscape?: () => void;
@@ -105,6 +109,7 @@ export function ConversationComposer({
   allowContextCompressionSlashCommand = true,
   selectedFiles,
   selectedQuotes,
+  selectedWebAnnotations,
   selectedImageAttachments,
   pastedTextFragments,
   onSearchWorkspace,
@@ -112,6 +117,7 @@ export function ConversationComposer({
   onOpenModelSettings,
   onSelectedFilesChange,
   onSelectedQuotesChange,
+  onSelectedWebAnnotationsChange,
   onSelectedImageAttachmentsChange,
   onPastedTextFragmentsChange,
   onChange,
@@ -183,11 +189,13 @@ export function ConversationComposer({
       }
       selectedFiles={selectedFiles}
       selectedQuotes={selectedQuotes}
+      selectedWebAnnotations={selectedWebAnnotations}
       selectedImageAttachments={selectedImageAttachments}
       pastedTextFragments={pastedTextFragments}
       selectedSkill={selectedSkill}
       onSelectedFilesChange={onSelectedFilesChange}
       onSelectedQuotesChange={onSelectedQuotesChange}
+      onSelectedWebAnnotationsChange={onSelectedWebAnnotationsChange}
       onSelectedImageAttachmentsChange={onSelectedImageAttachmentsChange}
       onPastedTextFragmentsChange={onPastedTextFragmentsChange}
       onSkillChange={onSkillChange}

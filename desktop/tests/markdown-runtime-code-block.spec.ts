@@ -45,6 +45,20 @@ describe("retained Markdown code block runtime", () => {
     },
   );
 
+  it.each(["sql", "bash", "go", "rust", "java", "cpp", "csharp", "php", "kotlin", "swift"])(
+    "schedules grammar highlighting for %s code fences",
+    async (language) => {
+      const service = new ControlledHighlighter();
+      const harness = renderCode("select value from records", language, { highlighter: service });
+      expect(harness.frame().dataset.markdownCodeHighlightState).toBe("pending");
+      expect(service.tasks).toHaveLength(1);
+      service.resolve(0, [{ start: 0, end: 6, kind: "keyword" }]);
+      await flushMicrotasks();
+      expect(harness.frame().dataset.markdownCodeHighlightState).toBe("ready");
+      harness.destroy();
+    },
+  );
+
   it("does not let separate mounted blocks cancel one another", async () => {
     const source = "```ts\nconst a = 1\n```\n\n```js\nconst b = 2\n```";
     const service = new ControlledHighlighter();

@@ -164,7 +164,15 @@ def test_init_database_adds_web_tables_to_existing_database(tmp_path) -> None:
         }
         legacy = conn.execute("select value_json from settings where key = 'legacy'").fetchone()
 
-    assert web_tables == {"web_settings", "web_provider_configs"}
+    assert web_tables == {
+        "web_settings",
+        "web_provider_configs",
+        "web_annotation_resources",
+        "web_annotations",
+        "web_annotation_target_history",
+        "web_annotation_assets",
+        "web_annotation_attachment_clones",
+    }
     assert legacy["value_json"] == '{"kept":true}'
 
 

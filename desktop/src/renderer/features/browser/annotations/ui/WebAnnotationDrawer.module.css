@@ -1,0 +1,613 @@
+.drawerTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.drawerBody {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  overflow: auto;
+  padding: 14px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 96%, var(--surface-muted));
+}
+
+.selectionActions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.incognitoNotice {
+  display: grid;
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 32%, var(--color-border-subtle));
+  border-radius: var(--radius-md);
+  padding: 9px 10px;
+  color: var(--color-text-2);
+  background: color-mix(in srgb, var(--color-warning) 6%, var(--color-bg-elevated));
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.incognitoNotice strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.selectionActions button,
+.drawerState button,
+.propertiesHeader button,
+.propertyRow button,
+.editorActions button,
+.cardFooter button {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-2);
+  background: var(--surface-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  transition:
+    color var(--motion-fast) var(--motion-ease-out),
+    border-color var(--motion-fast) var(--motion-ease-out),
+    background-color var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-fast) var(--motion-ease-standard);
+}
+
+.selectionActions button:hover,
+.drawerState button:hover,
+.propertiesHeader button:hover,
+.propertyRow button:hover,
+.editorActions button:hover,
+.cardFooter button:hover {
+  border-color: var(--color-border-default);
+  color: var(--color-text-primary);
+  background: var(--surface-hover);
+}
+
+.selectionActions button:focus-visible,
+.drawerState button:focus-visible,
+.propertiesHeader button:focus-visible,
+.propertyRow button:focus-visible,
+.editorActions button:focus-visible,
+.cardFooter button:focus-visible,
+.field input:focus-visible,
+.field textarea:focus-visible,
+.propertyRow input:focus-visible,
+.propertyRow select:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--annotation-accent) 54%, transparent);
+  outline-offset: 1px;
+}
+
+.selectionActions button:active,
+.editorActions button:active,
+.cardFooter button:active {
+  transform: scale(0.98);
+}
+
+.selectionActions button:disabled,
+.drawerState button:disabled,
+.propertiesHeader button:disabled,
+.propertyRow button:disabled,
+.editorActions button:disabled,
+.cardFooter button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.listSection,
+.draft,
+.retargetFlow {
+  display: grid;
+  gap: 9px;
+}
+
+.draft {
+  border: 1px solid color-mix(in srgb, var(--annotation-accent) 28%, var(--color-border-subtle));
+  border-radius: var(--radius-md);
+  padding: 11px;
+  background: color-mix(in srgb, var(--annotation-accent) 5%, var(--color-bg-elevated));
+}
+
+.retargetFlow {
+  border: 1px solid color-mix(in srgb, var(--annotation-accent) 32%, var(--color-border-subtle));
+  border-radius: var(--radius-md);
+  padding: 11px;
+  background: color-mix(in srgb, var(--annotation-accent) 5%, var(--color-bg-elevated));
+}
+
+.retargetComparison {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.retargetComparison > div {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  background: var(--surface-muted);
+}
+
+.retargetComparison > div > span {
+  color: var(--color-text-3);
+  font-size: 10px;
+}
+
+.retargetComparison blockquote {
+  overflow: hidden;
+  margin: 0;
+  color: var(--color-text-2);
+  font-size: 11px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+}
+
+.retargetComparison > svg {
+  color: var(--color-text-4);
+}
+
+.retargetPreserved,
+.retargetStatus {
+  margin: 0;
+  color: var(--color-text-3);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.retargetConflict {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  border-radius: var(--radius-sm);
+  padding: 7px 8px;
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 9%, transparent);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.retargetConflict svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.candidateList {
+  display: grid;
+  gap: 5px;
+}
+
+.candidateList > span {
+  color: var(--color-text-3);
+  font-size: 10px;
+}
+
+.candidateList button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  color: var(--color-text-2);
+  background: var(--surface-muted);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.candidateList button:hover {
+  border-color: var(--color-border-default);
+  background: var(--surface-hover);
+}
+
+.candidateList button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--annotation-accent) 54%, transparent);
+  outline-offset: 1px;
+}
+
+.candidateList button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.candidateList strong {
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.candidateList small {
+  color: var(--color-text-4);
+  font-size: 9px;
+}
+
+.draft blockquote,
+.targetSummary {
+  overflow: hidden;
+  margin: 0;
+  border-left: 2px solid color-mix(in srgb, var(--annotation-accent) 52%, transparent);
+  padding-left: 9px;
+  color: var(--color-text-2);
+  font-size: 12px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+}
+
+.draft > p {
+  margin: 0;
+  color: var(--color-text-3);
+  font-size: 11px;
+}
+
+.sectionHeading {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--color-text-2);
+  font-size: 12px;
+}
+
+.sectionHeading strong {
+  color: var(--color-text-primary);
+  font-size: 13px;
+}
+
+.sectionHeading span {
+  border-radius: var(--radius-pill);
+  padding: 2px 7px;
+  background: var(--surface-muted);
+  color: var(--color-text-3);
+  font-size: 10px;
+}
+
+.card {
+  position: relative;
+  display: grid;
+  gap: 9px;
+  border: 1px solid var(--color-border-subtle);
+  border-left: 3px solid var(--annotation-accent);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  padding: 11px 11px 9px 12px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 90%, var(--surface-muted));
+  box-shadow:none;
+  transition:
+    border-color var(--motion-fast) var(--motion-ease-out),
+    background-color var(--motion-fast) var(--motion-ease-out),
+    box-shadow var(--motion-fast) var(--motion-ease-out);
+}
+
+.card:hover,
+.card:focus-within {
+  border-color: color-mix(in srgb, var(--annotation-accent) 30%, var(--color-border-subtle));
+  background: var(--color-bg-elevated);
+  box-shadow:var(--shadow-popover);
+}
+
+.card[data-status="changed"],
+.card[data-status="ambiguous"] {
+  border-left-color: var(--color-warning);
+}
+
+.card[data-status="orphaned"] {
+  border-left-color: var(--color-danger);
+}
+
+.cardHeader,
+.cardFooter,
+.editorActions,
+.propertiesHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+}
+
+.cardHeader {
+  justify-content: flex-start;
+  font-size: 10px;
+}
+
+.cardHeader time {
+  margin-left: auto;
+  color: var(--color-text-4);
+}
+
+.targetBadge,
+.statusBadge,
+.tags span {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
+.targetBadge {
+  background: color-mix(in srgb, var(--annotation-accent) 11%, var(--surface-muted));
+  color: var(--color-text-2);
+}
+
+.statusBadge {
+  border: 1px solid var(--color-border-subtle);
+  color: var(--color-text-3);
+  background: var(--surface-muted);
+}
+
+.statusBadge[data-status="resolved"] {
+  color: var(--color-success-6);
+}
+
+.statusBadge[data-status="changed"],
+.statusBadge[data-status="ambiguous"] {
+  color: var(--color-warning);
+}
+
+.statusBadge[data-status="orphaned"] {
+  color: var(--color-danger);
+}
+
+.body {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.tags span {
+  background: var(--surface-muted);
+  color: var(--color-text-3);
+  font-size: 10px;
+}
+
+.propertyList {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.propertyList > div {
+  display: grid;
+  grid-template-columns: minmax(72px, 0.35fr) minmax(0, 1fr);
+  gap: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 70%, transparent);
+  padding-top: 4px;
+  font-size: 11px;
+}
+
+.propertyList dt {
+  overflow: hidden;
+  color: var(--color-text-3);
+  text-overflow: ellipsis;
+}
+
+.propertyList dd {
+  overflow: hidden;
+  margin: 0;
+  color: var(--color-text-2);
+  text-overflow: ellipsis;
+}
+
+.cardFooter {
+  min-width: 0;
+}
+
+.cardFooter > span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  color: var(--color-text-4);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cardFooter > div {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.cardFooter button,
+.propertyRow button {
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+}
+
+.revision {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-4);
+  font-size: 9px;
+}
+
+.editor {
+  display: grid;
+  gap: 9px;
+}
+
+.field {
+  display: grid;
+  gap: 5px;
+}
+
+.field > span,
+.propertiesHeader > span {
+  color: var(--color-text-2);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.field input,
+.field textarea,
+.propertyRow input,
+.propertyRow select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  outline: 0;
+  padding: 7px 8px;
+  color: var(--color-text-primary);
+  background: var(--control-pill-bg);
+  font: inherit;
+  font-size: 12px;
+}
+
+.field textarea {
+  min-height: 92px;
+  resize: vertical;
+  line-height: 1.55;
+}
+
+.field small {
+  color: var(--color-text-4);
+  font-size: 9px;
+  text-align: right;
+}
+
+.properties {
+  display: grid;
+  gap: 6px;
+}
+
+.propertiesHeader button {
+  min-height: 25px;
+  padding: 0 7px;
+}
+
+.propertiesEmpty {
+  margin: 0;
+  color: var(--color-text-4);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.propertyRow {
+  display: grid;
+  grid-template-columns: minmax(72px, 0.8fr) 80px minmax(92px, 1fr) 28px;
+  gap: 5px;
+}
+
+.validationError {
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.editorActions {
+  justify-content: flex-end;
+}
+
+.editorActions > span {
+  margin-right: auto;
+  color: var(--color-text-4);
+  font-size: 9px;
+}
+
+.editorActions button {
+  padding: 0 10px;
+}
+
+.editorActions .primaryButton {
+  border-color: var(--color-text-primary);
+  color: var(--color-text-inverse);
+  background: var(--color-text-primary);
+}
+
+.drawerState {
+  display: grid;
+  min-height: 150px;
+  place-items: center;
+  align-content: center;
+  gap: 7px;
+  border: 1px dashed var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  padding: 18px;
+  color: var(--color-text-3);
+  background: color-mix(in srgb, var(--surface-muted) 70%, transparent);
+  text-align: center;
+}
+
+.drawerState strong {
+  color: var(--color-text-2);
+  font-size: 12px;
+}
+
+.drawerState span {
+  max-width: 280px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.drawerState button {
+  padding: 0 9px;
+}
+
+@container (max-width: 430px) {
+  .selectionActions {
+    grid-template-columns: 1fr;
+  }
+
+  .propertyRow {
+    grid-template-columns: minmax(0, 1fr) 74px 28px;
+  }
+
+  .retargetComparison {
+    grid-template-columns: 1fr;
+  }
+
+  .retargetComparison > svg {
+    transform: rotate(90deg);
+    justify-self: center;
+  }
+
+  .propertyRow > :nth-child(3) {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .selectionActions button,
+  .drawerState button,
+  .propertiesHeader button,
+  .propertyRow button,
+  .editorActions button,
+  .cardFooter button,
+  .candidateList button,
+  .card {
+    transition: none;
+  }
+}

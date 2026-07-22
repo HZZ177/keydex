@@ -5,13 +5,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Layout, resetLayoutUiStateCacheForTests } from "@/renderer/components/layout/Layout";
 import { useOptionalRightSidebarConversation } from "@/renderer/components/layout/RightSidebarConversationContext";
-import type { RuntimeBridge } from "@/runtime";
+import { createRuntimeBridge, type RuntimeBridge } from "@/runtime";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { MessageText } from "@/renderer/pages/conversation/messages";
 import { useA2UIRenderSuspension } from "@/renderer/pages/conversation/messages/a2ui/A2UIRenderSuspensionContext";
 import { PreviewProvider, usePreview } from "@/renderer/providers/PreviewProvider";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import { ThemeProvider } from "@/renderer/providers/ThemeProvider";
+import { ActiveProjectCoordinatorProvider } from "@/renderer/providers/ActiveProjectCoordinatorProvider";
+import { TerminalSessionScopeProvider } from "@/renderer/providers/TerminalSessionScopeProvider";
+import { TerminalProvider } from "@/renderer/features/terminal";
 import type { SubagentRunSnapshot } from "@/types/subagents";
 
 afterEach(() => {
@@ -22,7 +25,13 @@ afterEach(() => {
 function renderLayout(ui: ReactElement) {
   return render(
     <ThemeProvider>
-      <LayoutStateProvider>{ui}</LayoutStateProvider>
+      <ActiveProjectCoordinatorProvider>
+        <TerminalSessionScopeProvider>
+          <TerminalProvider runtimeAvailable={false}>
+            <LayoutStateProvider>{ui}</LayoutStateProvider>
+          </TerminalProvider>
+        </TerminalSessionScopeProvider>
+      </ActiveProjectCoordinatorProvider>
     </ThemeProvider>,
   );
 }
@@ -30,9 +39,15 @@ function renderLayout(ui: ReactElement) {
 function renderLayoutWithPreview(ui: ReactElement) {
   return render(
     <ThemeProvider>
-      <LayoutStateProvider>
-        <PreviewProvider>{ui}</PreviewProvider>
-      </LayoutStateProvider>
+      <ActiveProjectCoordinatorProvider>
+        <TerminalSessionScopeProvider>
+          <TerminalProvider runtimeAvailable={false}>
+            <LayoutStateProvider>
+              <PreviewProvider>{ui}</PreviewProvider>
+            </LayoutStateProvider>
+          </TerminalProvider>
+        </TerminalSessionScopeProvider>
+      </ActiveProjectCoordinatorProvider>
     </ThemeProvider>,
   );
 }
@@ -546,6 +561,11 @@ describe("Layout", () => {
     expect(screen.getByRole("tab", { name: "Markdown 窗口" }).getAttribute("title")).toBeNull();
     expect(screen.getByRole("button", { name: "关闭侧边栏窗口 HTML 窗口" }).getAttribute("title")).toBeNull();
     expect(screen.getByRole("button", { name: "新建侧边栏页面" }).getAttribute("title")).toBeNull();
+    expect(screen.getByRole("tab", { name: "HTML 窗口" }).getAttribute("data-tooltip-label")).toBe("HTML 窗口");
+    expect(screen.getByRole("button", { name: "关闭侧边栏窗口 HTML 窗口" }).getAttribute("data-tooltip-label"))
+      .toBe("关闭 HTML 窗口");
+    expect(screen.getByRole("button", { name: "新建侧边栏页面" }).getAttribute("data-tooltip-label"))
+      .toBe("新建侧边栏页面");
     expect(await screen.findByRole("heading", { level: 1, name: "Markdown 窗口" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "新建侧边栏页面" })).not.toBeNull();
 
@@ -590,6 +610,30 @@ describe("Layout", () => {
     expect(shell.dataset.rightSidebar).toBe("closed");
     expect(screen.queryAllByRole("tab")).toHaveLength(0);
     expect(screen.queryByTestId("right-sidebar-initial-page")).toBeNull();
+  });
+
+  it("does not persist workbench-only preview scopes", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(null), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    const runtime = createRuntimeBridge({ baseUrl: "http://keydex", fetcher });
+
+    renderLayoutWithPreview(
+      <>
+        <WorkbenchPreviewScopeHarness />
+        <Layout runtime={runtime} appMode="workbench" contentMode="full">
+          <div>工作台内容</div>
+        </Layout>
+      </>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("workbench-preview-scope").textContent).toBe("workbench:workspace-1");
+    });
+    expect(
+      fetcher.mock.calls.filter(([url]) => String(url).includes("/api/ui/right-sidebar")),
+    ).toHaveLength(0);
   });
 
   it("shows the target session loading state before routed navigation commits", () => {
@@ -1124,6 +1168,21 @@ function RightSidebarFilePanelRemountHarness() {
       ) : null}
     </>
   );
+}
+
+function WorkbenchPreviewScopeHarness() {
+  const preview = usePreview();
+  const { setPreviewHostContext } = preview;
+
+  useEffect(() => {
+    setPreviewHostContext({
+      panelScopeKey: "workbench:workspace-1",
+      workspaceId: "workspace-1",
+    });
+    return () => setPreviewHostContext(null);
+  }, [setPreviewHostContext]);
+
+  return <output data-testid="workbench-preview-scope">{preview.activeScopeKey}</output>;
 }
 
 function RightSidebarDirectoryPanelHarness() {

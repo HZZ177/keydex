@@ -617,6 +617,46 @@ describe("ConversationPage", () => {
     expect(tooltip.textContent).not.toContain("调用后 · 模型返回");
   });
 
+  it("empties the context window ring as soon as compression completes", async () => {
+    const { runtime, emit } = fakeRuntime();
+    renderConversation(<ConversationPage threadId="ses-1" runtime={runtime} />);
+
+    await readyComposer();
+    await act(async () => {
+      emit(
+        agentEvent("middleware_progress", {
+          session_id: "ses-1",
+          active_session_id: "ses-1",
+          middleware: "ContextCompressionMiddleware",
+          stage: "context_window_snapshot",
+          token_count: 700,
+          context_window: 1000,
+          threshold_token_count: 750,
+          threshold_usage_fraction: 700 / 750,
+        }),
+      );
+    });
+    expect(screen.getByTestId("context-window-indicator").getAttribute("aria-label")).toContain(
+      "当前已使用上下文 700 tokens",
+    );
+
+    await act(async () => {
+      emit(
+        agentEvent("middleware_progress", {
+          session_id: "ses-1",
+          active_session_id: "ses-1",
+          middleware: "ContextCompressionMiddleware",
+          stage: "compression_completed",
+          notice_id: "context-compression:ses-1:run-1",
+        }),
+      );
+    });
+
+    expect(screen.getByTestId("context-window-indicator").getAttribute("aria-label")).toBe(
+      "上下文窗口占用等待下一次模型调用",
+    );
+  });
+
   it("forks a restored message and navigates to the new branch session", async () => {
     const navigateToConversation = vi.fn();
     const forkResponse = {

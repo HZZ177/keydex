@@ -163,12 +163,48 @@ async def test_pending_input_middleware_keeps_images_and_skill_activation(tmp_pa
         attachment_id="att-steer",
         user_id="local-user",
         type="image",
-        source="upload",
+        source="web_annotation",
         name="guide.png",
         path=str(image_path),
         mime_type="image/png",
         size=image_path.stat().st_size,
     )
+    web_context = {
+        "id": "web-annotation:annotation-steer:snapshot-steer",
+        "type": "web_annotation",
+        "label": "网页批注 · Pending history",
+        "content": "Immutable pending annotation context",
+        "metadata": {
+            "annotation_id": "annotation-steer",
+            "snapshot_digest": "snapshot-steer",
+            "snapshot": {
+                "schemaVersion": 1,
+                "type": "web_annotation",
+                "annotationId": "annotation-steer",
+                "annotationRevision": 2,
+                "capturedAt": "2026-07-22T08:00:00Z",
+                "source": {
+                    "title": "Pending history",
+                    "url": "https://example.test/pending",
+                    "urlKey": "d" * 64,
+                    "origin": "https://example.test",
+                },
+                "target": {
+                    "type": "region",
+                    "summary": "Pending region",
+                    "resolution": "orphaned",
+                    "freshness": "last-known",
+                },
+                "evidence": {"attachmentId": attachment.id},
+                "annotation": {
+                    "bodyMarkdown": "Pending immutable note",
+                    "tags": [],
+                    "properties": [],
+                },
+                "digest": "snapshot-steer",
+            },
+        },
+    }
     record, _ = repositories.pending_inputs.create_or_get(
         session_id="ses-steer",
         message="结合图片继续",
@@ -178,6 +214,7 @@ async def test_pending_input_middleware_keeps_images_and_skill_activation(tmp_pa
             "skill_activation": {"skill_name": "review-skill", "source": "workspace"},
             "message_context_items": [
                 {"type": "skill", "label": "/review-skill", "skill_name": "review-skill"},
+                web_context,
             ],
         },
     )
@@ -238,6 +275,7 @@ async def test_pending_input_middleware_keeps_images_and_skill_activation(tmp_pa
         "pending_user_input_context",
         "skill_activation",
         "message_context_item",
+        "message_context_item",
         "root_user_message",
         "image_attachment",
     ]
@@ -247,6 +285,8 @@ async def test_pending_input_middleware_keeps_images_and_skill_activation(tmp_pa
     )
     assert user_event.payload["pending_input_id"] == record.id
     assert user_event.payload["attachments"][0]["attachment_id"] == attachment.id
+    assert user_event.payload["attachments"][0]["source"] == "web_annotation"
+    assert user_event.payload["contextItems"][1] == web_context
 
 
 @pytest.mark.asyncio

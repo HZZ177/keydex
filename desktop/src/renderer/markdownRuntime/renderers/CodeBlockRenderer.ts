@@ -6,25 +6,18 @@ import type {
   MarkdownBlockRendererDefinition,
   MarkdownBlockSourceMap,
 } from "./types";
+import {
+  markdownCodeLanguageLabel,
+  resolveMarkdownCodeHighlightLanguage,
+  type MarkdownCodeHighlightResult,
+  type MarkdownCodeHighlightService,
+  type MarkdownCodeHighlightTask,
+  type MarkdownCodeToken,
+  type MarkdownCodeTokenKind,
+} from "./CodeHighlightProtocol";
+import { MarkdownCodeWorkerHighlighter } from "./CodeHighlightWorkerService";
 import { replaceMarkdownActionIcon } from "./domIcons";
 
-export type MarkdownCodeTokenKind = "keyword" | "string" | "number" | "literal";
-export interface MarkdownCodeToken { readonly start: number; readonly end: number; readonly kind: MarkdownCodeTokenKind }
-export interface MarkdownCodeHighlightResult {
-  readonly blockId: string;
-  readonly contentHash: string;
-  readonly language: string | null;
-  readonly tokens: readonly MarkdownCodeToken[];
-  readonly truncated: boolean;
-}
-export interface MarkdownCodeHighlightTask {
-  readonly signal: AbortSignal;
-  readonly promise: Promise<MarkdownCodeHighlightResult>;
-  cancel(reason?: string): void;
-}
-export interface MarkdownCodeHighlightService {
-  highlight(block: MarkdownSnapshotBlock, code: string): MarkdownCodeHighlightTask;
-}
 export interface MarkdownCodeHighlighterOptions {
   readonly chunkCharacters?: number;
   readonly maxHighlightCharacters?: number;
@@ -77,7 +70,7 @@ export class MarkdownCodeHighlighter implements MarkdownCodeHighlightService {
     return Object.freeze({
       blockId: block.id,
       contentHash: block.content_hash,
-      language: normalizedLanguage(block.metadata.language),
+      language: resolveMarkdownCodeHighlightLanguage(block.metadata.language),
       tokens: Object.freeze(tokens),
       truncated: code.length > this.maxHighlightCharacters || tokenLimitReached,
     });
@@ -105,9 +98,10 @@ export function createCodeBlockRenderer(options: MarkdownCodeBlockRendererOption
         element.dataset.markdownCodeHighlightState = "plain";
         renderPlain(code, value, plainChunk);
         installCopy(element, next, value);
-        const language = normalizedLanguage(next.block.metadata.language);
-        if (!language || !KNOWN_LANGUAGES.has(language)) {
-          element.dataset.markdownCodeHighlightState = language ? "unsupported" : "plain";
+        const languageLabel = markdownCodeLanguageLabel(next.block.metadata.language);
+        const language = resolveMarkdownCodeHighlightLanguage(next.block.metadata.language);
+        if (!language) {
+          element.dataset.markdownCodeHighlightState = languageLabel ? "unsupported" : "plain";
           return;
         }
         const cached = cache.getDescriptor<MarkdownCodeHighlightResult>(next.block, next.profile.id);
@@ -195,9 +189,9 @@ function applyFrameAttributes(element: HTMLElement, context: MarkdownBlockRender
   element.dataset.markdownLogicalEnd = String(block.logical_end);
   element.dataset.markdownRendererProfile = context.profile.id;
   element.dataset.markdownCodeFrame = "true";
-  element.dataset.markdownCodeLanguage = normalizedLanguage(block.metadata.language) ?? "text";
+  element.dataset.markdownCodeLanguage = markdownCodeLanguageLabel(block.metadata.language) ?? "text";
   const language = element.querySelector<HTMLElement>("[data-markdown-code-language-label]");
-  if (language) language.textContent = normalizedLanguage(block.metadata.language) ?? "text";
+  if (language) language.textContent = markdownCodeLanguageLabel(block.metadata.language) ?? "text";
   const code = element.querySelector("code");
   if (code) code.className = block.metadata.language ? `language-${safeClass(block.metadata.language)}` : "";
 }
@@ -297,11 +291,6 @@ function tokenKind(token: string): MarkdownCodeTokenKind {
   return "keyword";
 }
 
-function normalizedLanguage(value: string | null | undefined): string | null {
-  const language = value?.trim().toLowerCase();
-  return language ? LANGUAGE_ALIASES.get(language) ?? language : null;
-}
-
 function safeClass(value: string): string {
   return value.replace(/[^a-z0-9_-]/giu, "-").slice(0, 64);
 }
@@ -315,9 +304,7 @@ function yieldToMain(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-const LANGUAGE_ALIASES = new Map([["js", "javascript"], ["ts", "typescript"], ["py", "python"], ["yml", "yaml"]]);
-const KNOWN_LANGUAGES = new Set(["javascript", "typescript", "jsx", "tsx", "json", "python", "css", "html", "xml", "yaml"]);
 const SHARED_CODE_CACHE = new MarkdownRenderCache({ maxEntries: 512, maxBytes: 8 * 1024 * 1024 });
-const SHARED_HIGHLIGHTER = new MarkdownCodeHighlighter();
+const SHARED_HIGHLIGHTER = new MarkdownCodeWorkerHighlighter({ fallback: new MarkdownCodeHighlighter() });
 
 export const codeBlockRenderer = createCodeBlockRenderer();

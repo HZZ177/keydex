@@ -417,6 +417,166 @@ create index if not exists idx_sessions_archived
 create index if not exists idx_sessions_workspace_archive
   on sessions(workspace_id, archive_origin, archived_at desc, id desc);
 
+create table if not exists right_sidebar_scope_states (
+  id text primary key,
+  scope_kind text not null
+    check (scope_kind in ('session', 'workspace', 'global')),
+  session_id text,
+  workspace_id text,
+  schema_version integer not null default 2
+    check (schema_version = 2),
+  state_json text not null,
+  revision integer not null default 1
+    check (revision >= 1),
+  created_at text not null,
+  updated_at text not null,
+  check (
+    (scope_kind = 'session' and session_id is not null and workspace_id is null)
+    or (scope_kind = 'workspace' and session_id is null and workspace_id is not null)
+    or (scope_kind = 'global' and session_id is null and workspace_id is null)
+  ),
+  foreign key(session_id) references sessions(id) on delete cascade,
+  foreign key(workspace_id) references workspaces(id) on delete cascade
+);
+
+create unique index if not exists idx_right_sidebar_scope_session
+  on right_sidebar_scope_states(session_id)
+  where scope_kind = 'session';
+create unique index if not exists idx_right_sidebar_scope_workspace
+  on right_sidebar_scope_states(workspace_id)
+  where scope_kind = 'workspace';
+create unique index if not exists idx_right_sidebar_scope_global
+  on right_sidebar_scope_states(scope_kind)
+  where scope_kind = 'global';
+
+create table if not exists right_sidebar_scope_promotions (
+  id text primary key,
+  source_scope_kind text not null
+    check (source_scope_kind in ('workspace', 'global')),
+  source_scope_key text not null,
+  source_revision integer not null check (source_revision >= 1),
+  target_session_id text not null,
+  response_json text not null,
+  created_at text not null,
+  unique (source_scope_kind, source_scope_key, source_revision, target_session_id),
+  foreign key(target_session_id) references sessions(id) on delete cascade
+);
+
+create index if not exists idx_right_sidebar_promotions_target
+  on right_sidebar_scope_promotions(target_session_id, created_at desc);
+
+create table if not exists web_annotation_resources (
+  id text primary key,
+  scope_kind text not null
+    check (scope_kind in ('session', 'workspace', 'global')),
+  session_id text,
+  workspace_id text,
+  normalization_version integer not null default 1
+    check (normalization_version = 1),
+  url_key text not null
+    check (length(url_key) = 64 and lower(url_key) = url_key),
+  url_normalized text not null check (length(url_normalized) > 0),
+  document_url text not null check (length(document_url) > 0),
+  canonical_url text,
+  origin text not null check (length(origin) > 0),
+  title text not null default '',
+  page_fingerprint_json text,
+  created_at text not null,
+  updated_at text not null,
+  check (
+    (scope_kind = 'session' and session_id is not null and workspace_id is null)
+    or (scope_kind = 'workspace' and session_id is null and workspace_id is not null)
+    or (scope_kind = 'global' and session_id is null and workspace_id is null)
+  ),
+  foreign key(session_id) references sessions(id) on delete cascade,
+  foreign key(workspace_id) references workspaces(id) on delete cascade
+);
+
+create unique index if not exists idx_web_resources_session_url
+  on web_annotation_resources(session_id, url_key)
+  where scope_kind = 'session';
+create unique index if not exists idx_web_resources_workspace_url
+  on web_annotation_resources(workspace_id, url_key)
+  where scope_kind = 'workspace';
+create unique index if not exists idx_web_resources_global_url
+  on web_annotation_resources(scope_kind, url_key)
+  where scope_kind = 'global';
+create index if not exists idx_web_resources_document
+  on web_annotation_resources(scope_kind, document_url, updated_at desc);
+
+create table if not exists web_annotations (
+  id text primary key,
+  resource_id text not null,
+  target_type text not null
+    check (target_type in ('text', 'element', 'region')),
+  target_schema_version integer not null default 1
+    check (target_schema_version = 1),
+  target_json text not null check (length(target_json) > 0),
+  body_markdown text not null,
+  tags_json text not null default '[]',
+  properties_json text not null default '[]',
+  revision integer not null default 1 check (revision >= 1),
+  created_at text not null,
+  updated_at text not null,
+  unique (id, resource_id),
+  foreign key(resource_id) references web_annotation_resources(id) on delete cascade
+);
+
+create index if not exists idx_web_annotations_resource_created
+  on web_annotations(resource_id, created_at, id);
+create index if not exists idx_web_annotations_resource_updated
+  on web_annotations(resource_id, updated_at desc, id);
+
+create table if not exists web_annotation_target_history (
+  id text primary key,
+  annotation_id text not null,
+  prior_revision integer not null check (prior_revision >= 1),
+  target_type text not null
+    check (target_type in ('text', 'element', 'region')),
+  target_schema_version integer not null default 1
+    check (target_schema_version = 1),
+  target_json text not null check (length(target_json) > 0),
+  reason text not null check (reason in ('user_retarget', 'migration')),
+  created_at text not null,
+  foreign key(annotation_id) references web_annotations(id) on delete cascade
+);
+
+create unique index if not exists idx_web_target_history_revision
+  on web_annotation_target_history(annotation_id, prior_revision);
+
+create table if not exists web_annotation_assets (
+  id text primary key,
+  resource_id text not null,
+  annotation_id text,
+  asset_kind text not null check (asset_kind in ('region_screenshot')),
+  state text not null check (state in ('staged', 'attached')),
+  storage_path text not null check (length(storage_path) > 0),
+  mime_type text not null check (mime_type in ('image/png', 'image/jpeg', 'image/webp')),
+  size_bytes integer not null check (size_bytes > 0),
+  sha256 text not null check (length(sha256) = 64 and lower(sha256) = sha256),
+  width integer not null check (width > 0),
+  height integer not null check (height > 0),
+  expires_at text,
+  created_at text not null,
+  updated_at text not null,
+  check (
+    (state = 'staged' and annotation_id is null and expires_at is not null)
+    or (state = 'attached' and annotation_id is not null and expires_at is null)
+  ),
+  foreign key(resource_id) references web_annotation_resources(id) on delete cascade,
+  foreign key(annotation_id, resource_id)
+    references web_annotations(id, resource_id) on delete cascade
+);
+
+create unique index if not exists idx_web_annotation_assets_path
+  on web_annotation_assets(storage_path);
+create index if not exists idx_web_annotation_assets_staged_expiry
+  on web_annotation_assets(state, expires_at)
+  where state = 'staged';
+create index if not exists idx_web_annotation_assets_annotation
+  on web_annotation_assets(annotation_id, created_at, id)
+  where annotation_id is not null;
+
 create table if not exists thread_tasks (
   id text primary key,
   session_id text not null,
@@ -525,6 +685,22 @@ create index if not exists idx_attachments_user_id
   on attachments(user_id, is_deleted, created_at desc);
 create index if not exists idx_attachments_path
   on attachments(path);
+
+create table if not exists web_annotation_attachment_clones (
+  id text primary key,
+  session_id text not null,
+  annotation_id text not null,
+  asset_id text not null,
+  context_digest text not null,
+  attachment_id text not null unique,
+  created_at text not null,
+  unique(session_id, annotation_id, asset_id, context_digest),
+  foreign key(session_id) references sessions(id) on delete cascade,
+  foreign key(attachment_id) references attachments(id) on delete cascade
+);
+
+create index if not exists idx_web_annotation_attachment_clones_session
+  on web_annotation_attachment_clones(session_id, created_at desc);
 
 drop table if exists workspace_file_annotations;
 

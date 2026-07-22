@@ -1,6 +1,7 @@
 import { X } from "lucide-react";
 import { useEffect, useId, useRef, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useBrowserOcclusionToken } from "@/renderer/features/browser/runtime";
 
 import styles from "./AppDialog.module.css";
 
@@ -54,6 +55,7 @@ export function AppDialog({
   footerClassName = "",
   style,
 }: AppDialogProps) {
+  useBrowserOcclusionToken(true, "dialog");
   const titleId = useId();
   const descriptionId = useId();
   const panelRef = useRef<HTMLElement | null>(null);

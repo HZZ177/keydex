@@ -18,6 +18,7 @@ import { runtimeBridge, type RuntimeBridge } from "@/runtime";
 import { PierreWorkerPoolHost } from "@/renderer/components/diff/engine/PierreWorkerPoolHost";
 import { TerminalSessionScopeProvider } from "./TerminalSessionScopeProvider";
 import { TerminalProvider } from "@/renderer/features/terminal";
+import { BrowserOcclusionProvider } from "@/renderer/features/browser/runtime";
 
 export interface AppProvidersProps extends PropsWithChildren {
   runtime?: RuntimeBridge;
@@ -33,7 +34,8 @@ export function AppProviders({
 
   return (
     <ThemeProvider>
-      <PierreWorkerPoolHost>
+      <BrowserOcclusionProvider>
+        <PierreWorkerPoolHost>
         <NotificationProvider>
           <AppUpdateController>
             <AppContextMenuProvider>
@@ -59,7 +61,8 @@ export function AppProviders({
             </AppContextMenuProvider>
           </AppUpdateController>
         </NotificationProvider>
-      </PierreWorkerPoolHost>
+        </PierreWorkerPoolHost>
+      </BrowserOcclusionProvider>
     </ThemeProvider>
   );
 }

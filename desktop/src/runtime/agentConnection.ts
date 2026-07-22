@@ -58,14 +58,26 @@ export async function resolveAgentConnection(
 
   let invoke: TauriInvoke | null = null;
   let connection: AgentConnection | null = null;
+  let ownsSidecar = false;
 
   try {
     invoke = await resolveInvoke(options);
     if (!invoke) {
       throw new Error("Tauri API 不可用");
     }
+    const externalConnection = await invoke<AgentConnection | null>("resolve_dev_agent_connection");
+    if (externalConnection) {
+      connection = externalConnection;
+      await invoke<void>("wait_for_health", {
+        host: connection.host,
+        port: connection.port,
+        timeoutMs: DEFAULT_AGENT_HEALTH_TIMEOUT_MS,
+      });
+      return connection;
+    }
     const port = await invoke<number>("allocate_port");
     connection = await invoke<AgentConnection>("start_sidecar", { port });
+    ownsSidecar = true;
     await invoke<void>("wait_for_health", {
       host: connection.host,
       port: connection.port,
@@ -73,7 +85,7 @@ export async function resolveAgentConnection(
     });
     return connection;
   } catch (error) {
-    if (connection && invoke) {
+    if (ownsSidecar && invoke) {
       await invoke<void>("stop_sidecar").catch(() => undefined);
     }
     throw new Error(`启动 Keydex 本地服务失败：${formatErrorMessage(error)}`);

@@ -20,6 +20,7 @@ export interface TerminalSessionState {
   workspaceId: string | null;
   terminalIds: string[];
   activeTerminalId: string | null;
+  hydrated: boolean;
   cursorByTerminalId: Record<string, number>;
   attachStateByTerminalId: Record<string, TerminalAttachState>;
 }
@@ -108,6 +109,7 @@ export function createTerminalStore(options: CreateTerminalStoreOptions = {}): T
               workspaceId: previous?.workspaceId ?? null,
               terminalIds,
               activeTerminalId,
+              hydrated: true,
               cursorByTerminalId: keepKeys(previous?.cursorByTerminalId ?? {}, terminalIds),
               attachStateByTerminalId: keepKeys(previous?.attachStateByTerminalId ?? {}, terminalIds),
             },
@@ -186,6 +188,7 @@ export function createTerminalStore(options: CreateTerminalStoreOptions = {}): T
               workspaceId: session.workspaceId,
               terminalIds,
               activeTerminalId,
+              hydrated: session.hydrated,
               cursorByTerminalId,
               attachStateByTerminalId,
             },
@@ -301,6 +304,7 @@ function emptyTerminalSession(): TerminalSessionState {
     workspaceId: null,
     terminalIds: [],
     activeTerminalId: null,
+    hydrated: false,
     cursorByTerminalId: {},
     attachStateByTerminalId: {},
   };

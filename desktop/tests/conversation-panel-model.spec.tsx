@@ -5,7 +5,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeBridge } from "../src/runtime";
 import { fileReviewDocumentFromChanges } from "../src/renderer/components/diff/adapters/fileReviewDocument";
 import type { AgentSessionController } from "../src/renderer/hooks/useAgentSessionController";
-import { useConversationPanelModel } from "../src/renderer/pages/conversation/useConversationPanelModel";
+import {
+  contextWindowUsageUpdateFromProgress,
+  useConversationPanelModel,
+} from "../src/renderer/pages/conversation/useConversationPanelModel";
 import { NotificationProvider } from "../src/renderer/providers/NotificationProvider";
 import { PreviewProvider, usePreview, type ReviewPanelRequest } from "../src/renderer/providers/PreviewProvider";
 import type { ConversationRuntimeState } from "../src/renderer/stores/conversationStore";
@@ -16,6 +19,22 @@ let latestReviewPanelRequest: ReviewPanelRequest | null = null;
 describe("useConversationPanelModel", () => {
   beforeEach(() => {
     latestReviewPanelRequest = null;
+  });
+
+  it("clears context window usage only when the current session finishes compression", () => {
+    expect(contextWindowUsageUpdateFromProgress({
+      middleware: "ContextCompressionMiddleware",
+      stage: "compression_completed",
+      session_id: "ses-1",
+      active_session_id: "ses-1",
+    }, "ses-1")).toBeNull();
+
+    expect(contextWindowUsageUpdateFromProgress({
+      middleware: "ContextCompressionMiddleware",
+      stage: "compression_completed",
+      session_id: "ses-2",
+      active_session_id: "ses-2",
+    }, "ses-1")).toBeUndefined();
   });
 
   it("exposes workspace search and directory listing only for available workspace sessions", async () => {
@@ -202,6 +221,38 @@ describe("useConversationPanelModel", () => {
               metadata: { source: "selection", comment: "保留这条评论" },
             },
             { type: "skill", label: "/review", skill_name: "review", content: "Review changes" },
+            {
+              type: "web_annotation",
+              id: "web-annotation:web-history:history-digest",
+              label: "网页批注 · History",
+              content: "Immutable web history",
+              metadata: {
+                annotation_id: "web-history",
+                snapshot_digest: "history-digest",
+                snapshot: {
+                  schemaVersion: 1,
+                  type: "web_annotation",
+                  annotationId: "web-history",
+                  annotationRevision: 2,
+                  capturedAt: "2026-07-22T08:00:00Z",
+                  source: {
+                    title: "History",
+                    url: "https://example.test/history",
+                    urlKey: "f".repeat(64),
+                    origin: "https://example.test",
+                  },
+                  target: {
+                    type: "region",
+                    summary: "History region",
+                    resolution: "orphaned",
+                    freshness: "last-known",
+                  },
+                  evidence: { attachmentId: "att-1" },
+                  annotation: { bodyMarkdown: "Historical note", tags: [], properties: [] },
+                  digest: "history-digest",
+                },
+              },
+            },
           ],
         },
         attachments: [
@@ -211,7 +262,7 @@ describe("useConversationPanelModel", () => {
             type: "image",
             name: "review.png",
             path: "D:/tmp/review.png",
-            source: "upload",
+            source: "web_annotation",
             mime_type: "image/png",
             size: 128,
           },
@@ -233,6 +284,11 @@ describe("useConversationPanelModel", () => {
         quotes: [expect.objectContaining({ text: "selected code", comment: "保留这条评论" })],
         selectedSkill: expect.objectContaining({ name: "review" }),
         attachments: [expect.objectContaining({ attachment_id: "att-1", name: "review.png" })],
+        webAnnotations: [expect.objectContaining({ annotationId: "web-history", selectedRevision: 2 })],
+        replayedContextItems: [expect.objectContaining({
+          type: "web_annotation",
+          metadata: expect.objectContaining({ snapshot_digest: "history-digest" }),
+        })],
       }),
     );
   });
@@ -841,6 +897,8 @@ function fakeController(overrides: Partial<AgentSessionController> = {}): AgentS
       files: [],
       quotes: [],
       attachments: [],
+      webAnnotations: [],
+      replayedContextItems: [],
       updatedAt: 0,
     },
     setComposerDraft: vi.fn(),

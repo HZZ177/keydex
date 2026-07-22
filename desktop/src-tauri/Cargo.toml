@@ -7,6 +7,10 @@ edition = "2021"
 name = "keydex_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = []
+browser-devtools = ["tauri/devtools"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -15,7 +19,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Enables OS proxy discovery for tauri-plugin-updater via Cargo feature unification.
 reqwest = { version = "0.13", default-features = false, features = ["system-proxy"] }
-tauri = { version = "2", features = ["devtools", "tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "unstable"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-process = "2"
@@ -24,7 +28,13 @@ tauri-plugin-updater = "2"
 portable-pty = "0.9.0"
 base64 = "0.22.1"
 uuid = { version = "1.24.0", features = ["v4"] }
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+image = { version = "0.25.8", default-features = false, features = ["png"] }
+sha2 = "0.10.9"
+url = "2"
 
 [target."cfg(windows)".dependencies]
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+windows_061 = { package = "windows", version = "0.61.3", features = ["Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_UI_Input_KeyboardAndMouse"] }
+webview2-com = "0.38.2"
 winreg = "0.56.0"

@@ -52,9 +52,7 @@ export function TerminalSurface({
     });
     let disposed = false;
     let attachmentDispose: (() => void) | null = null;
-    void attachTerminal(snapshot.terminalId, (event) => {
-      if (!disposed) applyRuntimeEvent(nextHandle, event);
-    })
+    void attachTerminal(snapshot.terminalId, (event) => applyRuntimeEvent(nextHandle, event))
       .then((attachment) => {
         if (disposed) attachment.dispose();
         else attachmentDispose = attachment.dispose;
@@ -122,6 +120,13 @@ export function TerminalSurface({
   );
 }
 
-function applyRuntimeEvent(handle: TerminalXtermHandle, event: TerminalRuntimeEvent) {
-  if (event.event === "output") handle.terminal.write(event.data);
+function applyRuntimeEvent(handle: TerminalXtermHandle, event: TerminalRuntimeEvent): Promise<void> {
+  if (event.event !== "output") return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    try {
+      handle.terminal.write(event.data, resolve);
+    } catch (reason) {
+      reject(reason);
+    }
+  });
 }

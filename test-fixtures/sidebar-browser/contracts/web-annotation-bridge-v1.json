@@ -1,0 +1,316 @@
+{
+  "schemaVersion": 1,
+  "protocol": "keydex.web-annotation.v1",
+  "hostToPageKinds": [
+    "selection.start",
+    "selection.cancel",
+    "overlay.configure",
+    "annotation.resolve",
+    "highlight.render",
+    "highlight.clear",
+    "navigate.toTarget"
+  ],
+  "pageToHostKinds": [
+    "bridge.ready",
+    "selection.candidate",
+    "selection.result",
+    "selection.cancelled",
+    "annotation.submit",
+    "annotation.cancelled",
+    "resolution.result",
+    "geometry.changed",
+    "page.changed",
+    "bridge.error"
+  ],
+  "hostToPage": [
+    {
+      "protocol": "keydex.web-annotation.v1",
+      "kind": "selection.start",
+      "panelId": "panel-1",
+      "surfaceId": "surface-1",
+      "generation": 2,
+      "navigationId": "navigation-2",
+      "frameKey": "main",
+      "requestId": "request-start",
+      "sequence": 1,
+      "payload": { "selectionId": "selection-1", "mode": "text" }
+    },
+    {
+      "protocol": "keydex.web-annotation.v1",
+      "kind": "selection.cancel",
+      "panelId": "panel-1",
+      "surfaceId": "surface-1",
+      "generation": 2,
+      "navigationId": "navigation-2",
+      "frameKey": "main",
+      "requestId": "request-cancel",
+      "sequence": 2,
+      "payload": { "selectionId": "selection-1", "reason": "user" }
+    },
+    {
+      "protocol": "keydex.web-annotation.v1",
+      "kind": "overlay.configure",
+      "panelId": "panel-1",
+      "surfaceId": "surface-1",
+      "generation": 2,
+      "navigationId": "navigation-2",
+      "frameKey": "main",
+      "requestId": "request-overlay-theme",
+      "sequence": 3,
+      "payload": {
+        "theme": "dark",
+        "tokens": {
+          "accent": "rgb(255, 121, 198)",
+          "surface": "rgb(40, 42, 54)",
+          "text": "rgb(248, 248, 242)",
+          "border": "rgb(89, 100, 131)",
+          "focus": "rgb(255, 121, 198)",
+          "warning": "rgb(255, 184, 108)",
+          "danger": "rgb(255, 85, 85)"
+        },
+        "radiusPx": 4,
+        "motionMs": 0,
+        "reducedMotion": true
+      }
+    },
+    {
+      "protocol": "keydex.web-annotation.v1",
+      "kind": "annotation.resolve",
+      "panelId": "panel-1",
+      "surfaceId": "surface-1",
+      "generation": 2,
+      "navigationId": "navigation-2",
+      "frameKey": "main",
+      "requestId": "request-resolve",
+      "sequence": 4,
+      "payload": {
+        "annotationId": "annotation-1",
+        "target": {
+          "type": "text",
+          "quote": { "exact": "Keydex bridge text", "prefix": "before ", "suffix": " after" },
+          "position": { "start": 10, "end": 28, "textModelVersion": 1 },
+          "domRange": {
+            "startPath": [{ "childIndex": 0, "shadowRoot": false }],
+            "startOffset": 0,
+            "endPath": [{ "childIndex": 0, "shadowRoot": false }],
+            "endOffset": 18
+          },
+          "context": { "headingPath": ["Bridge fixtures"], "containerRole": "article", "containerTextDigest": "sha256:fixture" },
+          "rects": [{ "x": 12, "y": 24, "width": 180, "height": 20 }],
+          "frame": { "url": "https://example.test/article", "indexPath": [] }
+        }
+      }
+    },
+    {
+      "protocol": "keydex.web-annotation.v1",
+      "kind": "highlight.render",
+      "panelId": "panel-1",
+      "surfaceId": "surface-1",
+      "generation": 2,
+      "navigationId": "navigation-2",
+      "frameKey": "main",
+      "requestId": "request-highlight",
+      "sequence": 5,
+      "payload": {
+        "annotationId": "annotation-2",
+        "state": "resolved",
+        "target": {
+          "type": "element",
+          "tag": "button",
+          "role": "button",
+          "accessibleName": "Save note",
+          "textSummary": "Save note",
+          "stableAttributes": [{ "name": "aria-label", "value": "Save note" }],
+          "path": [{ "childIndex": 2, "shadowRoot": false }],
+          "context": { "headingPath": ["Bridge fixtures"] },
+          "rect": { "x": 20, "y": 60, "width": 100, "height": 32 },
+          "frame": { "url": "https://example.test/article", "indexPath": [] }
+        }
+      }
+    },
+    {
+      "protocol": "keydex.web-annotation.v1",
+      "kind": "highlight.clear",
+      "panelId": "panel-1",
+      "surfaceId": "surface-1",
+      "generation": 2,
+      "navigationId": "navigation-2",
+      "frameKey": "main",
+      "requestId": "request-clear",
+      "sequence": 6,
+      "payload": { "annotationIds": ["annotation-1", "annotation-2"] }
+    },
+    {
+      "protocol": "keydex.web-annotation.v1",
+      "kind": "navigate.toTarget",
+      "panelId": "panel-1",
+      "surfaceId": "surface-1",
+      "generation": 2,
+      "navigationId": "navigation-2",
+      "frameKey": "main",
+      "requestId": "request-navigate",
+      "sequence": 7,
+      "payload": {
+        "annotationId": "annotation-3",
+        "target": {
+          "type": "region",
+          "rect": { "x": 40, "y": 80, "width": 320, "height": 180 },
+          "viewport": { "width": 1280, "height": 720 },
+          "scroll": { "x": 0, "y": 400 },
+          "relativeElement": {
+            "path": [{ "childIndex": 4, "shadowRoot": false }],
+            "rect": { "x": 32, "y": 64, "width": 360, "height": 220 }
+          },
+          "frame": { "url": "https://example.test/article", "indexPath": [] }
+        }
+      }
+    }
+  ],
+  "pageToHost": [
+    {
+      "protocol": "keydex.web-annotation.v1",
+      "kind": "bridge.ready",
+      "panelId": "panel-1",
+      "surfaceId": "surface-1",
+      "generation": 2,
+      "navigationId": "navigation-2",
+      "frameKey": "main",
+      "requestId": "request-ready",
+      "sequence": 1,
+      "payload": { "href": "https://example.test/article", "top": true }
+    },
+    {
+      "protocol": "keydex.web-annotation.v1",
+      "kind": "selection.candidate",
+      "panelId": "panel-1",
+      "surfaceId": "surface-1",
+      "generation": 2,
+      "navigationId": "navigation-2",
+      "frameKey": "main",
+      "requestId": "request-candidate",
+      "sequence": 2,
+      "payload": {
+        "selectionId": "selection-1",
+        "mode": "element",
+        "candidateId": "candidate-1",
+        "label": "Save note button",
+        "rect": { "x": 20, "y": 60, "width": 100, "height": 32 },
+        "depth": 2
+      }
+    },
+    {
+      "protocol": "keydex.web-annotation.v1",
+      "kind": "selection.result",
+      "panelId": "panel-1",
+      "surfaceId": "surface-1",
+      "generation": 2,
+      "navigationId": "navigation-2",
+      "frameKey": "main",
+      "requestId": "request-result",
+      "sequence": 3,
+      "payload": {
+        "selectionId": "selection-1",
+        "target": {
+          "type": "element",
+          "tag": "button",
+          "role": "button",
+          "accessibleName": "Save note",
+          "stableAttributes": [{ "name": "aria-label", "value": "Save note" }],
+          "path": [{ "childIndex": 2, "shadowRoot": false }],
+          "shadowHostPath": [{ "childIndex": 1, "shadowRoot": true }],
+          "context": { "headingPath": ["Bridge fixtures"] },
+          "rect": { "x": 20, "y": 60, "width": 100, "height": 32 },
+          "frame": { "url": "https://example.test/article", "name": "main", "indexPath": [] }
+        }
+      }
+    },
+    {
+      "protocol": "keydex.web-annotation.v1",
+      "kind": "annotation.submit",
+      "panelId": "panel-1",
+      "surfaceId": "surface-1",
+      "generation": 2,
+      "navigationId": "navigation-2",
+      "frameKey": "main",
+      "requestId": "request-result",
+      "sequence": 4,
+      "payload": { "selectionId": "selection-1", "bodyMarkdown": "这里需要进一步确认。" }
+    },
+    {
+      "protocol": "keydex.web-annotation.v1",
+      "kind": "annotation.cancelled",
+      "panelId": "panel-1",
+      "surfaceId": "surface-1",
+      "generation": 2,
+      "navigationId": "navigation-2",
+      "frameKey": "main",
+      "requestId": "request-result-cancelled",
+      "sequence": 5,
+      "payload": { "selectionId": "selection-3" }
+    },
+    {
+      "protocol": "keydex.web-annotation.v1",
+      "kind": "selection.cancelled",
+      "panelId": "panel-1",
+      "surfaceId": "surface-1",
+      "generation": 2,
+      "navigationId": "navigation-2",
+      "frameKey": "main",
+      "requestId": "request-cancelled",
+      "sequence": 6,
+      "payload": { "selectionId": "selection-2", "reason": "navigation" }
+    },
+    {
+      "protocol": "keydex.web-annotation.v1",
+      "kind": "resolution.result",
+      "panelId": "panel-1",
+      "surfaceId": "surface-1",
+      "generation": 2,
+      "navigationId": "navigation-2",
+      "frameKey": "main",
+      "requestId": "request-resolution",
+      "sequence": 7,
+      "payload": {
+        "annotationId": "annotation-4",
+        "status": "ambiguous",
+        "candidateIds": ["candidate-1", "candidate-2"]
+      }
+    },
+    {
+      "protocol": "keydex.web-annotation.v1",
+      "kind": "geometry.changed",
+      "panelId": "panel-1",
+      "surfaceId": "surface-1",
+      "generation": 2,
+      "navigationId": "navigation-2",
+      "frameKey": "main",
+      "requestId": "request-geometry",
+      "sequence": 8,
+      "payload": { "annotationIds": ["annotation-1"] }
+    },
+    {
+      "protocol": "keydex.web-annotation.v1",
+      "kind": "page.changed",
+      "panelId": "panel-1",
+      "surfaceId": "surface-1",
+      "generation": 2,
+      "navigationId": "navigation-2",
+      "frameKey": "main",
+      "requestId": "request-page-change",
+      "sequence": 9,
+      "payload": { "reason": "dom", "revision": 3 }
+    },
+    {
+      "protocol": "keydex.web-annotation.v1",
+      "kind": "bridge.error",
+      "panelId": "panel-1",
+      "surfaceId": "surface-1",
+      "generation": 2,
+      "navigationId": "navigation-2",
+      "frameKey": "main",
+      "requestId": "request-error",
+      "sequence": 10,
+      "payload": { "code": "unsupported_frame", "message": "Cross-origin frame is unavailable", "retryable": false }
+    }
+  ]
+}

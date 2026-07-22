@@ -1,4 +1,4 @@
-import { ArrowUp, LoaderCircle, Paperclip, Plus, SendHorizontal, Square, X } from "lucide-react";
+import { ArrowUp, LoaderCircle, Paperclip, Plus, SendHorizontal, Square, StickyNote, TriangleAlert, X } from "lucide-react";
 import {
   type ClipboardEvent,
   type ChangeEvent,
@@ -19,6 +19,7 @@ import {
   useReducer,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { createPortal } from "react-dom";
 
@@ -49,6 +50,11 @@ import { ContextChipIcon } from "@/renderer/components/chat/ContextChipIcon";
 import { useWorkspaceFileSearch, type WorkspaceFileSearchFn } from "@/renderer/hooks/useWorkspaceFileSearch";
 import { WORKSPACE_FILE_SEARCH_DEBOUNCE_MS } from "@/renderer/utils/workspaceFileSearchBudget";
 import { ImagePreviewDialog } from "@/renderer/components/workspace/ImagePreviewSurface";
+import {
+  webAnnotationReferencePresentations,
+  type SelectedWebAnnotationReference,
+  type WebAnnotationVisibleStatus,
+} from "@/renderer/features/browser/annotations";
 
 import styles from "./SendBox.module.css";
 import {
@@ -135,6 +141,7 @@ export interface SendBoxProps {
   externalContextRequest?: SendBoxExternalContextRequest | null;
   selectedFiles?: SelectedFile[];
   selectedQuotes?: SelectedQuote[];
+  selectedWebAnnotations?: SelectedWebAnnotationReference[];
   selectedImageAttachments?: SelectedImageAttachment[];
   pastedTextFragments?: PastedTextFragment[];
   leftHint?: ReactNode;
@@ -147,6 +154,7 @@ export interface SendBoxProps {
   selectedSkill?: SkillSummary | null;
   onSelectedFilesChange?: (files: SelectedFile[]) => void;
   onSelectedQuotesChange?: (quotes: SelectedQuote[]) => void;
+  onSelectedWebAnnotationsChange?: (references: SelectedWebAnnotationReference[]) => void;
   onSelectedImageAttachmentsChange?: (attachments: SelectedImageAttachment[]) => void;
   onPastedTextFragmentsChange?: (fragments: PastedTextFragment[], value: string) => void;
   onSkillChange?: (skill: SkillSummary | null) => void;
@@ -156,6 +164,7 @@ export interface SendBoxProps {
     quotes: SelectedQuote[],
     attachments: SelectedImageAttachment[],
     options?: SendBoxSubmitOptions,
+    webAnnotations?: SelectedWebAnnotationReference[],
   ) => boolean | void | Promise<boolean | void>;
   onStop: () => void;
   runtime?: RuntimeBridge;
@@ -221,6 +230,7 @@ export function SendBox({
   externalContextRequest = null,
   selectedFiles: controlledSelectedFiles,
   selectedQuotes: controlledSelectedQuotes,
+  selectedWebAnnotations: controlledWebAnnotations,
   selectedImageAttachments: controlledImageAttachments,
   pastedTextFragments: controlledPastedTextFragments = [],
   leftHint = null,
@@ -233,6 +243,7 @@ export function SendBox({
   selectedSkill: controlledSelectedSkill,
   onSelectedFilesChange,
   onSelectedQuotesChange,
+  onSelectedWebAnnotationsChange,
   onSelectedImageAttachmentsChange,
   onPastedTextFragmentsChange,
   onSkillChange,
@@ -288,6 +299,7 @@ export function SendBox({
     quoteSelectionReducer,
     initialQuoteSelectionState,
   );
+  const [uncontrolledWebAnnotations, setUncontrolledWebAnnotations] = useState<SelectedWebAnnotationReference[]>([]);
   const notifications = useNotifications();
   const editorValue = value;
   const pastedTextFragments = useMemo(
@@ -308,6 +320,7 @@ export function SendBox({
     controlledSelectedQuotes === undefined
       ? uncontrolledQuoteSelection
       : { quotes: controlledSelectedQuotes };
+  const webAnnotations = controlledWebAnnotations ?? uncontrolledWebAnnotations;
   const imageAttachments = controlledImageAttachments ?? uncontrolledImageAttachments;
   const emitEditorChange = useCallback(
     (nextValue: string, nextFragments: PastedTextFragment[]) => {
@@ -363,6 +376,10 @@ export function SendBox({
     },
     [controlledSelectedQuotes, onSelectedQuotesChange, quoteSelection],
   );
+  const setWebAnnotations = useCallback((next: SelectedWebAnnotationReference[]) => {
+    if (controlledWebAnnotations === undefined) setUncontrolledWebAnnotations(next);
+    onSelectedWebAnnotationsChange?.(next);
+  }, [controlledWebAnnotations, onSelectedWebAnnotationsChange]);
   const setSelectedSkill = useCallback(
     (skill: SkillSummary | null) => {
       if (controlledSelectedSkill === undefined) {
@@ -449,14 +466,16 @@ export function SendBox({
       Boolean(selectedSkill) ||
       fileSelection.files.length > 0 ||
       quoteSelection.quotes.length > 0 ||
+      webAnnotations.length > 0 ||
       imageAttachments.length > 0);
   const showSendLoading = sendLoading && !busy;
   const requestSend = useCallback((options: SendBoxSubmitOptions = {}) => {
-    const result = onSend(fileSelection.files, quoteSelection.quotes, imageAttachments, options);
+    const result = onSend(fileSelection.files, quoteSelection.quotes, imageAttachments, options, webAnnotations);
     void Promise.resolve(result).then((sent) => {
       if (sent !== false) {
         dispatchFileSelection({ type: "clear" });
         dispatchQuoteSelection({ type: "clear" });
+        setWebAnnotations([]);
         clearImageAttachments();
         setSelectedSkill(null);
       }
@@ -468,6 +487,8 @@ export function SendBox({
     onSend,
     quoteSelection.quotes,
     setSelectedSkill,
+    setWebAnnotations,
+    webAnnotations,
   ]);
   const SendIcon = variant === "keydex" ? ArrowUp : SendHorizontal;
   const slashQuery = getSlashQuery(editorValue);
@@ -1492,7 +1513,7 @@ export function SendBox({
         </div>
       ) : null}
 
-      {selectedSkill || quoteSelection.quotes.length || fileSelection.files.length ? (
+      {selectedSkill || quoteSelection.quotes.length || fileSelection.files.length || webAnnotations.length ? (
         <div className={styles.fileChips} aria-label="已添加上下文" data-sendbox-context-chips="true">
           {selectedSkill ? (
             <SkillContextChip
@@ -1517,6 +1538,15 @@ export function SendBox({
               file={file}
               onOpen={onOpenFileReference}
               onRemove={() => removeFile(file)}
+            />
+          ))}
+          {webAnnotations.map((reference) => (
+            <WebAnnotationContextChip
+              key={reference.annotationId}
+              reference={reference}
+              onRemove={() => setWebAnnotations(
+                webAnnotations.filter((item) => item.annotationId !== reference.annotationId),
+              )}
             />
           ))}
         </div>
@@ -2054,6 +2084,66 @@ function FileContextChip({
   );
 }
 
+function WebAnnotationContextChip({
+  reference,
+  onRemove,
+}: {
+  readonly reference: SelectedWebAnnotationReference;
+  onRemove(): void;
+}) {
+  const presentations = useSyncExternalStore(
+    webAnnotationReferencePresentations.subscribe,
+    webAnnotationReferencePresentations.getSnapshot,
+    webAnnotationReferencePresentations.getSnapshot,
+  );
+  const presentation = presentations[reference.annotationId];
+  const title = presentation?.title || "网页批注";
+  const label = title === "网页批注" ? title : `网页批注 · ${title}`;
+  const warning = warningPresentation(presentation?.status);
+  return (
+    <ComposerContextHover
+      className={styles.webAnnotationChipWrapper}
+      hoverAnchor="web-annotation"
+      title={label}
+      description={[presentation?.summary, presentation?.bodyMarkdown].filter(Boolean).join("\n\n") || `修订 ${reference.selectedRevision}`}
+      meta={warning?.label ?? presentation?.origin ?? "网页引用"}
+    >
+      <span
+        className={styles.webAnnotationChip}
+        data-context-type="web_annotation"
+        data-status={presentation?.status ?? "unknown"}
+      >
+        <span className={styles.contextChipMain} aria-label={`${label}，修订 ${reference.selectedRevision}`}>
+          <span className={styles.contextChipIcon} data-context-chip-icon="web_annotation" aria-hidden="true">
+            <StickyNote size={14} strokeWidth={2} />
+          </span>
+          <span className={styles.contextChipLabel}>{label}</span>
+          {warning ? (
+            <span className={styles.webAnnotationWarning} aria-label={warning.label} role="status" title={warning.label}>
+              <TriangleAlert size={12} strokeWidth={2} />
+            </span>
+          ) : null}
+        </span>
+        <button
+          className={styles.webAnnotationChipRemove}
+          type="button"
+          aria-label={`移除网页批注引用 ${title}`}
+          onClick={onRemove}
+        >
+          <X size={12} strokeWidth={2} />
+        </button>
+      </span>
+    </ComposerContextHover>
+  );
+}
+
+function warningPresentation(status: WebAnnotationVisibleStatus | undefined): { readonly label: string } | null {
+  if (status === "changed") return { label: "网页内容已变化，发送时将保留原始与当前引用" };
+  if (status === "ambiguous") return { label: "网页目标存在歧义，发送时不会自动选择候选" };
+  if (status === "orphaned") return { label: "网页目标已失联，发送时仅保留原始引用和来源" };
+  return null;
+}
+
 function quoteHoverDescription(quote: SelectedQuote): string {
   const lineLabel = quote.file ? quoteLineLabel(quote.file.lineStart, quote.file.lineEnd) : null;
   const location = quote.file?.path ? `${quote.file.path}${lineLabel ? ` · ${lineLabel}` : ""}` : "";
@@ -2109,7 +2199,7 @@ function ComposerContextHover({
   children,
 }: {
   className: string;
-  hoverAnchor: "skill" | "quote" | "comment" | "file";
+  hoverAnchor: "skill" | "quote" | "comment" | "file" | "web-annotation";
   title: string;
   description: string;
   meta?: string | null;

@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex, MutexGuard,
+    Arc, Condvar, Mutex, MutexGuard,
 };
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -19,8 +19,9 @@ use super::profiles::{list_shell_profiles, resolve_shell_profile};
 use super::protocol::{
     error_codes, TerminalAttachSnapshot, TerminalError, TerminalEvent, TerminalProfileSnapshot,
     TerminalSize, TerminalSnapshot, TerminalStatus, TERMINAL_CONTRACT_VERSION,
-    TERMINAL_GLOBAL_LIMIT, TERMINAL_MAX_INPUT_BYTES, TERMINAL_MAX_OUTPUT_CHUNK_BYTES,
-    TERMINAL_REPLAY_LIMIT_BYTES, TERMINAL_SESSION_LIMIT,
+    TERMINAL_DELIVERY_WINDOW_BYTES, TERMINAL_DELIVERY_WINDOW_CHUNKS, TERMINAL_GLOBAL_LIMIT,
+    TERMINAL_MAX_INPUT_BYTES, TERMINAL_MAX_OUTPUT_CHUNK_BYTES, TERMINAL_REPLAY_LIMIT_BYTES,
+    TERMINAL_SESSION_LIMIT,
 };
 use super::replay::ReplayRing;
 
@@ -49,13 +50,55 @@ struct TerminalEntry {
     process_tree: Mutex<Option<ManagedProcessTree>>,
     last_size: Mutex<TerminalSize>,
     stream: Mutex<StreamState>,
+    stream_credit: Condvar,
     finalized: AtomicBool,
 }
 
 struct StreamState {
     replay: ReplayRing,
-    subscriber: Option<Channel<TerminalEvent>>,
-    subscriber_generation: u64,
+    subscriber: Option<TerminalSubscriber>,
+}
+
+struct TerminalSubscriber {
+    id: String,
+    channel: Channel<TerminalEvent>,
+    delivery: DeliveryWindow,
+}
+
+#[derive(Debug, Default)]
+struct DeliveryWindow {
+    in_flight: VecDeque<DeliveryChunk>,
+    bytes: usize,
+}
+
+#[derive(Debug)]
+struct DeliveryChunk {
+    seq: u64,
+    bytes: usize,
+}
+
+impl DeliveryWindow {
+    fn try_reserve(&mut self, seq: u64, bytes: usize) -> bool {
+        if self.bytes.saturating_add(bytes) > TERMINAL_DELIVERY_WINDOW_BYTES
+            || self.in_flight.len() >= TERMINAL_DELIVERY_WINDOW_CHUNKS
+        {
+            return false;
+        }
+        self.bytes += bytes;
+        self.in_flight.push_back(DeliveryChunk { seq, bytes });
+        true
+    }
+
+    fn acknowledge(&mut self, seq: u64) -> bool {
+        let mut released = false;
+        while self.in_flight.front().is_some_and(|chunk| chunk.seq <= seq) {
+            if let Some(chunk) = self.in_flight.pop_front() {
+                self.bytes = self.bytes.saturating_sub(chunk.bytes);
+                released = true;
+            }
+        }
+        released
+    }
 }
 
 impl Default for TerminalManager {
@@ -147,23 +190,24 @@ impl TerminalManager {
         on_event: Channel<TerminalEvent>,
     ) -> Result<TerminalAttachSnapshot, TerminalError> {
         let entry = self.entry(terminal_id)?;
-        let (truncated, mut replay, cursor) = {
+        let subscription_id = Uuid::new_v4().to_string();
+        let (truncated, mut replay, cursor, earliest_seq) = {
             let mut stream = entry
                 .stream
                 .lock()
                 .map_err(|_| TerminalError::new(error_codes::ATTACH_FAILED, "无法连接终端输出"))?;
             let (truncated, replay) = stream.replay.events_after(terminal_id, after_seq);
-            stream.subscriber_generation = stream.subscriber_generation.wrapping_add(1).max(1);
-            stream.subscriber = Some(on_event);
-            (truncated, replay, stream.replay.latest_seq())
+            let cursor = stream.replay.latest_seq();
+            let earliest_seq = stream.replay.earliest_seq();
+            stream.subscriber = Some(TerminalSubscriber {
+                id: subscription_id.clone(),
+                channel: on_event,
+                delivery: DeliveryWindow::default(),
+            });
+            (truncated, replay, cursor, earliest_seq)
         };
+        entry.stream_credit.notify_all();
         if truncated {
-            let earliest_seq = entry
-                .stream
-                .lock()
-                .map_err(|_| TerminalError::new(error_codes::ATTACH_FAILED, "无法读取终端回放"))?
-                .replay
-                .earliest_seq();
             replay.insert(
                 0,
                 TerminalEvent::ReplayTruncated {
@@ -177,7 +221,58 @@ impl TerminalManager {
             snapshot,
             replay,
             cursor,
+            subscription_id,
         })
+    }
+
+    pub fn acknowledge(
+        &self,
+        terminal_id: &str,
+        subscription_id: &str,
+        seq: u64,
+    ) -> Result<(), TerminalError> {
+        let entry = match self.entry(terminal_id) {
+            Ok(entry) => entry,
+            Err(error) if error.code == error_codes::NOT_FOUND => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        let released = {
+            let mut stream = lock(&entry.stream)?;
+            stream
+                .subscriber
+                .as_mut()
+                .filter(|subscriber| subscriber.id == subscription_id)
+                .is_some_and(|subscriber| subscriber.delivery.acknowledge(seq))
+        };
+        if released {
+            entry.stream_credit.notify_all();
+        }
+        Ok(())
+    }
+
+    pub fn detach(&self, terminal_id: &str, subscription_id: &str) -> Result<(), TerminalError> {
+        let entry = match self.entry(terminal_id) {
+            Ok(entry) => entry,
+            Err(error) if error.code == error_codes::NOT_FOUND => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        let detached = {
+            let mut stream = lock(&entry.stream)?;
+            if stream
+                .subscriber
+                .as_ref()
+                .is_some_and(|subscriber| subscriber.id == subscription_id)
+            {
+                stream.subscriber = None;
+                true
+            } else {
+                false
+            }
+        };
+        if detached {
+            entry.stream_credit.notify_all();
+        }
+        Ok(())
     }
 
     pub fn write(&self, terminal_id: &str, data_base64: &str) -> Result<(), TerminalError> {
@@ -255,8 +350,8 @@ impl TerminalManager {
             Err(error) if error.code == error_codes::NOT_FOUND => return Ok(()),
             Err(error) => return Err(error),
         };
+        clear_subscriber(&entry)?;
         let _ = kill_entry(&entry);
-        lock(&entry.stream)?.subscriber = None;
         self.remove_entry(terminal_id)?;
         Ok(())
     }
@@ -343,7 +438,7 @@ impl TerminalManager {
     }
 
     fn publish_output(&self, terminal_id: &str, entry: &Arc<TerminalEntry>, bytes: &[u8]) {
-        let (event, subscriber) = match lock(&entry.stream) {
+        let (event, seq, target_subscription_id) = match lock(&entry.stream) {
             Ok(mut stream) => {
                 let seq = stream.replay.append(bytes);
                 let event = TerminalEvent::Output {
@@ -351,30 +446,54 @@ impl TerminalManager {
                     seq,
                     data_base64: STANDARD.encode(bytes),
                 };
-                (
-                    event,
-                    stream
-                        .subscriber
-                        .clone()
-                        .map(|channel| (stream.subscriber_generation, channel)),
-                )
+                let target_subscription_id = stream
+                    .subscriber
+                    .as_ref()
+                    .map(|subscriber| subscriber.id.clone());
+                (event, seq, target_subscription_id)
             }
             Err(_) => return,
         };
         if let Ok(mut snapshot) = entry.snapshot.lock() {
-            if let TerminalEvent::Output { seq, .. } = &event {
-                snapshot.seq = *seq;
-                snapshot.updated_at = now_millis();
-            }
+            snapshot.seq = seq;
+            snapshot.updated_at = now_millis();
         }
-        if let Some((generation, channel)) = subscriber {
-            if channel.send(event).is_err() {
-                if let Ok(mut stream) = entry.stream.lock() {
-                    if stream.subscriber_generation == generation {
-                        stream.subscriber = None;
-                    }
+        let Some(subscription_id) = target_subscription_id else {
+            return;
+        };
+        let channel = {
+            let mut stream = match entry.stream.lock() {
+                Ok(stream) => stream,
+                Err(_) => return,
+            };
+            loop {
+                let Some(subscriber) = stream
+                    .subscriber
+                    .as_mut()
+                    .filter(|subscriber| subscriber.id == subscription_id)
+                else {
+                    return;
+                };
+                if subscriber.delivery.try_reserve(seq, bytes.len()) {
+                    break subscriber.channel.clone();
+                }
+                stream = match entry.stream_credit.wait(stream) {
+                    Ok(stream) => stream,
+                    Err(_) => return,
+                };
+            }
+        };
+        if channel.send(event).is_err() {
+            if let Ok(mut stream) = entry.stream.lock() {
+                if stream
+                    .subscriber
+                    .as_ref()
+                    .is_some_and(|subscriber| subscriber.id == subscription_id)
+                {
+                    stream.subscriber = None;
                 }
             }
+            entry.stream_credit.notify_all();
         }
     }
 
@@ -513,6 +632,7 @@ impl Drop for TerminalManagerInner {
     fn drop(&mut self) {
         if let Ok(registry) = self.registry.get_mut() {
             for entry in registry.terminals.values() {
+                let _ = clear_subscriber(entry);
                 let _ = kill_entry(entry);
             }
         }
@@ -547,8 +667,8 @@ fn terminal_entry(
             stream: Mutex::new(StreamState {
                 replay: ReplayRing::new(TERMINAL_REPLAY_LIMIT_BYTES),
                 subscriber: None,
-                subscriber_generation: 0,
             }),
+            stream_credit: Condvar::new(),
             finalized: AtomicBool::new(false),
         }),
         reader,
@@ -607,14 +727,32 @@ fn cleanup_process_handles(entry: &TerminalEntry) {
 }
 
 fn send_terminal_event(entry: &TerminalEntry, event: TerminalEvent) {
-    let subscriber = entry
-        .stream
-        .lock()
-        .ok()
-        .and_then(|stream| stream.subscriber.clone());
-    if let Some(subscriber) = subscriber {
-        let _ = subscriber.send(event);
+    let subscriber = entry.stream.lock().ok().and_then(|stream| {
+        stream
+            .subscriber
+            .as_ref()
+            .map(|subscriber| (subscriber.id.clone(), subscriber.channel.clone()))
+    });
+    if let Some((subscription_id, subscriber)) = subscriber {
+        if subscriber.send(event).is_err() {
+            if let Ok(mut stream) = entry.stream.lock() {
+                if stream
+                    .subscriber
+                    .as_ref()
+                    .is_some_and(|subscriber| subscriber.id == subscription_id)
+                {
+                    stream.subscriber = None;
+                }
+            }
+            entry.stream_credit.notify_all();
+        }
     }
+}
+
+fn clear_subscriber(entry: &TerminalEntry) -> Result<(), TerminalError> {
+    lock(&entry.stream)?.subscriber = None;
+    entry.stream_credit.notify_all();
+    Ok(())
 }
 
 fn release_registry_reservation(registry: &mut TerminalRegistry, session_id: &str) {
@@ -657,6 +795,23 @@ fn now_millis() -> u64 {
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn delivery_window_bounds_bytes_and_chunks_until_cumulative_ack() {
+        let mut window = DeliveryWindow::default();
+        for seq in 1..=TERMINAL_DELIVERY_WINDOW_CHUNKS as u64 {
+            assert!(window.try_reserve(seq, 1));
+        }
+        assert!(!window.try_reserve(TERMINAL_DELIVERY_WINDOW_CHUNKS as u64 + 1, 1));
+        assert!(window.acknowledge(1));
+        assert!(window.try_reserve(TERMINAL_DELIVERY_WINDOW_CHUNKS as u64 + 1, 1));
+
+        let mut byte_window = DeliveryWindow::default();
+        assert!(byte_window.try_reserve(1, TERMINAL_DELIVERY_WINDOW_BYTES));
+        assert!(!byte_window.try_reserve(2, 1));
+        assert!(byte_window.acknowledge(1));
+        assert!(byte_window.try_reserve(2, TERMINAL_MAX_OUTPUT_CHUNK_BYTES));
+    }
 
     #[test]
     fn input_decoder_preserves_raw_bytes_and_enforces_limit() {

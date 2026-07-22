@@ -31,6 +31,7 @@ import {
   type SelectedQuote,
 } from "@/renderer/components/chat/SendBox";
 import { GoalModeAccessory } from "@/renderer/components/chat/GoalModeAccessory";
+import type { SelectedWebAnnotationReference } from "@/renderer/features/browser/annotations";
 import {
   isContextCompressionSlashCommand,
   type SlashCommand,
@@ -266,6 +267,7 @@ export function WorkbenchAssistantSurface({
   const composerFiles = controller.composerDraft.files;
   const composerQuotes = controller.composerDraft.quotes;
   const composerAttachments = controller.composerDraft.attachments;
+  const composerWebAnnotations = controller.composerDraft.webAnnotations;
   const composerPastedTextFragments = controller.composerDraft.pastedTextFragments;
   const setComposerFiles = useCallback(
     (files: SelectedFile[]) => controller.setComposerDraft({ files }),
@@ -277,6 +279,10 @@ export function WorkbenchAssistantSurface({
   );
   const setComposerAttachments = useCallback(
     (attachments: SelectedImageAttachment[]) => controller.setComposerDraft({ attachments }),
+    [controller.setComposerDraft],
+  );
+  const setComposerWebAnnotations = useCallback(
+    (webAnnotations: SelectedWebAnnotationReference[]) => controller.setComposerDraft({ webAnnotations }),
     [controller.setComposerDraft],
   );
   const [goalComposerOpen, setGoalComposerOpen] = useState(false);
@@ -1143,6 +1149,7 @@ export function WorkbenchAssistantSurface({
       files: SelectedFile[] = [],
       quotes: SelectedQuote[] = [],
       imageAttachments: SelectedImageAttachment[] = [],
+      webAnnotations: SelectedWebAnnotationReference[] = [],
     ) => {
       const prepared = prepareComposerMessage(controller.draft, files, {
         quotes,
@@ -1165,6 +1172,7 @@ export function WorkbenchAssistantSurface({
       setGoalCreating(true);
       setGoalError(null);
       try {
+        const createsSessionForGoal = !panelSessionId;
         const targetSessionId = await ensureGoalSession(objective, prepared.contextItems);
         if (!targetSessionId) {
           setGoalError("当前会话无法创建目标");
@@ -1196,6 +1204,8 @@ export function WorkbenchAssistantSurface({
           runtimeParams,
           attachments,
           targetSessionId,
+          createdSessionForSend: createsSessionForGoal,
+          ...(webAnnotations.length ? { webAnnotations } : {}),
         });
         if (!sent) {
           await runtime.conversation.deleteThreadTask(targetSessionId, task.id).catch(() => null);
@@ -1254,10 +1264,11 @@ export function WorkbenchAssistantSurface({
       quotes: SelectedQuote[] = [],
       attachments: SelectedImageAttachment[] = [],
       options?: { reverseDeliveryMode?: boolean; deliveryMode?: PendingInputMode },
+      webAnnotations: SelectedWebAnnotationReference[] = [],
     ) => {
       const result = goalComposerOpen
-        ? createGoalTask(files, quotes, attachments)
-        : controller.send(files, quotes, attachments, selectedModel, options);
+        ? createGoalTask(files, quotes, attachments, webAnnotations)
+        : controller.send(files, quotes, attachments, selectedModel, options, webAnnotations);
       void Promise.resolve(result).then((sent) => {
         if (sent === false || surfaceMode !== "composer") {
           return;
@@ -1620,6 +1631,7 @@ export function WorkbenchAssistantSurface({
       selectedFiles={composerFiles}
       selectedQuotes={composerQuotes}
       selectedImageAttachments={composerAttachments}
+      selectedWebAnnotations={composerWebAnnotations}
       pastedTextFragments={composerPastedTextFragments}
       selectedSkill={controller.selectedSkill}
       runtime={runtime}
@@ -1645,6 +1657,7 @@ export function WorkbenchAssistantSurface({
       onSelectedFilesChange={setComposerFiles}
       onSelectedQuotesChange={setComposerQuotes}
       onSelectedImageAttachmentsChange={setComposerAttachments}
+      onSelectedWebAnnotationsChange={setComposerWebAnnotations}
       onPastedTextFragmentsChange={handlePastedTextFragmentsChange}
       onChange={handleComposerChange}
       onSkillChange={controller.setSelectedSkill}
@@ -3037,6 +3050,7 @@ function WorkbenchComposer({
   selectedFiles,
   selectedQuotes,
   selectedImageAttachments,
+  selectedWebAnnotations,
   pastedTextFragments,
   selectedSkill,
   runtime,
@@ -3060,6 +3074,7 @@ function WorkbenchComposer({
   onSelectedFilesChange,
   onSelectedQuotesChange,
   onSelectedImageAttachmentsChange,
+  onSelectedWebAnnotationsChange,
   onPastedTextFragmentsChange,
   onChange,
   onSkillChange,
@@ -3087,6 +3102,7 @@ function WorkbenchComposer({
   selectedFiles: SelectedFile[];
   selectedQuotes: SelectedQuote[];
   selectedImageAttachments: SelectedImageAttachment[];
+  selectedWebAnnotations: SelectedWebAnnotationReference[];
   pastedTextFragments: PastedTextFragment[];
   selectedSkill: SkillSummary | null;
   runtime: RuntimeBridge;
@@ -3110,6 +3126,7 @@ function WorkbenchComposer({
   onSelectedFilesChange: (files: SelectedFile[]) => void;
   onSelectedQuotesChange: (quotes: SelectedQuote[]) => void;
   onSelectedImageAttachmentsChange: (attachments: SelectedImageAttachment[]) => void;
+  onSelectedWebAnnotationsChange: (webAnnotations: SelectedWebAnnotationReference[]) => void;
   onPastedTextFragmentsChange: (fragments: PastedTextFragment[], value: string) => void;
   onChange: (value: string) => void;
   onSkillChange: (skill: SkillSummary | null) => void;
@@ -3119,6 +3136,7 @@ function WorkbenchComposer({
     quotes?: SelectedQuote[],
     attachments?: SelectedImageAttachment[],
     options?: { reverseDeliveryMode?: boolean; deliveryMode?: PendingInputMode },
+    webAnnotations?: SelectedWebAnnotationReference[],
   ) => boolean | void | Promise<boolean | void>;
   onStop: () => void;
   onEscape?: () => void;
@@ -3158,6 +3176,7 @@ function WorkbenchComposer({
       selectedFiles={selectedFiles}
       selectedQuotes={selectedQuotes}
       selectedImageAttachments={selectedImageAttachments}
+      selectedWebAnnotations={selectedWebAnnotations}
       pastedTextFragments={pastedTextFragments}
       selectedSkill={selectedSkill}
       runtime={runtime}
@@ -3181,6 +3200,7 @@ function WorkbenchComposer({
       onSelectedFilesChange={onSelectedFilesChange}
       onSelectedQuotesChange={onSelectedQuotesChange}
       onSelectedImageAttachmentsChange={onSelectedImageAttachmentsChange}
+      onSelectedWebAnnotationsChange={onSelectedWebAnnotationsChange}
       onPastedTextFragmentsChange={onPastedTextFragmentsChange}
       onChange={onChange}
       onSkillChange={onSkillChange}

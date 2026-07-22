@@ -35,6 +35,11 @@ export interface StoredLocalFileResponse {
   size: number;
 }
 
+export interface AttachmentDiscardResponse {
+  attachment_id: string;
+  deleted: boolean;
+}
+
 export interface UploadImageOptions {
   source?: "pasted" | "dropped" | "picker" | "url" | string;
   sessionId?: string | null;
@@ -60,6 +65,7 @@ export interface AttachmentsRuntime {
   registerImagePath(path: string, options?: RegisterImagePathOptions): Promise<AttachmentRecord>;
   importImageUrl(url: string, options?: ImportImageUrlOptions): Promise<AttachmentRecord>;
   readMedia(attachmentId: string): Promise<AttachmentMediaResponse>;
+  deleteUnreferencedWebAnnotation(attachmentId: string): Promise<AttachmentDiscardResponse>;
 }
 
 export function createAttachmentsRuntime(http: HttpClient): AttachmentsRuntime {
@@ -126,6 +132,13 @@ export function createAttachmentsRuntime(http: HttpClient): AttachmentsRuntime {
     readMedia(attachmentId) {
       return http.request<AttachmentMediaResponse>(
         `/api/attachments/${encodeURIComponent(attachmentId)}/media`,
+      );
+    },
+    deleteUnreferencedWebAnnotation(attachmentId) {
+      return rawJsonRequest<AttachmentDiscardResponse>(
+        http,
+        `/api/attachments/${encodeURIComponent(attachmentId)}/unreferenced-web-annotation`,
+        { method: "DELETE", keepalive: true },
       );
     },
   };

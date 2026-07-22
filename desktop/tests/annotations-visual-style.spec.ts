@@ -9,8 +9,10 @@ describe("annotation visual style", () => {
   it("uses one pale-red accent for text marks without highlighting line numbers", () => {
     const css = readSource("renderer/components/workspace/FilePreview.module.css");
     const sourceView = readSource("renderer/components/workspace/FilePreview.tsx");
+    const themeCss = readSource("renderer/styles/themes/default-color-scheme.css");
 
-    expect(css).toContain("--annotation-accent: #d87575;");
+    expect(themeCss.match(/--annotation-accent:\s*#d87575;/g)).toHaveLength(2);
+    expect(css).not.toContain("--annotation-accent:");
     expect(css).toMatch(/\.previewAnnotationMark\s*{[^}]*var\(--annotation-accent\)/s);
     expect(css).toContain('.previewAnnotationMark[data-hovered="true"]');
     expect(css).not.toContain('.previewAnnotationMark[data-active="true"]');

@@ -1,62 +1,39 @@
-import { Bot, FileDiff, FolderOpen, MessageSquare } from "lucide-react";
+import type { ReactNode } from "react";
 
 import styles from "./RightSidebarInitialPage.module.css";
 
 export interface RightSidebarInitialPageProps {
-  canOpenFiles?: boolean;
-  canOpenBtwConversation?: boolean;
-  canOpenSubagents?: boolean;
-  canOpenReview?: boolean;
-  onOpenFiles?: () => void;
-  onOpenBtwConversation?: () => void;
-  onOpenSubagents?: () => void;
-  onOpenReview?: () => void;
+  actions: readonly RightSidebarInitialPageAction[];
+  emptyText?: string;
+}
+
+export interface RightSidebarInitialPageAction {
+  readonly id: string;
+  readonly label: string;
+  readonly icon: ReactNode;
+  onSelect(): void;
 }
 
 export function RightSidebarInitialPage({
-  canOpenFiles = false,
-  canOpenBtwConversation = false,
-  canOpenSubagents = false,
-  canOpenReview = false,
-  onOpenFiles,
-  onOpenBtwConversation,
-  onOpenSubagents,
-  onOpenReview,
+  actions,
+  emptyText = "暂无侧边内容",
 }: RightSidebarInitialPageProps) {
-  if (!canOpenFiles && !canOpenBtwConversation && !canOpenSubagents && !canOpenReview) {
+  if (actions.length === 0) {
     return (
       <div className={styles.root} data-testid="right-sidebar-initial-page">
-        <span>暂无侧边内容</span>
+        <span>{emptyText}</span>
       </div>
     );
   }
 
   return (
     <div className={styles.root} data-testid="right-sidebar-initial-page">
-      {canOpenBtwConversation ? (
-        <button className={styles.action} type="button" onClick={onOpenBtwConversation}>
-          <MessageSquare size={14} strokeWidth={1.9} />
-          <span>旁路对话</span>
+      {actions.map((action) => (
+        <button className={styles.action} type="button" key={action.id} onClick={action.onSelect}>
+          {action.icon}
+          <span>{action.label}</span>
         </button>
-      ) : null}
-      {canOpenSubagents ? (
-        <button className={styles.action} type="button" onClick={onOpenSubagents}>
-          <Bot size={14} strokeWidth={1.9} />
-          <span>子智能体</span>
-        </button>
-      ) : null}
-      {canOpenFiles ? (
-        <button className={styles.action} type="button" onClick={onOpenFiles}>
-          <FolderOpen size={14} strokeWidth={1.9} />
-          <span>文件</span>
-        </button>
-      ) : null}
-      {canOpenReview ? (
-        <button className={styles.action} type="button" onClick={onOpenReview}>
-          <FileDiff size={14} strokeWidth={1.9} />
-          <span>审阅</span>
-        </button>
-      ) : null}
+      ))}
     </div>
   );
 }

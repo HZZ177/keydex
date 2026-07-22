@@ -2,11 +2,14 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-pub const TERMINAL_CONTRACT_VERSION: u8 = 1;
+pub const TERMINAL_CONTRACT_VERSION: u8 = 2;
 pub const TERMINAL_SESSION_LIMIT: usize = 8;
 pub const TERMINAL_GLOBAL_LIMIT: usize = 24;
 pub const TERMINAL_REPLAY_LIMIT_BYTES: usize = 1024 * 1024;
+pub const TERMINAL_REPLAY_LIMIT_CHUNKS: usize = 4096;
 pub const TERMINAL_MAX_OUTPUT_CHUNK_BYTES: usize = 32 * 1024;
+pub const TERMINAL_DELIVERY_WINDOW_BYTES: usize = 256 * 1024;
+pub const TERMINAL_DELIVERY_WINDOW_CHUNKS: usize = 64;
 pub const TERMINAL_MAX_INPUT_BYTES: usize = 64 * 1024;
 pub const TERMINAL_MIN_SIZE: u16 = 2;
 pub const TERMINAL_MAX_SIZE: u16 = 500;
@@ -138,6 +141,7 @@ pub struct TerminalAttachSnapshot {
     pub snapshot: TerminalSnapshot,
     pub replay: Vec<TerminalEvent>,
     pub cursor: u64,
+    pub subscription_id: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -169,7 +173,7 @@ mod tests {
             updated_at: 12,
         };
         let value = serde_json::to_value(&snapshot).expect("snapshot serializes");
-        assert_eq!(value["contractVersion"], 1);
+        assert_eq!(value["contractVersion"], 2);
         assert_eq!(value["terminalId"], "terminal-1");
         assert_eq!(value["status"], "running");
 

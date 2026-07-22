@@ -6,6 +6,8 @@ import type { ChatChannel, RuntimeBridge } from "@/runtime";
 import { ChatLayout } from "@/renderer/pages/conversation/ChatLayout";
 import { ConversationPage } from "@/renderer/pages/conversation";
 import { PreviewProvider } from "@/renderer/providers/PreviewProvider";
+import { ActiveProjectCoordinatorProvider } from "@/renderer/providers/ActiveProjectCoordinatorProvider";
+import { TerminalSessionScopeProvider } from "@/renderer/providers/TerminalSessionScopeProvider";
 import type { AgentHistoryResponse, AgentSession } from "@/types/protocol";
 
 describe("ChatLayout", () => {
@@ -130,9 +132,13 @@ describe("ChatLayout", () => {
 describe("ConversationPage", () => {
   it("renders the document chat shell for a thread", async () => {
     render(
-      <PreviewProvider>
-        <ConversationPage threadId="thread-1" runtime={fakeRuntime()} />
-      </PreviewProvider>,
+      <ActiveProjectCoordinatorProvider>
+        <TerminalSessionScopeProvider>
+          <PreviewProvider>
+            <ConversationPage threadId="thread-1" runtime={fakeRuntime()} />
+          </PreviewProvider>
+        </TerminalSessionScopeProvider>
+      </ActiveProjectCoordinatorProvider>,
     );
 
     expect(screen.getByRole("heading", { name: "对话 thread-1" })).not.toBeNull();

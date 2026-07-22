@@ -12,16 +12,31 @@ use serde::Serialize;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
+    webview::PageLoadEvent,
     Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, State,
 };
+use url::Url;
 
+mod browser;
+#[cfg(windows)]
+mod supervisor;
 mod terminal;
 
+use browser::host::{
+    browser_cancel_selection, browser_capture_region, browser_clear_highlights,
+    browser_clear_profile_data, browser_configure_overlay, browser_create_surface,
+    browser_destroy_surface, browser_discard_capture, browser_find, browser_go_back,
+    browser_go_forward, browser_navigate, browser_navigate_to_annotation_target, browser_reload,
+    browser_render_highlights, browser_resolve_annotations, browser_respond_download,
+    browser_respond_permission, browser_set_bounds, browser_set_resource_state,
+    browser_set_visibility, browser_set_zoom, browser_start_selection, browser_stop,
+    browser_stop_find, browser_take_incognito_capture, BrowserHostState,
+};
 use terminal::manager::TerminalManager;
 use terminal::{
-    terminal_attach, terminal_close, terminal_close_all, terminal_close_session, terminal_create,
-    terminal_kill, terminal_list, terminal_list_profiles, terminal_rename, terminal_resize,
-    terminal_write,
+    terminal_ack, terminal_attach, terminal_close, terminal_close_all, terminal_close_session,
+    terminal_create, terminal_detach, terminal_kill, terminal_list, terminal_list_profiles,
+    terminal_rename, terminal_resize, terminal_write,
 };
 
 #[cfg(windows)]
@@ -35,6 +50,7 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 const WINDOW_CLOSE_REQUESTED_EVENT: &str = "keydex://window-close-requested";
 const ASSOCIATED_FILE_OPEN_REQUESTED_EVENT: &str = "keydex://associated-file-open-requested";
 const UPDATE_RELAUNCH_ENV: &str = "KEYDEX_UPDATE_RELAUNCH_WITHOUT_FILE_INTENT";
+const DEV_AGENT_BASE_URL_ENV: &str = "KEYDEX_DEV_AGENT_BASE_URL";
 const TRAY_ID: &str = "keydex-tray";
 const TRAY_SHOW_ID: &str = "show_main_window";
 const TRAY_EXIT_ID: &str = "exit_app";
@@ -43,7 +59,8 @@ const INITIAL_WINDOW_HEIGHT_RATIO: f64 = 0.85;
 // Preserve the previous resizing range while scaling both limits with the startup monitor.
 const MIN_WINDOW_WIDTH_TO_INITIAL_RATIO: f64 = 880.0 / 1445.0;
 const MIN_WINDOW_HEIGHT_TO_INITIAL_RATIO: f64 = 620.0 / 900.0;
-const TERMINAL_SHUTDOWN_DEADLINE: Duration = Duration::from_secs(5);
+const EXIT_CLEANUP_DEADLINE: Duration = Duration::from_secs(2);
+const CHILD_TERMINATION_DEADLINE: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct StartupWindowGeometry {
@@ -126,18 +143,82 @@ impl Drop for SidecarState {
     fn drop(&mut self) {
         if let Ok(child) = self.child.get_mut() {
             if let Some(mut child) = child.take() {
-                kill_child(&mut child);
+                let _ = kill_child(&mut child);
             }
         }
     }
 }
 
-#[derive(Serialize)]
+#[derive(Debug, PartialEq, Serialize)]
 struct AgentConnection {
     host: String,
     port: u16,
     base_url: String,
     data_dir: String,
+}
+
+#[tauri::command]
+fn resolve_dev_agent_connection() -> Result<Option<AgentConnection>, String> {
+    if !cfg!(debug_assertions) {
+        return Ok(None);
+    }
+
+    let configured = match std::env::var(DEV_AGENT_BASE_URL_ENV) {
+        Ok(value) => Some(value),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(format!("{DEV_AGENT_BASE_URL_ENV} must be valid Unicode"))
+        }
+    };
+
+    resolve_dev_agent_connection_value(configured.as_deref(), true)
+}
+
+fn resolve_dev_agent_connection_value(
+    configured: Option<&str>,
+    debug_enabled: bool,
+) -> Result<Option<AgentConnection>, String> {
+    if !debug_enabled {
+        return Ok(None);
+    }
+
+    let Some(configured) = configured.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let url =
+        Url::parse(configured).map_err(|err| format!("invalid {DEV_AGENT_BASE_URL_ENV}: {err}"))?;
+    if url.scheme() != "http" {
+        return Err(format!("{DEV_AGENT_BASE_URL_ENV} must use http"));
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(format!(
+            "{DEV_AGENT_BASE_URL_ENV} must not include credentials"
+        ));
+    }
+    if url.path() != "/" || url.query().is_some() || url.fragment().is_some() {
+        return Err(format!(
+            "{DEV_AGENT_BASE_URL_ENV} must not include a path, query, or fragment"
+        ));
+    }
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| format!("{DEV_AGENT_BASE_URL_ENV} must include a host"))?;
+    if host != "127.0.0.1" && host != "localhost" {
+        return Err(format!(
+            "{DEV_AGENT_BASE_URL_ENV} only allows 127.0.0.1 or localhost"
+        ));
+    }
+    let port = url
+        .port()
+        .ok_or_else(|| format!("{DEV_AGENT_BASE_URL_ENV} must include an explicit port"))?;
+
+    Ok(Some(AgentConnection {
+        host: host.to_string(),
+        port,
+        base_url: format!("http://{host}:{port}"),
+        data_dir: String::new(),
+    }))
 }
 
 #[derive(Serialize)]
@@ -217,29 +298,34 @@ fn resolve_sidecar_binary(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .ok_or_else(|| "agent server sidecar binary was not found".to_string())
 }
 
-fn kill_child(child: &mut Child) {
-    #[cfg(windows)]
+fn kill_child(child: &mut Child) -> Result<(), String> {
+    if child
+        .try_wait()
+        .map_err(|error| error.to_string())?
+        .is_some()
     {
-        let pid = child.id().to_string();
-        let mut command = Command::new("taskkill");
-        command
-            .args(["/PID", &pid, "/T", "/F"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(CREATE_NO_WINDOW);
-        if command
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
-        {
-            let _ = child.wait();
-            return;
-        }
+        return Ok(());
     }
 
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill().map_err(|error| error.to_string())?;
+    let deadline = Instant::now() + CHILD_TERMINATION_DEADLINE;
+    loop {
+        if child
+            .try_wait()
+            .map_err(|error| error.to_string())?
+            .is_some()
+        {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "process {} did not terminate within {} ms",
+                child.id(),
+                CHILD_TERMINATION_DEADLINE.as_millis()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[tauri::command]
@@ -249,7 +335,7 @@ fn start_sidecar(
     port: u16,
 ) -> Result<AgentConnection, String> {
     if let Some(mut child) = state.child.lock().map_err(|err| err.to_string())?.take() {
-        kill_child(&mut child);
+        kill_child(&mut child)?;
     }
     let data_dir = app
         .path()
@@ -288,7 +374,7 @@ fn start_sidecar(
 #[tauri::command]
 fn stop_sidecar(state: State<'_, SidecarState>) -> Result<(), String> {
     if let Some(mut child) = state.child.lock().map_err(|err| err.to_string())?.take() {
-        kill_child(&mut child);
+        kill_child(&mut child)?;
     }
     Ok(())
 }
@@ -303,8 +389,9 @@ fn request_app_exit(
     app: tauri::AppHandle,
     state: State<'_, SidecarState>,
     terminals: State<'_, TerminalManager>,
+    browser: State<'_, BrowserHostState>,
 ) -> Result<(), String> {
-    request_exit(&app, &state, &terminals)
+    request_exit(&app, &state, &terminals, &browser)
 }
 
 #[tauri::command]
@@ -414,8 +501,16 @@ async fn relaunch_after_app_update(
     if let Err(error) = cleanup {
         eprintln!("failed to close embedded terminals before update relaunch: {error}");
     }
-    std::env::set_var(UPDATE_RELAUNCH_ENV, "1");
-    app.request_restart();
+    #[cfg(windows)]
+    {
+        supervisor::notify_restart_requested()?;
+        app.exit(0);
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::set_var(UPDATE_RELAUNCH_ENV, "1");
+        app.request_restart();
+    }
     Ok(())
 }
 
@@ -533,48 +628,141 @@ fn request_exit(
     app: &tauri::AppHandle,
     state: &SidecarState,
     terminals: &TerminalManager,
+    browser: &BrowserHostState,
 ) -> Result<(), String> {
     if state.closing.swap(true, Ordering::SeqCst) {
         return Ok(());
     }
 
-    let child = state.child.lock().map_err(|err| err.to_string())?.take();
+    #[cfg(windows)]
+    if let Err(error) = supervisor::notify_exit_requested() {
+        eprintln!("failed to notify the Keydex exit supervisor: {error}");
+    }
+
+    let child = match state.child.lock() {
+        Ok(mut child) => child.take(),
+        Err(error) => {
+            eprintln!("failed to take the agent sidecar during exit: {error}");
+            None
+        }
+    };
+    let _ = app.remove_tray_by_id(TRAY_ID);
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();
     }
     let app = app.clone();
     let terminals = terminals.clone();
+    let browser = browser.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        if let Err(error) = close_terminals_with_deadline(terminals) {
-            eprintln!("failed to close embedded terminals during exit: {error}");
-        }
-        if let Some(mut child) = child {
-            kill_child(&mut child);
-        }
+        run_parallel_exit_cleanup(browser, terminals, child);
         app.exit(0);
     });
     Ok(())
 }
 
+type ExitCleanupResult = (&'static str, Result<(), String>);
+
+fn run_parallel_exit_cleanup(
+    browser: BrowserHostState,
+    terminals: TerminalManager,
+    child: Option<Child>,
+) {
+    let (sender, receiver) = mpsc::channel::<ExitCleanupResult>();
+    let mut task_count = 0usize;
+    task_count += spawn_exit_cleanup_task("browser-shutdown", sender.clone(), move || {
+        browser.shutdown();
+        Ok(())
+    });
+    task_count += spawn_exit_cleanup_task("terminal-shutdown", sender.clone(), move || {
+        terminals
+            .close_all()
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    });
+    if let Some(mut child) = child {
+        task_count += spawn_exit_cleanup_task("sidecar-shutdown", sender.clone(), move || {
+            kill_child(&mut child)
+        });
+    }
+    drop(sender);
+
+    let completed = wait_for_exit_cleanup(&receiver, task_count, EXIT_CLEANUP_DEADLINE);
+    if completed < task_count {
+        eprintln!(
+            "exit cleanup reached its {} ms global deadline with {} task(s) still pending",
+            EXIT_CLEANUP_DEADLINE.as_millis(),
+            task_count - completed
+        );
+    }
+}
+
+fn wait_for_exit_cleanup(
+    receiver: &mpsc::Receiver<ExitCleanupResult>,
+    task_count: usize,
+    timeout: Duration,
+) -> usize {
+    let deadline = Instant::now() + timeout;
+    let mut completed = 0usize;
+    while completed < task_count {
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            break;
+        };
+        match receiver.recv_timeout(remaining) {
+            Ok((_name, Ok(()))) => completed += 1,
+            Ok((name, Err(error))) => {
+                completed += 1;
+                eprintln!("{name} failed during exit: {error}");
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => break,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    completed
+}
+
+fn spawn_exit_cleanup_task<F>(
+    name: &'static str,
+    sender: mpsc::Sender<ExitCleanupResult>,
+    work: F,
+) -> usize
+where
+    F: FnOnce() -> Result<(), String> + Send + 'static,
+{
+    match std::thread::Builder::new()
+        .name(name.to_string())
+        .spawn(move || {
+            let result = work();
+            let _ = sender.send((name, result));
+        }) {
+        Ok(_) => 1,
+        Err(error) => {
+            eprintln!("failed to spawn {name}: {error}");
+            0
+        }
+    }
+}
+
 fn close_terminals_with_deadline(terminals: TerminalManager) -> Result<(), String> {
     let (sender, receiver) = mpsc::sync_channel(1);
     std::thread::Builder::new()
-        .name("terminal-shutdown".to_string())
+        .name("update-terminal-shutdown".to_string())
         .spawn(move || {
-            let _ = sender.send(
-                terminals
-                    .close_all()
-                    .map(|_| ())
-                    .map_err(|error| error.to_string()),
-            );
+            let result = terminals
+                .close_all()
+                .map(|_| ())
+                .map_err(|error| error.to_string());
+            let _ = sender.send(result);
         })
         .map_err(|error| error.to_string())?;
     receiver
-        .recv_timeout(TERMINAL_SHUTDOWN_DEADLINE)
-        .map_err(|_| "终端清理超过 5 秒，继续退出".to_string())?
+        .recv_timeout(EXIT_CLEANUP_DEADLINE)
+        .map_err(|_| "终端清理超过 2 秒，继续重启更新".to_string())?
 }
 
 fn show_main_window(app: &tauri::AppHandle) {
+    if app.state::<SidecarState>().closing.load(Ordering::SeqCst) {
+        return;
+    }
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
@@ -666,7 +854,8 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             if id == TRAY_EXIT_ID {
                 let state = app.state::<SidecarState>();
                 let terminals = app.state::<TerminalManager>();
-                let _ = request_exit(app, &state, &terminals);
+                let browser = app.state::<BrowserHostState>();
+                let _ = request_exit(app, &state, &terminals, &browser);
             }
         })
         .on_tray_icon_event(|tray, event| match event {
@@ -689,6 +878,29 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+pub fn run_entrypoint() -> i32 {
+    #[cfg(windows)]
+    {
+        match supervisor::bootstrap() {
+            Ok(supervisor::BootstrapOutcome::RunDesktop) => {
+                run();
+                0
+            }
+            Ok(supervisor::BootstrapOutcome::SupervisorExited(exit_code)) => exit_code,
+            Err(error) => {
+                eprintln!("failed to start the Keydex process supervisor: {error}");
+                1
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        run();
+        0
+    }
+}
+
 pub fn run() {
     let startup_associated_paths = collect_startup_associated_markdown_paths(
         std::env::args_os()
@@ -699,6 +911,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(SidecarState::default())
+        .manage(BrowserHostState::default())
         .manage(TerminalManager::default())
         .manage(AssociatedFileOpenState::with_paths(
             startup_associated_paths,
@@ -715,6 +928,19 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .on_page_load(|webview, page| {
+            if webview.label() != "main" || page.event() != PageLoadEvent::Started {
+                return;
+            }
+            let removed = webview
+                .state::<BrowserHostState>()
+                .reset_renderer_surfaces();
+            if removed > 0 {
+                eprintln!(
+                    "reclaimed {removed} browser surface(s) before loading a new main renderer"
+                );
+            }
+        })
         .setup(|app| {
             initialize_main_window(app.handle())?;
             #[cfg(dev)]
@@ -723,6 +949,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            resolve_dev_agent_connection,
             allocate_port,
             start_sidecar,
             stop_sidecar,
@@ -735,10 +962,38 @@ pub fn run() {
             copy_file_to_clipboard,
             take_associated_file_open_paths,
             relaunch_after_app_update,
+            browser_create_surface,
+            browser_destroy_surface,
+            browser_navigate,
+            browser_go_back,
+            browser_go_forward,
+            browser_reload,
+            browser_stop,
+            browser_find,
+            browser_stop_find,
+            browser_start_selection,
+            browser_configure_overlay,
+            browser_cancel_selection,
+            browser_resolve_annotations,
+            browser_render_highlights,
+            browser_clear_highlights,
+            browser_navigate_to_annotation_target,
+            browser_capture_region,
+            browser_discard_capture,
+            browser_take_incognito_capture,
+            browser_set_zoom,
+            browser_set_resource_state,
+            browser_set_bounds,
+            browser_set_visibility,
+            browser_clear_profile_data,
+            browser_respond_permission,
+            browser_respond_download,
             terminal_list_profiles,
             terminal_create,
             terminal_list,
             terminal_attach,
+            terminal_ack,
+            terminal_detach,
             terminal_write,
             terminal_resize,
             terminal_kill,
@@ -765,8 +1020,9 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        calculate_startup_window_geometry, close_terminals_with_deadline,
-        collect_startup_associated_markdown_paths, TerminalManager,
+        calculate_startup_window_geometry, collect_startup_associated_markdown_paths,
+        resolve_dev_agent_connection_value, spawn_exit_cleanup_task, wait_for_exit_cleanup,
+        AgentConnection,
     };
     #[cfg(windows)]
     use super::{
@@ -776,12 +1032,99 @@ mod tests {
     use std::fs;
     #[cfg(windows)]
     use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
     use tauri::{PhysicalPosition, PhysicalSize};
 
     #[test]
-    fn terminal_shutdown_deadline_path_completes_for_an_empty_registry() {
-        close_terminals_with_deadline(TerminalManager::default()).unwrap();
+    fn dev_agent_connection_accepts_an_explicit_loopback_http_endpoint() {
+        assert_eq!(
+            resolve_dev_agent_connection_value(Some(" http://127.0.0.1:8765/ "), true).unwrap(),
+            Some(AgentConnection {
+                host: "127.0.0.1".to_string(),
+                port: 8765,
+                base_url: "http://127.0.0.1:8765".to_string(),
+                data_dir: String::new(),
+            })
+        );
+        assert_eq!(
+            resolve_dev_agent_connection_value(Some("http://localhost:18765"), true)
+                .unwrap()
+                .unwrap()
+                .base_url,
+            "http://localhost:18765"
+        );
+    }
+
+    #[test]
+    fn dev_agent_connection_is_disabled_for_release_builds_and_empty_configuration() {
+        assert_eq!(
+            resolve_dev_agent_connection_value(Some("http://127.0.0.1:8765"), false).unwrap(),
+            None
+        );
+        assert_eq!(
+            resolve_dev_agent_connection_value(None, true).unwrap(),
+            None
+        );
+        assert_eq!(
+            resolve_dev_agent_connection_value(Some("  "), true).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn dev_agent_connection_rejects_non_loopback_or_ambiguous_endpoints() {
+        for invalid in [
+            "https://127.0.0.1:8765",
+            "http://192.168.1.10:8765",
+            "http://127.0.0.1",
+            "http://127.0.0.1:8765/api",
+            "http://127.0.0.1:8765/?token=secret",
+            "http://user@127.0.0.1:8765",
+        ] {
+            assert!(
+                resolve_dev_agent_connection_value(Some(invalid), true).is_err(),
+                "{invalid} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn exit_cleanup_tasks_run_in_parallel_under_one_global_deadline() {
+        let (sender, receiver) = mpsc::channel();
+        let started = Instant::now();
+        let first = spawn_exit_cleanup_task("first-exit-test", sender.clone(), || {
+            std::thread::sleep(Duration::from_millis(80));
+            Ok(())
+        });
+        let second = spawn_exit_cleanup_task("second-exit-test", sender.clone(), || {
+            std::thread::sleep(Duration::from_millis(80));
+            Ok(())
+        });
+        drop(sender);
+
+        assert_eq!(
+            wait_for_exit_cleanup(&receiver, first + second, Duration::from_secs(1)),
+            2
+        );
+        assert!(started.elapsed() < Duration::from_millis(300));
+    }
+
+    #[test]
+    fn exit_cleanup_stops_waiting_at_the_global_deadline() {
+        let (sender, receiver) = mpsc::channel();
+        let task_count = spawn_exit_cleanup_task("slow-exit-test", sender.clone(), || {
+            std::thread::sleep(Duration::from_millis(250));
+            Ok(())
+        });
+        drop(sender);
+        let started = Instant::now();
+
+        assert_eq!(
+            wait_for_exit_cleanup(&receiver, task_count, Duration::from_millis(25)),
+            0
+        );
+        assert!(started.elapsed() < Duration::from_millis(150));
     }
 
     #[test]

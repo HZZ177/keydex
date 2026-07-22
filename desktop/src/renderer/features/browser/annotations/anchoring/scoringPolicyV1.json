@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "policyId": "keydex.web-annotation.scoring.v1",
+  "weights": {
+    "quoteSimilarity": 0.45,
+    "prefixSuffix": 0.2,
+    "domContext": 0.2,
+    "heading": 0.1,
+    "position": 0.05
+  },
+  "acceptThreshold": 0.82,
+  "ambiguityGap": 0.08
+}

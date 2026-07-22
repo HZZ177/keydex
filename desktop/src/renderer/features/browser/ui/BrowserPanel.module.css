@@ -1,0 +1,361 @@
+.panel {
+  container-type: inline-size;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surface-bg);
+  color: var(--color-text-1);
+}
+
+.toolbarAccessory:empty {
+  display: none;
+}
+
+/*
+ * Keep the native surface in the flexible third row even when the optional
+ * find/zoom accessory is absent. A display:none accessory does not generate a
+ * grid item, so relying on auto-placement would move .stage into the second
+ * auto-sized row and collapse the browser viewport.
+ */
+.toolbar {
+  grid-row: 1;
+}
+
+.toolbarAccessory {
+  grid-row: 2;
+}
+
+.stage {
+  grid-row: 3;
+}
+
+.findBar,
+.zoomBar {
+  display: flex;
+  min-width: 0;
+  height: 34px;
+  align-items: center;
+  gap: 4px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--surface-bg) 96%, var(--shell-bg));
+  padding: 3px 7px;
+}
+
+.findInput {
+  min-width: 0;
+  height: 26px;
+  flex: 1 1 auto;
+  border: 1px solid var(--control-pill-border);
+  border-radius: var(--radius-sm);
+  outline: none;
+  background: var(--control-pill-bg);
+  color: var(--color-text-1);
+  font: inherit;
+  font-size: 11px;
+  padding: 0 8px;
+}
+
+.findInput:focus {
+  border-color: var(--color-border-strong);
+  background: var(--control-pill-active-bg);
+}
+
+.findCaseButton {
+  display: inline-grid;
+  width: 28px;
+  height: 26px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-3);
+  cursor: pointer;
+}
+
+.findCaseButton:hover,
+.findCaseButton:focus-visible,
+.findCaseButton[data-active="true"] {
+  outline: none;
+  background: var(--surface-hover);
+  color: var(--color-text-1);
+}
+
+.zoomBar {
+  justify-content: flex-end;
+}
+
+.zoomLabel {
+  min-width: 48px;
+  color: var(--color-text-2);
+  font-size: 11px;
+  text-align: center;
+}
+
+.toolbar {
+  display: flex;
+  min-width: 0;
+  min-height: 40px;
+  align-items: center;
+  gap: 5px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--surface-bg) 94%, var(--shell-bg));
+  padding: 5px 7px;
+}
+
+.navigationGroup,
+.actionGroup {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+
+.toolbarButton {
+  position: relative;
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-2);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    color var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-fast) var(--motion-ease-standard);
+}
+
+.toolbarCount {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  display: inline-flex;
+  min-width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--surface-bg);
+  border-radius: var(--radius-pill);
+  padding: 0 3px;
+  color: var(--color-text-inverse);
+  background: var(--annotation-accent);
+  font-size: 8px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.toolbarButton:hover:not(:disabled),
+.toolbarButton:focus-visible {
+  outline: none;
+  background: var(--surface-hover);
+  color: var(--color-text-1);
+}
+
+.toolbarButton[data-active="true"] {
+  background: color-mix(in srgb, var(--annotation-accent) 12%, transparent);
+  color: var(--annotation-accent);
+  outline: 1px solid color-mix(in srgb, var(--annotation-accent) 28%, transparent);
+  outline-offset: -1px;
+}
+
+.toolbarButton[data-active="true"]:hover,
+.toolbarButton[data-active="true"]:focus-visible {
+  background: color-mix(in srgb, var(--annotation-accent) 17%, transparent);
+  color: var(--annotation-accent);
+}
+
+.toolbarButton:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.toolbarButton:disabled {
+  cursor: default;
+  color: var(--color-text-4);
+  opacity: 0.64;
+}
+
+.addressForm {
+  display: flex;
+  min-width: 88px;
+  height: 28px;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--control-pill-border);
+  border-radius: var(--radius-md);
+  background: var(--control-pill-bg);
+  box-shadow:var(--control-pill-shadow);
+  padding: 0 8px;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    border-color var(--motion-fast) var(--motion-ease-out);
+}
+
+.addressForm:focus-within {
+  border-color: var(--color-border-strong);
+  background: var(--control-pill-active-bg);
+}
+
+.addressIcon {
+  flex: 0 0 auto;
+  color: var(--color-text-3);
+}
+
+.addressInput {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-1);
+  font: inherit;
+  font-size: 11px;
+  line-height: var(--ui-line-height-tight);
+}
+
+.addressInput::selection {
+  background: color-mix(in srgb, var(--color-accent) 24%, transparent);
+}
+
+.addressInput:disabled {
+  color: var(--color-text-4);
+}
+
+.profileBadge {
+  display: inline-flex;
+  height: 24px;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  color: var(--color-text-2);
+  font-size: 10px;
+  line-height: var(--ui-line-height-tight);
+  padding: 0 7px;
+  white-space: nowrap;
+}
+
+.profileBadge[data-profile="incognito"] {
+  border-color: color-mix(in srgb, var(--color-accent) 36%, var(--color-border-subtle));
+  color: var(--color-text-1);
+}
+
+.stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surface-bg);
+}
+
+.surface {
+  position: absolute;
+  inset: 0;
+}
+
+.loadingTrack {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 2px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  pointer-events: none;
+}
+
+.loadingTrack span {
+  display: block;
+  width: 34%;
+  height: 100%;
+  background: var(--color-accent);
+  animation: browser-loading var(--motion-panel) var(--motion-ease-standard) infinite alternate;
+}
+
+.startingState,
+.emptyState {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 9px;
+  color: var(--color-text-3);
+  font-size: 11px;
+  line-height: var(--ui-line-height-normal);
+  pointer-events: none;
+}
+
+.emptyState {
+  gap: 7px;
+}
+
+.emptyState svg {
+  margin-bottom: 3px;
+  color: var(--color-text-2);
+}
+
+.emptyState strong {
+  color: var(--color-text-1);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.emptyState span {
+  color: var(--color-text-3);
+}
+
+@container (width < 520px) {
+  .toolbar {
+    gap: 3px;
+    padding-inline: 5px;
+  }
+
+  .profileBadge span,
+  .toolbarButton[data-browser-secondary-action="true"] {
+    display: none;
+  }
+
+  .profileBadge {
+    width: 26px;
+    justify-content: center;
+    padding: 0;
+  }
+}
+
+@container (width < 340px) {
+  .navigationGroup .toolbarButton:nth-child(2) {
+    display: none;
+  }
+}
+
+@keyframes browser-loading {
+  from {
+    transform: translateX(-20%);
+  }
+  to {
+    transform: translateX(210%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toolbarButton,
+  .addressForm {
+    transition: none;
+  }
+
+  .loadingTrack span {
+    animation: none;
+    width: 100%;
+  }
+}

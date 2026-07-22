@@ -12,6 +12,7 @@ import { createAnnotationsRuntime, type AnnotationsRuntime } from "./annotations
 import { createArchiveRuntime, type ArchiveRuntime } from "./archive";
 import { createMcpRuntime, type McpRuntime } from "./mcp";
 import { createGitRuntime, type GitRuntime } from "./git";
+import { createRightSidebarRuntime, type RightSidebarRuntime } from "./rightSidebar";
 import {
   createKeydexRuntime,
   createSkillRuntime,
@@ -40,6 +41,7 @@ export interface RuntimeBridge {
   skills: SkillRuntime;
   keydex: KeydexRuntime;
   git: GitRuntime;
+  rightSidebar: RightSidebarRuntime;
   getBaseUrl(): string;
   setBaseUrl(baseUrl: string): void;
   health(): Promise<HealthResponse>;
@@ -66,6 +68,7 @@ export function createRuntimeBridge(options: RuntimeBridgeOptions = {}): Runtime
     skills: createSkillRuntime(http),
     keydex: createKeydexRuntime(http),
     git: createGitRuntime(http),
+    rightSidebar: createRightSidebarRuntime(http),
     getBaseUrl() {
       return http.getBaseUrl();
     },

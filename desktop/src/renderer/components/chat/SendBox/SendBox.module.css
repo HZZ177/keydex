@@ -335,7 +335,8 @@
 
 .quoteChipWrapper,
 .fileChipWrapper,
-.skillChipWrapper {
+.skillChipWrapper,
+.webAnnotationChipWrapper {
   position: relative;
   display: inline-flex;
   width: auto;
@@ -346,7 +347,8 @@
 
 .quoteInputChip,
 .fileChip,
-.skillChip {
+.skillChip,
+.webAnnotationChip {
   display: inline-flex;
   max-width: 100%;
   box-sizing: border-box;
@@ -385,7 +387,8 @@
 
 .quoteInputChip:hover,
 .fileChip:hover,
-.skillChip:hover {
+.skillChip:hover,
+.webAnnotationChip:hover {
   border-color: color-mix(in srgb, var(--color-border-default) 86%, var(--color-text-tertiary));
   box-shadow: 0 7px 18px rgb(15 23 42 / 9%);
   color: var(--color-text-primary);
@@ -451,7 +454,8 @@
 
 .quoteInputChipRemove,
 .fileChipRemove,
-.skillChipRemove {
+.skillChipRemove,
+.webAnnotationChipRemove {
   position: static;
   display: inline-grid;
   width: 18px;
@@ -476,24 +480,50 @@
 .quoteInputChip:hover .quoteInputChipRemove,
 .fileChip:hover .fileChipRemove,
 .skillChip:hover .skillChipRemove,
+.webAnnotationChip:hover .webAnnotationChipRemove,
 .quoteInputChipRemove:focus-visible,
 .fileChipRemove:focus-visible,
-.skillChipRemove:focus-visible {
+.skillChipRemove:focus-visible,
+.webAnnotationChipRemove:focus-visible {
   color: color-mix(in srgb, var(--color-danger) 84%, var(--color-text-secondary));
   opacity: 1;
 }
 
 .quoteInputChipRemove:hover,
 .fileChipRemove:hover,
-.skillChipRemove:hover {
+.skillChipRemove:hover,
+.webAnnotationChipRemove:hover {
   background: color-mix(in srgb, var(--color-danger) 10%, transparent);
   color: var(--color-danger);
 }
 
 .quoteInputChipRemove:focus-visible,
 .fileChipRemove:focus-visible,
-.skillChipRemove:focus-visible {
+.skillChipRemove:focus-visible,
+.webAnnotationChipRemove:focus-visible {
   outline: none;
+}
+
+.webAnnotationChip[data-status="changed"],
+.webAnnotationChip[data-status="ambiguous"] {
+  border-color: color-mix(in srgb, var(--color-warning) 42%, var(--color-border-default));
+}
+
+.webAnnotationChip[data-status="orphaned"] {
+  border-color: color-mix(in srgb, var(--color-danger) 38%, var(--color-border-default));
+}
+
+.webAnnotationWarning {
+  display: inline-grid;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--color-warning);
+}
+
+.webAnnotationChip[data-status="orphaned"] .webAnnotationWarning {
+  color: var(--color-danger);
 }
 
 .contextHoverCard {

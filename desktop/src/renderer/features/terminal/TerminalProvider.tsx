@@ -41,7 +41,7 @@ export interface TerminalContextValue {
   createTerminal(profile?: TerminalProfileSnapshot["id"]): Promise<TerminalSnapshot | null>;
   attachTerminal(
     terminalId: string,
-    onEvent: (event: TerminalRuntimeEvent) => void,
+    onEvent: (event: TerminalRuntimeEvent) => void | Promise<void>,
   ): Promise<TerminalAttachment>;
   closeTerminal(terminalId: string): Promise<boolean>;
   killTerminal(terminalId: string): Promise<boolean>;
@@ -201,7 +201,7 @@ export function TerminalProvider({
   );
 
   const attachTerminal = useCallback(
-    async (terminalId: string, onEvent: (event: TerminalRuntimeEvent) => void) => {
+    async (terminalId: string, onEvent: (event: TerminalRuntimeEvent) => void | Promise<void>) => {
       if (!available) {
         throw new TerminalRuntimeError("terminal_runtime_unavailable", "内置终端仅在 Keydex 桌面客户端中可用");
       }
@@ -213,16 +213,14 @@ export function TerminalProvider({
       state.setAttachState(terminalId, "attaching");
       const attachment = await runtime.attach(terminalId, {
         afterSeq: cursor,
-        onEvent: (event) => {
-          applyTerminalEvent(store, event, onEvent, reportError);
-        },
+        onEvent: (event) => applyTerminalEvent(store, event, onEvent, reportError),
         onError: (error) => reportError(error, terminalId),
       });
       store.getState().upsertSnapshot(attachment.snapshot);
-      for (const event of attachment.replay) {
-        applyTerminalEvent(store, event, onEvent, reportError);
-      }
-      store.getState().setAttachState(terminalId, "live");
+      void attachment.ready.then(
+        () => store.getState().setAttachState(terminalId, "live"),
+        () => store.getState().setAttachState(terminalId, "idle"),
+      );
       return attachment;
     },
     [available, reportError, runtime, store],
@@ -401,20 +399,25 @@ function chooseAvailableProfile(
   return state.profiles.find((profile) => profile.available)?.id ?? null;
 }
 
-function applyTerminalEvent(
+async function applyTerminalEvent(
   store: TerminalStore,
   event: TerminalRuntimeEvent,
-  onEvent: (event: TerminalRuntimeEvent) => void,
+  onEvent: (event: TerminalRuntimeEvent) => void | Promise<void>,
   reportError: (reason: unknown, terminalId?: string) => void,
-) {
+): Promise<void> {
   const state = store.getState();
   if (event.event === "output") {
+    const snapshot = state.snapshotsById[event.terminalId];
+    const cursor = snapshot
+      ? state.sessionsById[snapshot.sessionId]?.cursorByTerminalId[event.terminalId] ?? 0
+      : 0;
+    if (event.seq <= cursor) return;
+    await onEvent(event);
     const acceptance = state.acceptOutput(event.terminalId, event.seq);
     if (acceptance === "duplicate") return;
     if (acceptance === "gap") {
       reportError(new TerminalRuntimeError("terminal_event_gap", "终端输出出现缺口"), event.terminalId);
     }
-    onEvent(event);
     return;
   }
   if (event.event === "replayTruncated") {
@@ -426,7 +429,7 @@ function applyTerminalEvent(
     state.updateTerminalStatus(event.terminalId, "failed");
     reportError(new TerminalRuntimeError(event.code, event.message), event.terminalId);
   }
-  onEvent(event);
+  await onEvent(event);
 }
 
 function terminalErrorMessage(error: TerminalRuntimeError): string {

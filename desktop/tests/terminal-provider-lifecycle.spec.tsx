@@ -110,7 +110,7 @@ function runtime(overrides: Partial<TerminalRuntime> = {}): TerminalRuntime {
     listProfiles: async () => [],
     create: async () => snapshot("new-terminal", "session-1"),
     list: async () => [],
-    attach: async () => ({ snapshot: snapshot("terminal-1", "session-1"), replay: [], cursor: 0, dispose() {} }),
+    attach: async () => ({ snapshot: snapshot("terminal-1", "session-1"), cursor: 0, ready: Promise.resolve(), dispose() {} }),
     write: async () => undefined,
     resize: async () => undefined,
     kill: async () => undefined,
@@ -124,7 +124,7 @@ function runtime(overrides: Partial<TerminalRuntime> = {}): TerminalRuntime {
 
 function snapshot(terminalId: string, sessionId: string): TerminalSnapshot {
   return {
-    contractVersion: 1,
+    contractVersion: 2,
     terminalId,
     sessionId,
     profileId: "powershell",

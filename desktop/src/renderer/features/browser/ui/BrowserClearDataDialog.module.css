@@ -1,0 +1,52 @@
+.options {
+  display: grid;
+  gap: 12px;
+  color: var(--color-text-2);
+  font-size: 11px;
+}
+
+.options > label {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.options select {
+  min-height: 28px;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  outline: none;
+  background: var(--control-pill-bg);
+  color: var(--color-text-1);
+  font: inherit;
+  padding: 0 7px;
+}
+
+.options select:focus-visible {
+  border-color: var(--color-border-strong);
+}
+
+.options fieldset {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.options legend {
+  margin-bottom: 5px;
+  color: var(--color-text-3);
+}
+
+.options fieldset label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+}
+
+.options input {
+  accent-color: var(--color-accent);
+}

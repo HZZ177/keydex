@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
-use super::protocol::TerminalEvent;
+use super::protocol::{TerminalEvent, TERMINAL_REPLAY_LIMIT_CHUNKS};
 
 #[derive(Debug, Clone)]
 struct ReplayChunk {
@@ -15,15 +15,21 @@ pub struct ReplayRing {
     chunks: VecDeque<ReplayChunk>,
     bytes: usize,
     limit: usize,
+    chunk_limit: usize,
     next_seq: u64,
 }
 
 impl ReplayRing {
     pub fn new(limit: usize) -> Self {
+        Self::with_limits(limit, TERMINAL_REPLAY_LIMIT_CHUNKS)
+    }
+
+    fn with_limits(limit: usize, chunk_limit: usize) -> Self {
         Self {
             chunks: VecDeque::new(),
             bytes: 0,
             limit,
+            chunk_limit: chunk_limit.max(1),
             next_seq: 1,
         }
     }
@@ -38,7 +44,7 @@ impl ReplayRing {
             return seq;
         }
 
-        while self.bytes + bytes.len() > self.limit {
+        while self.bytes + bytes.len() > self.limit || self.chunks.len() >= self.chunk_limit {
             if let Some(removed) = self.chunks.pop_front() {
                 self.bytes = self.bytes.saturating_sub(removed.bytes.len());
             } else {
@@ -67,6 +73,11 @@ impl ReplayRing {
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn retained_bytes(&self) -> usize {
         self.bytes
+    }
+
+    #[cfg(test)]
+    pub fn retained_chunks(&self) -> usize {
+        self.chunks.len()
     }
 
     pub fn events_after(&self, terminal_id: &str, after_seq: u64) -> (bool, Vec<TerminalEvent>) {
@@ -119,5 +130,17 @@ mod tests {
         let seq = ring.append(&vec![8; TERMINAL_REPLAY_LIMIT_BYTES + 1]);
         assert_eq!(ring.retained_bytes(), 0);
         assert_eq!(ring.earliest_seq(), seq + 1);
+    }
+
+    #[test]
+    fn ring_bounds_tiny_output_by_chunk_count_as_well_as_bytes() {
+        let mut ring = ReplayRing::with_limits(1024, 3);
+        for byte in 0..5 {
+            ring.append(&[byte]);
+        }
+        assert_eq!(ring.retained_chunks(), 3);
+        assert_eq!(ring.retained_bytes(), 3);
+        assert_eq!(ring.earliest_seq(), 3);
+        assert!(ring.events_after("terminal-1", 0).0);
     }
 }

@@ -41,6 +41,8 @@ export function TerminalDock({ registry = terminalXtermRegistry }: { registry?: 
   const [closing, setClosing] = useState(false);
   const [pendingCloseAll, setPendingCloseAll] = useState<{ sessionId: string; count: number } | null>(null);
   const [closingAll, setClosingAll] = useState(false);
+  const autoCreateOpenKeyRef = useRef<string | null>(null);
+  const autoCreatePendingRef = useRef(false);
   const terminals = useMemo(
     () => (session?.terminalIds ?? []).flatMap((terminalId) => {
       const snapshot = snapshotsById[terminalId];
@@ -85,6 +87,40 @@ export function TerminalDock({ registry = terminalXtermRegistry }: { registry?: 
     window.addEventListener("keydown", toggleShortcut);
     return () => window.removeEventListener("keydown", toggleShortcut);
   }, [scopeReady, store]);
+  useEffect(() => {
+    const sessionId = scope.sessionId;
+    if (!ui.dockOpen || !sessionId) {
+      autoCreateOpenKeyRef.current = null;
+      autoCreatePendingRef.current = false;
+      return;
+    }
+    if (autoCreateOpenKeyRef.current !== sessionId) {
+      autoCreateOpenKeyRef.current = sessionId;
+      autoCreatePendingRef.current = true;
+    }
+    if (
+      !autoCreatePendingRef.current
+      || !scopeReady
+      || !session?.hydrated
+      || profilesLoading
+    ) {
+      return;
+    }
+    autoCreatePendingRef.current = false;
+    if (terminals.length > 0 || creating || !profiles.some((profile) => profile.available)) return;
+    void createTerminal(ui.defaultProfile);
+  }, [
+    createTerminal,
+    creating,
+    profiles,
+    profilesLoading,
+    scope.sessionId,
+    scopeReady,
+    session?.hydrated,
+    terminals.length,
+    ui.defaultProfile,
+    ui.dockOpen,
+  ]);
 
   const collapse = () => {
     store.getState().setDockOpen(false);

@@ -44,7 +44,13 @@ import {
   usePublishActiveProjectDiscovery,
 } from "@/renderer/providers/ActiveProjectCoordinatorProvider";
 import { prepareComposerMessage, type RuntimeParamsWithInjection } from "@/renderer/utils/messageInjection";
-import type { AgentContextItem, AgentFileAttachment, FileAccessMode, ThreadTask, Workspace } from "@/types/protocol";
+import { rightSidebarPersistenceForRuntime } from "@/renderer/components/layout/rightSidebar/persistence";
+import {
+  createWebAnnotationSendCoordinator,
+  type SelectedWebAnnotationReference,
+  type WebAnnotationSendCoordinator,
+} from "@/renderer/features/browser/annotations";
+import type { AgentContextItem, AgentFileAttachment, AgentSession, FileAccessMode, ThreadTask, Workspace } from "@/types/protocol";
 import {
   goalContextItem,
   runtimeParamsWithGoalContextItem,
@@ -68,11 +74,18 @@ export interface HomePageProps {
     },
   ) => void;
   onOpenModelSettings: () => void;
+  webAnnotationSendCoordinator?: WebAnnotationSendCoordinator;
 }
 
 interface PendingWorkspaceRegistration {
   rootPath: string;
   promise: Promise<Workspace>;
+}
+
+interface PendingHomeWebAnnotationSend {
+  readonly key: string;
+  readonly session: AgentSession;
+  promoted: boolean;
 }
 
 export function HomePage({
@@ -82,6 +95,7 @@ export function HomePage({
   autoFocusInputKey,
   onNavigateToConversation,
   onOpenModelSettings,
+  webAnnotationSendCoordinator: providedWebAnnotationSendCoordinator,
 }: HomePageProps) {
   const [submitting, setSubmitting] = useState(false);
   const [goalComposerOpen, setGoalComposerOpen] = useState(false);
@@ -108,11 +122,16 @@ export function HomePage({
   const [fileAccessMode, setFileAccessMode] = useState<FileAccessMode>("workspace_trusted");
   const selectionTouchedRef = useRef(false);
   const pendingWorkspaceRegistrationRef = useRef<PendingWorkspaceRegistration | null>(null);
+  const pendingWebAnnotationSendRef = useRef<PendingHomeWebAnnotationSend | null>(null);
   const runtimeConnection = useOptionalRuntimeConnection();
   const backendReady = runtimeConnection?.ready ?? true;
   const backendError = runtimeConnection?.status === "error";
   const modelSelection = useRuntimeModelSelection(runtime, null, { enabled: backendReady });
   const notifications = useNotifications();
+  const webAnnotationSendCoordinator = useMemo(
+    () => providedWebAnnotationSendCoordinator ?? createWebAnnotationSendCoordinator(runtime),
+    [providedWebAnnotationSendCoordinator, runtime],
+  );
   const previewContext = useOptionalPreview();
   const setPreviewHostContext = previewContext?.setPreviewHostContext;
   const selectedWorkspaceId = workspaceSelection.type === "workspace" ? workspaceSelection.workspace.id : "";
@@ -126,6 +145,7 @@ export function HomePage({
   );
   usePublishActiveProjectDiscovery("home-route", activeProjectDiscovery);
   useWorkspaceFileWatchScope(selectedWorkspaceId);
+  useEffect(() => () => webAnnotationSendCoordinator.clear(), [webAnnotationSendCoordinator]);
   const effectiveSkillScope = useMemo(() => {
     if (workspaceSelection.type === "chat") {
       return { type: "system" as const };
@@ -448,6 +468,8 @@ export function HomePage({
     files: SelectedFile[] = [],
     quotes: SelectedQuote[] = [],
     imageAttachments: SelectedImageAttachment[] = [],
+    _options?: unknown,
+    webAnnotations: SelectedWebAnnotationReference[] = [],
   ) => {
     if (
       selectedSkill &&
@@ -460,10 +482,10 @@ export function HomePage({
       notifications.warning("所选 Skill 正在刷新或已不可用，请重新选择");
       return false;
     }
-    const prepared = prepareComposerMessage(draft, files, { quotes, selectedSkill });
+    const initialPrepared = prepareComposerMessage(draft, files, { quotes, selectedSkill });
     const attachments = imageAttachments.map(agentAttachmentFromSelected);
-    const text = prepared.message;
-    if ((!text && !prepared.contextItems.length && !attachments.length) || submitting) {
+    const text = initialPrepared.message;
+    if ((!text && !initialPrepared.contextItems.length && !attachments.length && !webAnnotations.length) || submitting) {
       return false;
     }
 
@@ -494,7 +516,7 @@ export function HomePage({
       const sessionPayload =
         sessionWorkspace
           ? {
-              title: sessionTitleFromPreparedMessage(text, prepared.contextItems),
+              title: sessionTitleFromPreparedMessage(text, initialPrepared.contextItems),
               session_tag: "chat",
               sessionType: "workspace" as const,
               workspaceId: sessionWorkspace.id,
@@ -502,14 +524,49 @@ export function HomePage({
               currentModel: model.model,
             }
           : {
-              title: sessionTitleFromPreparedMessage(text, prepared.contextItems),
+              title: sessionTitleFromPreparedMessage(text, initialPrepared.contextItems),
               session_tag: "chat",
               sessionType: "chat" as const,
               currentModelProviderId: model.providerId,
               currentModel: model.model,
             };
 
-      const session = await runtime.conversation.createSession(sessionPayload);
+      const sourceScopeKey = sessionWorkspace ? `workspace:${sessionWorkspace.id}` : "global";
+      const webSendKey = homeWebAnnotationSendKey({
+        text,
+        contextItems: initialPrepared.contextItems,
+        attachments,
+        webAnnotations,
+        model,
+        sourceScopeKey,
+        goalMode: goalComposerOpen,
+      });
+      let webSend = webAnnotations.length && pendingWebAnnotationSendRef.current?.key === webSendKey
+        ? pendingWebAnnotationSendRef.current
+        : null;
+      const session = webSend?.session ?? await runtime.conversation.createSession(sessionPayload);
+      if (webAnnotations.length && !webSend) {
+        webSend = { key: webSendKey, session, promoted: false };
+        pendingWebAnnotationSendRef.current = webSend;
+      }
+      if (!webSend?.promoted) {
+        await rightSidebarPersistenceForRuntime(runtime).promote(sourceScopeKey, session.id);
+        if (webSend) webSend.promoted = true;
+      }
+      const webAssembly = webAnnotations.length
+        ? await webAnnotationSendCoordinator.prepare(webAnnotations, { sessionId: session.id })
+        : null;
+      for (const warning of webAssembly?.warnings ?? []) notifications.warning(warning.message);
+      const messageAttachments = webAssembly
+        ? [...attachments, ...webAssembly.attachments]
+        : attachments;
+      const prepared = webAssembly
+        ? prepareComposerMessage(draft, files, {
+            quotes,
+            selectedSkill,
+            webAnnotationContexts: webAssembly.snapshots,
+          })
+        : initialPrepared;
       const goalItem = goalComposerOpen ? goalContextItem(text) : null;
       let goalTask: ThreadTask | null = null;
       if (goalComposerOpen) {
@@ -536,11 +593,11 @@ export function HomePage({
       composerDraftBinding.clearDraft();
       setGoalComposerOpen(false);
       setGoalError(null);
-      const injectionOptions = runtimeParams || contextItems.length || attachments.length
+      const injectionOptions = runtimeParams || contextItems.length || messageAttachments.length
         ? {
             runtimeParams,
             contextItems,
-            attachments,
+            attachments: messageAttachments,
           }
         : undefined;
       if (injectionOptions) {
@@ -548,6 +605,8 @@ export function HomePage({
       } else {
         onNavigateToConversation(session.id, model, text);
       }
+      if (webAnnotations.length) webAnnotationSendCoordinator.acknowledge(webAnnotations, session.id);
+      if (pendingWebAnnotationSendRef.current?.key === webSendKey) pendingWebAnnotationSendRef.current = null;
       return true;
     } catch (reason) {
       notifications.error(errorMessage(reason));
@@ -583,6 +642,7 @@ export function HomePage({
           selectedSkill={selectedSkill}
           selectedFiles={composerDraft.files}
           selectedQuotes={composerDraft.quotes}
+          selectedWebAnnotations={composerDraft.webAnnotations}
           selectedImageAttachments={composerDraft.attachments}
           pastedTextFragments={composerDraft.pastedTextFragments}
           allowBypassConversationSlashCommand={false}
@@ -635,6 +695,7 @@ export function HomePage({
           onChange={handleDraftChange}
           onSelectedFilesChange={(files) => composerDraftBinding.setDraft({ files })}
           onSelectedQuotesChange={(quotes) => composerDraftBinding.setDraft({ quotes })}
+          onSelectedWebAnnotationsChange={(webAnnotations) => composerDraftBinding.setDraft({ webAnnotations })}
           onSelectedImageAttachmentsChange={(attachments) => composerDraftBinding.setDraft({ attachments })}
           onPastedTextFragmentsChange={handlePastedTextFragmentsChange}
           onSkillChange={setSelectedSkill}
@@ -677,6 +738,31 @@ function selectedFileRevealTarget(file: SelectedFile): PreviewFileRevealTarget |
 function sessionTitleFromPreparedMessage(text: string, contextItems: AgentContextItem[]): string {
   const title = text.trim() || contextItems[0]?.label || "新对话";
   return title.slice(0, 32);
+}
+
+function homeWebAnnotationSendKey(input: {
+  readonly text: string;
+  readonly contextItems: readonly AgentContextItem[];
+  readonly attachments: readonly AgentFileAttachment[];
+  readonly webAnnotations: readonly SelectedWebAnnotationReference[];
+  readonly model: RuntimeSelectedModel;
+  readonly sourceScopeKey: string;
+  readonly goalMode: boolean;
+}): string {
+  return JSON.stringify({
+    text: input.text,
+    contextItemIds: input.contextItems.map((item) => item.id),
+    attachmentIds: input.attachments.map((item) => item.attachment_id ?? item.id ?? item.path),
+    webAnnotations: input.webAnnotations.map((reference) => ({
+      annotationId: reference.annotationId,
+      selectedRevision: reference.selectedRevision,
+      selectedAt: reference.selectedAt,
+      sourcePanelId: reference.sourcePanelId ?? null,
+    })),
+    model: [input.model.providerId, input.model.model],
+    sourceScopeKey: input.sourceScopeKey,
+    goalMode: input.goalMode,
+  });
 }
 
 function workspaceNameFromPath(path: string): string {

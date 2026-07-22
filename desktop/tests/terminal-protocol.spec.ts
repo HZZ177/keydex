@@ -7,7 +7,7 @@ import {
 } from "@/runtime/terminalTypes";
 
 const snapshot = {
-  contractVersion: 1,
+  contractVersion: 2,
   terminalId: "terminal-1",
   sessionId: "session-1",
   profileId: "powershell",
@@ -45,7 +45,7 @@ describe("terminal protocol", () => {
 
   it("rejects malformed or unknown protocol values conservatively", () => {
     expect(() => decodeTerminalSnapshot({ ...snapshot, status: "paused" })).toThrow("未知终端状态");
-    expect(() => decodeTerminalSnapshot({ ...snapshot, contractVersion: 2 })).toThrow("协议版本不兼容");
+    expect(() => decodeTerminalSnapshot({ ...snapshot, contractVersion: 3 })).toThrow("协议版本不兼容");
     expect(() => decodeTerminalEvent({ event: "mystery", terminalId: "terminal-1" })).toThrow(
       "未知终端事件",
     );

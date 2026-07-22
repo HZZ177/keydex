@@ -9,7 +9,7 @@ import {
 } from "@/runtime";
 
 const snapshot = {
-  contractVersion: 1,
+  contractVersion: 2,
   terminalId: "terminal-1",
   sessionId: "session-1",
   profileId: "powershell",
@@ -56,9 +56,21 @@ function configuredAdapter() {
   ]);
   adapter.responses.set("terminal_create", snapshot);
   adapter.responses.set("terminal_list", [snapshot]);
-  adapter.responses.set("terminal_attach", { snapshot, replay: [], cursor: 0 });
+  adapter.responses.set("terminal_attach", {
+    snapshot,
+    replay: [],
+    cursor: 0,
+    subscriptionId: "subscription-1",
+  });
   adapter.responses.set("terminal_rename", { ...snapshot, title: "构建终端" });
-  for (const command of ["terminal_write", "terminal_resize", "terminal_kill", "terminal_close"]) {
+  for (const command of [
+    "terminal_ack",
+    "terminal_detach",
+    "terminal_write",
+    "terminal_resize",
+    "terminal_kill",
+    "terminal_close",
+  ]) {
     adapter.responses.set(command, undefined);
   }
   adapter.responses.set("terminal_close_session", 1);
@@ -93,6 +105,7 @@ describe("terminal runtime", () => {
     ).resolves.toMatchObject({ terminalId: "terminal-1" });
     await expect(runtime.list("session-1")).resolves.toHaveLength(1);
     const attachment = await runtime.attach("terminal-1", { onEvent: vi.fn() });
+    await attachment.ready;
     await runtime.write("terminal-1", "中文\r");
     await runtime.resize("terminal-1", { cols: 100, rows: 30 });
     await runtime.kill("terminal-1");
@@ -100,6 +113,8 @@ describe("terminal runtime", () => {
     await runtime.close("terminal-1");
     await expect(runtime.closeSession("session-1")).resolves.toBe(1);
     await expect(runtime.closeAll()).resolves.toBe(2);
+    attachment.dispose();
+    await vi.waitFor(() => expect(adapter.calls.at(-1)?.command).toBe("terminal_detach"));
 
     expect(adapter.calls.map((call) => call.command)).toEqual([
       "terminal_list_profiles",
@@ -113,11 +128,11 @@ describe("terminal runtime", () => {
       "terminal_close",
       "terminal_close_session",
       "terminal_close_all",
+      "terminal_detach",
     ]);
     expect(adapter.calls.find((call) => call.command === "terminal_write")?.args?.dataBase64).toBe(
       "5Lit5paHDQ==",
     );
-    attachment.dispose();
     expect(adapter.channels[0]?.onmessage).toBeNull();
   });
 
@@ -137,9 +152,12 @@ describe("terminal runtime", () => {
       }
     };
     const attachment = await runtime.attach("terminal-1", {
-      onEvent: (event) => events.push(event),
+      onEvent: (event) => {
+        events.push(event);
+      },
       onError: (error) => errors.push(error.code),
     });
+    await attachment.ready;
     expect(events[0]).toMatchObject({ event: "output", seq: 1 });
     expect(events[0]?.event === "output" ? Array.from(events[0].data) : []).toEqual(
       Array.from(new TextEncoder().encode("中文")),
@@ -151,13 +169,70 @@ describe("terminal runtime", () => {
       seq: 1,
       dataBase64: "QQ==",
     });
+    await vi.waitFor(() => expect(errors).toContain("terminal_event_out_of_order"));
     adapter.channels[0]?.onmessage?.({
       event: "output",
       terminalId: "terminal-1",
       seq: 2,
       dataBase64: "%%invalid%%",
     });
-    expect(errors).toEqual(["terminal_event_out_of_order", "terminal_event_invalid"]);
+    await vi.waitFor(() =>
+      expect(errors).toEqual(["terminal_event_out_of_order", "terminal_event_invalid"]),
+    );
+    attachment.dispose();
+  });
+
+  it("delivers replay before early live output and acknowledges only after the consumer finishes", async () => {
+    const adapter = configuredAdapter();
+    adapter.responses.set("terminal_attach", {
+      snapshot: { ...snapshot, seq: 2 },
+      replay: [
+        {
+          event: "output",
+          terminalId: "terminal-1",
+          seq: 1,
+          dataBase64: "QQ==",
+        },
+      ],
+      cursor: 1,
+      subscriptionId: "subscription-ordered",
+    });
+    adapter.beforeResolve = (command) => {
+      if (command === "terminal_attach") {
+        adapter.channels[0]?.onmessage?.({
+          event: "output",
+          terminalId: "terminal-1",
+          seq: 2,
+          dataBase64: "Qg==",
+        });
+      }
+    };
+    let releaseReplay: (() => void) | undefined;
+    const replayParsed = new Promise<void>((resolve) => {
+      releaseReplay = resolve;
+    });
+    const events: number[] = [];
+    const runtime = createTerminalRuntime(adapter);
+    const attachment = await runtime.attach("terminal-1", {
+      onEvent: async (event) => {
+        if (event.event !== "output") return;
+        events.push(event.seq);
+        if (event.seq === 1) await replayParsed;
+      },
+    });
+
+    expect(events).toEqual([1]);
+    expect(adapter.calls.some((call) => call.command === "terminal_ack")).toBe(false);
+    releaseReplay?.();
+    await attachment.ready;
+    await vi.waitFor(() => expect(events).toEqual([1, 2]));
+    await vi.waitFor(() =>
+      expect(
+        adapter.calls
+          .filter((call) => call.command === "terminal_ack")
+          .map((call) => call.args?.seq),
+      ).toEqual([1, 2]),
+    );
     attachment.dispose();
   });
 

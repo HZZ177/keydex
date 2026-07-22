@@ -27,6 +27,7 @@ import {
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
+import { useBrowserOcclusionToken } from "@/renderer/features/browser/runtime";
 
 import {
   emitAddWorkspaceFileToChat,
@@ -123,6 +124,7 @@ const TEXT_INPUT_TYPES = new Set([
 export function AppContextMenuProvider({ children }: PropsWithChildren) {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  useBrowserOcclusionToken(menu !== null, "menu");
 
   const closeMenu = useCallback(() => {
     setMenu(null);
