@@ -2,7 +2,7 @@ import type { BrowserPanelState } from "@/renderer/components/layout/rightSideba
 
 import type { BrowserSurfaceRef, BrowserVisibilityReason } from "../domain";
 import { BROWSER_INTERNAL_BLANK_URL } from "../config";
-import { readBrowserOverlayTheme } from "../visualContract";
+import { readBrowserAppearanceTheme, readBrowserPageAppearance } from "../visualContract";
 import { createBrowserRuntimeStore, type BrowserRuntimeStore } from "../state";
 import { BrowserHostClient } from "./BrowserHostClient";
 import { browserDownloadController } from "./BrowserDownloadController";
@@ -17,6 +17,7 @@ interface BrowserResourceEntry {
   active: boolean;
   lastUsed: number;
   state: BrowserSurfaceResourceState;
+  theme: "light" | "dark";
   readonly protections: Set<string>;
 }
 
@@ -46,7 +47,7 @@ export class BrowserPanelRuntimeController {
     this.store = store;
   }
 
-  activate(panel: BrowserPanelState): number {
+  activate(panel: BrowserPanelState, theme: "light" | "dark" = "light"): number {
     if (this.#browserCircuitOpen) {
       const generation = this.#lastGeneration.get(panel.id) ?? 1;
       this.store.getState().beginCreate(panel.id, generation, panel.profileMode, panel.restoreUrl);
@@ -61,6 +62,7 @@ export class BrowserPanelRuntimeController {
       resource.active = true;
       resource.lastUsed = ++this.#usageClock;
       resource.surface = existing.surface;
+      resource.theme = theme;
       void this.#rebalance("panel_activated");
       return existing.generation;
     }
@@ -74,6 +76,8 @@ export class BrowserPanelRuntimeController {
     resource.lastUsed = ++this.#usageClock;
     resource.surface = null;
     resource.state = "visible";
+    resource.theme = theme;
+    const appearance = readBrowserPageAppearance(theme);
     void this.#ensureConnected()
       .then(async () => {
         if (this.#desiredGeneration.get(panel.id) !== generation) return;
@@ -82,6 +86,7 @@ export class BrowserPanelRuntimeController {
           generation,
           profileMode: panel.profileMode,
           initialUrl: panel.restoreUrl || BROWSER_INTERNAL_BLANK_URL,
+          ...appearance,
         });
       })
       .catch((error: unknown) => {
@@ -140,13 +145,13 @@ export class BrowserPanelRuntimeController {
     await this.client.send("browser_set_zoom", { ...surface, factor });
   }
 
-  async configureOverlay(
+  async configureAppearance(
     surface: BrowserSurfaceRef,
     theme: "light" | "dark",
     reducedMotion: boolean,
   ): Promise<void> {
-    const overlayTheme = readBrowserOverlayTheme(theme, reducedMotion);
-    await this.client.send("browser_configure_overlay", { ...surface, ...overlayTheme });
+    const appearance = readBrowserAppearanceTheme(theme, reducedMotion);
+    await this.client.send("browser_configure_appearance", { ...surface, ...appearance });
   }
 
   async find(surface: BrowserSurfaceRef, query: string, matchCase: boolean, backwards: boolean): Promise<void> {
@@ -314,6 +319,7 @@ export class BrowserPanelRuntimeController {
       active: false,
       lastUsed: ++this.#usageClock,
       state: "visible",
+      theme: "light",
       protections: new Set(),
     };
     this.#resources.set(panelId, entry);
@@ -354,7 +360,7 @@ export class BrowserPanelRuntimeController {
         }
         return;
       }
-      if (active) this.activate(active.panel);
+      if (active) this.activate(active.panel, active.theme);
     } finally {
       this.#recoveringFailures.delete(key);
     }

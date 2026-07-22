@@ -62,6 +62,22 @@ describe("WebAnnotationDrawer", () => {
     expect(screen.getByRole("button", { name: "选择区域" })).not.toBeNull();
   });
 
+  it("closes when the user clicks outside the annotation drawer", async () => {
+    const onClose = vi.fn();
+    const store = createWebAnnotationStore(client({
+      list: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
+    }));
+    await activate(store);
+
+    renderDrawer(store, session(), { open: true, onClose });
+
+    const dialog = screen.getByRole("dialog", { name: "网页批注" });
+    fireEvent.mouseDown(dialog);
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.mouseDown(dialog.parentElement as HTMLElement);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("can be used as a saved-annotation viewer without selection actions", async () => {
     const store = createWebAnnotationStore(client({
       list: vi.fn().mockResolvedValue(page(item("annotation-view", "需要复核这段内容"))),
@@ -356,6 +372,7 @@ function renderDrawer(
     readonly profileMode?: "persistent" | "incognito";
     readonly onCreateTemporaryReference?: Parameters<typeof WebAnnotationDrawer>[0]["onCreateTemporaryReference"];
     readonly showCreationActions?: boolean;
+    readonly onClose?: () => void;
   },
 ) {
   return render(
@@ -371,7 +388,7 @@ function renderDrawer(
           store={store}
           onAddToComposer={input.onAddToComposer}
           onCreateTemporaryReference={input.onCreateTemporaryReference}
-          onClose={vi.fn()}
+          onClose={input.onClose ?? vi.fn()}
         />
         <OcclusionState />
       </NotificationProvider>

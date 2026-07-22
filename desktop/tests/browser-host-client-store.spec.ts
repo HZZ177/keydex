@@ -50,6 +50,8 @@ describe("BrowserHostClient", () => {
       generation: 1,
       profileMode: "persistent",
       initialUrl: "https://example.com",
+      theme: "dark",
+      backgroundColor: { red: 40, green: 42, blue: 54, alpha: 255 },
     });
 
     expect(invoke).toHaveBeenCalledWith("browser_create_surface", {
@@ -59,6 +61,8 @@ describe("BrowserHostClient", () => {
         generation: 1,
         profileMode: "persistent",
         initialUrl: "https://example.com",
+        theme: "dark",
+        backgroundColor: { red: 40, green: 42, blue: 54, alpha: 255 },
       },
     });
   });

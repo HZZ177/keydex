@@ -2,10 +2,15 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { NotificationProvider, useNotifications } from "@/renderer/providers/NotificationProvider";
+import {
+  BrowserOcclusionProvider,
+  useBrowserOcclusionSnapshot,
+} from "@/renderer/features/browser/runtime/BrowserOcclusionCoordinator";
 
 describe("NotificationProvider", () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("shows a top error capsule and dismisses it automatically", async () => {
@@ -152,6 +157,41 @@ describe("NotificationProvider", () => {
     });
     expect(screen.getAllByTestId("notification-item").at(-1)?.getAttribute("data-expanded")).toBe("true");
   });
+
+  it("occludes native browser surfaces until the notification has exited", () => {
+    vi.useFakeTimers();
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function mockRect(this: HTMLElement) {
+      if (this.getAttribute("data-browser-native-surface") === "placeholder") {
+        return domRect(500, 0, 500, 700);
+      }
+      if (this.getAttribute("data-notification-toast") === "true") {
+        return domRect(420, 40, 300, 40);
+      }
+      return domRect(0, 0, 0, 0);
+    });
+
+    render(
+      <BrowserOcclusionProvider>
+        <NotificationProvider>
+          <NotificationHarness />
+          <OcclusionProbe />
+          <div data-browser-native-surface="placeholder" />
+        </NotificationProvider>
+      </BrowserOcclusionProvider>,
+    );
+
+    expect(screen.getByTestId("notification-occlusion").textContent).toBe("visible");
+    fireEvent.click(screen.getByRole("button", { name: "show error" }));
+    expect(screen.getByTestId("notification-occlusion").textContent).toBe("notification");
+
+    act(() => {
+      vi.advanceTimersByTime(50);
+    });
+    act(() => {
+      vi.advanceTimersByTime(180);
+    });
+    expect(screen.getByTestId("notification-occlusion").textContent).toBe("visible");
+  });
 });
 
 const LONG_NOTIFICATION_MESSAGE =
@@ -175,4 +215,27 @@ function NotificationHarness() {
       </button>
     </>
   );
+}
+
+function OcclusionProbe() {
+  const snapshot = useBrowserOcclusionSnapshot();
+  return (
+    <span data-testid="notification-occlusion">
+      {(snapshot.reasons.notification ?? 0) > 0 ? "notification" : "visible"}
+    </span>
+  );
+}
+
+function domRect(x: number, y: number, width: number, height: number): DOMRect {
+  return {
+    x,
+    y,
+    width,
+    height,
+    top: y,
+    right: x + width,
+    bottom: y + height,
+    left: x,
+    toJSON: () => ({}),
+  } as DOMRect;
 }

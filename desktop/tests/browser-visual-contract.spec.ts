@@ -12,7 +12,7 @@ import {
   BROWSER_RIGHT_SIDEBAR_SELECTORS,
   BROWSER_SHARED_COMPONENTS,
   BROWSER_VISUAL_CONTRACT_SCHEMA_VERSION,
-  readBrowserOverlayTheme,
+  readBrowserAppearanceTheme,
 } from "../src/renderer/features/browser/visualContract";
 
 const desktopRoot = process.cwd();
@@ -137,6 +137,7 @@ describe("browser visual contract", () => {
     const root = document.createElement("div");
     root.style.setProperty("--annotation-accent", "rgb(216, 117, 117)");
     root.style.setProperty("--color-bg-elevated", "rgb(255, 255, 255)");
+    root.style.setProperty("--surface-bg", "var(--color-bg-elevated)");
     root.style.setProperty("--color-text-1", "rgb(23, 23, 23)");
     root.style.setProperty("--color-border-strong", "rgb(201, 201, 201)");
     root.style.setProperty("--color-warning", "rgb(217, 119, 6)");
@@ -144,12 +145,13 @@ describe("browser visual contract", () => {
     root.style.setProperty("--radius-xs", "4px");
     root.style.setProperty("--motion-fast", "140ms");
     document.body.append(root);
-    const theme = readBrowserOverlayTheme("light", false, root);
-    const reduced = readBrowserOverlayTheme("light", true, root);
+    const theme = readBrowserAppearanceTheme("light", false, root);
+    const reduced = readBrowserAppearanceTheme("light", true, root);
     root.remove();
 
     expect(theme).toMatchObject({
       theme: "light",
+      backgroundColor: { red: 255, green: 255, blue: 255, alpha: 255 },
       tokens: { accent: "rgb(216, 117, 117)", surface: "rgb(255, 255, 255)" },
       radiusPx: 4,
       motionMs: 140,

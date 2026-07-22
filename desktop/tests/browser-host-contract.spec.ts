@@ -47,7 +47,7 @@ describe("BrowserHost wire contract", () => {
       "browser_respond_permission",
       "browser_respond_download",
       "browser_start_selection",
-      "browser_configure_overlay",
+      "browser_configure_appearance",
       "browser_resolve_annotations",
       "browser_render_highlights",
       "browser_clear_highlights",

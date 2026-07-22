@@ -61,12 +61,21 @@ export interface BrowserOverlayTokens {
   readonly danger: string;
 }
 
+export interface BrowserRgbaColor {
+  readonly red: number;
+  readonly green: number;
+  readonly blue: number;
+  readonly alpha: number;
+}
+
 export interface BrowserCommandPayloadByKind {
   readonly browser_create_surface: {
     readonly panelId: string;
     readonly generation: number;
     readonly profileMode: BrowserProfileMode;
     readonly initialUrl: string;
+    readonly theme: "light" | "dark";
+    readonly backgroundColor: BrowserRgbaColor;
   };
   readonly browser_destroy_surface: BrowserSurfaceRef;
   readonly browser_set_visibility: BrowserSurfaceRef & {
@@ -106,8 +115,9 @@ export interface BrowserCommandPayloadByKind {
     readonly selectionRequestId: string;
     readonly mode: "text" | "element" | "region";
   };
-  readonly browser_configure_overlay: BrowserSurfaceRef & {
+  readonly browser_configure_appearance: BrowserSurfaceRef & {
     readonly theme: "light" | "dark";
+    readonly backgroundColor: BrowserRgbaColor;
     readonly tokens: BrowserOverlayTokens;
     readonly radiusPx: number;
     readonly motionMs: number;
@@ -328,12 +338,14 @@ type Validator = (value: unknown, path: string) => void;
 
 const commandValidators: Readonly<Record<BrowserCommandKind, Validator>> = {
   browser_create_surface: objectValidator(
-    ["panelId", "generation", "profileMode", "initialUrl"],
+    ["panelId", "generation", "profileMode", "initialUrl", "theme", "backgroundColor"],
     {
       panelId: idValidator,
       generation: generationValidator,
       profileMode: enumValidator(["persistent", "incognito"]),
       initialUrl: urlValidator,
+      theme: enumValidator(["light", "dark"]),
+      backgroundColor: rgbaColorValidator,
     },
   ),
   browser_destroy_surface: surfaceRefValidator(),
@@ -374,8 +386,9 @@ const commandValidators: Readonly<Record<BrowserCommandKind, Validator>> = {
     selectionRequestId: idValidator,
     mode: enumValidator(["text", "element", "region"]),
   }),
-  browser_configure_overlay: surfaceRefValidator({
+  browser_configure_appearance: surfaceRefValidator({
     theme: enumValidator(["light", "dark"]),
+    backgroundColor: rgbaColorValidator,
     tokens: objectValidator(
       ["accent", "surface", "text", "border", "focus", "warning", "danger"],
       {
@@ -816,6 +829,18 @@ function safeCssColorValidator(value: unknown, path: string): void {
   if (/[;{}'"\\]/.test(value as string) || /url\s*\(/i.test(value as string)) {
     throw new Error(`${path} must be a safe CSS color`);
   }
+}
+
+function rgbaColorValidator(value: unknown, path: string): void {
+  objectValidator(
+    ["red", "green", "blue", "alpha"],
+    {
+      red: numberRangeValidator(0, 255),
+      green: numberRangeValidator(0, 255),
+      blue: numberRangeValidator(0, 255),
+      alpha: numberRangeValidator(0, 255),
+    },
+  )(value, path);
 }
 
 function booleanValidator(value: unknown, path: string): void {

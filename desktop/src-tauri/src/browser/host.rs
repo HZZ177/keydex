@@ -21,11 +21,11 @@ use super::commands::{
 };
 use super::config::BROWSER_RESOLVE_BATCH_SIZE;
 use super::contract::{
-    BridgeErrorPayload, BridgeMessagePayload, BrowserCommandError, BrowserCommandErrorCode,
-    BrowserCommandResponse, BrowserEvent, BrowserHighlightState, BrowserNewWindowDisposition,
-    BrowserOverlayTheme, BrowserReloadMode, BrowserSelectionMode, BrowserSurfaceRef,
+    BridgeErrorPayload, BridgeMessagePayload, BrowserAppearanceTheme, BrowserCommandError,
+    BrowserCommandErrorCode, BrowserCommandResponse, BrowserEvent, BrowserHighlightState,
+    BrowserNewWindowDisposition, BrowserReloadMode, BrowserSelectionMode, BrowserSurfaceRef,
     BrowserVisibilityReason, CaptureCompletedPayload, CaptureFailedPayload, CaptureRegionInput,
-    ClearHighlightsInput, ClearProfileDataInput, ConfigureOverlayInput, CreateSurfaceInput,
+    ClearHighlightsInput, ClearProfileDataInput, ConfigureAppearanceInput, CreateSurfaceInput,
     DiscardCaptureInput, ExternalProtocolPayload, FindInput, NavigateAnnotationTargetInput,
     NavigateInput, NavigationFailedPayload, NavigationPayload, NewWindowPayload,
     PageHistoryPayload, PageLoadingPayload, PageSourcePayload, PageTitlePayload, ReasonPayload,
@@ -37,7 +37,8 @@ use super::contract::{
 };
 use super::devtools_inspector::{
     attach_windows_devtools_inspector, cancel_native_element_selection,
-    start_native_element_selection, BrowserDevToolsInspector, NativeInspectorEvent,
+    configure_native_auto_dark_mode, start_native_element_selection, BrowserDevToolsInspector,
+    NativeInspectorEvent,
 };
 use super::downloads::{attach_download_manager, DownloadManager};
 use super::failures::{attach_process_failure_observer, BrowserFailureCoordinator};
@@ -179,6 +180,8 @@ pub(crate) async fn browser_create_surface(
         identity.reference.generation,
         profile_directory,
         "about:blank".to_string(),
+        payload.theme,
+        payload.background_color,
     ) {
         Ok(surface) => surface,
         Err(reason) => {
@@ -399,6 +402,20 @@ pub(crate) async fn browser_create_surface(
         let _ = surface.destroy();
         abort_surface(&state, &identity);
         return host_failure(request_id, &reason);
+    }
+
+    if let Err(reason) = configure_native_auto_dark_mode(
+        &surface,
+        matches!(payload.theme, BrowserAppearanceTheme::Dark),
+    )
+    .await
+    {
+        let _ = surface.destroy();
+        abort_surface(&state, &identity);
+        return host_failure(
+            request_id,
+            &format!("Failed to configure Chromium page color adaptation: {reason}"),
+        );
     }
 
     let stale = {
@@ -1238,10 +1255,10 @@ pub(crate) async fn browser_start_selection(
 }
 
 #[tauri::command]
-pub(crate) async fn browser_configure_overlay(
+pub(crate) async fn browser_configure_appearance(
     caller: Webview,
     request_id: String,
-    payload: ConfigureOverlayInput,
+    payload: ConfigureAppearanceInput,
 ) -> BrowserCommandResponse {
     if let Err(error) = ensure_main_webview_caller(&caller) {
         return failure(request_id, error);
@@ -1251,16 +1268,34 @@ pub(crate) async fn browser_configure_overlay(
         Ok(webview) => webview,
         Err(code) => return surface_resolution_failure(request_id, code),
     };
+    let appearance_theme = payload.theme;
+    let background_color = payload.background_color;
+    if let Err(reason) =
+        webview.run(move |surface| surface.set_appearance(appearance_theme, background_color))
+    {
+        return host_failure(
+            request_id,
+            &format!("Failed to configure browser page appearance: {reason}"),
+        );
+    }
+    if let Err(reason) = configure_native_auto_dark_mode(
+        &webview,
+        matches!(payload.theme, BrowserAppearanceTheme::Dark),
+    )
+    .await
+    {
+        return host_failure(
+            request_id,
+            &format!("Failed to configure Chromium page color adaptation: {reason}"),
+        );
+    }
     state
         .inspector
         .configure_accent(&payload.surface, &payload.tokens.accent);
     let frame_keys = state.bridge.ready_frame_keys(&payload.surface);
-    if frame_keys.is_empty() {
-        return host_failure(request_id, "Structured page overlay bridge is not ready");
-    }
     let theme = match payload.theme {
-        BrowserOverlayTheme::Light => "light",
-        BrowserOverlayTheme::Dark => "dark",
+        BrowserAppearanceTheme::Light => "light",
+        BrowserAppearanceTheme::Dark => "dark",
     };
     let overlay_payload = serde_json::json!({
         "theme": theme,

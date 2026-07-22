@@ -54,6 +54,8 @@ pub(crate) struct CreateSurfaceInput {
     pub(crate) generation: u64,
     pub(crate) profile_mode: BrowserProfileMode,
     pub(crate) initial_url: String,
+    pub(crate) theme: BrowserAppearanceTheme,
+    pub(crate) background_color: BrowserRgbaColor,
 }
 
 macro_rules! surface_input {
@@ -103,8 +105,9 @@ surface_input!(StartSelectionInput {
     selection_request_id: String,
     mode: BrowserSelectionMode
 });
-surface_input!(ConfigureOverlayInput {
-    theme: BrowserOverlayTheme,
+surface_input!(ConfigureAppearanceInput {
+    theme: BrowserAppearanceTheme,
+    background_color: BrowserRgbaColor,
     tokens: BrowserOverlayTokens,
     radius_px: f64,
     motion_ms: f64,
@@ -176,11 +179,20 @@ pub(crate) enum BrowserSelectionMode {
     Region,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum BrowserOverlayTheme {
+pub(crate) enum BrowserAppearanceTheme {
     Light,
     Dark,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct BrowserRgbaColor {
+    pub(crate) red: u8,
+    pub(crate) green: u8,
+    pub(crate) blue: u8,
+    pub(crate) alpha: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -275,8 +287,8 @@ pub(crate) enum BrowserCommand {
     RespondDownload(RespondDownloadInput),
     #[serde(rename = "browser_start_selection")]
     StartSelection(StartSelectionInput),
-    #[serde(rename = "browser_configure_overlay")]
-    ConfigureOverlay(ConfigureOverlayInput),
+    #[serde(rename = "browser_configure_appearance")]
+    ConfigureAppearance(ConfigureAppearanceInput),
     #[serde(rename = "browser_cancel_selection")]
     CancelSelection(BrowserSurfaceRef),
     #[serde(rename = "browser_resolve_annotations")]
@@ -860,7 +872,14 @@ fn validate_command_payload_keys(kind: &str, payload: &Value) -> Result<(), Brow
     let result = match kind {
         "browser_create_surface" => exact_payload(
             payload,
-            &["panelId", "generation", "profileMode", "initialUrl"],
+            &[
+                "panelId",
+                "generation",
+                "profileMode",
+                "initialUrl",
+                "theme",
+                "backgroundColor",
+            ],
             &[],
         ),
         "browser_destroy_surface"
@@ -940,13 +959,14 @@ fn validate_command_payload_keys(kind: &str, payload: &Value) -> Result<(), Brow
             ],
             &[],
         ),
-        "browser_configure_overlay" => exact_payload(
+        "browser_configure_appearance" => exact_payload(
             payload,
             &[
                 "panelId",
                 "surfaceId",
                 "generation",
                 "theme",
+                "backgroundColor",
                 "tokens",
                 "radiusPx",
                 "motionMs",
@@ -1134,7 +1154,7 @@ fn validate_command(command: &BrowserCommand) -> Result<(), BrowserContractError
             validate_surface(&input.surface)?;
             validate_id(&input.selection_request_id, "selectionRequestId")?;
         }
-        BrowserCommand::ConfigureOverlay(input) => {
+        BrowserCommand::ConfigureAppearance(input) => {
             validate_surface(&input.surface)?;
             if !input.radius_px.is_finite()
                 || !(0.0..=32.0).contains(&input.radius_px)

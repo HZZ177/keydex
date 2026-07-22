@@ -10,7 +10,10 @@ import {
   useMemo,
   useRef,
   useState,
+  type RefObject,
 } from "react";
+
+import { useBrowserOcclusionToken } from "@/renderer/features/browser/runtime/BrowserOcclusionCoordinator";
 
 import styles from "./NotificationProvider.module.css";
 
@@ -76,6 +79,9 @@ const NotificationContext = createContext<NotificationContextValue>(noopContext)
 
 export function NotificationProvider({ children }: PropsWithChildren) {
   const [items, setItems] = useState<NotificationItem[]>([]);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const overlapsNativeBrowser = useNativeBrowserNotificationOverlap(viewportRef, items);
+  useBrowserOcclusionToken(overlapsNativeBrowser, "notification");
 
   const dismiss = useCallback((id: string) => {
     setItems((current) =>
@@ -126,7 +132,7 @@ export function NotificationProvider({ children }: PropsWithChildren) {
   return (
     <NotificationContext.Provider value={value}>
       {children}
-      <div className={styles.viewport} data-testid="notification-viewport">
+      <div className={styles.viewport} data-testid="notification-viewport" ref={viewportRef}>
         {items.map((item) => (
           <NotificationToast item={item} onDismiss={dismiss} onExited={remove} key={item.id} />
         ))}
@@ -296,6 +302,7 @@ function NotificationToast({
       data-exiting={item.exiting ? "true" : "false"}
       data-overflowing={overflowing ? "true" : "false"}
       data-testid="notification-item"
+      data-notification-toast="true"
       data-type={item.type}
       role={item.type === "error" ? "alert" : "status"}
       onBlur={startTimer}
@@ -352,6 +359,72 @@ function NotificationToast({
       </span>
     </section>
   );
+}
+
+function useNativeBrowserNotificationOverlap(
+  viewportRef: RefObject<HTMLDivElement | null>,
+  items: readonly NotificationItem[],
+): boolean {
+  const [overlaps, setOverlaps] = useState(false);
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || items.length === 0) {
+      setOverlaps(false);
+      return;
+    }
+
+    let frame: number | null = null;
+    const measure = () => {
+      frame = null;
+      const toastRects = Array.from(
+        viewport.querySelectorAll<HTMLElement>('[data-notification-toast="true"]'),
+        (element) => element.getBoundingClientRect(),
+      ).filter(hasPositiveRect);
+      const browserRects = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-browser-native-surface="placeholder"]'),
+        (element) => element.getBoundingClientRect(),
+      ).filter(hasPositiveRect);
+      const next = toastRects.some((toast) => browserRects.some((browser) => rectsIntersect(toast, browser)));
+      setOverlaps((current) => current === next ? current : next);
+    };
+    const scheduleMeasure = () => {
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(measure);
+    };
+
+    measure();
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleMeasure);
+    const observed = [
+      viewport,
+      ...document.querySelectorAll<HTMLElement>('[data-browser-native-surface="placeholder"]'),
+    ];
+    for (const element of observed) resizeObserver?.observe(element);
+    const mutationObserver = typeof MutationObserver === "undefined"
+      ? null
+      : new MutationObserver(scheduleMeasure);
+    mutationObserver?.observe(viewport, { attributes: true, childList: true, subtree: true });
+    window.addEventListener("resize", scheduleMeasure);
+    return () => {
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
+      window.removeEventListener("resize", scheduleMeasure);
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
+  }, [items, viewportRef]);
+
+  return overlaps;
+}
+
+function hasPositiveRect(rect: DOMRect): boolean {
+  return rect.width > 0 && rect.height > 0;
+}
+
+function rectsIntersect(left: DOMRect, right: DOMRect): boolean {
+  return left.left < right.right
+    && left.right > right.left
+    && left.top < right.bottom
+    && left.bottom > right.top;
 }
 
 function hasElementOverflow(element: HTMLElement | null): boolean {

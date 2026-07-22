@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   WebAnnotationContextAssembler,
   WebAnnotationContextError,
+  webAnnotationSendWarningNotice,
   type SelectedWebAnnotationReference,
   type WebAnnotationContextResolutionSource,
   type WebAnnotationCoordinatorResolution,
@@ -14,6 +15,29 @@ import { prepareComposerMessage } from "@/renderer/utils/messageInjection";
 const CAPTURED_AT = "2026-07-22T08:00:00.000Z";
 
 describe("WebAnnotationContextAssembler", () => {
+  it("keeps fallback diagnostics structured without turning them into global send notices", async () => {
+    const assembler = new WebAnnotationContextAssembler({
+      client: { get: vi.fn(async () => detail("fallback")) },
+      resolutions: resolutionSource({}),
+      now: () => CAPTURED_AT,
+      resolutionTimeoutMs: 0,
+    });
+
+    const assembly = await assembler.assemble([reference("fallback", 1, CAPTURED_AT)]);
+
+    expect(assembly.warnings.map((warning) => warning.code)).toEqual(["orphaned"]);
+    expect(assembly.snapshots[0].target).toMatchObject({
+      resolution: "orphaned",
+      freshness: "last-known",
+    });
+    expect(webAnnotationSendWarningNotice(assembly.warnings)).toBeNull();
+    expect(webAnnotationSendWarningNotice([
+      { annotationId: "a", code: "target_changed", message: "目标内容已变化" },
+      { annotationId: "b", code: "target_changed", message: "目标内容已变化" },
+      { annotationId: "b", code: "ambiguous", message: "存在多个候选" },
+    ])).toBe("网页批注引用存在变化：目标内容已变化；存在多个候选");
+  });
+
   it("assembles all four settled states as immutable, structure-complete, untrusted snapshots", async () => {
     const details = Object.fromEntries(
       ["resolved", "changed", "ambiguous", "orphaned"].map((id, index) => [
@@ -160,7 +184,7 @@ describe("WebAnnotationContextAssembler", () => {
     });
     expect(assembly.snapshots[0].evidence.currentQuote).toBe("Last known quote");
     expect(assembly.warnings.map((warning) => warning.code)).toEqual([
-      "target_changed", "resolution_timeout", "last_known",
+      "target_changed", "resolution_timeout",
     ]);
   });
 

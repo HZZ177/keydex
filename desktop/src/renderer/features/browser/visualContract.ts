@@ -71,7 +71,7 @@ export const BROWSER_INTERACTION_STATES = Object.freeze([
   "prefers-reduced-motion",
 ] as const);
 
-export const BROWSER_REMOTE_PAGE_THEME_POLICY = "preserve-site" as const;
+export const BROWSER_REMOTE_PAGE_THEME_POLICY = "force-keydex-appearance" as const;
 
 export const BROWSER_OVERLAY_TOKEN_MAP = Object.freeze({
   accent: "--annotation-accent",
@@ -85,8 +85,19 @@ export const BROWSER_OVERLAY_TOKEN_MAP = Object.freeze({
   motion: "--motion-fast",
 } as const);
 
-export interface BrowserOverlayTheme {
+export interface BrowserRgbaColor {
+  readonly red: number;
+  readonly green: number;
+  readonly blue: number;
+  readonly alpha: number;
+}
+
+export interface BrowserPageAppearance {
   readonly theme: "light" | "dark";
+  readonly backgroundColor: BrowserRgbaColor;
+}
+
+export interface BrowserAppearanceTheme extends BrowserPageAppearance {
   readonly tokens: {
     readonly accent: string;
     readonly surface: string;
@@ -101,19 +112,32 @@ export interface BrowserOverlayTheme {
   readonly reducedMotion: boolean;
 }
 
-export function readBrowserOverlayTheme(
-  theme: BrowserOverlayTheme["theme"],
+export function readBrowserPageAppearance(
+  theme: BrowserPageAppearance["theme"],
+  root: Element = document.documentElement,
+): BrowserPageAppearance {
+  const styles = getComputedStyle(root);
+  const fallback = theme === "dark" ? "#282a36" : "#ffffff";
+  const background = resolveCssCustomProperty(styles, "--surface-bg") || fallback;
+  return Object.freeze({
+    theme,
+    backgroundColor: Object.freeze(parseCssColor(background)),
+  });
+}
+
+export function readBrowserAppearanceTheme(
+  theme: BrowserAppearanceTheme["theme"],
   reducedMotion: boolean,
   root: Element = document.documentElement,
-): BrowserOverlayTheme {
+): BrowserAppearanceTheme {
   const styles = getComputedStyle(root);
-  const color = (name: keyof BrowserOverlayTheme["tokens"]): string => {
+  const color = (name: keyof BrowserAppearanceTheme["tokens"]): string => {
     const value = styles.getPropertyValue(BROWSER_OVERLAY_TOKEN_MAP[name]).trim();
     if (!value) throw new Error(`Missing Keydex browser overlay token: ${BROWSER_OVERLAY_TOKEN_MAP[name]}`);
     return value;
   };
   return Object.freeze({
-    theme,
+    ...readBrowserPageAppearance(theme, root),
     tokens: Object.freeze({
       accent: color("accent"),
       surface: color("surface"),
@@ -129,6 +153,38 @@ export function readBrowserOverlayTheme(
       : readCssNumber(styles.getPropertyValue(BROWSER_OVERLAY_TOKEN_MAP.motion), "ms", 0, 2_000),
     reducedMotion,
   });
+}
+
+function resolveCssCustomProperty(styles: CSSStyleDeclaration, name: string, depth = 0): string {
+  if (depth > 8) throw new Error(`Circular Keydex browser color token: ${name}`);
+  const value = styles.getPropertyValue(name).trim();
+  const reference = /^var\(\s*(--[\w-]+)\s*(?:,[^)]+)?\)$/.exec(value);
+  return reference ? resolveCssCustomProperty(styles, reference[1], depth + 1) : value;
+}
+
+function parseCssColor(rawValue: string): BrowserRgbaColor {
+  const value = rawValue.trim().toLowerCase();
+  const hex = /^#([0-9a-f]{3,8})$/.exec(value)?.[1];
+  if (hex) {
+    const expanded = hex.length <= 4 ? [...hex].map((part) => `${part}${part}`).join("") : hex;
+    if (expanded.length === 6 || expanded.length === 8) {
+      return {
+        red: Number.parseInt(expanded.slice(0, 2), 16),
+        green: Number.parseInt(expanded.slice(2, 4), 16),
+        blue: Number.parseInt(expanded.slice(4, 6), 16),
+        alpha: expanded.length === 8 ? Number.parseInt(expanded.slice(6, 8), 16) : 255,
+      };
+    }
+  }
+  const rgb = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)$/.exec(value);
+  if (rgb) {
+    const channel = (index: number) => Math.round(Math.max(0, Math.min(255, Number(rgb[index]))));
+    const alpha = rgb[4]?.endsWith("%")
+      ? Math.round(Math.max(0, Math.min(100, Number(rgb[4].slice(0, -1)))) * 2.55)
+      : Math.round(Math.max(0, Math.min(1, Number(rgb[4] ?? "1"))) * 255);
+    return { red: channel(1), green: channel(2), blue: channel(3), alpha };
+  }
+  throw new Error(`Invalid Keydex browser page background token: ${rawValue}`);
 }
 
 function readCssNumber(

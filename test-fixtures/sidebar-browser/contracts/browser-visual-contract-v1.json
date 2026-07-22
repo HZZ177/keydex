@@ -84,5 +84,5 @@
     "[data-active=\"true\"]",
     "prefers-reduced-motion"
   ],
-  "remotePageThemePolicy": "preserve-site"
+  "remotePageThemePolicy": "force-keydex-appearance"
 }

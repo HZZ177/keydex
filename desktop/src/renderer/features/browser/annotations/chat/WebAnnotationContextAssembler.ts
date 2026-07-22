@@ -107,6 +107,35 @@ export interface WebAnnotationContextWarning {
   readonly message: string;
 }
 
+const USER_VISIBLE_WARNING_CODES = new Set<WebAnnotationContextWarningCode>([
+  "source_updated",
+  "content_changed",
+  "target_changed",
+  "ambiguous",
+]);
+
+/**
+ * Turns structured send diagnostics into at most one user-facing notice.
+ *
+ * Losing the live page is not a send failure: the immutable target captured
+ * when the annotation was created is still delivered to the Agent. Keep that
+ * state in the snapshot for Agent/audit consumers without turning the normal
+ * fallback path into a stack of global warnings.
+ */
+export function webAnnotationSendWarningNotice(
+  warnings: readonly WebAnnotationContextWarning[],
+): string | null {
+  const messages = [...new Set(
+    warnings
+      .filter((warning) => USER_VISIBLE_WARNING_CODES.has(warning.code))
+      .map((warning) => warning.message.trim())
+      .filter(Boolean),
+  )];
+  if (messages.length === 0) return null;
+  if (messages.length === 1) return messages[0];
+  return `网页批注引用存在变化：${messages.join("；")}`;
+}
+
 export interface WebAnnotationContextEvidenceAsset {
   readonly annotationId: string;
   readonly assetId: string;
@@ -503,10 +532,15 @@ function snapshotWarnings(
   if (change.material) {
     push("target_changed", `网页目标仍可定位，但${changeDescription(change)}。`);
   }
-  if (status === "ambiguous") push("ambiguous", "网页目标存在多个候选，未把任一候选当作确定事实。");
-  if (status === "orphaned") push("orphaned", "网页目标当前无法定位，本次仅发送原始引用和来源。");
-  if (timedOut) push("resolution_timeout", "等待网页目标解析超时，已使用最近已知信息。");
-  if (freshness === "last-known") push("last_known", "该快照中的页面定位信息不是当前实时结果。");
+  if (status === "ambiguous") {
+    push("ambiguous", "网页目标存在多个候选，未把任一候选当作确定事实。");
+  } else if (status === "orphaned") {
+    push("orphaned", "网页目标当前无法定位，本次仅发送原始引用和来源。");
+  } else if (timedOut) {
+    push("resolution_timeout", "等待网页目标解析超时，已使用最近已知信息。");
+  } else if (freshness === "last-known") {
+    push("last_known", "该快照中的页面定位信息不是当前实时结果。");
+  }
   return warnings;
 }
 

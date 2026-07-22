@@ -53,6 +53,7 @@ import {
   incognitoWebReferenceRegistry,
   isIncognitoWebAnnotationId,
   replayedWebAnnotationContexts,
+  webAnnotationSendWarningNotice,
   WebAnnotationContextError,
   type SelectedWebAnnotationReference,
   type WebAnnotationSendCoordinator,
@@ -760,7 +761,8 @@ export function useAgentSessionController({
               sessionId: targetSessionId,
               signal,
             });
-            for (const warning of assembly.warnings) onNotice?.(warning.message, "warning");
+            const warningNotice = webAnnotationSendWarningNotice(assembly.warnings);
+            if (warningNotice) onNotice?.(warningNotice, "warning");
             const webPrepared = prepareComposerMessage("", [], { webAnnotationContexts: assembly.snapshots });
             return {
               contextItems: [...contextItems, ...webPrepared.contextItems],
@@ -1000,7 +1002,8 @@ export function useAgentSessionController({
                   sessionId: targetSessionId,
                   signal,
                 });
-                for (const warning of assembly.warnings) onNotice?.(warning.message, "warning");
+                const warningNotice = webAnnotationSendWarningNotice(assembly.warnings);
+                if (warningNotice) onNotice?.(warningNotice, "warning");
                 const webPrepared = prepareComposerMessage("", [], {
                   webAnnotationContexts: assembly.snapshots,
                 });

@@ -46,6 +46,29 @@ const NATIVE_SELECTION_FUNCTION: &str = r#"function (detail) {
 }"#;
 const ROOT_SESSION: &str = "";
 
+#[cfg(windows)]
+pub(crate) async fn configure_native_auto_dark_mode(
+    webview: &NativeBrowserSurface,
+    enabled: bool,
+) -> Result<(), String> {
+    call_devtools_method(
+        webview,
+        ROOT_SESSION,
+        "Emulation.setAutoDarkModeOverride",
+        json!({ "enabled": enabled }),
+    )
+    .await
+    .map(|_| ())
+}
+
+#[cfg(not(windows))]
+pub(crate) async fn configure_native_auto_dark_mode(
+    _webview: &NativeBrowserSurface,
+    _enabled: bool,
+) -> Result<(), String> {
+    Err("Chromium auto dark mode is unavailable on this platform".to_string())
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum NativeInspectorEvent {
     Selected {

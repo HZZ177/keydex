@@ -26,7 +26,7 @@ commands.allow = [
   "browser_find",
   "browser_stop_find",
   "browser_start_selection",
-  "browser_configure_overlay",
+  "browser_configure_appearance",
   "browser_cancel_selection",
   "browser_resolve_annotations",
   "browser_render_highlights",

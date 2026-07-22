@@ -9,7 +9,9 @@
         "panelId": "browser-panel-1",
         "generation": 1,
         "profileMode": "persistent",
-        "initialUrl": "https://example.com/"
+        "initialUrl": "https://example.com/",
+        "theme": "dark",
+        "backgroundColor": { "red": 40, "green": 42, "blue": 54, "alpha": 255 }
       }
     },
     {
@@ -63,13 +65,14 @@
     },
     {
       "schemaVersion": 1,
-      "requestId": "req-overlay-theme-1",
-      "command": "browser_configure_overlay",
+      "requestId": "req-appearance-theme-1",
+      "command": "browser_configure_appearance",
       "payload": {
         "panelId": "browser-panel-1",
         "surfaceId": "surface-1",
         "generation": 1,
         "theme": "dark",
+        "backgroundColor": { "red": 40, "green": 42, "blue": 54, "alpha": 255 },
         "tokens": {
           "accent": "rgb(255, 121, 198)",
           "surface": "rgb(40, 42, 54)",

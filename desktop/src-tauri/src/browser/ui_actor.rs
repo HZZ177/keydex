@@ -24,6 +24,7 @@ use windows_061::Win32::{
 
 #[cfg(windows)]
 use super::{
+    contract::{BrowserAppearanceTheme, BrowserRgbaColor},
     geometry::{
         interactive_resize_rect, BrowserGeometryFrame, GeometryMailbox,
         NativeInteractiveResizeRequest,
@@ -51,6 +52,8 @@ pub(crate) enum BrowserUiCommand {
         generation: u64,
         profile_directory: PathBuf,
         initial_url: String,
+        theme: BrowserAppearanceTheme,
+        background_color: BrowserRgbaColor,
         response: mpsc::Sender<Result<(), String>>,
     },
     Navigate {
@@ -150,6 +153,8 @@ impl BrowserUiActorHandle {
         generation: u64,
         profile_directory: PathBuf,
         initial_url: String,
+        theme: BrowserAppearanceTheme,
+        background_color: BrowserRgbaColor,
     ) -> Result<NativeBrowserSurface, String> {
         let (response, result) = mpsc::channel();
         self.send(BrowserUiCommand::CreateSurface {
@@ -157,6 +162,8 @@ impl BrowserUiActorHandle {
             generation,
             profile_directory,
             initial_url,
+            theme,
+            background_color,
             response,
         })?;
         result
@@ -395,6 +402,8 @@ fn apply_command(
             generation,
             profile_directory,
             initial_url,
+            theme,
+            background_color,
             response,
         } => {
             if let Some(existing) = surfaces.remove(&surface_id) {
@@ -406,6 +415,8 @@ fn apply_command(
                 generation,
                 &profile_directory,
                 &initial_url,
+                theme,
+                background_color,
             )
             .map(|surface| {
                 surfaces.insert(surface_id, surface);

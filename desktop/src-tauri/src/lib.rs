@@ -24,7 +24,7 @@ mod terminal;
 
 use browser::host::{
     browser_begin_interactive_resize, browser_cancel_selection, browser_capture_region,
-    browser_clear_highlights, browser_clear_profile_data, browser_configure_overlay,
+    browser_clear_highlights, browser_clear_profile_data, browser_configure_appearance,
     browser_create_surface, browser_destroy_surface, browser_discard_capture,
     browser_end_interactive_resize, browser_find, browser_go_back, browser_go_forward,
     browser_navigate, browser_navigate_to_annotation_target, browser_reload,
@@ -974,7 +974,7 @@ pub fn run() {
             browser_find,
             browser_stop_find,
             browser_start_selection,
-            browser_configure_overlay,
+            browser_configure_appearance,
             browser_cancel_selection,
             browser_resolve_annotations,
             browser_render_highlights,

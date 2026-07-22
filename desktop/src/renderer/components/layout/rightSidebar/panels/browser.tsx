@@ -342,13 +342,13 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
 
   useEffect(() => {
     if (active) {
-      const next = browserPanelRuntime.activate(state);
+      const next = browserPanelRuntime.activate(state, theme);
       generationRef.current = next;
       setActivatedGeneration(next);
     } else if (generationRef.current > 0) {
       browserPanelRuntime.deactivate(state.id, generationRef.current);
     }
-  }, [active, state.id]);
+  }, [active, state.id, theme]);
   useEffect(() => {
     setPermissionRequest(null);
     setRespondingPermission(false);
@@ -705,7 +705,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
       ? window.matchMedia("(prefers-reduced-motion: reduce)")
       : null;
     const configure = () => {
-      void browserPanelRuntime.configureOverlay(surface, theme, motion?.matches ?? false).catch(() => undefined);
+      void browserPanelRuntime.configureAppearance(surface, theme, motion?.matches ?? false).catch(() => undefined);
     };
     configure();
     const unsubscribe = browserPanelRuntime.client.subscribe((event) => {
@@ -903,7 +903,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
           if (surface) {
             run((current) => browserPanelRuntime.navigate(current, navigation?.url ?? state.restoreUrl));
           } else {
-            const next = browserPanelRuntime.activate(state);
+            const next = browserPanelRuntime.activate(state, theme);
             generationRef.current = next;
             setActivatedGeneration(next);
           }

@@ -6,14 +6,17 @@ use webview2_com::{
     CreateCoreWebView2ControllerCompletedHandler, CreateCoreWebView2EnvironmentCompletedHandler,
     Microsoft::Web::WebView2::Win32::{
         CreateCoreWebView2EnvironmentWithOptions, ICoreWebView2, ICoreWebView2Controller,
-        ICoreWebView2Environment, ICoreWebView2EnvironmentOptions,
+        ICoreWebView2Controller2, ICoreWebView2Environment, ICoreWebView2EnvironmentOptions,
+        ICoreWebView2_13, COREWEBVIEW2_COLOR, COREWEBVIEW2_PREFERRED_COLOR_SCHEME_DARK,
+        COREWEBVIEW2_PREFERRED_COLOR_SCHEME_LIGHT,
     },
 };
 #[cfg(windows)]
-use windows_061::core::{HSTRING, PCWSTR};
+use windows_061::core::{Interface, HSTRING, PCWSTR};
 
 #[cfg(windows)]
 use super::{
+    contract::{BrowserAppearanceTheme, BrowserRgbaColor},
     geometry::{BrowserGeometryFrame, BrowserPhysicalRect},
     window_host::BrowserWindowHost,
 };
@@ -37,6 +40,8 @@ impl WindowedBrowserSurface {
         generation: u64,
         profile_directory: &Path,
         initial_url: &str,
+        theme: BrowserAppearanceTheme,
+        background_color: BrowserRgbaColor,
     ) -> Result<Self, String> {
         let environment = create_environment(profile_directory)?;
         let mut window_host = BrowserWindowHost::create(parent_hwnd)?;
@@ -44,6 +49,8 @@ impl WindowedBrowserSurface {
         window_host.attach_controller(&controller)?;
         let core = unsafe { controller.CoreWebView2() }
             .map_err(|error| format!("Failed to acquire CoreWebView2: {error}"))?;
+
+        set_webview_appearance(&controller, &core, theme, background_color)?;
 
         unsafe {
             controller
@@ -103,6 +110,14 @@ impl WindowedBrowserSurface {
         let url = wide(url);
         unsafe { self.core.Navigate(PCWSTR(url.as_ptr())) }
             .map_err(|error| format!("Failed to navigate WebView2 surface: {error}"))
+    }
+
+    pub(crate) fn set_appearance(
+        &self,
+        theme: BrowserAppearanceTheme,
+        background_color: BrowserRgbaColor,
+    ) -> Result<(), String> {
+        set_webview_appearance(&self.controller, &self.core, theme, background_color)
     }
 
     pub(crate) fn reload(&self) -> Result<(), String> {
@@ -171,6 +186,39 @@ impl WindowedBrowserSurface {
 
     pub(crate) fn environment(&self) -> &ICoreWebView2Environment {
         &self.environment
+    }
+}
+
+#[cfg(windows)]
+fn set_webview_appearance(
+    controller: &ICoreWebView2Controller,
+    core: &ICoreWebView2,
+    theme: BrowserAppearanceTheme,
+    background_color: BrowserRgbaColor,
+) -> Result<(), String> {
+    unsafe {
+        let controller2: ICoreWebView2Controller2 = controller.cast().map_err(|error| {
+            format!("Failed to acquire WebView2 background controller: {error}")
+        })?;
+        controller2
+            .SetDefaultBackgroundColor(COREWEBVIEW2_COLOR {
+                R: background_color.red,
+                G: background_color.green,
+                B: background_color.blue,
+                A: background_color.alpha,
+            })
+            .map_err(|error| format!("Failed to set WebView2 background color: {error}"))?;
+
+        let profile = core
+            .cast::<ICoreWebView2_13>()
+            .and_then(|webview| webview.Profile())
+            .map_err(|error| format!("Failed to acquire WebView2 profile: {error}"))?;
+        profile
+            .SetPreferredColorScheme(match theme {
+                BrowserAppearanceTheme::Light => COREWEBVIEW2_PREFERRED_COLOR_SCHEME_LIGHT,
+                BrowserAppearanceTheme::Dark => COREWEBVIEW2_PREFERRED_COLOR_SCHEME_DARK,
+            })
+            .map_err(|error| format!("Failed to set WebView2 preferred color scheme: {error}"))
     }
 }
 

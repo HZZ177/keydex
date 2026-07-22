@@ -228,10 +228,7 @@
   padding: 0 9px;
   border-color: color-mix(in srgb, var(--annotation-accent) 30%, var(--color-border-subtle));
   background: color-mix(in srgb, var(--annotation-accent) 12%, var(--control-pill-active-bg));
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 22%),
-    inset 0 -1px 0 rgb(9 10 16 / 6%),
-    0 2px 7px rgb(9 10 16 / 9%);
+  box-shadow:var(--control-pill-shadow);
   color: var(--annotation-accent);
   backdrop-filter: blur(10px) saturate(1.1);
   -webkit-backdrop-filter: blur(10px) saturate(1.1);

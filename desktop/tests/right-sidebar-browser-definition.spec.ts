@@ -152,12 +152,14 @@ describe("BrowserPanelRuntimeController", () => {
     const panel = rightSidebarDefinitionRegistry.create("browser", {
       id: "right-sidebar:browser:1", sequence: 1, now: NOW,
     });
-    const generation = controller.activate(panel);
+    const generation = controller.activate(panel, "dark");
     await vi.waitFor(() => expect(send).toHaveBeenCalledWith("browser_create_surface", {
       panelId: panel.id,
       generation,
       profileMode: "persistent",
       initialUrl: BROWSER_INTERNAL_BLANK_URL,
+      theme: "dark",
+      backgroundColor: { red: 40, green: 42, blue: 54, alpha: 255 },
     }));
     (subscriber as ((event: BrowserEventEnvelope) => void) | null)?.(
       event(panel.id, generation, "surface-1"),

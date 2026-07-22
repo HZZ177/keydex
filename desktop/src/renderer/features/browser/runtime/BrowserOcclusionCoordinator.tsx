@@ -12,6 +12,7 @@ export type BrowserOcclusionReason =
   | "menu"
   | "permission"
   | "download"
+  | "notification"
   | "annotation_drawer"
   | "command_palette"
   | "window_transition"

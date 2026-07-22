@@ -114,7 +114,6 @@ export function WebAnnotationDrawer({
         ariaLabel="网页批注"
         backdrop="panel"
         bodyClassName={styles.drawerBody}
-        closeOnOverlayClick={false}
         description={state.activePage?.url ?? "当前网页"}
         inset="below-titlebar"
         onClose={onClose}
