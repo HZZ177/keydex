@@ -825,6 +825,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
         profileMode={state.profileMode}
         resourceState={runtime?.resourceState ?? "discarded"}
         surfaceReady={runtime?.status === "ready"}
+        surface={surface}
         title={navigation?.title || state.title}
         toolbarAccessory={findOpen ? (
           <BrowserFindBar
@@ -867,7 +868,6 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
             }
           : undefined}
         onBack={() => run((current) => browserPanelRuntime.history(current, "back"))}
-        onBoundsChange={(rect) => run((current) => browserPanelRuntime.setBounds(current, rect))}
         onForward={() => run((current) => browserPanelRuntime.history(current, "forward"))}
         onDownloads={() => setDownloadsOpen(true)}
         onFind={() => {

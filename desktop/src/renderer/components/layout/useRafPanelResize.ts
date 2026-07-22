@@ -5,6 +5,7 @@ interface ResizeDragState {
   target: HTMLDivElement;
   startWidth: number;
   startCoordinate: number;
+  startScreenCoordinate: number;
   lastWidth: number;
   pendingWidth: number;
   frameId: number | null;
@@ -16,6 +17,12 @@ interface UseRafPanelResizeOptions {
   getWidth(startWidth: number, startCoordinate: number, clientCoordinate: number): number;
   onPreview?: (width: number) => void;
   onCommit: (width: number) => void;
+  onDragStart?: (input: {
+    readonly startWidth: number;
+    readonly startCoordinate: number;
+    readonly startScreenCoordinate: number;
+  }) => void;
+  onDragEnd?: (finalWidth: number) => void;
   previewMode?: "raf" | "sync";
   axis?: "x" | "y";
 }
@@ -26,16 +33,18 @@ export function useRafPanelResize({
   getWidth,
   onPreview,
   onCommit,
+  onDragStart,
+  onDragEnd,
   previewMode = "raf",
   axis = "x",
 }: UseRafPanelResizeOptions) {
   const dragRef = useRef<ResizeDragState | null>(null);
-  const optionsRef = useRef({ getWidth, onPreview, onCommit, previewMode });
+  const optionsRef = useRef({ getWidth, onPreview, onCommit, onDragStart, onDragEnd, previewMode });
   const [dragging, setDragging] = useState(false);
 
   useEffect(() => {
-    optionsRef.current = { getWidth, onPreview, onCommit, previewMode };
-  }, [getWidth, onPreview, onCommit, previewMode]);
+    optionsRef.current = { getWidth, onPreview, onCommit, onDragStart, onDragEnd, previewMode };
+  }, [getWidth, onPreview, onCommit, onDragEnd, onDragStart, previewMode]);
 
   const flushPreview = useCallback((drag: ResizeDragState) => {
     if (drag.frameId !== null) {
@@ -65,6 +74,7 @@ export function useRafPanelResize({
       dragRef.current = null;
       setDragging(false);
       optionsRef.current.onCommit(finalWidth);
+      optionsRef.current.onDragEnd?.(finalWidth);
     },
     [flushPreview],
   );
@@ -148,6 +158,7 @@ export function useRafPanelResize({
       if (drag?.frameId !== null && drag?.frameId !== undefined) {
         cancelAnimationFrame(drag.frameId);
       }
+      if (drag) optionsRef.current.onDragEnd?.(drag.lastWidth);
       dragRef.current = null;
     };
   }, []);
@@ -169,10 +180,16 @@ export function useRafPanelResize({
         target: event.currentTarget,
         startWidth: width,
         startCoordinate: axis === "y" ? event.clientY : event.clientX,
+        startScreenCoordinate: axis === "y" ? event.screenY : event.screenX,
         lastWidth: width,
         pendingWidth: width,
         frameId: null,
       };
+      optionsRef.current.onDragStart?.({
+        startWidth: width,
+        startCoordinate: axis === "y" ? event.clientY : event.clientX,
+        startScreenCoordinate: axis === "y" ? event.screenY : event.screenX,
+      });
       setDragging(true);
     },
     [axis, disabled, width],

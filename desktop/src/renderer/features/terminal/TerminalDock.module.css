@@ -275,6 +275,8 @@
     color var(--motion-fast) ease;
 }
 
+.closeAllButton > svg { color: var(--color-danger); }
+
 .closeAllButton:hover:not(:disabled),
 .closeAllButton:focus-visible {
   border-color: color-mix(in srgb, var(--color-danger) 38%, var(--color-border-1));

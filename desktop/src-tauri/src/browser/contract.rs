@@ -68,9 +68,6 @@ macro_rules! surface_input {
     };
 }
 
-surface_input!(SetBoundsInput {
-    rect: BrowserLogicalRect
-});
 surface_input!(SetVisibilityInput {
     visible: bool,
     reason: BrowserVisibilityReason
@@ -251,8 +248,6 @@ pub(crate) enum BrowserCommand {
     CreateSurface(CreateSurfaceInput),
     #[serde(rename = "browser_destroy_surface")]
     DestroySurface(BrowserSurfaceRef),
-    #[serde(rename = "browser_set_bounds")]
-    SetBounds(SetBoundsInput),
     #[serde(rename = "browser_set_visibility")]
     SetVisibility(SetVisibilityInput),
     #[serde(rename = "browser_navigate")]
@@ -872,11 +867,6 @@ fn validate_command_payload_keys(kind: &str, payload: &Value) -> Result<(), Brow
         | "browser_stop"
         | "browser_stop_find"
         | "browser_cancel_selection" => exact_payload(payload, &surface, &[]),
-        "browser_set_bounds" => exact_payload(
-            payload,
-            &["panelId", "surfaceId", "generation", "rect"],
-            &[],
-        ),
         "browser_set_visibility" => exact_payload(
             payload,
             &["panelId", "surfaceId", "generation", "visible", "reason"],
@@ -1098,18 +1088,6 @@ fn validate_command(command: &BrowserCommand) -> Result<(), BrowserContractError
         | BrowserCommand::Stop(surface)
         | BrowserCommand::StopFind(surface)
         | BrowserCommand::CancelSelection(surface) => validate_surface(surface)?,
-        BrowserCommand::SetBounds(input) => {
-            validate_surface(&input.surface)?;
-            if !input.rect.x.is_finite()
-                || !input.rect.y.is_finite()
-                || !input.rect.width.is_finite()
-                || !input.rect.height.is_finite()
-                || input.rect.width < 0.0
-                || input.rect.height < 0.0
-            {
-                return Err(BrowserContractError::InvalidValue("rect"));
-            }
-        }
         BrowserCommand::SetVisibility(input) => validate_surface(&input.surface)?,
         BrowserCommand::Navigate(input) => {
             validate_surface(&input.surface)?;

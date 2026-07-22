@@ -6,12 +6,15 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use tauri::{Webview, Wry};
 use uuid::Uuid;
 
-use super::contract::{
-    BrowserDownloadDecision, BrowserEvent, BrowserSurfaceRef, DownloadCompletedPayload,
-    DownloadFailedPayload, DownloadProgressPayload, DownloadRequestedPayload, RespondDownloadInput,
+use super::{
+    contract::{
+        BrowserDownloadDecision, BrowserEvent, BrowserSurfaceRef, DownloadCompletedPayload,
+        DownloadFailedPayload, DownloadProgressPayload, DownloadRequestedPayload,
+        RespondDownloadInput,
+    },
+    ui_actor::NativeBrowserSurface,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,7 +86,7 @@ impl DownloadManager {
     #[cfg(windows)]
     pub(crate) fn respond(
         &self,
-        webview: &Webview<Wry>,
+        webview: &NativeBrowserSurface,
         downloads_dir: &Path,
         input: &RespondDownloadInput,
     ) -> Result<(), String> {
@@ -115,7 +118,7 @@ impl DownloadManager {
     #[cfg(not(windows))]
     pub(crate) fn respond(
         &self,
-        _webview: &Webview<Wry>,
+        _webview: &NativeBrowserSurface,
         _downloads_dir: &Path,
         _input: &RespondDownloadInput,
     ) -> Result<(), String> {
@@ -124,7 +127,7 @@ impl DownloadManager {
 
     pub(crate) fn cancel_pending_for_surface(
         &self,
-        webview: Option<&Webview<Wry>>,
+        webview: Option<&NativeBrowserSurface>,
         surface: &BrowserSurfaceRef,
     ) {
         let ids = self
@@ -145,25 +148,21 @@ impl DownloadManager {
 
 #[cfg(windows)]
 pub(crate) fn attach_download_manager(
-    webview: &Webview<Wry>,
+    webview: &NativeBrowserSurface,
     manager: DownloadManager,
     surface: BrowserSurfaceRef,
     emit: Arc<dyn Fn(BrowserEvent) + Send + Sync>,
-) -> tauri::Result<()> {
+) -> Result<(), String> {
     use webview2_com::DownloadStartingEventHandler;
     use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_4;
     use windows_061::core::Interface;
 
-    webview.with_webview(move |platform| unsafe {
-        let Ok(core) = platform
-            .controller()
-            .CoreWebView2()
-            .and_then(|core| core.cast::<ICoreWebView2_4>())
-        else {
-            return;
+    webview.run(move |surface_handle| unsafe {
+        let Ok(core) = surface_handle.core().cast::<ICoreWebView2_4>() else {
+            return Err("WebView2 download API is unavailable".to_string());
         };
         let mut token = 0_i64;
-        let _ = core.add_DownloadStarting(
+        core.add_DownloadStarting(
             &DownloadStartingEventHandler::create(Box::new(move |_, args| {
                 let Some(args) = args else {
                     return Ok(());
@@ -214,47 +213,61 @@ pub(crate) fn attach_download_manager(
                 Ok(())
             })),
             &mut token,
-        );
+        )
+        .map_err(|error| format!("Failed to attach browser download manager: {error}"))?;
+        Ok(())
     })
 }
 
 #[cfg(not(windows))]
 pub(crate) fn attach_download_manager(
-    _webview: &Webview<Wry>,
+    _webview: &NativeBrowserSurface,
     _manager: DownloadManager,
     _surface: BrowserSurfaceRef,
     _emit: Arc<dyn Fn(BrowserEvent) + Send + Sync>,
-) -> tauri::Result<()> {
+) -> Result<(), String> {
     Ok(())
 }
 
 #[cfg(windows)]
 fn resolve_native_download(
-    webview: &Webview<Wry>,
+    webview: &NativeBrowserSurface,
     download_id: String,
     target: Option<PathBuf>,
 ) -> Result<(), String> {
     webview
-        .with_webview(move |_| unsafe {
+        .run(move |_| unsafe {
             let handle =
                 NATIVE_DOWNLOAD_HANDLES.with(|handles| handles.borrow_mut().remove(&download_id));
             let Some(handle) = handle else {
-                return;
+                return Err("Native download request is unavailable".to_string());
             };
             let Some(target) = target else {
-                let _ = handle.args.SetCancel(true);
-                let _ = handle.deferral.Complete();
-                return;
+                handle
+                    .args
+                    .SetCancel(true)
+                    .map_err(|error| format!("Failed to cancel download: {error}"))?;
+                handle.deferral.Complete().map_err(|error| {
+                    format!("Failed to complete download cancellation: {error}")
+                })?;
+                return Ok(());
             };
             let target = windows_061::core::HSTRING::from(target.as_os_str());
             if handle.args.SetResultFilePath(&target).is_err() {
                 let _ = handle.args.SetCancel(true);
                 let _ = handle.deferral.Complete();
-                return;
+                return Err("Failed to set managed download path".to_string());
             }
             attach_download_progress(&handle.operation, download_id.clone(), handle.emit.clone());
-            let _ = handle.args.SetCancel(false);
-            let _ = handle.deferral.Complete();
+            handle
+                .args
+                .SetCancel(false)
+                .map_err(|error| format!("Failed to accept download: {error}"))?;
+            handle
+                .deferral
+                .Complete()
+                .map_err(|error| format!("Failed to complete download request: {error}"))?;
+            Ok(())
         })
         .map_err(|error| format!("Failed to resolve download request: {error}"))
 }

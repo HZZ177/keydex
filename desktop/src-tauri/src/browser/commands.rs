@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
-use tauri::{Webview, Wry};
-
 use super::contract::{BrowserEvent, BrowserShortcut, ShortcutRequestedPayload};
+use super::ui_actor::NativeBrowserSurface;
 
 #[cfg(windows)]
 use std::{cell::RefCell, collections::HashMap};
@@ -33,50 +32,50 @@ thread_local! {
 
 #[cfg(windows)]
 pub(crate) fn dispatch_native_history(
-    webview: &Webview<Wry>,
+    webview: &NativeBrowserSurface,
     action: NativeHistoryAction,
-) -> tauri::Result<()> {
-    webview.with_webview(move |platform| unsafe {
-        let Ok(core) = platform.controller().CoreWebView2() else {
-            return;
-        };
-        let _ = match action {
+) -> Result<(), String> {
+    webview.run(move |surface| unsafe {
+        let core = surface.core();
+        match action {
             NativeHistoryAction::Back => core.GoBack(),
             NativeHistoryAction::Forward => core.GoForward(),
             NativeHistoryAction::Stop => core.Stop(),
-        };
+        }
+        .map_err(|error| format!("Failed to update browser history: {error}"))
     })
 }
 
 #[cfg(windows)]
-pub(crate) fn set_native_zoom(webview: &Webview<Wry>, factor: f64) -> tauri::Result<()> {
-    webview.with_webview(move |platform| unsafe {
-        let _ = platform.controller().SetZoomFactor(factor);
+pub(crate) fn set_native_zoom(webview: &NativeBrowserSurface, factor: f64) -> Result<(), String> {
+    webview.run(move |surface| unsafe {
+        surface
+            .controller()
+            .SetZoomFactor(factor)
+            .map_err(|error| format!("Failed to set browser zoom: {error}"))
     })
 }
 
 #[cfg(not(windows))]
-pub(crate) fn set_native_zoom(_webview: &Webview<Wry>, _factor: f64) -> tauri::Result<()> {
-    Err(tauri::Error::Anyhow(
-        "DirectWebView2 BrowserHost requires Windows".into(),
-    ))
+pub(crate) fn set_native_zoom(_webview: &NativeBrowserSurface, _factor: f64) -> Result<(), String> {
+    Err("Windowed WebView2 BrowserHost requires Windows".to_string())
 }
 
 #[cfg(windows)]
 pub(crate) fn dispatch_native_find(
-    webview: &Webview<Wry>,
+    webview: &NativeBrowserSurface,
     surface_key: String,
     query: String,
     match_case: bool,
     backwards: bool,
-) -> tauri::Result<()> {
+) -> Result<(), String> {
     use webview2_com::FindStartCompletedHandler;
     use webview2_com::Microsoft::Web::WebView2::Win32::{
         ICoreWebView2Environment15, ICoreWebView2_2, ICoreWebView2_28,
     };
     use windows_061::core::{Interface, HSTRING};
 
-    webview.with_webview(move |platform| unsafe {
+    webview.run(move |surface| unsafe {
         FIND_SESSIONS.with(|sessions| {
             let mut sessions = sessions.borrow_mut();
             if let Some(session) = sessions.get(&surface_key) {
@@ -86,18 +85,16 @@ pub(crate) fn dispatch_native_find(
                     } else {
                         session.find.FindNext()
                     };
-                    return;
+                    return Ok(());
                 }
             }
 
             if let Some(previous) = sessions.remove(&surface_key) {
                 let _ = previous.find.Stop();
             }
-            let Ok(core) = platform.controller().CoreWebView2() else {
-                return;
-            };
+            let core = surface.core();
             let Ok(find) = core.cast::<ICoreWebView2_28>().and_then(|core| core.Find()) else {
-                return;
+                return Err("Native WebView2 find is unavailable".to_string());
             };
             let Ok(options) = core
                 .cast::<ICoreWebView2_2>()
@@ -105,7 +102,7 @@ pub(crate) fn dispatch_native_find(
                 .and_then(|environment| environment.cast::<ICoreWebView2Environment15>())
                 .and_then(|environment| environment.CreateFindOptions())
             else {
-                return;
+                return Err("Native WebView2 find options are unavailable".to_string());
             };
             let term = HSTRING::from(&query);
             if options.SetFindTerm(&term).is_err()
@@ -114,7 +111,7 @@ pub(crate) fn dispatch_native_find(
                 || options.SetShouldMatchWord(false).is_err()
                 || options.SetSuppressDefaultFindDialog(true).is_err()
             {
-                return;
+                return Err("Failed to configure native WebView2 find".to_string());
             }
             let completion = FindStartCompletedHandler::create(Box::new(|_| Ok(())));
             if find.Start(&options, &completion).is_ok() {
@@ -127,26 +124,28 @@ pub(crate) fn dispatch_native_find(
                     },
                 );
             }
-        });
+            Ok(())
+        })
     })
 }
 
 #[cfg(not(windows))]
 pub(crate) fn dispatch_native_find(
-    _webview: &Webview<Wry>,
+    _webview: &NativeBrowserSurface,
     _surface_key: String,
     _query: String,
     _match_case: bool,
     _backwards: bool,
-) -> tauri::Result<()> {
-    Err(tauri::Error::Anyhow(
-        "DirectWebView2 BrowserHost requires Windows".into(),
-    ))
+) -> Result<(), String> {
+    Err("Windowed WebView2 BrowserHost requires Windows".to_string())
 }
 
 #[cfg(windows)]
-pub(crate) fn stop_native_find(webview: &Webview<Wry>, surface_key: String) -> tauri::Result<()> {
-    webview.with_webview(move |_| {
+pub(crate) fn stop_native_find(
+    webview: &NativeBrowserSurface,
+    surface_key: String,
+) -> Result<(), String> {
+    webview.run(move |_| {
         FIND_SESSIONS.with(|sessions| {
             if let Some(session) = sessions.borrow_mut().remove(&surface_key) {
                 unsafe {
@@ -154,11 +153,15 @@ pub(crate) fn stop_native_find(webview: &Webview<Wry>, surface_key: String) -> t
                 }
             }
         });
+        Ok(())
     })
 }
 
 #[cfg(not(windows))]
-pub(crate) fn stop_native_find(_webview: &Webview<Wry>, _surface_key: String) -> tauri::Result<()> {
+pub(crate) fn stop_native_find(
+    _webview: &NativeBrowserSurface,
+    _surface_key: String,
+) -> Result<(), String> {
     Ok(())
 }
 
@@ -168,69 +171,70 @@ pub(crate) fn native_find_surface_key(panel_id: &str, surface_id: &str, generati
 
 #[cfg(windows)]
 pub(crate) fn attach_native_shortcuts(
-    webview: &Webview<Wry>,
+    webview: &NativeBrowserSurface,
     emit: Arc<dyn Fn(BrowserEvent) + Send + Sync>,
-) -> tauri::Result<()> {
+) -> Result<(), String> {
     use webview2_com::AcceleratorKeyPressedEventHandler;
     use webview2_com::Microsoft::Web::WebView2::Win32::{
         COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
     };
     use windows_061::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL};
 
-    webview.with_webview(move |platform| unsafe {
-        let controller = platform.controller();
+    webview.run(move |surface| unsafe {
+        let controller = surface.controller();
         let mut token = 0_i64;
-        let _ = controller.add_AcceleratorKeyPressed(
-            &AcceleratorKeyPressedEventHandler::create(Box::new(move |_, args| {
-                let Some(args) = args else {
-                    return Ok(());
-                };
-                let mut kind = COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN;
-                let mut virtual_key = 0_u32;
-                if args.KeyEventKind(&mut kind).is_err()
-                    || args.VirtualKey(&mut virtual_key).is_err()
-                    || (kind != COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN
-                        && kind != COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN)
-                {
-                    return Ok(());
-                }
-                let control = GetKeyState(VK_CONTROL.0 as i32) < 0;
-                let shortcut = match (control, virtual_key) {
-                    (true, 0x46) => Some(BrowserShortcut::Find),
-                    (true, 0x4c) => Some(BrowserShortcut::FocusAddress),
-                    (true, 0x52) | (false, 0x74) => Some(BrowserShortcut::Reload),
-                    (true, 0x57) => Some(BrowserShortcut::ClosePanel),
-                    _ => None,
-                };
-                if let Some(shortcut) = shortcut {
-                    args.SetHandled(true)?;
-                    emit(BrowserEvent::ShortcutRequested(ShortcutRequestedPayload {
-                        shortcut,
-                    }));
-                }
-                Ok(())
-            })),
-            &mut token,
-        );
+        controller
+            .add_AcceleratorKeyPressed(
+                &AcceleratorKeyPressedEventHandler::create(Box::new(move |_, args| {
+                    let Some(args) = args else {
+                        return Ok(());
+                    };
+                    let mut kind = COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN;
+                    let mut virtual_key = 0_u32;
+                    if args.KeyEventKind(&mut kind).is_err()
+                        || args.VirtualKey(&mut virtual_key).is_err()
+                        || (kind != COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN
+                            && kind != COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN)
+                    {
+                        return Ok(());
+                    }
+                    let control = GetKeyState(VK_CONTROL.0 as i32) < 0;
+                    let shortcut = match (control, virtual_key) {
+                        (true, 0x46) => Some(BrowserShortcut::Find),
+                        (true, 0x4c) => Some(BrowserShortcut::FocusAddress),
+                        (true, 0x52) | (false, 0x74) => Some(BrowserShortcut::Reload),
+                        (true, 0x57) => Some(BrowserShortcut::ClosePanel),
+                        _ => None,
+                    };
+                    if let Some(shortcut) = shortcut {
+                        args.SetHandled(true)?;
+                        emit(BrowserEvent::ShortcutRequested(ShortcutRequestedPayload {
+                            shortcut,
+                        }));
+                    }
+                    Ok(())
+                })),
+                &mut token,
+            )
+            .map_err(|error| format!("Failed to attach browser shortcuts: {error}"))?;
+        Ok(())
     })
 }
 
 #[cfg(not(windows))]
 pub(crate) fn attach_native_shortcuts(
-    _webview: &Webview<Wry>,
+    _webview: &NativeBrowserSurface,
     _emit: Arc<dyn Fn(BrowserEvent) + Send + Sync>,
-) -> tauri::Result<()> {
+) -> Result<(), String> {
     Ok(())
 }
 
 #[cfg(not(windows))]
 pub(crate) fn dispatch_native_history(
-    _webview: &Webview<Wry>,
+    _webview: &NativeBrowserSurface,
     _action: NativeHistoryAction,
-) -> tauri::Result<()> {
-    Err(tauri::Error::Anyhow(
-        "DirectWebView2 BrowserHost requires Windows".into(),
-    ))
+) -> Result<(), String> {
+    Err("Windowed WebView2 BrowserHost requires Windows".to_string())
 }
 
 #[cfg(test)]

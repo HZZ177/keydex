@@ -9,6 +9,7 @@ import {
 } from "@/renderer/events/workspaceFileContext";
 import {
   AppContextMenuProvider,
+  resolveContextMenuPlacement,
   useOptionalAppContextMenu,
 } from "@/renderer/providers/AppContextMenuProvider";
 import { createPastedTextFragmentElement } from "@/renderer/components/chat/SendBox/collapsiblePaste";
@@ -52,6 +53,40 @@ describe("AppContextMenuProvider", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("moves a main-area menu away from the native browser surface", () => {
+    expect(resolveContextMenuPlacement({
+      desiredLeft: 760,
+      desiredTop: 700,
+      exclusions: [{ bottom: 1200, left: 836, right: 2048, top: 0 }],
+      height: 58,
+      margin: 8,
+      viewportHeight: 1200,
+      viewportWidth: 2048,
+      width: 150,
+    })).toEqual({
+      left: 678,
+      occludesNativeSurface: false,
+      top: 700,
+    });
+  });
+
+  it("keeps a non-overlapping menu at the requested position", () => {
+    expect(resolveContextMenuPlacement({
+      desiredLeft: 500,
+      desiredTop: 300,
+      exclusions: [{ bottom: 1200, left: 836, right: 2048, top: 0 }],
+      height: 58,
+      margin: 8,
+      viewportHeight: 1200,
+      viewportWidth: 2048,
+      width: 150,
+    })).toEqual({
+      left: 500,
+      occludesNativeSurface: false,
+      top: 300,
+    });
   });
 
   it("prevents the browser context menu and shows the app menu", () => {

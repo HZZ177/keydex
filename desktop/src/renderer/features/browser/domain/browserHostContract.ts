@@ -31,6 +31,26 @@ export interface BrowserLogicalRect {
   readonly height: number;
 }
 
+export interface BrowserGeometryFrame extends BrowserSurfaceRef {
+  readonly revision: number;
+  readonly rect: BrowserLogicalRect;
+  readonly visible: boolean;
+}
+
+export interface BrowserInteractiveResizeInput {
+  readonly sessionId: number;
+  readonly placement: "left" | "right";
+  readonly startScreenX: number;
+  readonly minDelta: number;
+  readonly maxDelta: number;
+  readonly surfaces: readonly BrowserGeometryFrame[];
+}
+
+export interface BrowserInteractiveResizeEndInput {
+  readonly sessionId: number;
+  readonly surfaces: readonly BrowserGeometryFrame[];
+}
+
 export interface BrowserOverlayTokens {
   readonly accent: string;
   readonly surface: string;
@@ -49,7 +69,6 @@ export interface BrowserCommandPayloadByKind {
     readonly initialUrl: string;
   };
   readonly browser_destroy_surface: BrowserSurfaceRef;
-  readonly browser_set_bounds: BrowserSurfaceRef & { readonly rect: BrowserLogicalRect };
   readonly browser_set_visibility: BrowserSurfaceRef & {
     readonly visible: boolean;
     readonly reason: BrowserVisibilityReason;
@@ -311,7 +330,6 @@ const commandValidators: Readonly<Record<BrowserCommandKind, Validator>> = {
     },
   ),
   browser_destroy_surface: surfaceRefValidator(),
-  browser_set_bounds: surfaceRefValidator({ rect: rectValidator }),
   browser_set_visibility: surfaceRefValidator({
     visible: booleanValidator,
     reason: enumValidator(["active", "inactive_tab", "sidebar_closed", "window_hidden", "occluded"]),

@@ -5,12 +5,14 @@ use std::{
 };
 
 use serde_json::{json, Value};
-use tauri::{Webview, Wry};
 
 #[cfg(windows)]
 use std::{cell::RefCell, rc::Rc};
 
-use super::{bridge::validate_web_annotation_target, contract::BrowserSurfaceRef};
+use super::{
+    bridge::validate_web_annotation_target, contract::BrowserSurfaceRef,
+    ui_actor::NativeBrowserSurface,
+};
 
 const DEVTOOLS_TIMEOUT: Duration = Duration::from_secs(4);
 const ELEMENT_TARGET_FUNCTION: &str = include_str!("devtools_element_target.js");
@@ -393,26 +395,21 @@ impl BrowserDevToolsInspector {
 
 #[cfg(windows)]
 pub(crate) fn attach_windows_devtools_inspector(
-    webview: &Webview<Wry>,
+    webview: &NativeBrowserSurface,
     inspector: BrowserDevToolsInspector,
     surface: BrowserSurfaceRef,
     route: NativeInspectorRoute,
-) -> tauri::Result<()> {
+) -> Result<(), String> {
     use webview2_com::DevToolsProtocolEventReceivedEventHandler;
     use windows_061::core::HSTRING;
 
     inspector.register_surface(surface.clone());
-    webview.with_webview(move |platform| unsafe {
-        let Ok(core) = platform.controller().CoreWebView2() else {
-            return;
-        };
+    webview.run(move |surface_handle| unsafe {
+        let core = surface_handle.core();
 
-        let inspect_receiver = match core
+        let inspect_receiver = core
             .GetDevToolsProtocolEventReceiver(&HSTRING::from("Overlay.inspectNodeRequested"))
-        {
-            Ok(receiver) => receiver,
-            Err(_) => return,
-        };
+            .map_err(|error| format!("Chromium inspect event is unavailable: {error}"))?;
         let inspect_core = core.clone();
         let inspect_state = inspector.clone();
         let inspect_surface = surface.clone();
@@ -448,12 +445,9 @@ pub(crate) fn attach_windows_devtools_inspector(
             &mut inspect_token,
         );
 
-        let cancelled_receiver = match core
+        let cancelled_receiver = core
             .GetDevToolsProtocolEventReceiver(&HSTRING::from("Overlay.inspectModeCanceled"))
-        {
-            Ok(receiver) => receiver,
-            Err(_) => return,
-        };
+            .map_err(|error| format!("Chromium inspect cancel event is unavailable: {error}"))?;
         let cancelled_state = inspector.clone();
         let cancelled_surface = surface.clone();
         let cancelled_route = route.clone();
@@ -473,12 +467,9 @@ pub(crate) fn attach_windows_devtools_inspector(
             &mut cancelled_token,
         );
 
-        let attached_receiver = match core
+        let attached_receiver = core
             .GetDevToolsProtocolEventReceiver(&HSTRING::from("Target.attachedToTarget"))
-        {
-            Ok(receiver) => receiver,
-            Err(_) => return,
-        };
+            .map_err(|error| format!("Chromium target attach event is unavailable: {error}"))?;
         let attached_core = core.clone();
         let attached_state = inspector.clone();
         let attached_surface = surface.clone();
@@ -511,45 +502,47 @@ pub(crate) fn attach_windows_devtools_inspector(
             &mut attached_token,
         );
 
-        let detached_receiver = match core
+        let detached_receiver = core
             .GetDevToolsProtocolEventReceiver(&HSTRING::from("Target.detachedFromTarget"))
-        {
-            Ok(receiver) => receiver,
-            Err(_) => return,
-        };
+            .map_err(|error| format!("Chromium target detach event is unavailable: {error}"))?;
         let detached_state = inspector;
         let detached_surface = surface;
         let mut detached_token = 0_i64;
-        let _ = detached_receiver.add_DevToolsProtocolEventReceived(
-            &DevToolsProtocolEventReceivedEventHandler::create(Box::new(move |_, args| {
-                let Some(args) = args else {
-                    return Ok(());
-                };
-                let parameters = devtools_event_parameters(&args)?;
-                if let Some(session_id) = parameters.get("sessionId").and_then(Value::as_str) {
-                    detached_state.remove_session(&detached_surface, session_id);
-                }
-                Ok(())
-            })),
-            &mut detached_token,
-        );
+        detached_receiver
+            .add_DevToolsProtocolEventReceived(
+                &DevToolsProtocolEventReceivedEventHandler::create(Box::new(move |_, args| {
+                    let Some(args) = args else {
+                        return Ok(());
+                    };
+                    let parameters = devtools_event_parameters(&args)?;
+                    if let Some(session_id) = parameters.get("sessionId").and_then(Value::as_str) {
+                        detached_state.remove_session(&detached_surface, session_id);
+                    }
+                    Ok(())
+                })),
+                &mut detached_token,
+            )
+            .map_err(|error| {
+                format!("Failed to attach Chromium target detach observer: {error}")
+            })?;
+        Ok(())
     })
 }
 
 #[cfg(not(windows))]
 pub(crate) fn attach_windows_devtools_inspector(
-    _webview: &Webview<Wry>,
+    _webview: &NativeBrowserSurface,
     inspector: BrowserDevToolsInspector,
     surface: BrowserSurfaceRef,
     _route: NativeInspectorRoute,
-) -> tauri::Result<()> {
+) -> Result<(), String> {
     inspector.register_surface(surface);
     Ok(())
 }
 
 #[cfg(windows)]
 pub(crate) async fn start_native_element_selection(
-    webview: &Webview<Wry>,
+    webview: &NativeBrowserSurface,
     inspector: &BrowserDevToolsInspector,
     surface: &BrowserSurfaceRef,
     selection_request_id: &str,
@@ -589,7 +582,7 @@ pub(crate) async fn start_native_element_selection(
 
 #[cfg(not(windows))]
 pub(crate) async fn start_native_element_selection(
-    _webview: &Webview<Wry>,
+    _webview: &NativeBrowserSurface,
     _inspector: &BrowserDevToolsInspector,
     _surface: &BrowserSurfaceRef,
     _selection_request_id: &str,
@@ -599,7 +592,7 @@ pub(crate) async fn start_native_element_selection(
 
 #[cfg(windows)]
 pub(crate) async fn cancel_native_element_selection(
-    webview: &Webview<Wry>,
+    webview: &NativeBrowserSurface,
     inspector: &BrowserDevToolsInspector,
     surface: &BrowserSurfaceRef,
 ) -> Result<Option<String>, String> {
@@ -632,7 +625,7 @@ pub(crate) async fn cancel_native_element_selection(
 
 #[cfg(not(windows))]
 pub(crate) async fn cancel_native_element_selection(
-    _webview: &Webview<Wry>,
+    _webview: &NativeBrowserSurface,
     inspector: &BrowserDevToolsInspector,
     surface: &BrowserSurfaceRef,
 ) -> Result<Option<String>, String> {
@@ -1247,7 +1240,7 @@ fn deactivate_next_session(barrier: Rc<RefCell<DeactivationBarrier>>) {
 }
 
 #[cfg(windows)]
-async fn force_deactivate_on_webview(webview: &Webview<Wry>, mut sessions: Vec<String>) {
+async fn force_deactivate_on_webview(webview: &NativeBrowserSurface, mut sessions: Vec<String>) {
     sessions.sort();
     sessions.dedup();
     for session_id in sessions {
@@ -1291,7 +1284,7 @@ fn inspect_mode_parameters(accent: InspectorColor) -> Value {
 
 #[cfg(windows)]
 async fn call_devtools_method(
-    webview: &Webview<Wry>,
+    webview: &NativeBrowserSurface,
     session_id: &str,
     method: &str,
     parameters: Value,
@@ -1301,17 +1294,11 @@ async fn call_devtools_method(
     let method = method.to_string();
     let session_id = session_id.to_string();
     webview
-        .with_webview(move |platform| unsafe {
-            let Ok(core) = platform.controller().CoreWebView2() else {
-                send_devtools_result(
-                    &sender,
-                    Err("WebView2 DevTools Protocol API is unavailable".to_string()),
-                );
-                return;
-            };
+        .run(move |surface_handle| unsafe {
+            let core = surface_handle.core();
             let callback_sender = sender.clone();
             if let Err(reason) = call_devtools_on_core(
-                &core,
+                core,
                 &session_id,
                 &method,
                 parameters,
@@ -1319,6 +1306,7 @@ async fn call_devtools_method(
             ) {
                 send_devtools_result(&sender, Err(reason));
             }
+            Ok(())
         })
         .map_err(|_| "Browser surface could not schedule a DevTools Protocol call".to_string())?;
     tauri::async_runtime::spawn_blocking(move || {

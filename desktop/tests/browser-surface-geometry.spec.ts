@@ -72,7 +72,7 @@ describe("browser surface geometry and occlusion", () => {
     });
   });
 
-  it("integrates occlusion at shared dialog, menu, and floating-layer primitives", () => {
+  it("uses global occlusion for dialogs and floating layers but only spatial occlusion for app menus", () => {
     const sources = [
       "src/renderer/components/dialog/AppDialog.tsx",
       "src/renderer/components/floating/FloatingLayer.tsx",
@@ -80,7 +80,8 @@ describe("browser surface geometry and occlusion", () => {
     ].map((path) => readFileSync(resolve(process.cwd(), path), "utf8"));
     expect(sources[0]).toContain('useBrowserOcclusionToken(true, "dialog")');
     expect(sources[1]).toContain('useBrowserOcclusionToken(true, "menu")');
-    expect(sources[2]).toContain('useBrowserOcclusionToken(menu !== null, "menu")');
+    expect(sources[2]).toContain('useBrowserOcclusionToken(menu?.occludesNativeSurface === true, "menu")');
+    expect(sources[2]).toContain("resolveContextMenuPlacement");
   });
 
   it("does not treat main-WebView focus loss as native-window occlusion", () => {

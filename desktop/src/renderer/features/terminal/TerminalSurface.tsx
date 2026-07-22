@@ -1,9 +1,11 @@
 import "@xterm/xterm/css/xterm.css";
 
+import { CheckSquare, ClipboardPaste, Copy } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { openExternalUrl } from "@/runtime/externalLinks";
 import type { TerminalRuntimeEvent, TerminalSnapshot } from "@/runtime";
+import { useOptionalAppContextMenu } from "@/renderer/providers/AppContextMenuProvider";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 
 import { TerminalSearchBar } from "./TerminalSearchBar";
@@ -31,6 +33,7 @@ export function TerminalSurface({
   const [handle, setHandle] = useState<TerminalXtermHandle | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const { attachTerminal, writeTerminal, resizeTerminal } = useTerminal();
+  const appContextMenu = useOptionalAppContextMenu();
   const notifications = useNotifications();
 
   useEffect(() => {
@@ -76,30 +79,117 @@ export function TerminalSurface({
   );
   useTerminalFit({ hostRef, handle, active, visible, onResize: handleResize });
 
+  const copySelection = useCallback(async () => {
+    if (!handle?.terminal.hasSelection()) return;
+    if (!navigator.clipboard?.writeText) {
+      notifications.error("剪贴板不可用");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(handle.terminal.getSelection());
+    } catch {
+      notifications.error("复制终端选区失败");
+    } finally {
+      handle.terminal.focus();
+    }
+  }, [handle, notifications]);
+
+  const pasteClipboard = useCallback(async () => {
+    if (!handle || snapshot.status !== "running") return;
+    if (!navigator.clipboard?.readText) {
+      notifications.error("剪贴板不可用");
+      return;
+    }
+    try {
+      const text = await navigator.clipboard.readText();
+      handle.terminal.paste(text);
+      handle.terminal.focus();
+    } catch {
+      notifications.error("读取剪贴板失败");
+    }
+  }, [handle, notifications, snapshot.status]);
+
+  const showTerminalContextMenu = useCallback(
+    (target: HTMLElement, x: number, y: number) => {
+      if (!handle || !appContextMenu) return;
+      appContextMenu.openContextMenu({
+        target,
+        x,
+        y,
+        items: [
+          {
+            id: "terminal-copy-selection",
+            label: "复制",
+            icon: Copy,
+            disabled: !handle.terminal.hasSelection(),
+            action: copySelection,
+          },
+          {
+            id: "terminal-paste",
+            label: "粘贴",
+            icon: ClipboardPaste,
+            disabled: snapshot.status !== "running",
+            action: pasteClipboard,
+          },
+          {
+            id: "terminal-select-all",
+            label: "全选",
+            icon: CheckSquare,
+            action: () => {
+              handle.terminal.selectAll();
+              handle.terminal.focus();
+            },
+          },
+        ],
+      });
+    },
+    [appContextMenu, copySelection, handle, pasteClipboard, snapshot.status],
+  );
+
+  const handleContextMenu = useCallback(
+    (event: React.MouseEvent<HTMLElement>) => {
+      if (!handle || !appContextMenu) return;
+      event.preventDefault();
+      event.stopPropagation();
+      showTerminalContextMenu(event.currentTarget, event.clientX, event.clientY);
+    },
+    [appContextMenu, handle, showTerminalContextMenu],
+  );
+
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       if (!handle) return;
+      if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+        const bounds = event.currentTarget.getBoundingClientRect();
+        event.preventDefault();
+        event.stopPropagation();
+        showTerminalContextMenu(
+          event.currentTarget,
+          bounds.left + Math.min(20, bounds.width),
+          bounds.top + Math.min(20, bounds.height),
+        );
+        return;
+      }
       if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "f") {
         event.preventDefault();
+        event.stopPropagation();
         setSearchOpen(true);
         return;
       }
-      if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "c" && handle.terminal.hasSelection()) {
+      const primaryModifier = (event.ctrlKey || event.metaKey) && !event.altKey;
+      if (primaryModifier && event.key.toLowerCase() === "c" && handle.terminal.hasSelection()) {
         event.preventDefault();
-        void navigator.clipboard.writeText(handle.terminal.getSelection()).catch(() => {
-          notifications.error("复制终端选区失败");
-        });
+        event.stopPropagation();
+        void copySelection();
         return;
       }
-      if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "v") {
+      if (primaryModifier && event.key.toLowerCase() === "v") {
         event.preventDefault();
-        void navigator.clipboard
-          .readText()
-          .then((text) => handle.terminal.paste(text))
-          .catch(() => notifications.error("读取剪贴板失败"));
+        event.stopPropagation();
+        void pasteClipboard();
       }
     },
-    [handle, notifications],
+    [copySelection, handle, pasteClipboard, showTerminalContextMenu],
   );
 
   return (
@@ -108,9 +198,11 @@ export function TerminalSurface({
       data-active={active ? "true" : "false"}
       data-visible={visible ? "true" : "false"}
       data-terminal-id={snapshot.terminalId}
+      data-app-context-menu="local"
       aria-label={`终端 ${snapshot.title}`}
       aria-hidden={!visible}
-      onKeyDown={handleKeyDown}
+      onContextMenu={handleContextMenu}
+      onKeyDownCapture={handleKeyDown}
     >
       {handle ? (
         <TerminalSearchBar addon={handle.searchAddon} open={searchOpen} onClose={() => setSearchOpen(false)} />

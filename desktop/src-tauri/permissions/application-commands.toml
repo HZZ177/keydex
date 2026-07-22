@@ -15,6 +15,7 @@ commands.allow = [
   "copy_file_to_clipboard",
   "take_associated_file_open_paths",
   "relaunch_after_app_update",
+  "reload_main_webview",
   "browser_create_surface",
   "browser_destroy_surface",
   "browser_navigate",
@@ -36,7 +37,9 @@ commands.allow = [
   "browser_take_incognito_capture",
   "browser_set_zoom",
   "browser_set_resource_state",
-  "browser_set_bounds",
+  "browser_sync_geometry",
+  "browser_begin_interactive_resize",
+  "browser_end_interactive_resize",
   "browser_set_visibility",
   "browser_clear_profile_data",
   "browser_respond_permission",
@@ -55,8 +58,3 @@ commands.allow = [
   "terminal_close_session",
   "terminal_close_all",
 ]
-
-[[permission]]
-identifier = "allow-browser-page-bridge-message"
-description = "Allows a managed browser webview to submit authenticated structured-annotation bridge messages."
-commands.allow = ["browser_page_bridge_message"]

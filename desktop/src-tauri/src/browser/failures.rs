@@ -4,11 +4,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use tauri::{Webview, Wry};
-
 use super::{
     config::{BROWSER_CRASH_LOOP_COUNT, BROWSER_CRASH_LOOP_WINDOW_MS},
     contract::{BrowserEvent, BrowserProcessScope, BrowserSurfaceRef, ProcessFailedPayload},
+    ui_actor::NativeBrowserSurface,
 };
 
 const FAILURE_SINGLEFLIGHT_WINDOW_MS: u64 = 1_000;
@@ -85,21 +84,19 @@ impl BrowserFailureCoordinator {
 
 #[cfg(windows)]
 pub(crate) fn attach_process_failure_observer(
-    webview: &Webview<Wry>,
+    webview: &NativeBrowserSurface,
     coordinator: BrowserFailureCoordinator,
     environment_key: String,
     surface: BrowserSurfaceRef,
     emit: Arc<dyn Fn(BrowserEvent) + Send + Sync>,
-) -> tauri::Result<()> {
+) -> Result<(), String> {
     use webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED;
     use webview2_com::ProcessFailedEventHandler;
 
-    webview.with_webview(move |platform| unsafe {
-        let Ok(core) = platform.controller().CoreWebView2() else {
-            return;
-        };
+    webview.run(move |surface_handle| unsafe {
+        let core = surface_handle.core();
         let mut token = 0_i64;
-        let _ = core.add_ProcessFailed(
+        core.add_ProcessFailed(
             &ProcessFailedEventHandler::create(Box::new(move |_, args| {
                 let Some(args) = args else {
                     return Ok(());
@@ -125,18 +122,20 @@ pub(crate) fn attach_process_failure_observer(
                 Ok(())
             })),
             &mut token,
-        );
+        )
+        .map_err(|error| format!("Failed to attach browser process failure observer: {error}"))?;
+        Ok(())
     })
 }
 
 #[cfg(not(windows))]
 pub(crate) fn attach_process_failure_observer(
-    _webview: &Webview<Wry>,
+    _webview: &NativeBrowserSurface,
     _coordinator: BrowserFailureCoordinator,
     _environment_key: String,
     _surface: BrowserSurfaceRef,
     _emit: Arc<dyn Fn(BrowserEvent) + Send + Sync>,
-) -> tauri::Result<()> {
+) -> Result<(), String> {
     Ok(())
 }
 

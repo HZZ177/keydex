@@ -13,12 +13,14 @@ use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView, ImageFormat};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{Webview, Wry};
 use uuid::Uuid;
 
-use super::contract::{
-    BrowserCaptureAssetKind, BrowserCaptureAssetPayload, BrowserLogicalRect, BrowserProfileMode,
-    BrowserSurfaceRef, BrowserViewportSize,
+use super::{
+    contract::{
+        BrowserCaptureAssetKind, BrowserCaptureAssetPayload, BrowserLogicalRect,
+        BrowserProfileMode, BrowserSurfaceRef, BrowserViewportSize,
+    },
+    ui_actor::NativeBrowserSurface,
 };
 
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -526,7 +528,7 @@ fn managed_temp_run_root(temp_dir: &Path, run_id: &str) -> PathBuf {
 }
 
 #[cfg(windows)]
-pub(crate) async fn capture_webview_png(webview: &Webview<Wry>) -> Result<Vec<u8>, String> {
+pub(crate) async fn capture_webview_png(webview: &NativeBrowserSurface) -> Result<Vec<u8>, String> {
     use webview2_com::CapturePreviewCompletedHandler;
     use webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG;
     use windows_061::Win32::{
@@ -536,22 +538,15 @@ pub(crate) async fn capture_webview_png(webview: &Webview<Wry>) -> Result<Vec<u8
     let (sender, receiver) = std::sync::mpsc::sync_channel::<Result<Vec<u8>, String>>(1);
     let sender = Arc::new(Mutex::new(Some(sender)));
     webview
-        .with_webview(move |platform| unsafe {
-            let result = platform.controller().CoreWebView2();
-            let Ok(core) = result else {
-                send_capture_result(
-                    &sender,
-                    Err("WebView2 capture API is unavailable".to_string()),
-                );
-                return;
-            };
+        .run(move |surface| unsafe {
+            let core = surface.core();
             let stream = CreateStreamOnHGlobal(HGLOBAL::default(), true);
             let Ok(stream) = stream else {
                 send_capture_result(
                     &sender,
                     Err("WebView2 capture stream could not be created".to_string()),
                 );
-                return;
+                return Ok(());
             };
             let callback_stream = stream.clone();
             let callback_sender = sender.clone();
@@ -575,6 +570,7 @@ pub(crate) async fn capture_webview_png(webview: &Webview<Wry>) -> Result<Vec<u8
                     Err("WebView2 rejected the visible surface capture".to_string()),
                 );
             }
+            Ok(())
         })
         .map_err(|_| "Browser surface could not schedule native capture".to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -629,7 +625,9 @@ fn send_capture_result(
 }
 
 #[cfg(not(windows))]
-pub(crate) async fn capture_webview_png(_webview: &Webview<Wry>) -> Result<Vec<u8>, String> {
+pub(crate) async fn capture_webview_png(
+    _webview: &NativeBrowserSurface,
+) -> Result<Vec<u8>, String> {
     Err("Browser surface capture is only available on Windows".to_string())
 }
 

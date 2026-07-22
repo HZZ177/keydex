@@ -7,11 +7,11 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use tauri::{Webview, Wry};
 use uuid::Uuid;
 
-use super::contract::{
-    BrowserProfileDataKind, BrowserProfileMode, BrowserSurfaceRef, BrowserTimeRange,
+use super::{
+    contract::{BrowserProfileDataKind, BrowserProfileMode, BrowserSurfaceRef, BrowserTimeRange},
+    ui_actor::NativeBrowserSurface,
 };
 
 const PROFILE_MANIFEST: &str = ".keydex-browser-profile.json";
@@ -220,34 +220,37 @@ fn remove_managed_incognito_profile(parent: &Path, candidate: &Path) -> Result<(
 }
 
 #[cfg(windows)]
-pub(crate) fn configure_profile_security(webview: &Webview<Wry>) -> tauri::Result<()> {
+pub(crate) fn configure_profile_security(webview: &NativeBrowserSurface) -> Result<(), String> {
     use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2Profile6, ICoreWebView2_13};
     use windows_061::core::Interface;
 
-    webview.with_webview(move |platform| unsafe {
-        let Ok(core) = platform.controller().CoreWebView2() else {
-            return;
-        };
+    webview.run(move |surface| unsafe {
+        let core = surface.core();
         let Ok(profile) = core
             .cast::<ICoreWebView2_13>()
             .and_then(|core| core.Profile())
             .and_then(|profile| profile.cast::<ICoreWebView2Profile6>())
         else {
-            return;
+            return Err("WebView2 profile security API is unavailable".to_string());
         };
-        let _ = profile.SetIsPasswordAutosaveEnabled(false);
-        let _ = profile.SetIsGeneralAutofillEnabled(false);
+        profile
+            .SetIsPasswordAutosaveEnabled(false)
+            .map_err(|error| format!("Failed to disable browser password autosave: {error}"))?;
+        profile
+            .SetIsGeneralAutofillEnabled(false)
+            .map_err(|error| format!("Failed to disable browser autofill: {error}"))?;
+        Ok(())
     })
 }
 
 #[cfg(not(windows))]
-pub(crate) fn configure_profile_security(_webview: &Webview<Wry>) -> tauri::Result<()> {
+pub(crate) fn configure_profile_security(_webview: &NativeBrowserSurface) -> Result<(), String> {
     Ok(())
 }
 
 #[cfg(windows)]
 pub(crate) async fn clear_profile_data(
-    webview: &Webview<Wry>,
+    webview: &NativeBrowserSurface,
     kinds: &[BrowserProfileDataKind],
     time_range: BrowserTimeRange,
 ) -> Result<(), String> {
@@ -276,11 +279,10 @@ pub(crate) async fn clear_profile_data(
     let (sender, receiver) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
     let sender = Arc::new(Mutex::new(Some(sender)));
     webview
-        .with_webview(move |platform| unsafe {
-            let result = platform
-                .controller()
-                .CoreWebView2()
-                .and_then(|core| core.cast::<ICoreWebView2_13>())
+        .run(move |surface| unsafe {
+            let result = surface
+                .core()
+                .cast::<ICoreWebView2_13>()
                 .and_then(|core| core.Profile())
                 .and_then(|profile| profile.cast::<ICoreWebView2Profile2>());
             let Ok(profile) = result else {
@@ -288,7 +290,7 @@ pub(crate) async fn clear_profile_data(
                     let _ =
                         sender.send(Err("WebView2 profile data API is unavailable".to_string()));
                 }
-                return;
+                return Ok(());
             };
             let completion_sender = sender.clone();
             let completion = ClearBrowsingDataCompletedHandler::create(Box::new(move |status| {
@@ -330,6 +332,7 @@ pub(crate) async fn clear_profile_data(
                     )));
                 }
             }
+            Ok(())
         })
         .map_err(|error| format!("Failed to access WebView2 profile: {error}"))?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -343,7 +346,7 @@ pub(crate) async fn clear_profile_data(
 
 #[cfg(not(windows))]
 pub(crate) async fn clear_profile_data(
-    _webview: &Webview<Wry>,
+    _webview: &NativeBrowserSurface,
     _kinds: &[BrowserProfileDataKind],
     _time_range: BrowserTimeRange,
 ) -> Result<(), String> {

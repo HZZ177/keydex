@@ -5,7 +5,7 @@ use std::{
 
 use serde::Serialize;
 use serde_json::{Map, Value};
-use tauri::{Url, Webview, Wry};
+use tauri::Url;
 
 use super::config::{
     BROWSER_BRIDGE_MAX_MESSAGE_BYTES, BROWSER_RESOLVE_BATCH_SIZE,
@@ -13,6 +13,7 @@ use super::config::{
     BROWSER_RESOLVE_SLICE_BUDGET_MS, WEB_ANNOTATION_BRIDGE_SCHEMA_VERSION,
 };
 use super::contract::BrowserSurfaceRef;
+use super::ui_actor::NativeBrowserSurface;
 
 pub(crate) const WEB_ANNOTATION_BRIDGE_PROTOCOL: &str = "keydex.web-annotation.v1";
 const MAX_ID_LENGTH: usize = 128;
@@ -148,7 +149,6 @@ struct PendingBridgeRequest {
 struct BrowserBridgeCursor {
     surface: BrowserSurfaceRef,
     host_navigation_id: String,
-    transport_token: String,
     frames: HashMap<String, BrowserBridgeFrameCursor>,
     pending_requests: HashMap<String, PendingBridgeRequest>,
 }
@@ -159,25 +159,18 @@ pub(crate) struct BrowserBridgeBroker {
 }
 
 impl BrowserBridgeBroker {
-    pub(crate) fn register_surface(
-        &self,
-        surface: BrowserSurfaceRef,
-        navigation_id: String,
-    ) -> String {
-        let transport_token = uuid::Uuid::new_v4().simple().to_string();
+    pub(crate) fn register_surface(&self, surface: BrowserSurfaceRef, navigation_id: String) {
         if let Ok(mut cursors) = self.cursors.lock() {
             cursors.insert(
                 surface.panel_id.clone(),
                 BrowserBridgeCursor {
                     surface,
                     host_navigation_id: navigation_id,
-                    transport_token: transport_token.clone(),
                     frames: HashMap::new(),
                     pending_requests: HashMap::new(),
                 },
             );
         }
-        transport_token
     }
 
     pub(crate) fn begin_navigation(
@@ -270,29 +263,6 @@ impl BrowserBridgeBroker {
 
     pub(crate) fn receive(&self, raw: &str) -> Result<BrowserBridgeEnvelope, BrowserBridgeError> {
         self.receive_on_channel(MAIN_FRAME_CHANNEL, None, raw)
-    }
-
-    pub(crate) fn receive_authenticated_main(
-        &self,
-        surface: &BrowserSurfaceRef,
-        transport_token: &str,
-        raw: &str,
-    ) -> Result<BrowserBridgeEnvelope, BrowserBridgeError> {
-        let authenticated = self
-            .cursors
-            .lock()
-            .ok()
-            .and_then(|cursors| cursors.get(&surface.panel_id).cloned())
-            .is_some_and(|cursor| {
-                cursor.surface == *surface && cursor.transport_token == transport_token
-            });
-        let result = if authenticated {
-            self.receive_on_channel(MAIN_FRAME_CHANNEL, None, raw)
-        } else {
-            Err(BrowserBridgeError::SourceMismatch)
-        };
-        write_debug_bridge_trace("tauri-main", raw, &result);
-        result
     }
 
     pub(crate) fn receive_on_channel(
@@ -572,17 +542,13 @@ pub(crate) fn parse_browser_bridge_envelope_for_direction(
     })
 }
 
-pub(crate) fn bridge_initialization_script(
-    surface: &BrowserSurfaceRef,
-    transport_token: &str,
-) -> String {
+pub(crate) fn bridge_initialization_script(surface: &BrowserSurfaceRef) -> String {
     let scoring_policy: Value = serde_json::from_str(WEB_ANNOTATION_SCORING_POLICY_V1)
         .expect("web annotation scoring policy fixture must be valid JSON");
     let bootstrap = serde_json::json!({
         "panelId": surface.panel_id,
         "surfaceId": surface.surface_id,
         "generation": surface.generation,
-        "transportToken": transport_token,
         "diagnostics": cfg!(debug_assertions),
         "scoringPolicy": scoring_policy,
         "resolverPolicy": {
@@ -600,22 +566,20 @@ pub(crate) type BrowserBridgeRouteHandler =
 
 #[cfg(windows)]
 pub(crate) fn attach_windows_web_message_broker(
-    webview: &Webview<Wry>,
+    webview: &NativeBrowserSurface,
     broker: BrowserBridgeBroker,
     route: BrowserBridgeRouteHandler,
-) -> tauri::Result<()> {
+) -> Result<(), String> {
     use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_4;
     use webview2_com::{FrameCreatedEventHandler, WebMessageReceivedEventHandler};
     use windows_061::core::Interface;
 
-    webview.with_webview(move |platform| unsafe {
-        let Ok(core) = platform.controller().CoreWebView2() else {
-            return;
-        };
+    webview.run(move |surface| unsafe {
+        let core = surface.core();
         let main_broker = broker.clone();
         let main_route = route.clone();
         let mut token = 0_i64;
-        let result = core.add_WebMessageReceived(
+        core.add_WebMessageReceived(
             &WebMessageReceivedEventHandler::create(Box::new(move |_, args| {
                 let Some(args) = args else {
                     return Ok(());
@@ -623,30 +587,32 @@ pub(crate) fn attach_windows_web_message_broker(
                 receive_windows_message(&args, MAIN_FRAME_CHANNEL, &main_broker, &main_route)
             })),
             &mut token,
-        );
-        debug_assert!(result.is_ok(), "failed to attach browser bridge broker");
+        )
+        .map_err(|error| format!("Failed to attach browser bridge broker: {error}"))?;
 
         if let Ok(core4) = core.cast::<ICoreWebView2_4>() {
             let frame_broker = broker.clone();
             let frame_route = route.clone();
             let mut frame_token = 0_i64;
-            let result = core4.add_FrameCreated(
-                &FrameCreatedEventHandler::create(Box::new(move |_, args| {
-                    if let Some(args) = args {
-                        if let Ok(frame) = args.Frame() {
-                            let _ = attach_windows_frame_channel(
-                                frame,
-                                frame_broker.clone(),
-                                frame_route.clone(),
-                            );
+            core4
+                .add_FrameCreated(
+                    &FrameCreatedEventHandler::create(Box::new(move |_, args| {
+                        if let Some(args) = args {
+                            if let Ok(frame) = args.Frame() {
+                                let _ = attach_windows_frame_channel(
+                                    frame,
+                                    frame_broker.clone(),
+                                    frame_route.clone(),
+                                );
+                            }
                         }
-                    }
-                    Ok(())
-                })),
-                &mut frame_token,
-            );
-            debug_assert!(result.is_ok(), "failed to attach browser frame broker");
+                        Ok(())
+                    })),
+                    &mut frame_token,
+                )
+                .map_err(|error| format!("Failed to attach browser frame broker: {error}"))?;
         }
+        Ok(())
     })
 }
 
@@ -876,38 +842,37 @@ unsafe fn take_windows_string(
 
 #[cfg(windows)]
 pub(crate) fn post_windows_bridge_envelope(
-    webview: &Webview<Wry>,
+    webview: &NativeBrowserSurface,
     envelope: &BrowserBridgeEnvelope,
-) -> tauri::Result<()> {
+) -> Result<(), String> {
     use windows_061::core::HSTRING;
 
     let message = HSTRING::from(
         serde_json::to_string(envelope).expect("validated browser bridge envelope serializes"),
     );
-    webview.with_webview(move |platform| unsafe {
-        if let Ok(core) = platform.controller().CoreWebView2() {
-            let _ = core.PostWebMessageAsJson(&message);
-        }
+    webview.run(move |surface| unsafe {
+        surface
+            .core()
+            .PostWebMessageAsJson(&message)
+            .map_err(|error| format!("Failed to post browser bridge message: {error}"))
     })
 }
 
 #[cfg(not(windows))]
 pub(crate) fn attach_windows_web_message_broker(
-    _webview: &Webview<Wry>,
+    _webview: &NativeBrowserSurface,
     _broker: BrowserBridgeBroker,
     _route: BrowserBridgeRouteHandler,
-) -> tauri::Result<()> {
+) -> Result<(), String> {
     Ok(())
 }
 
 #[cfg(not(windows))]
 pub(crate) fn post_windows_bridge_envelope(
-    _webview: &Webview<Wry>,
+    _webview: &NativeBrowserSurface,
     _envelope: &BrowserBridgeEnvelope,
-) -> tauri::Result<()> {
-    Err(tauri::Error::Anyhow(
-        "DirectWebView2 BrowserHost requires Windows".into(),
-    ))
+) -> Result<(), String> {
+    Err("Windowed WebView2 BrowserHost requires Windows".to_string())
 }
 
 fn validate_ready_channel(
@@ -2299,7 +2264,7 @@ mod tests {
 
     #[test]
     fn initialization_script_is_fixed_and_has_no_generic_automation_surface() {
-        let script = bridge_initialization_script(&surface(), "transport-token-test");
+        let script = bridge_initialization_script(&surface());
         assert!(script.contains(WEB_ANNOTATION_BRIDGE_PROTOCOL));
         assert!(script.contains("keydex.web-annotation.scoring.v1"));
         assert!(script.contains("chrome?.webview?.postMessage"));

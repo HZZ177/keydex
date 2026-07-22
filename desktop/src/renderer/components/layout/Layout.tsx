@@ -28,6 +28,7 @@ import { flushSync } from "react-dom";
 
 import { runtimeBridge, type RuntimeBridge } from "@/runtime";
 import { BROWSER_LIMITS } from "@/renderer/features/browser/config";
+import { browserGeometryCoordinator } from "@/renderer/features/browser/runtime";
 import {
   createWebAnnotationClient,
   webAnnotationNavigator,
@@ -86,7 +87,10 @@ import {
   useTerminalStore,
 } from "@/renderer/features/terminal";
 
-import { RightSidebarResizeHandle } from "./RightSidebarResizeHandle";
+import {
+  RightSidebarResizeHandle,
+  type RightSidebarResizeDragInput,
+} from "./RightSidebarResizeHandle";
 import { RightSidebarInitialPage } from "./RightSidebarInitialPage";
 import {
   RightSidebarConversationContext,
@@ -344,6 +348,7 @@ export function Layout({
   const appModeNavigationTimerRef = useRef<number | null>(null);
   const shellWidthRef = useRef(initialShellWidth());
   const shellMeasureFrameRef = useRef<number | null>(null);
+  const browserResizeSessionRef = useRef<number | null>(null);
   const layoutUiStateCache = layoutUiStateCacheForRuntime(runtime);
   const initialLayoutUiStateRef = useRef<LayoutUiState | null | undefined>(undefined);
   if (initialLayoutUiStateRef.current === undefined) {
@@ -512,17 +517,23 @@ export function Layout({
       applyRightSidebarGeometry();
     });
   }, [applyRightSidebarGeometry]);
-  const setRightSidebarResizing = useCallback((resizing: boolean) => {
+  const setRightSidebarResizing = useCallback((
+    resizing: boolean,
+    input?: RightSidebarResizeDragInput,
+  ) => {
     const shell = shellRef.current;
     setRightSidebarResizeActive((current) => (current === resizing ? current : resizing));
     if (!shell) {
       return;
     }
-    if (resizing) {
+    if (resizing && input) {
       shell.dataset.rightSidebarResizing = "true";
+      browserResizeSessionRef.current = browserGeometryCoordinator.beginInteractiveResize(input);
       return;
     }
     delete shell.dataset.rightSidebarResizing;
+    browserGeometryCoordinator.endInteractiveResize(browserResizeSessionRef.current);
+    browserResizeSessionRef.current = null;
   }, []);
 
   useEffect(() => {

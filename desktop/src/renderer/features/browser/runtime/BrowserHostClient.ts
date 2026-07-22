@@ -9,6 +9,9 @@ import {
   type BrowserCommandPayloadByKind,
   type BrowserCommandResponse,
   type BrowserEventEnvelope,
+  type BrowserGeometryFrame,
+  type BrowserInteractiveResizeEndInput,
+  type BrowserInteractiveResizeInput,
 } from "../domain";
 
 export type BrowserHostInvoke = (
@@ -104,6 +107,30 @@ export class BrowserHostClient {
     }
     if (!response.ok) throw new BrowserHostCommandError(response);
     return response;
+  }
+
+  syncGeometry(frame: BrowserGeometryFrame): void {
+    this.#invokeOneWay("browser_sync_geometry", frame);
+  }
+
+  beginInteractiveResize(input: BrowserInteractiveResizeInput): void {
+    this.#invokeOneWay("browser_begin_interactive_resize", input);
+  }
+
+  endInteractiveResize(input: BrowserInteractiveResizeEndInput): void {
+    this.#invokeOneWay("browser_end_interactive_resize", input);
+  }
+
+  #invokeOneWay(command: string, payload: unknown): void {
+    if (!this.#options.invoke && !isBrowserHostRuntimeAvailable()) return;
+    const invokePromise = this.#options.invoke
+      ? Promise.resolve(this.#options.invoke)
+      : loadTauriInvoke();
+    void invokePromise
+      .then((invoke) => invoke(command, { payload }))
+      .catch((error: unknown) => {
+        console.error(`[Keydex browser geometry] ${command} failed`, error);
+      });
   }
 }
 

@@ -1,6 +1,6 @@
 import type { BrowserPanelState } from "@/renderer/components/layout/rightSidebar/types";
 
-import type { BrowserLogicalRect, BrowserSurfaceRef, BrowserVisibilityReason } from "../domain";
+import type { BrowserSurfaceRef, BrowserVisibilityReason } from "../domain";
 import { BROWSER_INTERNAL_BLANK_URL } from "../config";
 import { readBrowserOverlayTheme } from "../visualContract";
 import { createBrowserRuntimeStore, type BrowserRuntimeStore } from "../state";
@@ -134,10 +134,6 @@ export class BrowserPanelRuntimeController {
       navigationId: `navigation-${cryptoId()}`,
       url,
     });
-  }
-
-  async setBounds(surface: BrowserSurfaceRef, rect: BrowserLogicalRect): Promise<void> {
-    await this.client.send("browser_set_bounds", { ...surface, rect });
   }
 
   async setZoom(surface: BrowserSurfaceRef, factor: number): Promise<void> {

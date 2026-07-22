@@ -1,6 +1,5 @@
 import {
   useCallback,
-  useEffect,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 
@@ -23,8 +22,15 @@ interface RightSidebarResizeHandleProps {
   getAvailableWidth: () => number;
   onResizePreview?: (ratio: number) => void;
   onResize: (ratio: number) => void;
-  onResizeDragChange?: (dragging: boolean) => void;
+  onResizeDragChange?: (dragging: boolean, input?: RightSidebarResizeDragInput) => void;
   onSwapPlacement: () => void;
+}
+
+export interface RightSidebarResizeDragInput {
+  readonly placement: RightSidebarPlacement;
+  readonly startScreenX: number;
+  readonly minDelta: number;
+  readonly maxDelta: number;
 }
 
 const KEYBOARD_STEP = 0.01;
@@ -100,16 +106,21 @@ export function RightSidebarResizeHandle({
     getWidth: getDragRatio,
     onPreview: onResizePreview,
     onCommit: onResize,
+    onDragStart: ({ startWidth, startScreenCoordinate }) => {
+      const availableWidth = Math.max(1, getAvailableWidth());
+      const direction = placement === "right" ? -1 : 1;
+      const deltaAtMin = ((MIN_RIGHT_SIDEBAR_RATIO - startWidth) * availableWidth) / direction;
+      const deltaAtMax = ((getBoundedMaxRatio() - startWidth) * availableWidth) / direction;
+      onResizeDragChange?.(true, {
+        placement,
+        startScreenX: startScreenCoordinate,
+        minDelta: Math.min(deltaAtMin, deltaAtMax),
+        maxDelta: Math.max(deltaAtMin, deltaAtMax),
+      });
+    },
+    onDragEnd: () => onResizeDragChange?.(false),
+    previewMode: "sync",
   });
-
-  useEffect(() => {
-    onResizeDragChange?.(dragging);
-    return () => {
-      if (dragging) {
-        onResizeDragChange?.(false);
-      }
-    };
-  }, [dragging, onResizeDragChange]);
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (disabled) {

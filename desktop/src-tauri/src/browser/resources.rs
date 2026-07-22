@@ -3,9 +3,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use tauri::{Webview, Wry};
-
-use super::contract::{BrowserResourceState, BrowserSurfaceRef};
+use super::{
+    contract::{BrowserResourceState, BrowserSurfaceRef},
+    ui_actor::NativeBrowserSurface,
+};
 
 #[derive(Debug, Clone, Copy)]
 struct BrowserResourceEntry {
@@ -71,39 +72,38 @@ impl BrowserResourceRegistry {
 
 #[cfg(windows)]
 pub(crate) fn apply_native_resource_state(
-    webview: &Webview<Wry>,
+    webview: &NativeBrowserSurface,
     state: BrowserResourceState,
-) -> tauri::Result<()> {
+) -> Result<(), String> {
     use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_3;
     use webview2_com::TrySuspendCompletedHandler;
     use windows_061::core::Interface;
 
-    webview.with_webview(move |platform| unsafe {
-        let Ok(core) = platform
-            .controller()
-            .CoreWebView2()
-            .and_then(|core| core.cast::<ICoreWebView2_3>())
-        else {
-            return;
+    webview.run(move |surface| unsafe {
+        let Ok(core) = surface.core().cast::<ICoreWebView2_3>() else {
+            return Err("WebView2 resource suspension API is unavailable".to_string());
         };
         match state {
             BrowserResourceState::Visible | BrowserResourceState::Warm => {
-                let _ = core.Resume();
+                core.Resume()
+                    .map_err(|error| format!("Failed to resume browser surface: {error}"))?;
             }
             BrowserResourceState::NativeSuspended => {
                 let completion = TrySuspendCompletedHandler::create(Box::new(|_, _| Ok(())));
-                let _ = core.TrySuspend(&completion);
+                core.TrySuspend(&completion)
+                    .map_err(|error| format!("Failed to suspend browser surface: {error}"))?;
             }
             BrowserResourceState::Discarded => {}
         }
+        Ok(())
     })
 }
 
 #[cfg(not(windows))]
 pub(crate) fn apply_native_resource_state(
-    _webview: &Webview<Wry>,
+    _webview: &NativeBrowserSurface,
     _state: BrowserResourceState,
-) -> tauri::Result<()> {
+) -> Result<(), String> {
     Ok(())
 }
 

@@ -42,8 +42,6 @@
     ? nativeWebview.addEventListener.bind(nativeWebview) : null;
   const removeNativeMessageListener = typeof nativeWebview?.removeEventListener === "function"
     ? nativeWebview.removeEventListener.bind(nativeWebview) : null;
-  const invokeNative = typeof window.__TAURI_INTERNALS__?.invoke === "function"
-    ? window.__TAURI_INTERNALS__.invoke.bind(window.__TAURI_INTERNALS__) : null;
   const overlaySelector = "[data-keydex-annotation-overlay-root='true']";
   const exactEnvelopeKeys = [
     "protocol",
@@ -176,35 +174,6 @@
       sequence: ++sequence,
       payload,
     };
-    // Send a WebView2 JSON value instead of a string. Tauri's own IPC handler
-    // only consumes string messages, while the BrowserHost broker reads the
-    // JSON channel directly; keeping the channels type-separated avoids
-    // spurious `missing field cmd` errors in page DevTools.
-    if (frameKey === "main" && invokeNative && typeof bootstrap.transportToken === "string") {
-      void invokeNative("browser_page_bridge_message", {
-        message: {
-          transportToken: bootstrap.transportToken,
-          envelope,
-        },
-      }).then(() => {
-        trace("page-bridge.post.sent", {
-          kind,
-          requestId,
-          frameKey,
-          sequence: envelope.sequence,
-          transport: "tauri_ipc",
-        });
-      }).catch((error) => {
-        trace("page-bridge.post.failed", {
-          kind,
-          requestId,
-          sequence: envelope.sequence,
-          transport: "tauri_ipc",
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-      return;
-    }
     if (!postNativeMessage) {
       trace("page-bridge.post.dropped", { kind, requestId, sequence: envelope.sequence, reason: "native_channel_missing" });
       return;
@@ -216,7 +185,7 @@
         requestId,
         frameKey,
         sequence: envelope.sequence,
-        transport: "webview2_frame",
+        transport: "webview2_composition",
       });
     } catch (error) {
       trace("page-bridge.post.failed", {

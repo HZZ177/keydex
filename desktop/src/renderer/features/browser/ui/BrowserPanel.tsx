@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 
 import { AppTooltipLayer } from "@/renderer/components/tooltip";
 
-import type { BrowserProfileMode } from "../domain";
+import type { BrowserProfileMode, BrowserSurfaceRef } from "../domain";
 import type { BrowserNavigationFailure } from "../runtime/BrowserPolicyCoordinator";
 import { BrowserErrorView } from "./BrowserErrorView";
 import type { BrowserSurfaceVisibilityInput } from "./BrowserSurfacePlaceholder";
@@ -18,10 +18,10 @@ export interface BrowserPanelProps extends Omit<BrowserToolbarProps, "profileMod
   readonly error?: BrowserNavigationFailure | null;
   readonly profileMode: BrowserProfileMode;
   readonly surfaceReady: boolean;
+  readonly surface: BrowserSurfaceRef | null;
   readonly title: string;
   readonly toolbarAccessory?: ReactNode;
   readonly resourceState?: React.ComponentProps<typeof BrowserSurfacePlaceholder>["resourceState"];
-  onBoundsChange: React.ComponentProps<typeof BrowserSurfacePlaceholder>["onBoundsChange"];
   onRetry(): void;
   onVisibilityChange(input: BrowserSurfaceVisibilityInput): void;
 }
@@ -32,10 +32,10 @@ export function BrowserPanel({
   error = null,
   profileMode,
   surfaceReady,
+  surface,
   title,
   toolbarAccessory,
   resourceState,
-  onBoundsChange,
   onRetry,
   onVisibilityChange,
   ...toolbarProps
@@ -59,9 +59,9 @@ export function BrowserPanel({
         {toolbarProps.loading ? <div aria-hidden="true" className={styles.loadingTrack}><span /></div> : null}
         <BrowserSurfacePlaceholder
           active={active && surfaceReady && !error && !empty}
+          surface={surface}
           resourceState={resourceState}
           className={styles.surface}
-          onBoundsChange={onBoundsChange}
           onVisibilityChange={onVisibilityChange}
         />
         {error ? <BrowserErrorView {...error} onRetry={onRetry} /> : null}

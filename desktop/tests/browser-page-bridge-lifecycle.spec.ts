@@ -42,6 +42,8 @@ describe("fixed page bridge lifecycle", () => {
         webview: {
           postMessage(value: unknown) {
             mainNativePosts.push(value);
+            const parsed = parseBrowserBridgeEnvelope(value, "page-to-host");
+            if (parsed.ok) messages.push(parsed.envelope);
           },
           addEventListener(type: string, listener: (event: { data: unknown }) => void) {
             if (type === "message") nativeListeners.add(listener);
@@ -52,23 +54,10 @@ describe("fixed page bridge lifecycle", () => {
         },
       },
     });
-    Object.defineProperty(window, "__TAURI_INTERNALS__", {
-      configurable: true,
-      value: {
-        invoke(command: string, args: { message?: { transportToken?: string; envelope?: unknown } }) {
-          expect(command).toBe("browser_page_bridge_message");
-          expect(args.message?.transportToken).toBe("transport-token-test");
-          const parsed = parseBrowserBridgeEnvelope(args.message?.envelope, "page-to-host");
-          if (parsed.ok) messages.push(parsed.envelope);
-          return Promise.resolve();
-        },
-      },
-    });
     const bootstrap = JSON.stringify({
       panelId: "panel-1",
       surfaceId: "surface-1",
       generation: 2,
-      transportToken: "transport-token-test",
     });
     const bundled = sources.map((source, index) => index === 0
       ? source.replace("__KEYDEX_BRIDGE_BOOTSTRAP__", bootstrap)
@@ -188,7 +177,7 @@ describe("fixed page bridge lifecycle", () => {
       selectionId: nativeRequestId,
       bodyMarkdown: "Native inspector annotation",
     });
-    expect(mainNativePosts).toHaveLength(0);
+    expect(mainNativePosts.length).toBeGreaterThan(0);
 
     window.dispatchEvent(new window.Event("pagehide"));
     expect(nativeListeners.size).toBe(0);

@@ -7,8 +7,8 @@ import {
   type HTMLAttributes,
 } from "react";
 
-import type { BrowserLogicalRect, BrowserVisibilityReason } from "../domain";
-import { useBrowserOcclusionSnapshot } from "../runtime";
+import type { BrowserLogicalRect, BrowserSurfaceRef, BrowserVisibilityReason } from "../domain";
+import { browserGeometryCoordinator, useBrowserOcclusionSnapshot } from "../runtime";
 
 import styles from "./BrowserSurfacePlaceholder.module.css";
 
@@ -21,27 +21,24 @@ export interface BrowserSurfaceVisibilityInput {
 
 export interface BrowserSurfacePlaceholderProps extends Omit<HTMLAttributes<HTMLDivElement>, "children"> {
   readonly active: boolean;
+  readonly surface: BrowserSurfaceRef | null;
   readonly resourceState?: BrowserSurfaceResourceState;
-  onBoundsChange(rect: BrowserLogicalRect): void;
   onVisibilityChange(input: BrowserSurfaceVisibilityInput): void;
 }
 
 export function BrowserSurfacePlaceholder({
   active,
   className = "",
-  onBoundsChange,
   onVisibilityChange,
   resourceState = "visible",
+  surface,
   ...props
 }: BrowserSurfacePlaceholderProps) {
   const elementRef = useRef<HTMLDivElement | null>(null);
   const frameRef = useRef<number | null>(null);
-  const lastBoundsRef = useRef<BrowserLogicalRect | null>(null);
-  const onBoundsChangeRef = useRef(onBoundsChange);
   const onVisibilityChangeRef = useRef(onVisibilityChange);
   const [hasPositiveArea, setHasPositiveArea] = useState(false);
   const { count: occlusionCount } = useBrowserOcclusionSnapshot();
-  onBoundsChangeRef.current = onBoundsChange;
   onVisibilityChangeRef.current = onVisibilityChange;
 
   const measure = useCallback(() => {
@@ -51,11 +48,8 @@ export function BrowserSurfacePlaceholder({
     const next = logicalRectFromDomRect(element.getBoundingClientRect());
     const positive = next.width > 0 && next.height > 0;
     setHasPositiveArea((current) => current === positive ? current : positive);
-    if (!sameLogicalRect(lastBoundsRef.current, next)) {
-      lastBoundsRef.current = next;
-      onBoundsChangeRef.current(next);
-    }
-  }, []);
+    if (surface) browserGeometryCoordinator.syncSurface(surface);
+  }, [surface]);
 
   const scheduleMeasure = useCallback(() => {
     if (frameRef.current !== null) return;
@@ -64,15 +58,16 @@ export function BrowserSurfacePlaceholder({
 
   useLayoutEffect(scheduleMeasure);
 
-  // The DOM placeholder is measured before the native WebView is ready. That
-  // first callback cannot dispatch bounds because no surface exists yet, but
-  // it still populates lastBoundsRef. When readiness flips `active` to true,
-  // invalidate the cache so the unchanged rect is sent to the new surface.
   useLayoutEffect(() => {
-    if (!active) return;
-    lastBoundsRef.current = null;
+    if (!active || !surface) return;
     scheduleMeasure();
-  }, [active, scheduleMeasure]);
+  }, [active, scheduleMeasure, surface]);
+
+  useLayoutEffect(() => {
+    const element = elementRef.current;
+    if (!element || !surface) return;
+    return browserGeometryCoordinator.register(surface, element, false);
+  }, [surface]);
 
   useEffect(() => {
     const element = elementRef.current;
@@ -106,8 +101,9 @@ export function BrowserSurfacePlaceholder({
     const previous = lastVisibilityRef.current;
     if (previous?.visible === visibility.visible && previous.reason === visibility.reason) return;
     lastVisibilityRef.current = visibility;
+    if (surface) browserGeometryCoordinator.setVisibility(surface, visibility.visible);
     onVisibilityChangeRef.current(visibility);
-  }, [visibility.reason, visibility.visible]);
+  }, [surface, visibility.reason, visibility.visible]);
 
   return (
     <div
@@ -143,14 +139,6 @@ export function resolveBrowserSurfaceVisibility(input: {
   }
   if (input.occlusionCount > 0) return { visible: false, reason: "occluded" };
   return { visible: true, reason: "active" };
-}
-
-function sameLogicalRect(left: BrowserLogicalRect | null, right: BrowserLogicalRect): boolean {
-  return left !== null
-    && left.x === right.x
-    && left.y === right.y
-    && left.width === right.width
-    && left.height === right.height;
 }
 
 function finiteOrZero(value: number): number {

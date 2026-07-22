@@ -23,15 +23,15 @@ mod supervisor;
 mod terminal;
 
 use browser::host::{
-    browser_cancel_selection, browser_capture_region, browser_clear_highlights,
-    browser_clear_profile_data, browser_configure_overlay, browser_create_surface,
-    browser_destroy_surface, browser_discard_capture, browser_find, browser_go_back,
-    browser_go_forward, browser_navigate, browser_navigate_to_annotation_target,
-    browser_page_bridge_message, browser_reload, browser_render_highlights,
-    browser_resolve_annotations, browser_respond_download, browser_respond_permission,
-    browser_set_bounds, browser_set_resource_state, browser_set_visibility, browser_set_zoom,
-    browser_start_selection, browser_stop, browser_stop_find, browser_take_incognito_capture,
-    BrowserHostState,
+    browser_begin_interactive_resize, browser_cancel_selection, browser_capture_region,
+    browser_clear_highlights, browser_clear_profile_data, browser_configure_overlay,
+    browser_create_surface, browser_destroy_surface, browser_discard_capture,
+    browser_end_interactive_resize, browser_find, browser_go_back, browser_go_forward,
+    browser_navigate, browser_navigate_to_annotation_target, browser_reload,
+    browser_render_highlights, browser_resolve_annotations, browser_respond_download,
+    browser_respond_permission, browser_set_resource_state, browser_set_visibility,
+    browser_set_zoom, browser_start_selection, browser_stop, browser_stop_find,
+    browser_sync_geometry, browser_take_incognito_capture, reload_main_webview, BrowserHostState,
 };
 use terminal::manager::TerminalManager;
 use terminal::{
@@ -935,7 +935,7 @@ pub fn run() {
             }
             let removed = webview
                 .state::<BrowserHostState>()
-                .reset_renderer_surfaces();
+                .reset_renderer_surfaces_in_background();
             if removed > 0 {
                 eprintln!(
                     "reclaimed {removed} browser surface(s) before loading a new main renderer"
@@ -963,8 +963,8 @@ pub fn run() {
             copy_file_to_clipboard,
             take_associated_file_open_paths,
             relaunch_after_app_update,
+            reload_main_webview,
             browser_create_surface,
-            browser_page_bridge_message,
             browser_destroy_surface,
             browser_navigate,
             browser_go_back,
@@ -985,7 +985,9 @@ pub fn run() {
             browser_take_incognito_capture,
             browser_set_zoom,
             browser_set_resource_state,
-            browser_set_bounds,
+            browser_sync_geometry,
+            browser_begin_interactive_resize,
+            browser_end_interactive_resize,
             browser_set_visibility,
             browser_clear_profile_data,
             browser_respond_permission,

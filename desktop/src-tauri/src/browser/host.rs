@@ -6,14 +6,8 @@ use std::{
     },
 };
 
-use serde::Deserialize;
-use serde_json::Value;
-use tauri::{
-    webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder},
-    Emitter, LogicalPosition, LogicalSize, Manager, Url, Webview, WebviewUrl, Wry,
-};
+use tauri::{Emitter, Manager, Url, Webview};
 
-use super::bounds::logical_webview_rect;
 use super::bridge::{
     attach_windows_web_message_broker, bridge_initialization_script, post_windows_bridge_envelope,
     validate_web_annotation_target, BrowserBridgeBroker,
@@ -29,27 +23,28 @@ use super::config::BROWSER_RESOLVE_BATCH_SIZE;
 use super::contract::{
     BridgeErrorPayload, BridgeMessagePayload, BrowserCommandError, BrowserCommandErrorCode,
     BrowserCommandResponse, BrowserEvent, BrowserHighlightState, BrowserNewWindowDisposition,
-    BrowserOverlayTheme, BrowserProfileMode, BrowserReloadMode, BrowserSelectionMode,
-    BrowserSurfaceRef, BrowserVisibilityReason, CaptureCompletedPayload, CaptureFailedPayload,
-    CaptureRegionInput, ClearHighlightsInput, ClearProfileDataInput, ConfigureOverlayInput,
-    CreateSurfaceInput, DiscardCaptureInput, ExternalProtocolPayload, FindInput,
-    NavigateAnnotationTargetInput, NavigateInput, NavigationFailedPayload, NavigationPayload,
-    NewWindowPayload, PageHistoryPayload, PageLoadingPayload, PageSourcePayload, PageTitlePayload,
-    ReasonPayload, ReloadInput, RenderHighlightsInput, ResolveAnnotationsInput,
-    ResourceStatePayload, RespondDownloadInput, RespondPermissionInput, SelectionCancelledPayload,
-    SelectionFailedPayload, SelectionResultPayload, SetBoundsInput, SetResourceStateInput,
-    SetVisibilityInput, SetZoomInput, StartSelectionInput, SurfaceReadyPayload,
-    TakeIncognitoCaptureInput, BROWSER_EVENT_TOPIC,
+    BrowserOverlayTheme, BrowserReloadMode, BrowserSelectionMode, BrowserSurfaceRef,
+    BrowserVisibilityReason, CaptureCompletedPayload, CaptureFailedPayload, CaptureRegionInput,
+    ClearHighlightsInput, ClearProfileDataInput, ConfigureOverlayInput, CreateSurfaceInput,
+    DiscardCaptureInput, ExternalProtocolPayload, FindInput, NavigateAnnotationTargetInput,
+    NavigateInput, NavigationFailedPayload, NavigationPayload, NewWindowPayload,
+    PageHistoryPayload, PageLoadingPayload, PageSourcePayload, PageTitlePayload, ReasonPayload,
+    ReloadInput, RenderHighlightsInput, ResolveAnnotationsInput, ResourceStatePayload,
+    RespondDownloadInput, RespondPermissionInput, SelectionCancelledPayload,
+    SelectionFailedPayload, SelectionResultPayload, SetResourceStateInput, SetVisibilityInput,
+    SetZoomInput, StartSelectionInput, SurfaceReadyPayload, TakeIncognitoCaptureInput,
+    BROWSER_EVENT_TOPIC,
 };
 use super::devtools_inspector::{
     attach_windows_devtools_inspector, cancel_native_element_selection,
     start_native_element_selection, BrowserDevToolsInspector, NativeInspectorEvent,
 };
-use super::direct_webview2::{
-    direct_webview2_adapter_is_selected, DIRECT_WEBVIEW2_REQUIRED_CAPABILITIES,
-};
 use super::downloads::{attach_download_manager, DownloadManager};
 use super::failures::{attach_process_failure_observer, BrowserFailureCoordinator};
+use super::geometry::{
+    BrowserGeometryFrame, BrowserGeometryInput, BrowserInteractiveResizeEndInput,
+    BrowserInteractiveResizeInput, NativeInteractiveResizeRequest, NativeInteractiveResizeSurface,
+};
 use super::navigation::{
     attach_windows_navigation_observers, is_confirmable_external_protocol, BrowserLifecycle,
     NativeNavigationEvent,
@@ -57,16 +52,17 @@ use super::navigation::{
 use super::permissions::{attach_permission_broker, PermissionBroker};
 use super::profiles::{clear_profile_data, configure_profile_security, BrowserProfileManager};
 use super::resources::{apply_native_resource_state, BrowserResourceRegistry};
-use super::security::{ensure_main_webview_caller, is_remote_browser_label};
+use super::security::ensure_main_webview_caller;
 use super::surface::{BeginCreate, DestroySurface, SurfaceHandle, SurfaceTable};
+use super::ui_actor::{BrowserUiActorHandle, NativeBrowserSurface};
 
-const INITIAL_SURFACE_SIZE: f64 = 1.0;
 const MAIN_WEBVIEW_LABEL: &str = "main";
 const BROWSER_LINK_POLICY_SCRIPT: &str = include_str!("page_link_policy.js");
 
 #[derive(Clone)]
 pub(crate) struct BrowserHostState {
-    surfaces: Arc<Mutex<SurfaceTable<Webview<Wry>>>>,
+    surfaces: Arc<Mutex<SurfaceTable<NativeBrowserSurface>>>,
+    actor: Arc<Mutex<Option<BrowserUiActorHandle>>>,
     bridge: BrowserBridgeBroker,
     lifecycle: BrowserLifecycle,
     profiles: BrowserProfileManager,
@@ -81,9 +77,9 @@ pub(crate) struct BrowserHostState {
 
 impl Default for BrowserHostState {
     fn default() -> Self {
-        debug_assert!(direct_webview2_adapter_is_selected());
         Self {
             surfaces: Arc::new(Mutex::new(SurfaceTable::default())),
+            actor: Arc::new(Mutex::new(None)),
             bridge: BrowserBridgeBroker::default(),
             lifecycle: BrowserLifecycle::default(),
             profiles: BrowserProfileManager::default(),
@@ -96,39 +92,6 @@ impl Default for BrowserHostState {
             closing: Arc::new(AtomicBool::new(false)),
         }
     }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct BrowserPageBridgeMessage {
-    transport_token: String,
-    envelope: Value,
-}
-
-#[tauri::command]
-pub(crate) fn browser_page_bridge_message(
-    caller: Webview,
-    message: BrowserPageBridgeMessage,
-) -> Result<(), String> {
-    if !is_remote_browser_label(caller.label()) {
-        return Err(
-            "Browser page bridge is available only to managed browser webviews".to_string(),
-        );
-    }
-    let state = caller.state::<BrowserHostState>().inner().clone();
-    let surface = state
-        .surfaces
-        .lock()
-        .ok()
-        .and_then(|surfaces| surfaces.reference_for_label(caller.label()))
-        .ok_or_else(|| "Browser page bridge surface is unavailable".to_string())?;
-    let raw = serde_json::to_string(&message.envelope)
-        .map_err(|_| "Browser page bridge message is not serializable".to_string())?;
-    let result = state
-        .bridge
-        .receive_authenticated_main(&surface, &message.transport_token, &raw);
-    emit_bridge_result(&caller, &state, &surface, result);
-    Ok(())
 }
 
 #[tauri::command]
@@ -170,8 +133,8 @@ pub(crate) async fn browser_create_surface(
         BeginCreate::Stale(_) => return stale_generation(request_id),
         BeginCreate::Reserved { identity, replaced } => (identity, replaced),
     };
-    if let Some(webview) = replaced {
-        let _ = webview.close();
+    if let Some(surface) = replaced {
+        let _ = surface.destroy();
     }
 
     let profile_directory = match caller.path().app_data_dir() {
@@ -200,137 +163,74 @@ pub(crate) async fn browser_create_surface(
         .lifecycle
         .reserve(identity.reference.clone(), payload.profile_mode);
     let bootstrap_navigation_id = format!("bootstrap-{}", identity.reference.generation);
-    let transport_token = state
+    state
         .bridge
         .register_surface(identity.reference.clone(), bootstrap_navigation_id.clone());
 
-    let page_state = state.clone();
-    let page_surface = identity.reference.clone();
-    let title_state = state.clone();
-    let title_surface = identity.reference.clone();
-    let blank_url = "about:blank".parse().expect("about:blank is a valid URL");
-    let builder = WebviewBuilder::new(identity.label.clone(), WebviewUrl::External(blank_url))
-        .data_directory(profile_directory)
-        .incognito(payload.profile_mode == BrowserProfileMode::Incognito)
-        .zoom_hotkeys_enabled(false)
-        .initialization_script(BROWSER_LINK_POLICY_SCRIPT)
-        .initialization_script_for_all_frames(bridge_initialization_script(
-            &identity.reference,
-            &transport_token,
-        ))
-        .on_navigation(|url| is_allowed_browser_url(url, true))
-        .on_document_title_changed(move |webview, title| {
-            emit_browser_event(
-                &webview,
-                &title_state,
-                &title_surface,
-                BrowserEvent::PageTitle(PageTitlePayload { title }),
-            );
-        })
-        .on_page_load(move |webview, page| {
-            let url = page.url().as_str().to_string();
-            match page.event() {
-                PageLoadEvent::Started => {
-                    if let Some(selection_request_id) =
-                        page_state.inspector.abandon_selection(&page_surface)
-                    {
-                        emit_browser_event(
-                            &webview,
-                            &page_state,
-                            &page_surface,
-                            BrowserEvent::SelectionCancelled(SelectionCancelledPayload {
-                                selection_request_id,
-                                reason: "navigation".to_string(),
-                            }),
-                        );
-                    }
-                    emit_browser_event(
-                        &webview,
-                        &page_state,
-                        &page_surface,
-                        BrowserEvent::NavigationCommitted(NavigationPayload {
-                            url: url.clone(),
-                            is_main_frame: true,
-                        }),
-                    );
-                    emit_browser_event(
-                        &webview,
-                        &page_state,
-                        &page_surface,
-                        BrowserEvent::PageSource(PageSourcePayload { url }),
-                    );
-                    emit_browser_event(
-                        &webview,
-                        &page_state,
-                        &page_surface,
-                        BrowserEvent::PageLoading(PageLoadingPayload { loading: true }),
-                    );
-                }
-                PageLoadEvent::Finished => {
-                    emit_browser_event(
-                        &webview,
-                        &page_state,
-                        &page_surface,
-                        BrowserEvent::NavigationCompleted(NavigationPayload {
-                            url,
-                            is_main_frame: true,
-                        }),
-                    );
-                    emit_browser_event(
-                        &webview,
-                        &page_state,
-                        &page_surface,
-                        BrowserEvent::PageLoading(PageLoadingPayload { loading: false }),
-                    );
-                }
-            }
-        })
-        .on_new_window(|_, _| NewWindowResponse::Deny);
-    let webview = match caller.window().add_child(
-        builder,
-        LogicalPosition::new(0.0, 0.0),
-        LogicalSize::new(INITIAL_SURFACE_SIZE, INITIAL_SURFACE_SIZE),
+    let actor = match native_actor_for(&state, &caller) {
+        Ok(actor) => actor,
+        Err(reason) => {
+            abort_surface(&state, &identity);
+            return host_failure(request_id, &reason);
+        }
+    };
+    let surface = match actor.create_surface(
+        identity.reference.surface_id.clone(),
+        identity.reference.generation,
+        profile_directory,
+        "about:blank".to_string(),
     ) {
-        Ok(webview) => webview,
+        Ok(surface) => surface,
         Err(reason) => {
             abort_surface(&state, &identity);
             return host_failure(
                 request_id,
-                &format!("Failed to create browser surface: {reason}"),
+                &format!("Failed to create windowed WebView2 surface: {reason}"),
             );
         }
     };
-    let bridge_route_state = state.clone();
-    let bridge_route_surface = identity.reference.clone();
-    let bridge_route_emitter = webview.clone();
-    let bridge_route = Arc::new(
-        move |result: Result<
-            super::bridge::BrowserBridgeEnvelope,
-            super::bridge::BrowserBridgeError,
-        >| {
-            emit_bridge_result(
-                &bridge_route_emitter,
-                &bridge_route_state,
-                &bridge_route_surface,
-                result,
-            )
-        },
-    );
-    if let Err(reason) =
-        attach_windows_web_message_broker(&webview, state.bridge.clone(), bridge_route)
-    {
-        let _ = webview.close();
+
+    let document_script = bridge_initialization_script(&identity.reference);
+    if let Err(reason) = surface.run(move |surface| {
+        surface.install_document_script(BROWSER_LINK_POLICY_SCRIPT.to_string())?;
+        surface.install_document_script(document_script)
+    }) {
+        let _ = surface.destroy();
         abort_surface(&state, &identity);
         return host_failure(
             request_id,
-            &format!("Failed to attach DirectWebView2 bridge broker: {reason}"),
+            &format!("Failed to install browser page bridge: {reason}"),
         );
     }
+
+    let app_emitter = caller.app_handle().clone();
+    let bridge_route_state = state.clone();
+    let bridge_route_surface = identity.reference.clone();
+    let bridge_route_emitter = app_emitter.clone();
+    let bridge_route = Arc::new(move |result| {
+        emit_bridge_result(
+            &bridge_route_emitter,
+            &bridge_route_state,
+            &bridge_route_surface,
+            result,
+        )
+    });
+    if let Err(reason) =
+        attach_windows_web_message_broker(&surface, state.bridge.clone(), bridge_route)
+    {
+        let _ = surface.destroy();
+        abort_surface(&state, &identity);
+        return host_failure(
+            request_id,
+            &format!("Failed to attach WebView2 bridge broker: {reason}"),
+        );
+    }
+
     let inspector_state = state.clone();
     let inspector_surface = identity.reference.clone();
-    let inspector_emitter = caller.app_handle().clone();
+    let inspector_emitter = app_emitter.clone();
     if let Err(reason) = attach_windows_devtools_inspector(
-        &webview,
+        &surface,
         state.inspector.clone(),
         identity.reference.clone(),
         Arc::new(move |event| {
@@ -369,26 +269,28 @@ pub(crate) async fn browser_create_surface(
             );
         }),
     ) {
-        let _ = webview.close();
+        let _ = surface.destroy();
         abort_surface(&state, &identity);
         return host_failure(
             request_id,
             &format!("Failed to attach Chromium element inspector: {reason}"),
         );
     }
-    if let Err(reason) = configure_profile_security(&webview) {
-        let _ = webview.close();
+
+    if let Err(reason) = configure_profile_security(&surface) {
+        let _ = surface.destroy();
         abort_surface(&state, &identity);
         return host_failure(
             request_id,
-            &format!("Failed to configure browser profile security: {reason}"),
+            &format!("Failed to secure browser profile: {reason}"),
         );
     }
+
     let permission_state = state.clone();
     let permission_surface = identity.reference.clone();
-    let permission_emitter = caller.app_handle().clone();
+    let permission_emitter = app_emitter.clone();
     if let Err(reason) = attach_permission_broker(
-        &webview,
+        &surface,
         state.permissions.clone(),
         identity.reference.clone(),
         Arc::new(move |event| {
@@ -397,207 +299,135 @@ pub(crate) async fn browser_create_surface(
                 &permission_state,
                 &permission_surface,
                 event,
-            );
+            )
         }),
     ) {
-        let _ = webview.close();
+        let _ = surface.destroy();
         abort_surface(&state, &identity);
         return host_failure(
             request_id,
-            &format!("Failed to attach website permission broker: {reason}"),
+            &format!("Failed to attach permission broker: {reason}"),
         );
     }
+
     let download_state = state.clone();
     let download_surface = identity.reference.clone();
-    let download_emitter = caller.app_handle().clone();
+    let download_emitter = app_emitter.clone();
     if let Err(reason) = attach_download_manager(
-        &webview,
+        &surface,
         state.downloads.clone(),
         identity.reference.clone(),
         Arc::new(move |event| {
-            emit_browser_event(&download_emitter, &download_state, &download_surface, event);
+            emit_browser_event(&download_emitter, &download_state, &download_surface, event)
         }),
     ) {
-        let _ = webview.close();
+        let _ = surface.destroy();
         abort_surface(&state, &identity);
         return host_failure(
             request_id,
             &format!("Failed to attach download manager: {reason}"),
         );
     }
+
     let shortcut_state = state.clone();
     let shortcut_surface = identity.reference.clone();
-    let shortcut_emitter = caller.app_handle().clone();
+    let shortcut_emitter = app_emitter.clone();
     if let Err(reason) = attach_native_shortcuts(
-        &webview,
+        &surface,
         Arc::new(move |event| {
-            emit_browser_event(&shortcut_emitter, &shortcut_state, &shortcut_surface, event);
+            emit_browser_event(&shortcut_emitter, &shortcut_state, &shortcut_surface, event)
         }),
     ) {
-        let _ = webview.close();
+        let _ = surface.destroy();
         abort_surface(&state, &identity);
         return host_failure(
             request_id,
             &format!("Failed to attach browser shortcuts: {reason}"),
         );
     }
+
     let failure_state = state.clone();
     let failure_surface = identity.reference.clone();
-    let failure_emitter = caller.app_handle().clone();
-    let environment_key = match payload.profile_mode {
-        BrowserProfileMode::Persistent => "persistent",
-        BrowserProfileMode::Incognito => "incognito",
-    };
+    let failure_emitter = app_emitter.clone();
     if let Err(reason) = attach_process_failure_observer(
-        &webview,
+        &surface,
         state.failures.clone(),
-        environment_key.to_string(),
+        format!("profile:{:?}", payload.profile_mode),
         identity.reference.clone(),
         Arc::new(move |event| {
-            emit_browser_event(&failure_emitter, &failure_state, &failure_surface, event);
+            emit_browser_event(&failure_emitter, &failure_state, &failure_surface, event)
         }),
     ) {
-        let _ = webview.close();
+        let _ = surface.destroy();
         abort_surface(&state, &identity);
         return host_failure(
             request_id,
-            &format!("Failed to attach process failure observer: {reason}"),
+            &format!("Failed to attach process observer: {reason}"),
         );
     }
-    let observer_state = state.clone();
-    let observer_surface = identity.reference.clone();
-    let observer_emitter = caller.app_handle().clone();
+
+    let navigation_state = state.clone();
+    let navigation_surface = identity.reference.clone();
+    let navigation_emitter = app_emitter.clone();
     if let Err(reason) = attach_windows_navigation_observers(
-        &webview,
-        Arc::new(move |event| match event {
-            NativeNavigationEvent::Snapshot(snapshot) => {
-                let source = snapshot.source.clone();
-                if let Some(url) = source.as_ref() {
-                    if parse_browser_url(url, true).is_ok() {
-                        emit_browser_event(
-                            &observer_emitter,
-                            &observer_state,
-                            &observer_surface,
-                            BrowserEvent::PageSource(PageSourcePayload { url: url.clone() }),
-                        );
-                    }
-                }
-                if let Some(category) = snapshot.error_category {
-                    emit_navigation_failed(
-                        &observer_emitter,
-                        &observer_state,
-                        &observer_surface,
-                        source.as_deref().unwrap_or("about:blank"),
-                        &category,
-                    );
-                }
-                emit_browser_event(
-                    &observer_emitter,
-                    &observer_state,
-                    &observer_surface,
-                    BrowserEvent::PageHistory(PageHistoryPayload {
-                        can_go_back: snapshot.can_go_back,
-                        can_go_forward: snapshot.can_go_forward,
-                    }),
-                );
-            }
-            NativeNavigationEvent::NewWindowRequested {
-                url,
-                user_initiated,
-            } => {
-                if user_initiated && parse_browser_url(&url, false).is_ok() {
-                    emit_browser_event(
-                        &observer_emitter,
-                        &observer_state,
-                        &observer_surface,
-                        BrowserEvent::NewWindowRequested(NewWindowPayload {
-                            url,
-                            user_gesture: true,
-                            disposition: BrowserNewWindowDisposition::Tab,
-                        }),
-                    );
-                }
-            }
-            NativeNavigationEvent::ExternalProtocolRequested {
-                url,
-                user_initiated,
-            } => {
-                if user_initiated && is_confirmable_external_protocol(&url) {
-                    let scheme = url
-                        .parse::<Url>()
-                        .map(|parsed| parsed.scheme().to_string())
-                        .unwrap_or_default();
-                    emit_browser_event(
-                        &observer_emitter,
-                        &observer_state,
-                        &observer_surface,
-                        BrowserEvent::ExternalProtocolRequested(ExternalProtocolPayload {
-                            scheme,
-                            target: url,
-                        }),
-                    );
-                }
-            }
-            NativeNavigationEvent::CertificateError { url } => {
-                emit_navigation_failed(
-                    &observer_emitter,
-                    &observer_state,
-                    &observer_surface,
-                    &url,
-                    "tls_certificate",
-                );
-            }
+        &surface,
+        Arc::new(move |event| {
+            emit_native_navigation_event(
+                &navigation_emitter,
+                &navigation_state,
+                &navigation_surface,
+                event,
+            )
         }),
     ) {
-        let _ = webview.close();
+        let _ = surface.destroy();
         abort_surface(&state, &identity);
         return host_failure(
             request_id,
-            &format!("Failed to attach DirectWebView2 navigation observers: {reason}"),
+            &format!("Failed to attach navigation observers: {reason}"),
         );
     }
-    if let Err(reason) = webview.hide() {
-        let _ = webview.close();
+
+    if let Err(reason) = attach_page_lifecycle_observers(
+        &surface,
+        app_emitter.clone(),
+        state.clone(),
+        identity.reference.clone(),
+    ) {
+        let _ = surface.destroy();
         abort_surface(&state, &identity);
-        return host_failure(
-            request_id,
-            &format!("Failed to hide browser surface: {reason}"),
-        );
+        return host_failure(request_id, &reason);
     }
-    let stale_handle = match state.surfaces.lock() {
-        Ok(mut surfaces) => surfaces.finish_create(&identity, webview.clone()),
-        Err(_) => {
-            let _ = webview.close();
+
+    let stale = {
+        let Ok(mut surfaces) = state.surfaces.lock() else {
+            let _ = surface.destroy();
             abort_surface(&state, &identity);
             return host_failure(request_id, "BrowserHost surface table is unavailable");
-        }
+        };
+        surfaces.finish_create(&identity, surface.clone())
     };
-    if let Some(stale) = stale_handle {
-        let _ = stale.close();
-        abort_surface(&state, &identity);
+    if let Some(stale) = stale {
+        let _ = stale.destroy();
         return stale_generation(request_id);
     }
-    if !state.lifecycle.mark_ready(&identity.reference) {
-        let _ = webview.close();
-        abort_surface(&state, &identity);
-        return host_failure(request_id, "BrowserHost lifecycle reservation was lost");
-    }
-    state.resources.register_visible(&identity.reference);
 
+    state.lifecycle.mark_ready(&identity.reference);
+    state.resources.register_visible(&identity.reference);
     emit_browser_event(
         &caller,
         &state,
         &identity.reference,
         BrowserEvent::SurfaceReady(SurfaceReadyPayload {
             profile_mode: payload.profile_mode,
-            capabilities: direct_webview2_capabilities(),
+            capabilities: composition_webview2_capabilities(),
         }),
     );
 
     if initial_url.as_str() != "about:blank" {
         state
             .lifecycle
-            .begin_navigation(&identity.reference, bootstrap_navigation_id.clone());
+            .begin_navigation(&identity.reference, bootstrap_navigation_id);
         emit_browser_event(
             &caller,
             &state,
@@ -607,7 +437,10 @@ pub(crate) async fn browser_create_surface(
                 is_main_frame: true,
             }),
         );
-        if let Err(reason) = webview.navigate(initial_url.clone()) {
+        if let Err(reason) = surface.run({
+            let url = initial_url.as_str().to_string();
+            move |surface| surface.navigate(&url)
+        }) {
             emit_navigation_failed(
                 &caller,
                 &state,
@@ -637,19 +470,61 @@ impl BrowserHostState {
         self.close_all_surfaces()
     }
 
+    /// Detaches renderer-owned surfaces immediately and performs the native
+    /// COM/HWND teardown off the Tauri page-load callback thread.
+    pub(crate) fn reset_renderer_surfaces_in_background(&self) -> usize {
+        if self.closing.load(Ordering::SeqCst) {
+            return 0;
+        }
+        let surfaces = self.take_all_surfaces();
+        let surface_count = surfaces.len();
+        if surface_count == 0 {
+            return 0;
+        }
+        let state = self.clone();
+        if std::thread::Builder::new()
+            .name("keydex-browser-renderer-reset".to_string())
+            .spawn(move || {
+                state.close_surface_records(surfaces);
+            })
+            .is_err()
+        {
+            // The renderer table is already detached. Never block the Tauri UI
+            // thread trying to recover from a cleanup-thread spawn failure.
+            return 0;
+        }
+        surface_count
+    }
+
     pub(crate) fn shutdown(&self) {
         self.closing.store(true, Ordering::SeqCst);
         self.close_all_surfaces();
+        if let Ok(mut actor) = self.actor.lock() {
+            if let Some(actor) = actor.take() {
+                let _ = actor.shutdown();
+            }
+        }
         self.captures.shutdown(&std::env::temp_dir());
     }
 
     fn close_all_surfaces(&self) -> usize {
-        let surfaces = self
-            .surfaces
+        let surfaces = self.take_all_surfaces();
+        let surface_count = surfaces.len();
+        self.close_surface_records(surfaces);
+        surface_count
+    }
+
+    fn take_all_surfaces(&self) -> Vec<(BrowserSurfaceRef, Option<NativeBrowserSurface>)> {
+        self.surfaces
             .lock()
             .map(|mut surfaces| surfaces.drain())
-            .unwrap_or_default();
-        let surface_count = surfaces.len();
+            .unwrap_or_default()
+    }
+
+    fn close_surface_records(
+        &self,
+        surfaces: Vec<(BrowserSurfaceRef, Option<NativeBrowserSurface>)>,
+    ) {
         for (surface, webview) in surfaces {
             self.inspector.remove_surface(&surface);
             self.bridge.unregister_surface(&surface);
@@ -657,8 +532,7 @@ impl BrowserHostState {
             self.downloads
                 .cancel_pending_for_surface(webview.as_ref(), &surface);
             if let Some(webview) = webview {
-                let _ = webview.hide();
-                let _ = webview.close();
+                let _ = webview.destroy();
             }
             self.resources.remove(&surface);
             self.captures.release_surface(&surface);
@@ -666,8 +540,19 @@ impl BrowserHostState {
             self.profiles
                 .release_surface(&std::env::temp_dir(), &surface);
         }
-        surface_count
     }
+}
+
+#[tauri::command]
+pub(crate) async fn reload_main_webview(caller: Webview) -> Result<(), String> {
+    ensure_main_webview_caller(&caller).map_err(|error| error.message)?;
+    let state = caller.state::<BrowserHostState>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.reset_renderer_surfaces())
+        .await
+        .map_err(|error| format!("Failed to reclaim browser surfaces before reload: {error}"))?;
+    caller
+        .reload()
+        .map_err(|error| format!("Failed to reload the main webview: {error}"))
 }
 
 #[tauri::command]
@@ -710,7 +595,7 @@ pub(crate) async fn browser_destroy_surface(
             .downloads
             .cancel_pending_for_surface(Some(webview), &payload);
     }
-    let close_error = handle.and_then(|webview| webview.close().err());
+    let close_error = handle.and_then(|webview| webview.destroy().err());
     state
         .profiles
         .release_surface(&std::env::temp_dir(), &payload);
@@ -824,7 +709,7 @@ pub(crate) async fn browser_clear_profile_data(
     }
     for surface in surfaces {
         if let Ok(webview) = exact_surface(&state, &surface) {
-            let _ = webview.reload();
+            let _ = webview.run(|surface| surface.reload());
         }
     }
     success(request_id)
@@ -866,7 +751,8 @@ pub(crate) async fn browser_navigate(
             is_main_frame: true,
         }),
     );
-    match webview.navigate(url.clone()) {
+    let navigation_url = url.as_str().to_string();
+    match webview.run(move |surface| surface.navigate(&navigation_url)) {
         Ok(()) => success(request_id),
         Err(reason) => {
             emit_navigation_failed(
@@ -958,7 +844,7 @@ pub(crate) async fn browser_reload(
         Ok(webview) => webview,
         Err(code) => return surface_resolution_failure(request_id, code),
     };
-    match webview.reload() {
+    match webview.run(|surface| surface.reload()) {
         Ok(()) => success(request_id),
         Err(reason) => host_failure(
             request_id,
@@ -981,17 +867,15 @@ pub(crate) async fn browser_set_visibility(
         Ok(webview) => webview,
         Err(code) => return surface_resolution_failure(request_id, code),
     };
-    let result = if payload.visible {
-        webview.show().and_then(|_| {
-            if payload.reason == BrowserVisibilityReason::Active {
-                webview.set_focus()
-            } else {
-                Ok(())
-            }
-        })
-    } else {
-        webview.hide()
-    };
+    let visible = payload.visible;
+    let focus = payload.visible && payload.reason == BrowserVisibilityReason::Active;
+    let result = webview.run(move |surface| {
+        surface.set_visible(visible)?;
+        if focus {
+            surface.focus()?;
+        }
+        Ok(())
+    });
     match result {
         Ok(()) => {
             state
@@ -1007,34 +891,144 @@ pub(crate) async fn browser_set_visibility(
 }
 
 #[tauri::command]
-pub(crate) async fn browser_set_bounds(
+pub(crate) fn browser_sync_geometry(
     caller: Webview,
-    request_id: String,
-    payload: SetBoundsInput,
-) -> BrowserCommandResponse {
-    if let Err(error) = ensure_main_webview_caller(&caller) {
-        return failure(request_id, error);
+    payload: BrowserGeometryInput,
+) -> Result<(), String> {
+    ensure_main_webview_caller(&caller).map_err(|error| error.message)?;
+    let state = caller.state::<BrowserHostState>().inner().clone();
+    let scale = caller.window().scale_factor().unwrap_or(1.0);
+    let (webview, surface_ref, frame) = resolve_geometry_input(&state, payload, scale)?;
+    let visible = frame.visible;
+    webview.publish_geometry(frame)?;
+    state.resources.set_visible(&surface_ref, visible);
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn browser_begin_interactive_resize(
+    caller: Webview,
+    payload: BrowserInteractiveResizeInput,
+) -> Result<(), String> {
+    ensure_main_webview_caller(&caller).map_err(|error| error.message)?;
+    if payload.session_id == 0
+        || !payload.start_screen_x.is_finite()
+        || !payload.min_delta.is_finite()
+        || !payload.max_delta.is_finite()
+        || payload.min_delta > payload.max_delta
+        || payload.surfaces.is_empty()
+        || payload.surfaces.len() > 32
+    {
+        return Err("Browser interactive resize request is invalid".to_string());
     }
     let state = caller.state::<BrowserHostState>().inner().clone();
-    let bounds = match logical_webview_rect(&payload.rect) {
-        Ok(bounds) => bounds,
-        Err(message) => return invalid_request(request_id, message),
-    };
-    let webview = match exact_surface(&state, &payload.surface) {
-        Ok(webview) => webview,
-        Err(code) => return surface_resolution_failure(request_id, code),
-    };
-    if payload.rect.width == 0.0 || payload.rect.height == 0.0 {
-        let _ = webview.hide();
-        state.resources.set_visible(&payload.surface, false);
+    let scale = caller.window().scale_factor().unwrap_or(1.0);
+    let mut owner = None;
+    let mut surfaces = Vec::with_capacity(payload.surfaces.len());
+    for input in payload.surfaces {
+        let (webview, surface_ref, frame) = resolve_geometry_input(&state, input, scale)?;
+        state.resources.set_visible(&surface_ref, frame.visible);
+        owner.get_or_insert_with(|| webview.clone());
+        let baseline = frame.physical_rect();
+        surfaces.push(NativeInteractiveResizeSurface {
+            surface_id: frame.surface_id,
+            generation: frame.generation,
+            baseline,
+            visible: frame.visible,
+        });
     }
-    match webview.set_bounds(bounds) {
-        Ok(()) => success(request_id),
-        Err(reason) => host_failure(
-            request_id,
-            &format!("Failed to update browser surface bounds: {reason}"),
-        ),
+    let request = NativeInteractiveResizeRequest {
+        session_id: payload.session_id,
+        placement: payload.placement,
+        start_screen_x: physical_scalar(payload.start_screen_x, scale),
+        min_delta: physical_scalar(payload.min_delta, scale),
+        max_delta: physical_scalar(payload.max_delta, scale),
+        surfaces,
+    };
+    owner
+        .ok_or_else(|| "Browser interactive resize has no surface".to_string())?
+        .begin_interactive_resize(request)
+}
+
+#[tauri::command]
+pub(crate) fn browser_end_interactive_resize(
+    caller: Webview,
+    payload: BrowserInteractiveResizeEndInput,
+) -> Result<(), String> {
+    ensure_main_webview_caller(&caller).map_err(|error| error.message)?;
+    if payload.session_id == 0 || payload.surfaces.is_empty() || payload.surfaces.len() > 32 {
+        return Err("Browser interactive resize completion is invalid".to_string());
     }
+    let state = caller.state::<BrowserHostState>().inner().clone();
+    let scale = caller.window().scale_factor().unwrap_or(1.0);
+    let mut owner = None;
+    let mut final_frames = Vec::with_capacity(payload.surfaces.len());
+    for input in payload.surfaces {
+        let (webview, surface_ref, frame) = resolve_geometry_input(&state, input, scale)?;
+        state.resources.set_visible(&surface_ref, frame.visible);
+        owner.get_or_insert_with(|| webview.clone());
+        final_frames.push(frame);
+    }
+    owner
+        .ok_or_else(|| "Browser interactive resize has no surface".to_string())?
+        .end_interactive_resize(payload.session_id, final_frames)
+}
+
+fn resolve_geometry_input(
+    state: &BrowserHostState,
+    payload: BrowserGeometryInput,
+    scale: f64,
+) -> Result<
+    (
+        NativeBrowserSurface,
+        BrowserSurfaceRef,
+        BrowserGeometryFrame,
+    ),
+    String,
+> {
+    if payload.panel_id.is_empty()
+        || payload.surface_id.is_empty()
+        || payload.generation == 0
+        || payload.revision == 0
+    {
+        return Err("Browser geometry identity is invalid".to_string());
+    }
+    if !payload.rect.x.is_finite()
+        || !payload.rect.y.is_finite()
+        || !payload.rect.width.is_finite()
+        || !payload.rect.height.is_finite()
+        || payload.rect.width < 0.0
+        || payload.rect.height < 0.0
+    {
+        return Err("Browser geometry is invalid".to_string());
+    }
+    let surface_ref = BrowserSurfaceRef {
+        panel_id: payload.panel_id,
+        surface_id: payload.surface_id,
+        generation: payload.generation,
+    };
+    let webview = exact_surface(&state, &surface_ref)
+        .map_err(|code| format!("Browser surface is unavailable: {code:?}"))?;
+    let frame = BrowserGeometryFrame {
+        surface_id: surface_ref.surface_id.clone(),
+        generation: surface_ref.generation,
+        revision: payload.revision,
+        rect: payload.rect,
+        device_scale_factor: scale,
+        visible: payload.visible,
+    };
+    Ok((webview, surface_ref, frame))
+}
+
+fn physical_scalar(value: f64, scale: f64) -> i32 {
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    (value * scale)
+        .round()
+        .clamp(i32::MIN as f64, i32::MAX as f64) as i32
 }
 
 #[tauri::command]
@@ -1097,7 +1091,7 @@ pub(crate) async fn browser_set_resource_state(
         );
     }
     if payload.state != super::contract::BrowserResourceState::Visible {
-        let _ = webview.hide();
+        let _ = webview.run(|surface| surface.set_visible(false));
     }
     emit_browser_event(
         &caller,
@@ -1730,10 +1724,289 @@ fn abort_surface(state: &BrowserHostState, identity: &super::surface::SurfaceIde
     }
 }
 
+#[cfg(windows)]
+fn native_actor_for(
+    state: &BrowserHostState,
+    caller: &Webview,
+) -> Result<BrowserUiActorHandle, String> {
+    let mut actor = state
+        .actor
+        .lock()
+        .map_err(|_| "Browser UI actor state is unavailable".to_string())?;
+    if let Some(actor) = actor.as_ref() {
+        return Ok(actor.clone());
+    }
+    let hwnd = caller
+        .window()
+        .hwnd()
+        .map_err(|error| format!("Failed to resolve Keydex main window handle: {error}"))?;
+    let created = BrowserUiActorHandle::start(hwnd.0 as isize)?;
+    *actor = Some(created.clone());
+    Ok(created)
+}
+
+#[cfg(not(windows))]
+fn native_actor_for(
+    _state: &BrowserHostState,
+    _caller: &Webview,
+) -> Result<BrowserUiActorHandle, String> {
+    Err("Windowed WebView2 BrowserHost requires Windows".to_string())
+}
+
+#[cfg(windows)]
+fn attach_page_lifecycle_observers(
+    surface: &NativeBrowserSurface,
+    emitter: tauri::AppHandle,
+    state: BrowserHostState,
+    reference: BrowserSurfaceRef,
+) -> Result<(), String> {
+    use webview2_com::{
+        DocumentTitleChangedEventHandler, NavigationCompletedEventHandler,
+        NavigationStartingEventHandler,
+    };
+    use windows_061::{core::PWSTR, Win32::System::Com::CoTaskMemFree};
+
+    surface.run(move |surface_handle| unsafe {
+        let core = surface_handle.core();
+
+        let title_emitter = emitter.clone();
+        let title_state = state.clone();
+        let title_surface = reference.clone();
+        let mut title_token = 0_i64;
+        core.add_DocumentTitleChanged(
+            &DocumentTitleChangedEventHandler::create(Box::new(move |sender, _| {
+                let Some(sender) = sender else {
+                    return Ok(());
+                };
+                let mut value = PWSTR::null();
+                if sender.DocumentTitle(&mut value).is_ok() && !value.is_null() {
+                    let title = value.to_string().unwrap_or_default();
+                    CoTaskMemFree(Some(value.0.cast()));
+                    emit_browser_event(
+                        &title_emitter,
+                        &title_state,
+                        &title_surface,
+                        BrowserEvent::PageTitle(PageTitlePayload { title }),
+                    );
+                }
+                Ok(())
+            })),
+            &mut title_token,
+        )
+        .map_err(|error| format!("Failed to attach page title observer: {error}"))?;
+
+        let start_emitter = emitter.clone();
+        let start_state = state.clone();
+        let start_surface = reference.clone();
+        let mut start_token = 0_i64;
+        core.add_NavigationStarting(
+            &NavigationStartingEventHandler::create(Box::new(move |_, args| {
+                let Some(args) = args else {
+                    return Ok(());
+                };
+                let mut value = PWSTR::null();
+                if args.Uri(&mut value).is_err() || value.is_null() {
+                    return Ok(());
+                }
+                let url = value.to_string().unwrap_or_default();
+                CoTaskMemFree(Some(value.0.cast()));
+                let navigation_id = format!("native-{}", uuid::Uuid::new_v4().simple());
+                if !start_state
+                    .lifecycle
+                    .begin_navigation(&start_surface, navigation_id.clone())
+                    || !start_state
+                        .bridge
+                        .begin_navigation(&start_surface, navigation_id)
+                {
+                    return Ok(());
+                }
+                if let Some(selection_request_id) =
+                    start_state.inspector.abandon_selection(&start_surface)
+                {
+                    emit_browser_event(
+                        &start_emitter,
+                        &start_state,
+                        &start_surface,
+                        BrowserEvent::SelectionCancelled(SelectionCancelledPayload {
+                            selection_request_id,
+                            reason: "navigation".to_string(),
+                        }),
+                    );
+                }
+                emit_browser_event(
+                    &start_emitter,
+                    &start_state,
+                    &start_surface,
+                    BrowserEvent::NavigationStarted(NavigationPayload {
+                        url: url.clone(),
+                        is_main_frame: true,
+                    }),
+                );
+                emit_browser_event(
+                    &start_emitter,
+                    &start_state,
+                    &start_surface,
+                    BrowserEvent::NavigationCommitted(NavigationPayload {
+                        url: url.clone(),
+                        is_main_frame: true,
+                    }),
+                );
+                emit_browser_event(
+                    &start_emitter,
+                    &start_state,
+                    &start_surface,
+                    BrowserEvent::PageSource(PageSourcePayload { url }),
+                );
+                emit_browser_event(
+                    &start_emitter,
+                    &start_state,
+                    &start_surface,
+                    BrowserEvent::PageLoading(PageLoadingPayload { loading: true }),
+                );
+                Ok(())
+            })),
+            &mut start_token,
+        )
+        .map_err(|error| format!("Failed to attach page navigation-start observer: {error}"))?;
+
+        let completed_emitter = emitter;
+        let completed_state = state;
+        let completed_surface = reference;
+        let mut completed_token = 0_i64;
+        core.add_NavigationCompleted(
+            &NavigationCompletedEventHandler::create(Box::new(move |sender, _| {
+                let Some(sender) = sender else {
+                    return Ok(());
+                };
+                let mut value = PWSTR::null();
+                let url = if sender.Source(&mut value).is_ok() && !value.is_null() {
+                    let url = value
+                        .to_string()
+                        .unwrap_or_else(|_| "about:blank".to_string());
+                    CoTaskMemFree(Some(value.0.cast()));
+                    url
+                } else {
+                    "about:blank".to_string()
+                };
+                emit_browser_event(
+                    &completed_emitter,
+                    &completed_state,
+                    &completed_surface,
+                    BrowserEvent::NavigationCompleted(NavigationPayload {
+                        url,
+                        is_main_frame: true,
+                    }),
+                );
+                emit_browser_event(
+                    &completed_emitter,
+                    &completed_state,
+                    &completed_surface,
+                    BrowserEvent::PageLoading(PageLoadingPayload { loading: false }),
+                );
+                Ok(())
+            })),
+            &mut completed_token,
+        )
+        .map_err(|error| format!("Failed to attach page navigation observer: {error}"))?;
+        Ok(())
+    })
+}
+
+#[cfg(not(windows))]
+fn attach_page_lifecycle_observers(
+    _surface: &NativeBrowserSurface,
+    _emitter: tauri::AppHandle,
+    _state: BrowserHostState,
+    _reference: BrowserSurfaceRef,
+) -> Result<(), String> {
+    Err("Windowed WebView2 BrowserHost requires Windows".to_string())
+}
+
+fn emit_native_navigation_event(
+    emitter: &tauri::AppHandle,
+    state: &BrowserHostState,
+    surface: &BrowserSurfaceRef,
+    event: NativeNavigationEvent,
+) {
+    match event {
+        NativeNavigationEvent::Snapshot(snapshot) => {
+            let source = snapshot.source.clone();
+            if let Some(url) = source.as_ref() {
+                if parse_browser_url(url, true).is_ok() {
+                    emit_browser_event(
+                        emitter,
+                        state,
+                        surface,
+                        BrowserEvent::PageSource(PageSourcePayload { url: url.clone() }),
+                    );
+                }
+            }
+            if let Some(category) = snapshot.error_category {
+                emit_navigation_failed(
+                    emitter,
+                    state,
+                    surface,
+                    source.as_deref().unwrap_or("about:blank"),
+                    &category,
+                );
+            }
+            emit_browser_event(
+                emitter,
+                state,
+                surface,
+                BrowserEvent::PageHistory(PageHistoryPayload {
+                    can_go_back: snapshot.can_go_back,
+                    can_go_forward: snapshot.can_go_forward,
+                }),
+            );
+        }
+        NativeNavigationEvent::NewWindowRequested {
+            url,
+            user_initiated,
+        } => {
+            if user_initiated && parse_browser_url(&url, false).is_ok() {
+                emit_browser_event(
+                    emitter,
+                    state,
+                    surface,
+                    BrowserEvent::NewWindowRequested(NewWindowPayload {
+                        url,
+                        user_gesture: true,
+                        disposition: BrowserNewWindowDisposition::Tab,
+                    }),
+                );
+            }
+        }
+        NativeNavigationEvent::ExternalProtocolRequested {
+            url,
+            user_initiated,
+        } => {
+            if user_initiated && is_confirmable_external_protocol(&url) {
+                let scheme = url
+                    .parse::<Url>()
+                    .map(|parsed| parsed.scheme().to_string())
+                    .unwrap_or_default();
+                emit_browser_event(
+                    emitter,
+                    state,
+                    surface,
+                    BrowserEvent::ExternalProtocolRequested(ExternalProtocolPayload {
+                        scheme,
+                        target: url,
+                    }),
+                );
+            }
+        }
+        NativeNavigationEvent::CertificateError { url } => {
+            emit_navigation_failed(emitter, state, surface, &url, "tls_certificate");
+        }
+    }
+}
+
 fn exact_surface(
     state: &BrowserHostState,
     reference: &BrowserSurfaceRef,
-) -> Result<Webview<Wry>, BrowserCommandErrorCode> {
+) -> Result<NativeBrowserSurface, BrowserCommandErrorCode> {
     let surfaces = state
         .surfaces
         .lock()
@@ -1833,26 +2106,19 @@ fn emit_capture_failed<R: tauri::Runtime, E: Emitter<R>>(
     );
 }
 
-fn direct_webview2_capabilities() -> Vec<String> {
-    let capabilities = DIRECT_WEBVIEW2_REQUIRED_CAPABILITIES;
+fn composition_webview2_capabilities() -> Vec<String> {
     [
-        ("permission_requested", capabilities.permission_requested),
-        ("process_failed", capabilities.process_failed),
-        ("download_progress", capabilities.download_progress),
-        (
-            "file_chooser_observation",
-            capabilities.file_chooser_observation,
-        ),
-        ("find_in_page", capabilities.find_in_page),
-        (
-            "fixed_web_message_bridge",
-            capabilities.fixed_web_message_bridge,
-        ),
-        ("native_region_capture", capabilities.native_region_capture),
-        ("native_element_inspection", true),
+        "permission_requested",
+        "process_failed",
+        "download_progress",
+        "file_chooser_observation",
+        "find_in_page",
+        "fixed_web_message_bridge",
+        "native_region_capture",
+        "native_element_inspection",
     ]
     .into_iter()
-    .filter_map(|(name, enabled)| enabled.then(|| name.to_string()))
+    .map(str::to_string)
     .collect()
 }
 
@@ -2013,7 +2279,7 @@ mod tests {
         )
         .validate()
         .is_ok());
-        assert_eq!(direct_webview2_capabilities().len(), 7);
+        assert_eq!(composition_webview2_capabilities().len(), 8);
     }
 
     #[test]

@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { BrowserPanel } from "../src/renderer/features/browser/ui/BrowserPanel";
 
+const surface = { panelId: "panel-1", surfaceId: "surface-1", generation: 1 } as const;
+
 function renderPanel(overrides: Partial<React.ComponentProps<typeof BrowserPanel>> = {}) {
   const props: React.ComponentProps<typeof BrowserPanel> = {
     active: true,
@@ -12,11 +14,11 @@ function renderPanel(overrides: Partial<React.ComponentProps<typeof BrowserPanel
     loading: false,
     profileMode: "persistent",
     surfaceReady: true,
+    surface,
     title: "Example",
     zoomFactor: 1,
     onAddressChange: vi.fn(),
     onAddressSubmit: vi.fn(),
-    onBoundsChange: vi.fn(),
     onVisibilityChange: vi.fn(),
     onReload: vi.fn(),
     onStop: vi.fn(),
@@ -27,7 +29,7 @@ function renderPanel(overrides: Partial<React.ComponentProps<typeof BrowserPanel
 }
 
 describe("BrowserPanel chrome", () => {
-  it("re-sends unchanged placeholder bounds when the native surface becomes ready", () => {
+  it("mounts the geometry owner when the native surface becomes ready", () => {
     const callbacks: FrameRequestCallback[] = [];
     const requestFrame = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
       callbacks.push(callback);
@@ -46,20 +48,17 @@ describe("BrowserPanel chrome", () => {
       toJSON: () => ({}),
     } as DOMRect;
     const bounds = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(rect);
-    const onBoundsChange = vi.fn();
-    const view = renderPanel({ active: true, surfaceReady: false, onBoundsChange });
+    const view = renderPanel({ active: true, surface: null, surfaceReady: false });
 
     act(() => callbacks.shift()?.(0));
-    expect(onBoundsChange).toHaveBeenCalledTimes(1);
     view.rerender(
       <div data-theme="light">
-        <BrowserPanel {...view.props} active surfaceReady />
+        <BrowserPanel {...view.props} active surface={surface} surfaceReady />
       </div>,
     );
     act(() => callbacks.shift()?.(1));
 
-    expect(onBoundsChange).toHaveBeenCalledTimes(2);
-    expect(onBoundsChange).toHaveBeenLastCalledWith({ x: 120, y: 84, width: 640, height: 520 });
+    expect(document.querySelector("[data-browser-native-surface='placeholder']")).not.toBeNull();
     bounds.mockRestore();
     requestFrame.mockRestore();
     cancelFrame.mockRestore();

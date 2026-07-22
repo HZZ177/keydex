@@ -64,6 +64,7 @@ interface MenuState {
   context: MenuContext;
   items: AppContextMenuItem[] | null;
   left: number;
+  occludesNativeSurface: boolean;
   ready: boolean;
   top: number;
   x: number;
@@ -101,6 +102,7 @@ export function useOptionalAppContextMenu(): AppContextMenuController | null {
 }
 
 const MENU_MARGIN = 8;
+const BROWSER_NATIVE_SURFACE_SELECTOR = "[data-browser-native-surface='placeholder']";
 const LOCAL_CONTEXT_MENU_SELECTOR = "[data-app-context-menu='local']";
 const NATIVE_CONTEXT_MENU_SELECTOR = "[data-native-context-menu='true']";
 const WORKSPACE_DOCUMENT_CONTEXT_SELECTOR = "[data-workspace-document-context='true'][data-workspace-document-path]";
@@ -124,7 +126,7 @@ const TEXT_INPUT_TYPES = new Set([
 export function AppContextMenuProvider({ children }: PropsWithChildren) {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
-  useBrowserOcclusionToken(menu !== null, "menu");
+  useBrowserOcclusionToken(menu?.occludesNativeSurface === true, "menu");
 
   const closeMenu = useCallback(() => {
     setMenu(null);
@@ -141,6 +143,7 @@ export function AppContextMenuProvider({ children }: PropsWithChildren) {
       context: getMenuContext(targetElement),
       items: null,
       left: x,
+      occludesNativeSurface: false,
       ready: false,
       top: y,
       width: "default",
@@ -159,6 +162,7 @@ export function AppContextMenuProvider({ children }: PropsWithChildren) {
       context: { ...getMenuContext(targetElement), kind: "custom" },
       items: request.items,
       left: request.x,
+      occludesNativeSurface: false,
       ready: false,
       top: request.y,
       width: request.width ?? "default",
@@ -236,18 +240,25 @@ export function AppContextMenuProvider({ children }: PropsWithChildren) {
     const rect = element.getBoundingClientRect();
     const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
     const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
-    const maxLeft = Math.max(MENU_MARGIN, viewportWidth - rect.width - MENU_MARGIN);
-    const maxTop = Math.max(MENU_MARGIN, viewportHeight - rect.height - MENU_MARGIN);
-    const left = clamp(menu.x, MENU_MARGIN, maxLeft);
-    const top = clamp(menu.y, MENU_MARGIN, maxTop);
+    const placement = resolveContextMenuPlacement({
+      desiredLeft: menu.x,
+      desiredTop: menu.y,
+      exclusions: browserNativeSurfaceRects(),
+      height: rect.height,
+      margin: MENU_MARGIN,
+      viewportHeight,
+      viewportWidth,
+      width: rect.width,
+    });
 
     setMenu((current) =>
       current
         ? {
             ...current,
-            left: Math.round(left),
+            left: placement.left,
+            occludesNativeSurface: placement.occludesNativeSurface,
             ready: true,
-            top: Math.round(top),
+            top: placement.top,
           }
         : current,
     );
@@ -326,6 +337,7 @@ function AppContextMenu({ menu, menuRef, onClose }: AppContextMenuProps) {
       data-context-kind={menu.context.kind}
       data-context-mutable={menu.context.mutable ? "true" : "false"}
       data-context-selection={menu.context.selectionText ? "true" : "false"}
+      data-native-surface-occlusion={menu.occludesNativeSurface ? "true" : "false"}
       data-ready={menu.ready ? "true" : "false"}
       data-width={menu.width}
       role="menu"
@@ -651,7 +663,11 @@ function startWorkspaceFileAnnotation(context: WorkspaceEntryContext) {
   });
 }
 
-function refreshPage() {
+async function refreshPage() {
+  if ("__TAURI_INTERNALS__" in window || "__TAURI__" in window) {
+    await invokeDesktopCommand("reload_main_webview", {});
+    return;
+  }
   window.location.reload();
 }
 
@@ -971,4 +987,79 @@ function fileName(path: string): string {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
+}
+
+interface ContextMenuRect {
+  readonly bottom: number;
+  readonly left: number;
+  readonly right: number;
+  readonly top: number;
+}
+
+export function resolveContextMenuPlacement(input: {
+  readonly desiredLeft: number;
+  readonly desiredTop: number;
+  readonly exclusions: readonly ContextMenuRect[];
+  readonly height: number;
+  readonly margin: number;
+  readonly viewportHeight: number;
+  readonly viewportWidth: number;
+  readonly width: number;
+}): { readonly left: number; readonly top: number; readonly occludesNativeSurface: boolean } {
+  const maxLeft = Math.max(input.margin, input.viewportWidth - input.width - input.margin);
+  const maxTop = Math.max(input.margin, input.viewportHeight - input.height - input.margin);
+  const initial = {
+    left: clamp(input.desiredLeft, input.margin, maxLeft),
+    top: clamp(input.desiredTop, input.margin, maxTop),
+  };
+  if (!intersectsAny(menuRect(initial.left, initial.top, input.width, input.height), input.exclusions)) {
+    return { left: Math.round(initial.left), top: Math.round(initial.top), occludesNativeSurface: false };
+  }
+
+  const candidates = input.exclusions.flatMap((exclusion) => [
+    { left: exclusion.left - input.width - input.margin, top: initial.top },
+    { left: exclusion.right + input.margin, top: initial.top },
+    { left: initial.left, top: exclusion.top - input.height - input.margin },
+    { left: initial.left, top: exclusion.bottom + input.margin },
+  ]).map((candidate) => ({
+    left: clamp(candidate.left, input.margin, maxLeft),
+    top: clamp(candidate.top, input.margin, maxTop),
+  }));
+  const available = candidates.filter((candidate) => (
+    !intersectsAny(menuRect(candidate.left, candidate.top, input.width, input.height), input.exclusions)
+  ));
+  const resolved = available.sort((left, right) => (
+    placementDistance(left, initial) - placementDistance(right, initial)
+  ))[0];
+  if (!resolved) {
+    return { left: Math.round(initial.left), top: Math.round(initial.top), occludesNativeSurface: true };
+  }
+  return { left: Math.round(resolved.left), top: Math.round(resolved.top), occludesNativeSurface: false };
+}
+
+function browserNativeSurfaceRects(): ContextMenuRect[] {
+  return Array.from(document.querySelectorAll<HTMLElement>(BROWSER_NATIVE_SURFACE_SELECTOR))
+    .map((element) => element.getBoundingClientRect())
+    .filter((rect) => rect.width > 0 && rect.height > 0)
+    .map((rect) => ({ bottom: rect.bottom, left: rect.left, right: rect.right, top: rect.top }));
+}
+
+function menuRect(left: number, top: number, width: number, height: number): ContextMenuRect {
+  return { bottom: top + height, left, right: left + width, top };
+}
+
+function intersectsAny(rect: ContextMenuRect, exclusions: readonly ContextMenuRect[]): boolean {
+  return exclusions.some((exclusion) => (
+    rect.left < exclusion.right
+    && rect.right > exclusion.left
+    && rect.top < exclusion.bottom
+    && rect.bottom > exclusion.top
+  ));
+}
+
+function placementDistance(
+  left: { readonly left: number; readonly top: number },
+  right: { readonly left: number; readonly top: number },
+): number {
+  return Math.abs(left.left - right.left) + Math.abs(left.top - right.top);
 }

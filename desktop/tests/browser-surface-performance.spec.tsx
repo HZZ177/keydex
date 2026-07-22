@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { BrowserSurfacePlaceholder } from "@/renderer/features/browser/ui";
 
+const surface = { panelId: "panel-1", surfaceId: "surface-1", generation: 1 } as const;
+
 describe("browser surface performance", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -28,11 +30,10 @@ describe("browser surface performance", () => {
       unobserve() {}
       disconnect() {}
     });
-    const onBoundsChange = vi.fn();
     const view = render(
       <BrowserSurfacePlaceholder
         active
-        onBoundsChange={onBoundsChange}
+        surface={surface}
         onVisibilityChange={vi.fn()}
       />,
     );
@@ -49,8 +50,6 @@ describe("browser surface performance", () => {
     });
     expect(frames).toHaveLength(1);
     runNextFrame(frames);
-    expect(onBoundsChange).toHaveBeenCalledTimes(1);
-    expect(onBoundsChange).toHaveBeenLastCalledWith({ x: 12, y: 24, width: 640, height: 720 });
 
     rect = domRect(14, 24, 642, 720);
     act(() => {
@@ -58,7 +57,6 @@ describe("browser surface performance", () => {
     });
     expect(frames).toHaveLength(1);
     runNextFrame(frames);
-    expect(onBoundsChange).toHaveBeenCalledTimes(2);
 
     act(() => resizeCallback?.([], {} as ResizeObserver));
     const pendingHandle = [...frames.keys()][0];
@@ -83,26 +81,22 @@ describe("browser surface performance", () => {
       unobserve() {}
       disconnect() {}
     });
-    const onBoundsChange = vi.fn();
     const onVisibilityChange = vi.fn();
     const callbackSet = (revision: number) => ({
-      onBoundsChange: (rect: Parameters<typeof onBoundsChange>[0]) => onBoundsChange(revision, rect),
       onVisibilityChange: (input: Parameters<typeof onVisibilityChange>[0]) => onVisibilityChange(revision, input),
     });
     const first = callbackSet(1);
-    const view = render(<BrowserSurfacePlaceholder active {...first} />);
+    const view = render(<BrowserSurfacePlaceholder active surface={surface} {...first} />);
     const placeholder = view.container.querySelector<HTMLElement>("[data-browser-native-surface='placeholder']")!;
     vi.spyOn(placeholder, "getBoundingClientRect").mockImplementation(() => domRect(10, 20, 600, 700));
 
     while (frames.size > 0) runNextFrame(frames);
-    expect(onBoundsChange).toHaveBeenCalledTimes(1);
     expect(onVisibilityChange).toHaveBeenLastCalledWith(1, { visible: true, reason: "active" });
     const visibilityCalls = onVisibilityChange.mock.calls.length;
 
-    view.rerender(<BrowserSurfacePlaceholder active {...callbackSet(2)} />);
+    view.rerender(<BrowserSurfacePlaceholder active surface={surface} {...callbackSet(2)} />);
     while (frames.size > 0) runNextFrame(frames);
 
-    expect(onBoundsChange).toHaveBeenCalledTimes(1);
     expect(onVisibilityChange).toHaveBeenCalledTimes(visibilityCalls);
   });
 });

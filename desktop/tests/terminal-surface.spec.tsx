@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -10,10 +13,26 @@ import {
   type TerminalXtermHandle,
 } from "@/renderer/features/terminal/terminalXtermRegistry";
 import { createTerminalStore } from "@/renderer/features/terminal/terminalStore";
+import { AppContextMenuProvider } from "@/renderer/providers/AppContextMenuProvider";
 import { NotificationProvider } from "@/renderer/providers/NotificationProvider";
 import { TerminalSessionScopeProvider } from "@/renderer/providers/TerminalSessionScopeProvider";
 
 describe("TerminalSurface and TerminalXtermRegistry", () => {
+  it("insets the xterm host so the fit addon reserves bottom space without exposing its viewport background", () => {
+    const css = readFileSync(
+      resolve(process.cwd(), "src/renderer/features/terminal/TerminalSurface.module.css"),
+      "utf8",
+    );
+    expect(css).not.toMatch(/\.host\s*\{[^}]*padding:/s);
+    expect(css).not.toMatch(/\.host :global\(\.xterm\)\s*\{[^}]*padding:/s);
+    expect(css).toMatch(/\.host\s*\{[^}]*position:\s*absolute;[^}]*inset:\s*8px 10px 18px;/s);
+    expect(css).toMatch(/--terminal-surface-background:\s*#ffffff;/);
+    expect(css).toMatch(/html\[data-theme="dark"\][^}]*\.surface\s*\{[^}]*#111318;/s);
+    expect(css).toMatch(
+      /\.host :global\(\.xterm \.xterm-viewport\)\s*\{[^}]*background-color:\s*var\(--terminal-surface-background\);/s,
+    );
+  });
+
   it("uses readable ANSI colors on the light terminal surface", () => {
     const theme = terminalTheme("light");
     expect(theme.background).toBe("#ffffff");
@@ -150,13 +169,15 @@ describe("TerminalSurface and TerminalXtermRegistry", () => {
     };
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: clipboard });
     render(
-      <NotificationProvider>
-        <TerminalSessionScopeProvider>
-          <TerminalProvider runtime={fakeRuntime(snapshot, vi.fn())} store={store}>
-            <TerminalSurface snapshot={snapshot} active={false} visible={true} registry={registry} />
-          </TerminalProvider>
-        </TerminalSessionScopeProvider>
-      </NotificationProvider>,
+      <AppContextMenuProvider>
+        <NotificationProvider>
+          <TerminalSessionScopeProvider>
+            <TerminalProvider runtime={fakeRuntime(snapshot, vi.fn())} store={store}>
+              <TerminalSurface snapshot={snapshot} active={false} visible={true} registry={registry} />
+            </TerminalProvider>
+          </TerminalSessionScopeProvider>
+        </NotificationProvider>
+      </AppContextMenuProvider>,
     );
     const surface = await screen.findByLabelText(`终端 ${snapshot.title}`);
     expect(document.querySelector("img")).toBeNull();
@@ -169,10 +190,22 @@ describe("TerminalSurface and TerminalXtermRegistry", () => {
     expect(handle.searchAddon.findNext).toHaveBeenCalled();
     expect(handle.searchAddon.findPrevious).toHaveBeenCalled();
 
-    fireEvent.keyDown(surface, { key: "c", ctrlKey: true, shiftKey: true });
+    fireEvent.keyDown(surface, { key: "c", ctrlKey: true });
     await waitFor(() => expect(clipboard.writeText).toHaveBeenCalledWith("selected text"));
-    fireEvent.keyDown(surface, { key: "v", ctrlKey: true, shiftKey: true });
+    fireEvent.keyDown(surface, { key: "v", ctrlKey: true });
     await waitFor(() => expect(handle.terminal.paste).toHaveBeenCalledWith("pasted 中文"));
+
+    fireEvent.contextMenu(surface, { clientX: 12, clientY: 18 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "复制" }));
+    await waitFor(() => expect(clipboard.writeText).toHaveBeenCalledTimes(2));
+
+    fireEvent.contextMenu(surface, { clientX: 12, clientY: 18 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "粘贴" }));
+    await waitFor(() => expect(handle.terminal.paste).toHaveBeenCalledTimes(2));
+
+    fireEvent.contextMenu(surface, { clientX: 12, clientY: 18 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "全选" }));
+    expect(handle.terminal.selectAll).toHaveBeenCalledTimes(1);
 
     expect(activateLink).not.toBeNull();
     (activateLink as unknown as (uri: string, event: MouseEvent) => void)(
@@ -221,6 +254,7 @@ function fakeHandle(terminalId: string): TerminalXtermHandle & { listenerDisposa
     hasSelection: vi.fn(() => false),
     getSelection: vi.fn(() => ""),
     paste: vi.fn(),
+    selectAll: vi.fn(),
     focus: vi.fn(),
     refresh: vi.fn(),
     dispose: vi.fn(),

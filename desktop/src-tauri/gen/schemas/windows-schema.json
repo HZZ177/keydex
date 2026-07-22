@@ -387,12 +387,6 @@
       "description": "Permission identifier",
       "oneOf": [
         {
-          "description": "Allows a managed browser webview to submit authenticated structured-annotation bridge messages.",
-          "type": "string",
-          "const": "allow-browser-page-bridge-message",
-          "markdownDescription": "Allows a managed browser webview to submit authenticated structured-annotation bridge messages."
-        },
-        {
           "description": "Allows the trusted main webview to use the existing Keydex application commands.",
           "type": "string",
           "const": "allow-main-application-commands",

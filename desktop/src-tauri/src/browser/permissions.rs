@@ -6,12 +6,14 @@ use std::{
 };
 
 use chrono::Utc;
-use tauri::{Webview, Wry};
 use uuid::Uuid;
 
-use super::contract::{
-    BrowserEvent, BrowserPermissionDecision, BrowserSurfaceRef, PermissionExpiredPayload,
-    PermissionRequestedPayload, RespondPermissionInput,
+use super::{
+    contract::{
+        BrowserEvent, BrowserPermissionDecision, BrowserSurfaceRef, PermissionExpiredPayload,
+        PermissionRequestedPayload, RespondPermissionInput,
+    },
+    ui_actor::NativeBrowserSurface,
 };
 
 const PERMISSION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -110,7 +112,7 @@ impl PermissionBroker {
     #[cfg(windows)]
     pub(crate) fn respond(
         &self,
-        webview: &Webview<Wry>,
+        webview: &NativeBrowserSurface,
         input: &RespondPermissionInput,
     ) -> Result<(), String> {
         let request_id = {
@@ -137,7 +139,7 @@ impl PermissionBroker {
     #[cfg(not(windows))]
     pub(crate) fn respond(
         &self,
-        _webview: &Webview<Wry>,
+        _webview: &NativeBrowserSurface,
         _input: &RespondPermissionInput,
     ) -> Result<(), String> {
         Err("Website permissions are only available on Windows".to_string())
@@ -145,7 +147,7 @@ impl PermissionBroker {
 
     pub(crate) fn cancel_surface(
         &self,
-        webview: Option<&Webview<Wry>>,
+        webview: Option<&NativeBrowserSurface>,
         surface: &BrowserSurfaceRef,
     ) {
         let Ok(mut inner) = self.inner.lock() else {
@@ -169,23 +171,21 @@ impl PermissionBroker {
 
 #[cfg(windows)]
 pub(crate) fn attach_permission_broker(
-    webview: &Webview<Wry>,
+    webview: &NativeBrowserSurface,
     broker: PermissionBroker,
     surface: BrowserSurfaceRef,
     emit: Arc<dyn Fn(BrowserEvent) + Send + Sync>,
-) -> tauri::Result<()> {
+) -> Result<(), String> {
     use webview2_com::Microsoft::Web::WebView2::Win32::{
         COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_STATE_DENY,
     };
     use webview2_com::PermissionRequestedEventHandler;
 
     let timeout_webview = webview.clone();
-    webview.with_webview(move |platform| unsafe {
-        let Ok(core) = platform.controller().CoreWebView2() else {
-            return;
-        };
+    webview.run(move |surface_handle| unsafe {
+        let core = surface_handle.core();
         let mut token = 0_i64;
-        let _ = core.add_PermissionRequested(
+        core.add_PermissionRequested(
             &PermissionRequestedEventHandler::create(Box::new(move |_, args| {
                 let Some(args) = args else {
                     return Ok(());
@@ -259,23 +259,25 @@ pub(crate) fn attach_permission_broker(
                 Ok(())
             })),
             &mut token,
-        );
+        )
+        .map_err(|error| format!("Failed to attach browser permission broker: {error}"))?;
+        Ok(())
     })
 }
 
 #[cfg(not(windows))]
 pub(crate) fn attach_permission_broker(
-    _webview: &Webview<Wry>,
+    _webview: &NativeBrowserSurface,
     _broker: PermissionBroker,
     _surface: BrowserSurfaceRef,
     _emit: Arc<dyn Fn(BrowserEvent) + Send + Sync>,
-) -> tauri::Result<()> {
+) -> Result<(), String> {
     Ok(())
 }
 
 #[cfg(windows)]
 fn apply_permission_decision(
-    webview: &Webview<Wry>,
+    webview: &NativeBrowserSurface,
     request_id: String,
     decision: BrowserPermissionDecision,
 ) -> Result<(), String> {
@@ -283,18 +285,24 @@ fn apply_permission_decision(
         COREWEBVIEW2_PERMISSION_STATE_ALLOW, COREWEBVIEW2_PERMISSION_STATE_DENY,
     };
     webview
-        .with_webview(move |_| unsafe {
+        .run(move |_| unsafe {
             let handle =
                 NATIVE_PERMISSION_HANDLES.with(|handles| handles.borrow_mut().remove(&request_id));
             let Some(handle) = handle else {
-                return;
+                return Err("Native website permission request is unavailable".to_string());
             };
             let state = match decision {
                 BrowserPermissionDecision::AllowOnce => COREWEBVIEW2_PERMISSION_STATE_ALLOW,
                 BrowserPermissionDecision::Deny => COREWEBVIEW2_PERMISSION_STATE_DENY,
             };
-            let _ = handle.args.SetState(state);
-            let _ = handle.deferral.Complete();
+            handle
+                .args
+                .SetState(state)
+                .map_err(|error| format!("Failed to set website permission decision: {error}"))?;
+            handle.deferral.Complete().map_err(|error| {
+                format!("Failed to complete website permission request: {error}")
+            })?;
+            Ok(())
         })
         .map_err(|error| format!("Failed to resolve website permission: {error}"))
 }

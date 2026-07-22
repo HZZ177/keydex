@@ -3,13 +3,12 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use tauri::{Webview, Wry};
-
 use chrono::Utc;
 
 use super::{
     config::BROWSER_HOST_SCHEMA_VERSION,
     contract::{BrowserEvent, BrowserEventEnvelope, BrowserProfileMode, BrowserSurfaceRef},
+    ui_actor::NativeBrowserSurface,
 };
 
 #[derive(Debug, Clone)]
@@ -153,9 +152,9 @@ pub(crate) enum NativeNavigationEvent {
 
 #[cfg(windows)]
 pub(crate) fn attach_windows_navigation_observers(
-    webview: &Webview<Wry>,
+    webview: &NativeBrowserSurface,
     handler: Arc<dyn Fn(NativeNavigationEvent) + Send + Sync>,
-) -> tauri::Result<()> {
+) -> Result<(), String> {
     use webview2_com::Microsoft::Web::WebView2::Win32::{
         ICoreWebView2_14, ICoreWebView2_18, COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_CANCEL,
     };
@@ -166,13 +165,11 @@ pub(crate) fn attach_windows_navigation_observers(
     };
     use windows_061::core::Interface;
 
-    webview.with_webview(move |platform| unsafe {
-        let Ok(core) = platform.controller().CoreWebView2() else {
-            return;
-        };
+    webview.run(move |surface| unsafe {
+        let core = surface.core();
         let history_handler = handler.clone();
         let mut history_token = 0_i64;
-        let _ = core.add_HistoryChanged(
+        core.add_HistoryChanged(
             &HistoryChangedEventHandler::create(Box::new(move |sender, _| {
                 if let Some(sender) = sender {
                     history_handler(NativeNavigationEvent::Snapshot(
@@ -182,11 +179,12 @@ pub(crate) fn attach_windows_navigation_observers(
                 Ok(())
             })),
             &mut history_token,
-        );
+        )
+        .map_err(|error| format!("Failed to attach browser history observer: {error}"))?;
 
         let source_handler = handler.clone();
         let mut source_token = 0_i64;
-        let _ = core.add_SourceChanged(
+        core.add_SourceChanged(
             &SourceChangedEventHandler::create(Box::new(move |sender, _| {
                 if let Some(sender) = sender {
                     source_handler(NativeNavigationEvent::Snapshot(
@@ -196,11 +194,12 @@ pub(crate) fn attach_windows_navigation_observers(
                 Ok(())
             })),
             &mut source_token,
-        );
+        )
+        .map_err(|error| format!("Failed to attach browser source observer: {error}"))?;
 
         let completed_handler = handler.clone();
         let mut completed_token = 0_i64;
-        let _ = core.add_NavigationCompleted(
+        core.add_NavigationCompleted(
             &NavigationCompletedEventHandler::create(Box::new(move |sender, args| {
                 if let (Some(sender), Some(args)) = (sender, args) {
                     let mut success = windows_061::core::BOOL::default();
@@ -222,11 +221,12 @@ pub(crate) fn attach_windows_navigation_observers(
                 Ok(())
             })),
             &mut completed_token,
-        );
+        )
+        .map_err(|error| format!("Failed to attach browser navigation observer: {error}"))?;
 
         let popup_handler = handler.clone();
         let mut popup_token = 0_i64;
-        let _ = core.add_NewWindowRequested(
+        core.add_NewWindowRequested(
             &NewWindowRequestedEventHandler::create(Box::new(move |_, args| {
                 if let Some(args) = args {
                     let _ = args.SetHandled(true);
@@ -242,7 +242,8 @@ pub(crate) fn attach_windows_navigation_observers(
                 Ok(())
             })),
             &mut popup_token,
-        );
+        )
+        .map_err(|error| format!("Failed to attach browser popup observer: {error}"))?;
 
         if let Ok(core14) = core.cast::<ICoreWebView2_14>() {
             let certificate_handler = handler.clone();
@@ -282,6 +283,7 @@ pub(crate) fn attach_windows_navigation_observers(
                 &mut external_token,
             );
         }
+        Ok(())
     })
 }
 
@@ -352,9 +354,9 @@ pub(crate) fn is_confirmable_external_protocol(value: &str) -> bool {
 
 #[cfg(not(windows))]
 pub(crate) fn attach_windows_navigation_observers(
-    _webview: &Webview<Wry>,
+    _webview: &NativeBrowserSurface,
     _handler: Arc<dyn Fn(NativeNavigationEvent) + Send + Sync>,
-) -> tauri::Result<()> {
+) -> Result<(), String> {
     Ok(())
 }
 

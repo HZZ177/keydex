@@ -1,5 +1,6 @@
 export * from "./BrowserOcclusionCoordinator";
 export * from "./BrowserHostClient";
+export * from "./BrowserGeometryCoordinator";
 export * from "./BrowserNavigationController";
 export * from "./BrowserPolicyCoordinator";
 export * from "./BrowserPanelRuntime";
