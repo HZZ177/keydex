@@ -123,3 +123,39 @@ def test_local_html_preview_rejects_files_outside_the_registered_scope(tmp_path)
 
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "local_preview_outside_scope"
+
+
+def test_local_html_content_preview_serves_executable_content_from_an_isolated_url(
+    tmp_path,
+) -> None:
+    html = (
+        "<main>HTML 内容预览</main>"
+        "<script>document.body.dataset.ready = 'true'</script>"
+    )
+
+    with _client(tmp_path) as client:
+        registered = client.post(
+            "/api/local-preview/html/content/register",
+            json={"content": html},
+        )
+        assert registered.status_code == 200
+        preview = client.get(registered.json()["url"])
+
+    assert preview.status_code == 200
+    assert preview.headers["content-type"].startswith("text/html")
+    assert preview.headers["cache-control"] == "no-store"
+    assert preview.headers["referrer-policy"] == "no-referrer"
+    assert preview.headers["x-content-type-options"] == "nosniff"
+    assert html in preview.text
+    assert "data-keydex-preview-viewport-bridge" in preview.text
+
+
+def test_local_html_content_preview_rejects_oversized_content(tmp_path) -> None:
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/api/local-preview/html/content/register",
+            json={"content": "界" * (512 * 1024)},
+        )
+
+    assert response.status_code == 413
+    assert response.json()["detail"]["code"] == "local_preview_html_content_too_large"

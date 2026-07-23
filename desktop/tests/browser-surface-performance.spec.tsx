@@ -1,6 +1,7 @@
 import { act, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { browserGeometryCoordinator } from "@/renderer/features/browser/runtime";
 import { BrowserSurfacePlaceholder } from "@/renderer/features/browser/ui";
 
 const surface = { panelId: "panel-1", surfaceId: "surface-1", generation: 1 } as const;
@@ -34,7 +35,6 @@ describe("browser surface performance", () => {
       <BrowserSurfacePlaceholder
         active
         surface={surface}
-        onVisibilityChange={vi.fn()}
       />,
     );
     const placeholder = view.container.querySelector<HTMLElement>("[data-browser-native-surface='placeholder']")!;
@@ -65,7 +65,7 @@ describe("browser surface performance", () => {
     expect(frames).toHaveLength(0);
   });
 
-  it("does not resend bounds or visibility when parent callbacks change identity", () => {
+  it("does not resend native visibility when the parent rerenders with unchanged state", () => {
     const frames = new Map<number, FrameRequestCallback>();
     let nextFrame = 0;
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
@@ -81,23 +81,53 @@ describe("browser surface performance", () => {
       unobserve() {}
       disconnect() {}
     });
-    const onVisibilityChange = vi.fn();
-    const callbackSet = (revision: number) => ({
-      onVisibilityChange: (input: Parameters<typeof onVisibilityChange>[0]) => onVisibilityChange(revision, input),
-    });
-    const first = callbackSet(1);
-    const view = render(<BrowserSurfacePlaceholder active surface={surface} {...first} />);
+    const setVisibility = vi.spyOn(browserGeometryCoordinator, "setVisibility");
+    const view = render(<BrowserSurfacePlaceholder active surface={surface} />);
     const placeholder = view.container.querySelector<HTMLElement>("[data-browser-native-surface='placeholder']")!;
     vi.spyOn(placeholder, "getBoundingClientRect").mockImplementation(() => domRect(10, 20, 600, 700));
 
     while (frames.size > 0) runNextFrame(frames);
-    expect(onVisibilityChange).toHaveBeenLastCalledWith(1, { visible: true, reason: "active" });
-    const visibilityCalls = onVisibilityChange.mock.calls.length;
+    expect(setVisibility).toHaveBeenLastCalledWith(surface, true);
+    const visibilityCalls = setVisibility.mock.calls.length;
 
-    view.rerender(<BrowserSurfacePlaceholder active surface={surface} {...callbackSet(2)} />);
+    view.rerender(<BrowserSurfacePlaceholder active surface={surface} />);
     while (frames.size > 0) runNextFrame(frames);
 
-    expect(onVisibilityChange).toHaveBeenCalledTimes(visibilityCalls);
+    expect(setVisibility).toHaveBeenCalledTimes(visibilityCalls);
+  });
+
+  it("parks an inactive warm surface without dispatching a zero-sized hidden geometry frame", () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 0;
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      const handle = ++nextFrame;
+      frames.set(handle, callback);
+      return handle;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation((handle) => {
+      frames.delete(handle);
+    });
+    vi.stubGlobal("ResizeObserver", class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    const setVisibility = vi.spyOn(browserGeometryCoordinator, "setVisibility");
+    const markInactive = vi.spyOn(browserGeometryCoordinator, "markInactive");
+    const view = render(<BrowserSurfacePlaceholder active surface={surface} />);
+    const placeholder = view.container.querySelector<HTMLElement>("[data-browser-native-surface='placeholder']")!;
+    let rect = domRect(10, 20, 600, 700);
+    vi.spyOn(placeholder, "getBoundingClientRect").mockImplementation(() => rect);
+    while (frames.size > 0) runNextFrame(frames);
+
+    setVisibility.mockClear();
+    markInactive.mockClear();
+    rect = domRect(0, 0, 0, 0);
+    view.rerender(<BrowserSurfacePlaceholder active={false} surface={surface} />);
+    while (frames.size > 0) runNextFrame(frames);
+
+    expect(markInactive).toHaveBeenCalledWith(surface);
+    expect(setVisibility).not.toHaveBeenCalledWith(surface, false);
   });
 });
 

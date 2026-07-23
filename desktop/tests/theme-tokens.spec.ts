@@ -53,6 +53,32 @@ describe("theme tokens", () => {
     expect(css).toContain("#d97706");
   });
 
+  it("uses a restrained warm canvas for large light surfaces while preserving white elevation", () => {
+    const css = readFileSync(resolve(themeDir, "default-color-scheme.css"), "utf8");
+    const light = css.match(/:root,\s*:root\[data-theme="light"\]\s*\{([\s\S]*?)\n\}/u)?.[1] ?? "";
+    const terminalCss = readFileSync(
+      resolve(rendererDir, "features/terminal/TerminalSurface.module.css"),
+      "utf8",
+    );
+    const terminalRegistry = readFileSync(
+      resolve(rendererDir, "features/terminal/terminalXtermRegistry.ts"),
+      "utf8",
+    );
+    const browserVisualContract = readFileSync(
+      resolve(rendererDir, "features/browser/visualContract.ts"),
+      "utf8",
+    );
+
+    expect(light).toContain("--shell-bg: #fffefc");
+    expect(light).toContain("--surface-bg: #fffefc");
+    expect(light).toContain("--sidebar-bg: #f7f6f3");
+    expect(light).toContain("--color-bg-elevated: var(--color-bg-1)");
+    expect(light).toContain("--composer-bg: #ffffff");
+    expect(terminalCss).toContain("--terminal-surface-background: #fffefc");
+    expect(terminalRegistry).toContain('background: "#fffefc"');
+    expect(browserVisualContract).toContain('theme === "dark" ? "#282a36" : "#fffefc"');
+  });
+
   it("defines the complete Diff design-token graph in both themes", () => {
     const css = readFileSync(resolve(themeDir, "default-color-scheme.css"), "utf8");
     const light = css.match(/:root,\s*:root\[data-theme="light"\]\s*\{([\s\S]*?)\n\}/u)?.[1] ?? "";

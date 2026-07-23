@@ -26,7 +26,7 @@ describe("TerminalSurface and TerminalXtermRegistry", () => {
     expect(css).not.toMatch(/\.host\s*\{[^}]*padding:/s);
     expect(css).not.toMatch(/\.host :global\(\.xterm\)\s*\{[^}]*padding:/s);
     expect(css).toMatch(/\.host\s*\{[^}]*position:\s*absolute;[^}]*inset:\s*8px 10px 18px;/s);
-    expect(css).toMatch(/--terminal-surface-background:\s*#ffffff;/);
+    expect(css).toMatch(/--terminal-surface-background:\s*#fffefc;/);
     expect(css).toMatch(/html\[data-theme="dark"\][^}]*\.surface\s*\{[^}]*#111318;/s);
     expect(css).toMatch(
       /\.host :global\(\.xterm \.xterm-viewport\)\s*\{[^}]*background-color:\s*var\(--terminal-surface-background\);/s,
@@ -35,7 +35,7 @@ describe("TerminalSurface and TerminalXtermRegistry", () => {
 
   it("uses readable ANSI colors on the light terminal surface", () => {
     const theme = terminalTheme("light");
-    expect(theme.background).toBe("#ffffff");
+    expect(theme.background).toBe("#fffefc");
     expect(theme.yellow).toBe("#7d4e00");
     expect(theme.brightYellow).toBe("#8a5a00");
     expect(theme.white).toBe("#57606a");

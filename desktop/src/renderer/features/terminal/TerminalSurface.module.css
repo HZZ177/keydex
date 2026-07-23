@@ -9,7 +9,7 @@
 }
 
 .surface {
-  --terminal-surface-background: #ffffff;
+  --terminal-surface-background: #fffefc;
 
   position: absolute;
   inset: 0;

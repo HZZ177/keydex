@@ -13,7 +13,10 @@ import {
   rightSidebarDefinitionRegistry,
 } from "@/renderer/components/layout/rightSidebarRegistry";
 import type { BrowserEventEnvelope } from "@/renderer/features/browser/domain";
-import { BrowserPanelRuntimeController } from "@/renderer/features/browser/runtime/BrowserPanelRuntime";
+import {
+  browserRuntimePanelId,
+  BrowserPanelRuntimeController,
+} from "@/renderer/features/browser/runtime/BrowserPanelRuntime";
 import { BROWSER_INTERNAL_BLANK_URL } from "@/renderer/features/browser/config";
 import { createBrowserRuntimeStore } from "@/renderer/features/browser/state";
 
@@ -42,6 +45,14 @@ describe("browser right-sidebar definition", () => {
     expect(browserAnnotationComposerScopeKey("workspace:workspace-a")).toBe("new-workspace:workspace-a");
     expect(browserAnnotationComposerScopeKey("global")).toBe("new-chat");
     expect(browserAnnotationComposerScopeKey("workspace:")).toBeNull();
+  });
+
+  it("isolates native browser resources that reuse the same panel id in different session scopes", () => {
+    const first = browserRuntimePanelId("session:session-a", "right-sidebar:browser:1");
+    const second = browserRuntimePanelId("session:session-b", "right-sidebar:browser:1");
+
+    expect(first).not.toBe(second);
+    expect(first).toBe(browserRuntimePanelId("session:session-a", "right-sidebar:browser:1"));
   });
 
   it("registers the browser only when the product flag is enabled", () => {
@@ -137,7 +148,7 @@ describe("browser right-sidebar definition", () => {
 });
 
 describe("BrowserPanelRuntimeController", () => {
-  it("creates only an activated panel, warms it on task switch, and destroys it on disposal", async () => {
+  it("warms a deactivated panel, reuses its surface on return, and destroys it only on explicit disposal", async () => {
     let subscriber: ((event: BrowserEventEnvelope) => void) | null = null;
     const send = vi.fn().mockResolvedValue({ ok: true, requestId: "request" });
     const client = {
@@ -165,25 +176,96 @@ describe("BrowserPanelRuntimeController", () => {
       event(panel.id, generation, "surface-1"),
     );
     controller.deactivate(panel.id, generation);
-    await vi.waitFor(() => expect(send).toHaveBeenCalledWith("browser_set_resource_state", {
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith("browser_set_resource_state", expect.objectContaining({
       panelId: panel.id,
       surfaceId: "surface-1",
       generation,
       state: "warm",
-      reason: "panel_deactivated",
-    }));
+    })));
     expect(send).toHaveBeenCalledWith("browser_set_visibility", expect.objectContaining({
       panelId: panel.id,
       visible: false,
       reason: "inactive_tab",
     }));
     expect(send).not.toHaveBeenCalledWith("browser_destroy_surface", expect.anything());
-    controller.dispose(panel.id, generation);
+
+    send.mockClear();
+    expect(controller.activate(panel, "dark")).toBe(generation);
+    expect(controller.store.getState().surfaces[panel.id]?.resourceState).toBe("visible");
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith("browser_set_resource_state", expect.objectContaining({
+      panelId: panel.id,
+      surfaceId: "surface-1",
+      generation,
+      state: "visible",
+    })));
+    expect(send).not.toHaveBeenCalledWith("browser_create_surface", expect.anything());
+    expect(send).not.toHaveBeenCalledWith("browser_destroy_surface", expect.anything());
+    expect(send).not.toHaveBeenCalledWith("browser_navigate", expect.anything());
+    expect(send).not.toHaveBeenCalledWith("browser_reload", expect.anything());
+
+    controller.disposeCurrent(panel.id);
     await vi.waitFor(() => expect(send).toHaveBeenCalledWith("browser_destroy_surface", {
       panelId: panel.id,
       surfaceId: "surface-1",
       generation,
     }));
+  });
+
+  it("serializes a rapid deactivate/reactivate so a stale warm transition cannot hide the active tab", async () => {
+    let subscriber: ((event: BrowserEventEnvelope) => void) | null = null;
+    let releaseWarm: () => void = () => undefined;
+    let markWarmStarted: () => void = () => undefined;
+    const warmStarted = new Promise<void>((resolve) => { markWarmStarted = resolve; });
+    const transitionOrder: string[] = [];
+    const send = vi.fn(async (command: string, payload: unknown) => {
+      const input = payload as { state?: string; visible?: boolean };
+      if (command === "browser_set_resource_state" && input.state === "warm") {
+        transitionOrder.push("warm:start");
+        markWarmStarted();
+        await new Promise<void>((resolve) => { releaseWarm = resolve; });
+        transitionOrder.push("warm:finish");
+      } else if (command === "browser_set_resource_state" && input.state === "visible") {
+        transitionOrder.push("visible");
+      } else if (command === "browser_set_visibility" && input.visible === true) {
+        transitionOrder.push("show");
+      }
+      return { ok: true, requestId: "request" };
+    });
+    const controller = new BrowserPanelRuntimeController({
+      connect: vi.fn().mockResolvedValue(undefined),
+      subscribe: vi.fn((next: (event: BrowserEventEnvelope) => void) => {
+        subscriber = next;
+        return vi.fn();
+      }),
+      send,
+    } as never, createBrowserRuntimeStore());
+    const panel = rightSidebarDefinitionRegistry.create("browser", {
+      id: "right-sidebar:browser:1", sequence: 1, now: NOW,
+    });
+    const generation = controller.activate(panel);
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith(
+      "browser_create_surface",
+      expect.objectContaining({ panelId: panel.id, generation }),
+    ));
+    (subscriber as ((event: BrowserEventEnvelope) => void) | null)?.(
+      event(panel.id, generation, "surface-1"),
+    );
+
+    controller.deactivate(panel.id, generation);
+    await warmStarted;
+    expect(controller.activate(panel)).toBe(generation);
+    const shown = controller.setVisibility({
+      panelId: panel.id,
+      surfaceId: "surface-1",
+      generation,
+    }, true, "active");
+
+    await Promise.resolve();
+    expect(transitionOrder).toEqual(["warm:start"]);
+
+    releaseWarm();
+    await shown;
+    expect(transitionOrder).toEqual(["warm:start", "warm:finish", "visible", "show"]);
   });
 
   it("does not create a surface when scope deactivates before the host connects", async () => {

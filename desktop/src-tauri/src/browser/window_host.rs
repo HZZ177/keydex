@@ -117,6 +117,12 @@ impl BrowserWindowHost {
             let _ = SetFocus(Some(self.hwnd));
         }
     }
+
+    pub(crate) fn set_visible(&self, visible: bool) {
+        unsafe {
+            let _ = ShowWindow(self.hwnd, if visible { SW_SHOWNA } else { SW_HIDE });
+        }
+    }
 }
 
 #[cfg(windows)]

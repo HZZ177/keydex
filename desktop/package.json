@@ -16,7 +16,7 @@
     "measure:diff-build": "node tools/measure-diff-build-baseline.mjs",
     "verify:diff-worker-build": "node tools/verify-pierre-worker-build.mjs",
     "test": "vitest run",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build --features browser-devtools"
   },
   "dependencies": {
     "@babel/runtime": "^7.29.7",

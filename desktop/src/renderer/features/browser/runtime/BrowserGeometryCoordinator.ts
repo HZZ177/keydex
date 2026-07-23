@@ -13,6 +13,7 @@ interface GeometryEntry {
   readonly element: HTMLElement;
   revision: number;
   visible: boolean;
+  parked: boolean;
   lastRect: BrowserLogicalRect | null;
   lastOcclusions: readonly BrowserLogicalRect[];
 }
@@ -39,11 +40,12 @@ class BrowserGeometryCoordinator {
       element,
       revision: this.#lastRevisions.get(key) ?? 0,
       visible,
+      parked: false,
       lastRect: null,
       lastOcclusions: [],
     };
     this.#entries.set(key, entry);
-    this.#sync(entry, true);
+    if (visible) this.#sync(entry, true);
     return () => {
       if (this.#entries.get(key) === entry) this.#entries.delete(key);
     };
@@ -51,19 +53,29 @@ class BrowserGeometryCoordinator {
 
   setVisibility(surface: BrowserSurfaceRef, visible: boolean): void {
     const entry = this.#entries.get(surfaceKey(surface));
-    if (!entry || entry.visible === visible) return;
+    if (!entry || (entry.visible === visible && !entry.parked)) return;
     entry.visible = visible;
+    entry.parked = false;
     this.#sync(entry, true);
+  }
+
+  markInactive(surface: BrowserSurfaceRef): void {
+    const entry = this.#entries.get(surfaceKey(surface));
+    if (!entry) return;
+    entry.visible = false;
+    entry.parked = true;
   }
 
   syncSurface(surface: BrowserSurfaceRef): void {
     const entry = this.#entries.get(surfaceKey(surface));
-    if (entry) this.#sync(entry, false);
+    if (entry && !entry.parked) this.#sync(entry, false);
   }
 
   syncAll(): void {
     if (this.#interactiveSessionId !== null) return;
-    for (const entry of this.#entries.values()) this.#sync(entry, true);
+    for (const entry of this.#entries.values()) {
+      if (!entry.parked) this.#sync(entry, true);
+    }
   }
 
   setOcclusionElements(surface: BrowserSurfaceRef, elements: readonly HTMLElement[]): void {
@@ -115,7 +127,7 @@ class BrowserGeometryCoordinator {
   }
 
   #frame(entry: GeometryEntry, force: boolean): BrowserGeometryFrame | null {
-    if (!entry.element.isConnected) return null;
+    if (entry.parked || !entry.element.isConnected) return null;
     const domRect = entry.element.getBoundingClientRect();
     const rect: BrowserLogicalRect = {
       x: finiteOrZero(domRect.x),

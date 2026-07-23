@@ -8,6 +8,29 @@ use super::{
     ui_actor::NativeBrowserSurface,
 };
 
+#[cfg(any(windows, test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativeResourceAction {
+    None,
+    Resume,
+    Suspend,
+}
+
+#[cfg(any(windows, test))]
+fn native_resource_action(
+    prior: BrowserResourceState,
+    next: BrowserResourceState,
+) -> NativeResourceAction {
+    match (prior, next) {
+        (
+            BrowserResourceState::NativeSuspended,
+            BrowserResourceState::Visible | BrowserResourceState::Warm,
+        ) => NativeResourceAction::Resume,
+        (_, BrowserResourceState::NativeSuspended) => NativeResourceAction::Suspend,
+        _ => NativeResourceAction::None,
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct BrowserResourceEntry {
     state: BrowserResourceState,
@@ -73,27 +96,31 @@ impl BrowserResourceRegistry {
 #[cfg(windows)]
 pub(crate) fn apply_native_resource_state(
     webview: &NativeBrowserSurface,
-    state: BrowserResourceState,
+    prior: BrowserResourceState,
+    next: BrowserResourceState,
 ) -> Result<(), String> {
     use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_3;
     use webview2_com::TrySuspendCompletedHandler;
     use windows_061::core::Interface;
 
     webview.run(move |surface| unsafe {
-        let Ok(core) = surface.core().cast::<ICoreWebView2_3>() else {
-            return Err("WebView2 resource suspension API is unavailable".to_string());
-        };
-        match state {
-            BrowserResourceState::Visible | BrowserResourceState::Warm => {
+        match native_resource_action(prior, next) {
+            NativeResourceAction::Resume => {
+                let Ok(core) = surface.core().cast::<ICoreWebView2_3>() else {
+                    return Err("WebView2 resource suspension API is unavailable".to_string());
+                };
                 core.Resume()
                     .map_err(|error| format!("Failed to resume browser surface: {error}"))?;
             }
-            BrowserResourceState::NativeSuspended => {
+            NativeResourceAction::Suspend => {
+                let Ok(core) = surface.core().cast::<ICoreWebView2_3>() else {
+                    return Err("WebView2 resource suspension API is unavailable".to_string());
+                };
                 let completion = TrySuspendCompletedHandler::create(Box::new(|_, _| Ok(())));
                 core.TrySuspend(&completion)
                     .map_err(|error| format!("Failed to suspend browser surface: {error}"))?;
             }
-            BrowserResourceState::Discarded => {}
+            NativeResourceAction::None => {}
         }
         Ok(())
     })
@@ -102,7 +129,8 @@ pub(crate) fn apply_native_resource_state(
 #[cfg(not(windows))]
 pub(crate) fn apply_native_resource_state(
     _webview: &NativeBrowserSurface,
-    _state: BrowserResourceState,
+    _prior: BrowserResourceState,
+    _next: BrowserResourceState,
 ) -> Result<(), String> {
     Ok(())
 }
@@ -149,6 +177,32 @@ mod tests {
         assert_eq!(
             registry.transition(&surface(1), BrowserResourceState::NativeSuspended),
             None
+        );
+    }
+
+    #[test]
+    fn warm_visibility_transitions_do_not_resume_an_already_running_webview() {
+        assert_eq!(
+            native_resource_action(BrowserResourceState::Visible, BrowserResourceState::Warm),
+            NativeResourceAction::None
+        );
+        assert_eq!(
+            native_resource_action(BrowserResourceState::Warm, BrowserResourceState::Visible),
+            NativeResourceAction::None
+        );
+        assert_eq!(
+            native_resource_action(
+                BrowserResourceState::NativeSuspended,
+                BrowserResourceState::Visible,
+            ),
+            NativeResourceAction::Resume
+        );
+        assert_eq!(
+            native_resource_action(
+                BrowserResourceState::Warm,
+                BrowserResourceState::NativeSuspended,
+            ),
+            NativeResourceAction::Suspend
         );
     }
 }

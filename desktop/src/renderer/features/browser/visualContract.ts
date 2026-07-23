@@ -117,7 +117,7 @@ export function readBrowserPageAppearance(
   root: Element = document.documentElement,
 ): BrowserPageAppearance {
   const styles = getComputedStyle(root);
-  const fallback = theme === "dark" ? "#282a36" : "#ffffff";
+  const fallback = theme === "dark" ? "#282a36" : "#fffefc";
   const background = resolveCssCustomProperty(styles, "--surface-bg") || fallback;
   return Object.freeze({
     theme,

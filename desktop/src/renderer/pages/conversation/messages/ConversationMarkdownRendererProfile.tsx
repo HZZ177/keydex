@@ -16,11 +16,15 @@ import {
 } from "@/renderer/markdownRuntime/renderers";
 import { parseFileLinkTarget } from "@/renderer/utils/fileLinks";
 import type { PreviewContextValue } from "@/renderer/providers/PreviewProvider";
+import type { LocalPreviewRuntime } from "@/runtime";
 
 import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
 
 export function createConversationMarkdownRendererRegistry(
-  options: { readonly previewContext?: PreviewContextValue | null } = {},
+  options: {
+    readonly htmlPreviewRuntime?: Pick<LocalPreviewRuntime, "prepareHtmlContent">;
+    readonly previewContext?: PreviewContextValue | null;
+  } = {},
 ): SemanticMarkdownRendererRegistry {
   const code = conversationCodeRenderer(options);
   const enhanced = Object.fromEntries(
@@ -213,7 +217,10 @@ function hybridMathRenderer(code: MarkdownBlockRendererDefinition): MarkdownBloc
 }
 
 function conversationCodeRenderer(
-  options: { readonly previewContext?: PreviewContextValue | null },
+  options: {
+    readonly htmlPreviewRuntime?: Pick<LocalPreviewRuntime, "prepareHtmlContent">;
+    readonly previewContext?: PreviewContextValue | null;
+  },
 ): MarkdownBlockRendererDefinition {
   return {
     create(initial) {
@@ -257,7 +264,10 @@ function conversationCodeRenderer(
 function render(
   root: Root,
   context: MarkdownBlockRendererContext,
-  options: { readonly previewContext?: PreviewContextValue | null },
+  options: {
+    readonly htmlPreviewRuntime?: Pick<LocalPreviewRuntime, "prepareHtmlContent">;
+    readonly previewContext?: PreviewContextValue | null;
+  },
 ): void {
   const language = context.block.metadata.language;
   const source = context.snapshot.logical_text.slice(context.block.logical_start, context.block.logical_end);
@@ -266,7 +276,11 @@ function render(
     && context.block.metadata.fence_markup !== undefined
     && context.block.metadata.fence_closed !== true;
   root.render(
-    <MarkdownCodeBlock previewContextOverride={options.previewContext} streaming={streaming}>
+    <MarkdownCodeBlock
+      htmlPreviewRuntime={options.htmlPreviewRuntime}
+      previewContextOverride={options.previewContext}
+      streaming={streaming}
+    >
       <code className={language ? `language-${language}` : undefined}>{source}</code>
     </MarkdownCodeBlock>,
   );

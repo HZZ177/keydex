@@ -36,9 +36,14 @@ export interface LocalHtmlPreviewResponse {
   url: string;
 }
 
+export interface LocalHtmlContentPreviewResponse {
+  url: string;
+}
+
 export interface LocalPreviewRuntime {
   readFile(path: string): Promise<LocalPreviewFileResponse>;
   prepareHtmlFile(path: string, scopePath?: string): Promise<LocalHtmlPreviewResponse>;
+  prepareHtmlContent(content: string): Promise<LocalHtmlContentPreviewResponse>;
   readDocument(path: string, options?: LocalPreviewDocumentReadOptions): Promise<DocumentReadResult>;
   readMedia(path: string): Promise<LocalPreviewMediaResponse>;
   writeDocument(
@@ -92,6 +97,15 @@ export function createLocalPreviewRuntime(
             path,
             scope_path: scopePath,
           },
+        },
+      );
+    },
+    async prepareHtmlContent(content) {
+      return http.request<LocalHtmlContentPreviewResponse>(
+        "/api/local-preview/html/content/register",
+        {
+          method: "POST",
+          body: { content },
         },
       );
     },

@@ -28,7 +28,11 @@ import { flushSync } from "react-dom";
 
 import { runtimeBridge, type RuntimeBridge } from "@/runtime";
 import { BROWSER_LIMITS } from "@/renderer/features/browser/config";
-import { browserGeometryCoordinator } from "@/renderer/features/browser/runtime";
+import {
+  browserGeometryCoordinator,
+  browserPanelRuntime,
+  browserRuntimePanelId,
+} from "@/renderer/features/browser/runtime";
 import {
   createWebAnnotationClient,
   webAnnotationNavigator,
@@ -1857,6 +1861,11 @@ function RightSidebarPanel({
         return;
       }
 
+      closeSet.forEach((panelId) => {
+        if (scopedPanelState.panels[panelId]?.kind === "browser") {
+          browserPanelRuntime.disposeCurrent(browserRuntimePanelId(activeScopeKey, panelId));
+        }
+      });
       const remainingPanelIds = orderedPanelIds.filter((panelId) => !closeSet.has(panelId));
       entries.forEach((entry) => {
         if (closeSet.has(entry.id)) {
@@ -1883,7 +1892,16 @@ function RightSidebarPanel({
         onClose();
       }
     },
-    [entries, onClose, orderedPanelIds, previewContext, resolvedActivePanelId, updateActiveScopePanelState],
+    [
+      activeScopeKey,
+      entries,
+      onClose,
+      orderedPanelIds,
+      previewContext,
+      resolvedActivePanelId,
+      scopedPanelState.panels,
+      updateActiveScopePanelState,
+    ],
   );
 
   const rightSidebarTabMenuTargets = useMemo(() => {

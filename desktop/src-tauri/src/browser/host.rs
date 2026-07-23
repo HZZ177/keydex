@@ -911,8 +911,13 @@ pub(crate) async fn browser_set_visibility(
     };
     let visible = payload.visible;
     let focus = payload.visible && payload.reason == BrowserVisibilityReason::Active;
+    let preserve_compositor = payload.reason == BrowserVisibilityReason::InactiveTab;
     let result = webview.run(move |surface| {
-        surface.set_visible(visible)?;
+        if preserve_compositor {
+            surface.set_host_visible(visible)?;
+        } else {
+            surface.set_visible(visible)?;
+        }
         if focus {
             surface.focus()?;
         }
@@ -1142,15 +1147,22 @@ pub(crate) async fn browser_set_resource_state(
     if prior == payload.state {
         return success(request_id);
     }
-    if let Err(reason) = apply_native_resource_state(&webview, payload.state) {
+    if let Err(reason) = apply_native_resource_state(&webview, prior, payload.state) {
         let _ = state.resources.transition(&payload.surface, prior);
         return host_failure(
             request_id,
             &format!("Failed to change browser resource state: {reason}"),
         );
     }
-    if payload.state != super::contract::BrowserResourceState::Visible {
-        let _ = webview.run(|surface| surface.set_visible(false));
+    match payload.state {
+        super::contract::BrowserResourceState::Warm => {
+            let _ = webview.run(|surface| surface.set_host_visible(false));
+        }
+        super::contract::BrowserResourceState::NativeSuspended => {
+            let _ = webview.run(|surface| surface.set_visible(false));
+        }
+        super::contract::BrowserResourceState::Visible
+        | super::contract::BrowserResourceState::Discarded => {}
     }
     emit_browser_event(
         &caller,

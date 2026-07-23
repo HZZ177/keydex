@@ -42,11 +42,14 @@ MAX_LOCAL_PREVIEW_TEXT_BYTES = 512 * 1024
 MAX_LOCAL_PREVIEW_MEDIA_BYTES = 2 * 1024 * 1024
 MAX_LOCAL_PREVIEW_DOCUMENT_BYTES = DEFAULT_PREVIEW_DOCUMENT_MAX_BYTES
 MAX_LOCAL_HTML_PREVIEW_SCOPES = 128
+MAX_LOCAL_HTML_PREVIEW_CONTENTS = 128
 HTML_PREVIEW_VIEWPORT_MESSAGE_TYPE = "keydex:html-preview-viewport-state/v1"
 HTML_PREVIEW_VIEWPORT_BRIDGE_MARKER = "data-keydex-preview-viewport-bridge"
 
 _local_html_preview_scopes: OrderedDict[str, Path] = OrderedDict()
 _local_html_preview_scopes_lock = Lock()
+_local_html_preview_contents: OrderedDict[str, str] = OrderedDict()
+_local_html_preview_contents_lock = Lock()
 
 
 class LocalPreviewFileResponse(BaseModel):
@@ -69,6 +72,14 @@ class LocalHtmlPreviewRequest(BaseModel):
 
 class LocalHtmlPreviewResponse(BaseModel):
     path: str
+    url: str
+
+
+class LocalHtmlContentPreviewRequest(BaseModel):
+    content: str
+
+
+class LocalHtmlContentPreviewResponse(BaseModel):
     url: str
 
 
@@ -122,6 +133,44 @@ async def register_local_html_preview(
         f"path={target} | scope={scope}"
     )
     return LocalHtmlPreviewResponse(path=str(target), url=url)
+
+
+@router.post(
+    "/api/local-preview/html/content/register",
+    response_model=LocalHtmlContentPreviewResponse,
+)
+async def register_local_html_content_preview(
+    payload: LocalHtmlContentPreviewRequest,
+    request: Request,
+) -> LocalHtmlContentPreviewResponse:
+    if len(payload.content.encode("utf-8")) > MAX_LOCAL_PREVIEW_TEXT_BYTES:
+        raise _local_preview_error(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            "local_preview_html_content_too_large",
+            "HTML 内容过大，暂不预览",
+        )
+    token = _register_local_html_preview_content(payload.content)
+    url = (
+        f"{str(request.base_url).rstrip('/')}/"
+        f"api/local-preview/html/content/{token}"
+    )
+    return LocalHtmlContentPreviewResponse(url=url)
+
+
+@router.get(
+    "/api/local-preview/html/content/{token}",
+    name="read_local_html_content_preview",
+)
+async def read_local_html_content_preview(token: str) -> HTMLResponse:
+    html = _local_html_preview_content(token)
+    return HTMLResponse(
+        _with_html_preview_viewport_bridge(html),
+        headers={
+            "Cache-Control": "no-store",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.get(
@@ -327,6 +376,29 @@ def _register_local_html_preview_scope(scope: Path) -> str:
         while len(_local_html_preview_scopes) > MAX_LOCAL_HTML_PREVIEW_SCOPES:
             _local_html_preview_scopes.popitem(last=False)
     return token
+
+
+def _register_local_html_preview_content(content: str) -> str:
+    token = secrets.token_urlsafe(18)
+    with _local_html_preview_contents_lock:
+        _local_html_preview_contents[token] = content
+        while len(_local_html_preview_contents) > MAX_LOCAL_HTML_PREVIEW_CONTENTS:
+            _local_html_preview_contents.popitem(last=False)
+    return token
+
+
+def _local_html_preview_content(token: str) -> str:
+    with _local_html_preview_contents_lock:
+        content = _local_html_preview_contents.get(token)
+        if content is not None:
+            _local_html_preview_contents.move_to_end(token)
+    if content is None:
+        raise _local_preview_error(
+            status.HTTP_404_NOT_FOUND,
+            "local_preview_html_content_session_not_found",
+            "HTML 预览会话已失效，请重新打开预览",
+        )
+    return content
 
 
 def _local_html_preview_scope(token: str) -> Path:

@@ -6,7 +6,6 @@ import { AppTooltipLayer } from "@/renderer/components/tooltip";
 import type { BrowserProfileMode, BrowserSurfaceRef } from "../domain";
 import type { BrowserNavigationFailure } from "../runtime/BrowserPolicyCoordinator";
 import { BrowserErrorView } from "./BrowserErrorView";
-import type { BrowserSurfaceVisibilityInput } from "./BrowserSurfacePlaceholder";
 import { BrowserSurfacePlaceholder } from "./BrowserSurfacePlaceholder";
 import { BrowserSurfaceOverlay } from "./BrowserSurfaceOverlay";
 import { BrowserToolbar, type BrowserToolbarProps } from "./BrowserToolbar";
@@ -25,7 +24,6 @@ export interface BrowserPanelProps extends Omit<BrowserToolbarProps, "profileMod
   readonly resourceState?: React.ComponentProps<typeof BrowserSurfacePlaceholder>["resourceState"];
   readonly surfaceOverlay?: ReactNode;
   onRetry(): void;
-  onVisibilityChange(input: BrowserSurfaceVisibilityInput): void;
 }
 
 export function BrowserPanel({
@@ -40,7 +38,6 @@ export function BrowserPanel({
   resourceState,
   surfaceOverlay,
   onRetry,
-  onVisibilityChange,
   ...toolbarProps
 }: BrowserPanelProps) {
   return (
@@ -65,7 +62,6 @@ export function BrowserPanel({
           surface={surface}
           resourceState={resourceState}
           className={styles.surface}
-          onVisibilityChange={onVisibilityChange}
         />
         {surfaceOverlay ? (
           <BrowserSurfaceOverlay surface={surface}>{surfaceOverlay}</BrowserSurfaceOverlay>

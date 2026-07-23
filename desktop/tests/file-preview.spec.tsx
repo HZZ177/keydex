@@ -1935,10 +1935,10 @@ describe("FilePreview", () => {
     expect(onViewportNearBottomChange).not.toHaveBeenCalledWith(true);
   });
 
-  it("opens workspace html files directly from their native directory without a sandbox", async () => {
+  it("opens workspace html files through the isolated local preview origin", async () => {
     const prepareHtmlFile = vi.fn().mockResolvedValue({
       path: "D:\\repo\\.ktaicoding\\prototype\\A2UI\\index.html",
-      url: "http://asset.localhost/D%3A/repo/.ktaicoding/prototype/A2UI/index.html",
+      url: "http://127.0.0.1:8765/api/local-preview/html/token/.ktaicoding/prototype/A2UI/index.html",
     });
     const runtime = {
       ...fakeRuntime({
@@ -1966,9 +1966,10 @@ describe("FilePreview", () => {
       "D:/repo",
     );
     expect(frame.getAttribute("src")).toBe(
-      "http://asset.localhost/D%3A/repo/.ktaicoding/prototype/A2UI/index.html",
+      "http://127.0.0.1:8765/api/local-preview/html/token/.ktaicoding/prototype/A2UI/index.html",
     );
-    expect(frame.getAttribute("sandbox")).toBeNull();
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(frame.getAttribute("sandbox")).not.toContain("allow-same-origin");
     expect(frame.getAttribute("srcdoc")).toBeNull();
   });
 

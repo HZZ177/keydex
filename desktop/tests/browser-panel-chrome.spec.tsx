@@ -19,7 +19,6 @@ function renderPanel(overrides: Partial<React.ComponentProps<typeof BrowserPanel
     zoomFactor: 1,
     onAddressChange: vi.fn(),
     onAddressSubmit: vi.fn(),
-    onVisibilityChange: vi.fn(),
     onReload: vi.fn(),
     onStop: vi.fn(),
     onRetry: vi.fn(),

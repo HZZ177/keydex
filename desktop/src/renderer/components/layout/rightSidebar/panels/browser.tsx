@@ -35,6 +35,7 @@ import {
   BrowserBridgeRouter,
   browserDownloadController,
   browserPanelRuntime,
+  browserRuntimePanelId,
   BrowserPolicyCoordinator,
   isBrowserHostRuntimeAvailable,
   type BrowserBridgeEnvelope,
@@ -210,12 +211,15 @@ function normalizedBrowserPanelRestoreUrl(
 function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState }: RightSidebarPanelRenderProps<"browser">) {
   const { theme } = useTheme();
   const notifications = useNotifications();
+  const runtimePanelId = browserRuntimePanelId(scopeKey, state.id);
+  const runtimePanelRef = useRef({ ...state, id: runtimePanelId });
+  runtimePanelRef.current = { ...state, id: runtimePanelId };
   const generationRef = useRef(0);
   const [activatedGeneration, setActivatedGeneration] = useState(0);
   const runtime = useSyncExternalStore(
     browserPanelRuntime.store.subscribe,
-    () => browserPanelRuntime.store.getState().surfaces[state.id],
-    () => browserPanelRuntime.store.getState().surfaces[state.id],
+    () => browserPanelRuntime.store.getState().surfaces[runtimePanelId],
+    () => browserPanelRuntime.store.getState().surfaces[runtimePanelId],
   );
   const generation = runtime?.generation ?? activatedGeneration;
   generationRef.current = generation;
@@ -270,7 +274,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
   const dangerousDownload = Object.values(downloads).find((item) =>
     item?.state === "requested"
     && item.dangerous
-    && item.surface.panelId === state.id
+    && item.surface.panelId === runtimePanelId
     && item.surface.generation === generation) ?? null;
   const browserHostAvailable = isBrowserHostRuntimeAvailable();
   const annotationsAvailable = BROWSER_FEATURE_FLAGS.annotationsEnabled;
@@ -342,7 +346,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
   useEffect(() => {
     const current = Object.fromEntries(
       Object.values(downloads).flatMap((item) => (
-        item && item.surface.panelId === state.id ? [[item.id, item.state] as const] : []
+        item && item.surface.panelId === runtimePanelId ? [[item.id, item.state] as const] : []
       )),
     );
     const previous = downloadStateSnapshotRef.current;
@@ -365,7 +369,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
     } else if (changedStates.includes("cancelled")) {
       setDownloadsIndicator(null);
     }
-  }, [downloads, downloadsOpen, state.id]);
+  }, [downloads, downloadsOpen, runtimePanelId]);
   const updateAnnotationModeActive = useCallback((next: boolean) => {
     annotationModeActiveRef.current = next;
     setAnnotationModeActive(next);
@@ -436,21 +440,21 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
 
   useEffect(() => {
     if (active) {
-      const next = browserPanelRuntime.activate(state, theme);
+      const next = browserPanelRuntime.activate(runtimePanelRef.current, theme);
       generationRef.current = next;
       setActivatedGeneration(next);
     } else if (generationRef.current > 0) {
-      browserPanelRuntime.deactivate(state.id, generationRef.current);
+      browserPanelRuntime.deactivate(runtimePanelId, generationRef.current);
     }
-  }, [active, state.id, theme]);
+  }, [active, runtimePanelId, theme]);
   useEffect(() => {
     setPermissionRequest(null);
     setRespondingPermission(false);
     setExternalProtocolRequest(null);
   }, [generation]);
   useEffect(() => () => {
-    if (generationRef.current > 0) browserPanelRuntime.dispose(state.id, generationRef.current);
-  }, [state.id]);
+    if (generationRef.current > 0) browserPanelRuntime.deactivate(runtimePanelId, generationRef.current);
+  }, [runtimePanelId]);
   useEffect(() => () => annotationStore.getState().dispose(), [annotationStore]);
   useEffect(() => {
     if (!surface || !annotationsAvailable) {
@@ -819,7 +823,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
     annotationStore.getState().closeSurface(surface);
   }, [active, annotationStore, surface?.generation, surface?.panelId, surface?.surfaceId]);
   useEffect(() => browserPanelRuntime.client.subscribe((event) => {
-    if (event.panelId !== state.id || event.generation !== generation) return;
+    if (event.panelId !== runtimePanelId || event.generation !== generation) return;
     if (event.kind === "permission.requested") setPermissionRequest(event.payload);
     if (event.kind === "shortcut.requested") {
       if (event.payload.shortcut === "find") {
@@ -837,7 +841,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
       event.kind === "permission.expired"
       && permissionRequest?.permissionRequestId === event.payload.permissionRequestId
     ) setPermissionRequest(null);
-  }), [generation, hostContext, permissionRequest?.permissionRequestId, requestFind, state.id, surface?.surfaceId]);
+  }), [generation, hostContext, permissionRequest?.permissionRequestId, requestFind, runtimePanelId, state.id, surface?.surfaceId]);
   useEffect(() => {
     if (!surface) return;
     const coordinator = new BrowserPolicyCoordinator({
@@ -899,7 +903,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
   const run = (operation: (surface: import("@/renderer/features/browser/domain").BrowserSurfaceRef) => Promise<void>) => {
     if (!surface) return;
     void operation(surface).catch((error: unknown) => {
-      browserPanelRuntime.store.getState().failCommand(state.id, generation, error instanceof Error ? error.message : "浏览器操作失败");
+      browserPanelRuntime.store.getState().failCommand(runtimePanelId, generation, error instanceof Error ? error.message : "浏览器操作失败");
     });
   };
   const respondPermission = (decision: "allow_once" | "deny") => {
@@ -911,11 +915,11 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
       origin: permissionRequest.origin,
       decision,
     }).then(() => {
-      browserPanelRuntime.setProtection(state.id, "permission", false);
+      browserPanelRuntime.setProtection(runtimePanelId, "permission", false);
       setPermissionRequest(null);
       setRespondingPermission(false);
     }).catch(() => {
-      browserPanelRuntime.setProtection(state.id, "permission", false);
+      browserPanelRuntime.setProtection(runtimePanelId, "permission", false);
       setPermissionRequest(null);
       setRespondingPermission(false);
     });
@@ -929,7 +933,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
     void browserPanelRuntime.setZoom(surface, factor).then(() => {
       updateState({ ...state, zoomFactor: factor, lastActivatedAt: new Date().toISOString() });
     }).catch((error: unknown) => {
-      browserPanelRuntime.store.getState().failCommand(state.id, generation, error instanceof Error ? error.message : "页面缩放失败");
+      browserPanelRuntime.store.getState().failCommand(runtimePanelId, generation, error instanceof Error ? error.message : "页面缩放失败");
     });
   };
   const annotationDisabledReason = state.profileMode === "incognito"
@@ -1128,7 +1132,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
             setAddress(target);
             run((current) => browserPanelRuntime.navigate(current, target));
           } catch (error) {
-            browserPanelRuntime.store.getState().failCommand(state.id, generation, error instanceof Error ? error.message : "地址无效");
+            browserPanelRuntime.store.getState().failCommand(runtimePanelId, generation, error instanceof Error ? error.message : "地址无效");
           }
         }}
         onAnnotations={annotationsAvailable
@@ -1157,7 +1161,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
           if (surface) {
             run((current) => browserPanelRuntime.navigate(current, navigation?.url ?? state.restoreUrl));
           } else {
-            const next = browserPanelRuntime.activate(state, theme);
+            const next = browserPanelRuntime.activate(runtimePanelRef.current, theme);
             generationRef.current = next;
             setActivatedGeneration(next);
           }
@@ -1167,7 +1171,6 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
           setFindOpen(false);
           setZoomOpen((value) => !value);
         }}
-        onVisibilityChange={({ visible, reason }) => run((current) => browserPanelRuntime.setVisibility(current, visible, reason))}
       />
       </div>
       {permissionRequest ? (

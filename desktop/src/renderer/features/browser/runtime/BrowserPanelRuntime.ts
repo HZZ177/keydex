@@ -27,6 +27,10 @@ export interface BrowserPanelRuntimeClient {
   send: BrowserHostClient["send"];
 }
 
+export function browserRuntimePanelId(scopeKey: string, panelId: string): string {
+  return `scope:${scopeKey.length}:${scopeKey}:${panelId}`;
+}
+
 export class BrowserPanelRuntimeController {
   readonly client: BrowserPanelRuntimeClient;
   readonly store: BrowserRuntimeStore;
@@ -36,6 +40,7 @@ export class BrowserPanelRuntimeController {
   readonly #recoveringFailures = new Set<string>();
   #browserCircuitOpen = false;
   #usageClock = 0;
+  #lifecycleTail: Promise<void> = Promise.resolve();
   #connected: Promise<void> | null = null;
   #unlisten: (() => void) | null = null;
 
@@ -63,6 +68,9 @@ export class BrowserPanelRuntimeController {
       resource.lastUsed = ++this.#usageClock;
       resource.surface = existing.surface;
       resource.theme = theme;
+      if (existing.resourceState === "warm") {
+        this.store.getState().setResourceState(panel.id, existing.generation, "visible");
+      }
       void this.#rebalance("panel_activated");
       return existing.generation;
     }
@@ -117,6 +125,11 @@ export class BrowserPanelRuntimeController {
     this.store.getState().forget(panelId, generation);
   }
 
+  disposeCurrent(panelId: string): void {
+    const generation = this.#desiredGeneration.get(panelId);
+    if (generation !== undefined) this.dispose(panelId, generation);
+  }
+
   releaseIfInactive(surface: BrowserSurfaceRef): void {
     this.setProtection(surface.panelId, "download", false);
   }
@@ -162,12 +175,14 @@ export class BrowserPanelRuntimeController {
     await this.client.send("browser_stop_find", surface);
   }
 
-  async setVisibility(
+  setVisibility(
     surface: BrowserSurfaceRef,
     visible: boolean,
     reason: BrowserVisibilityReason,
   ): Promise<void> {
-    await this.client.send("browser_set_visibility", { ...surface, visible, reason });
+    return this.#enqueueLifecycle(async () => {
+      await this.client.send("browser_set_visibility", { ...surface, visible, reason });
+    });
   }
 
   async history(surface: BrowserSurfaceRef, action: "back" | "forward" | "reload" | "stop"): Promise<void> {
@@ -255,7 +270,11 @@ export class BrowserPanelRuntimeController {
     }
   }
 
-  async #rebalance(reason: string, memoryPressure = false): Promise<void> {
+  #rebalance(reason: string, memoryPressure = false): Promise<void> {
+    return this.#enqueueLifecycle(() => this.#applyResourcePlan(reason, memoryPressure));
+  }
+
+  async #applyResourcePlan(reason: string, memoryPressure: boolean): Promise<void> {
     const decisions = planBrowserResources(
       [...this.#resources.values()].flatMap((entry) => entry.surface ? [{
         panelId: entry.panelId,
@@ -295,6 +314,12 @@ export class BrowserPanelRuntimeController {
         );
       }
     }
+  }
+
+  #enqueueLifecycle(operation: () => Promise<void>): Promise<void> {
+    const pending = this.#lifecycleTail.then(operation);
+    this.#lifecycleTail = pending.catch(() => undefined);
+    return pending;
   }
 
   #resource(panelId: string, generation: number): BrowserResourceEntry {

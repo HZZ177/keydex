@@ -86,6 +86,23 @@ describe("browser surface geometry and occlusion", () => {
     });
   });
 
+  it("preserves the last native WebView bounds while a browser tab is hidden", () => {
+    const surfaceSource = readFileSync(
+      resolve(process.cwd(), "src-tauri/src/browser/windowed_surface.rs"),
+      "utf8",
+    );
+    const hostSource = readFileSync(
+      resolve(process.cwd(), "src-tauri/src/browser/window_host.rs"),
+      "utf8",
+    );
+
+    expect(surfaceSource).toContain("self.window_host.set_visible(visible);");
+    expect(surfaceSource).not.toMatch(
+      /pub\(crate\) fn set_visible[\s\S]*?BrowserPhysicalRect\s*\{\s*left:\s*0,\s*top:\s*0,\s*width:\s*0,\s*height:\s*0,/,
+    );
+    expect(hostSource).toContain("ShowWindow(self.hwnd, if visible { SW_SHOWNA } else { SW_HIDE })");
+  });
+
   it("uses global occlusion for dialogs and floating layers but only spatial occlusion for app menus", () => {
     const sources = [
       "src/renderer/components/dialog/AppDialog.tsx",

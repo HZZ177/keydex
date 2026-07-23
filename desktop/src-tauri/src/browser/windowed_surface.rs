@@ -131,20 +131,15 @@ impl WindowedBrowserSurface {
     }
 
     pub(crate) fn set_visible(&self, visible: bool) -> Result<(), String> {
-        if !visible {
-            self.window_host.apply_geometry(
-                BrowserPhysicalRect {
-                    left: 0,
-                    top: 0,
-                    width: 0,
-                    height: 0,
-                },
-                false,
-                &[],
-            )?;
-        }
         unsafe { self.controller.SetIsVisible(visible) }
-            .map_err(|error| format!("Failed to update WebView2 visibility: {error}"))
+            .map_err(|error| format!("Failed to update WebView2 visibility: {error}"))?;
+        self.window_host.set_visible(visible);
+        Ok(())
+    }
+
+    pub(crate) fn set_host_visible(&self, visible: bool) -> Result<(), String> {
+        self.window_host.set_visible(visible);
+        Ok(())
     }
 
     pub(crate) fn focus(&self) -> Result<(), String> {

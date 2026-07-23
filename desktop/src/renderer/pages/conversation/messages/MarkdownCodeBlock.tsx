@@ -29,6 +29,7 @@ import {
 
 import { AppDialog } from "@/renderer/components/dialog";
 import { LoadingSkeleton } from "@/renderer/components/loading";
+import type { LocalPreviewRuntime } from "@/runtime";
 import type { ConversationMessage } from "@/renderer/stores/conversationStore";
 import { useOptionalPreview, type PreviewContextValue } from "@/renderer/providers/PreviewProvider";
 import type { PreviewRequest } from "@/renderer/providers/previewTypes";
@@ -154,6 +155,7 @@ const LazyJsonTreeViewer = lazy(() =>
 export interface MarkdownCodeBlockProps {
   children?: ReactNode;
   defaultViewMode?: "source" | "preview";
+  htmlPreviewRuntime?: Pick<LocalPreviewRuntime, "prepareHtmlContent">;
   previewContextOverride?: PreviewContextValue | null;
   streaming?: boolean;
 }
@@ -161,6 +163,7 @@ export interface MarkdownCodeBlockProps {
 export function MarkdownCodeBlock({
   children,
   defaultViewMode,
+  htmlPreviewRuntime,
   previewContextOverride,
   streaming = false,
 }: MarkdownCodeBlockProps) {
@@ -426,7 +429,10 @@ export function MarkdownCodeBlock({
       {isSwitchingView ? (
         <CodeViewLoading targetMode={pendingViewMode} />
       ) : canPreviewHtml && viewMode === "preview" ? (
-        <HtmlPreviewFrame html={text} />
+        <HtmlPreviewFrame
+          html={text}
+          runtime={streaming ? undefined : htmlPreviewRuntime}
+        />
       ) : canPreviewMermaid && viewMode === "preview" ? (
         <MermaidPreview code={text} theme={theme} />
       ) : canPreviewMath && viewMode === "preview" ? (
@@ -472,6 +478,7 @@ export function MarkdownCodeBlock({
             language={language}
             text={text}
             theme={theme}
+            htmlPreviewRuntime={htmlPreviewRuntime}
           />
         </PreviewFullscreenDialog>
       ) : null}
@@ -616,17 +623,19 @@ function CodeViewLoading({ targetMode: _targetMode }: { targetMode: "source" | "
 
 function FullscreenPreviewContent({
   contentType,
+  htmlPreviewRuntime,
   language,
   text,
   theme,
 }: {
   contentType?: ContentPreviewRequest["contentType"];
+  htmlPreviewRuntime?: Pick<LocalPreviewRuntime, "prepareHtmlContent">;
   language: string;
   text: string;
   theme: "light" | "dark";
 }) {
   if (contentType === "html" || isHtmlPreviewLanguage(language)) {
-    return <HtmlPreviewFrame html={text} size="fullscreen" />;
+    return <HtmlPreviewFrame html={text} runtime={htmlPreviewRuntime} size="fullscreen" />;
   }
   if (contentType === "mermaid" || language === "mermaid") {
     return <MermaidPreview code={text} theme={theme} interactive size="fullscreen" />;
@@ -774,17 +783,85 @@ function isHtmlPreviewLanguage(language: string): boolean {
   return language === "html" || language === "htm" || language === "svg" || language === "xml";
 }
 
-function HtmlPreviewFrame({ html, size = "inline" }: { html: string; size?: "inline" | "fullscreen" }) {
-  const frameSource = resolveHtmlPreviewFrameSource(html);
+function HtmlPreviewFrame({
+  html,
+  runtime,
+  size = "inline",
+}: {
+  html: string;
+  runtime?: Pick<LocalPreviewRuntime, "prepareHtmlContent">;
+  size?: "inline" | "fullscreen";
+}) {
+  const frameSource = useMemo(() => resolveHtmlPreviewFrameSource(html), [html]);
+  const [contentPreview, setContentPreview] = useState<{
+    error: string | null;
+    html: string;
+    status: "loading" | "ready" | "error";
+    url: string | null;
+  } | null>(null);
+  const registerContent = frameSource.kind === "srcdoc" ? runtime?.prepareHtmlContent : undefined;
+
+  useEffect(() => {
+    if (!registerContent) {
+      setContentPreview(null);
+      return;
+    }
+    let active = true;
+    setContentPreview({ error: null, html, status: "loading", url: null });
+    void registerContent(html)
+      .then((result) => {
+        if (!active) return;
+        setContentPreview({
+          error: null,
+          html,
+          status: "ready",
+          url: result.url,
+        });
+      })
+      .catch((reason) => {
+        if (!active) return;
+        setContentPreview({
+          error: reason instanceof Error ? reason.message : String(reason),
+          html,
+          status: "error",
+          url: null,
+        });
+      });
+    return () => {
+      active = false;
+    };
+  }, [html, registerContent]);
+
+  const contentPreviewMatches = contentPreview?.html === html;
+  const registeredUrl = contentPreviewMatches && contentPreview?.status === "ready"
+    ? contentPreview.url
+    : null;
+  const registrationFailed = contentPreviewMatches && contentPreview?.status === "error";
+  const registrationPending = Boolean(registerContent && !registeredUrl && !registrationFailed);
+  const src = frameSource.kind === "url" ? frameSource.src : registeredUrl ?? undefined;
+  const srcDoc = frameSource.kind === "srcdoc" && (!registerContent || registrationFailed)
+    ? frameSource.srcDoc
+    : undefined;
   return (
     <div className={styles.htmlPreview} data-size={size} data-testid="html-preview-frame">
       <iframe
+        aria-busy={registrationPending}
         className={styles.htmlPreviewFrame}
+        data-preview-source={
+          frameSource.kind === "url"
+            ? "loopback-vite"
+            : registeredUrl
+              ? "isolated-local-content"
+              : registrationFailed
+                ? "srcdoc-fallback"
+                : "preparing"
+        }
+        data-preview-registration-error={registrationFailed ? contentPreview?.error || "unknown" : undefined}
         data-size={size}
         title="HTML 预览"
         sandbox={frameSource.sandbox}
-        src={frameSource.kind === "url" ? frameSource.src : undefined}
-        srcDoc={frameSource.kind === "srcdoc" ? frameSource.srcDoc : undefined}
+        src={src}
+        srcDoc={srcDoc}
       />
     </div>
   );

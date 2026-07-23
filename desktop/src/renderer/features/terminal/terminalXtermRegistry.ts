@@ -157,7 +157,7 @@ export function terminalTheme(theme?: "light" | "dark"): ITheme {
         brightWhite: "#ffffff",
       }
     : {
-        background: "#ffffff",
+        background: "#fffefc",
         foreground: "#24292f",
         cursor: "#24292f",
         selectionBackground: "#9fc5ef88",

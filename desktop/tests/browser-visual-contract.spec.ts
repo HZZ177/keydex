@@ -13,6 +13,7 @@ import {
   BROWSER_SHARED_COMPONENTS,
   BROWSER_VISUAL_CONTRACT_SCHEMA_VERSION,
   readBrowserAppearanceTheme,
+  readBrowserPageAppearance,
 } from "../src/renderer/features/browser/visualContract";
 
 const desktopRoot = process.cwd();
@@ -41,6 +42,23 @@ function readVisualFixture(): VisualFixture {
 }
 
 describe("browser visual contract", () => {
+  it("uses the restrained warm canvas when the light browser surface token is unavailable", () => {
+    const root = document.createElement("div");
+
+    expect(readBrowserPageAppearance("light", root).backgroundColor).toEqual({
+      red: 255,
+      green: 254,
+      blue: 252,
+      alpha: 255,
+    });
+    expect(readBrowserPageAppearance("dark", root).backgroundColor).toEqual({
+      red: 40,
+      green: 42,
+      blue: 54,
+      alpha: 255,
+    });
+  });
+
   it("keeps the executable contract aligned with the review fixture", () => {
     const fixture = readVisualFixture();
 

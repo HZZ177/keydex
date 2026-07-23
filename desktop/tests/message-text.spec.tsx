@@ -1299,6 +1299,34 @@ describe("MessageText", () => {
     expect(screen.queryByTitle("HTML 预览")).toBeNull();
   });
 
+  it("loads executable fenced html from an isolated local preview URL when the runtime is available", async () => {
+    const html = "<section><h1>隔离预览</h1><script>document.body.dataset.ready='true'</script></section>";
+    const prepareHtmlContent = vi.fn().mockResolvedValue({
+      url: "http://127.0.0.1:8765/api/local-preview/html/content/token",
+    });
+
+    render(
+      <MessageText
+        message={message("assistant", `\`\`\`html\n${html}\n\`\`\``, "completed")}
+        workspaceRuntime={{
+          localPreview: { prepareHtmlContent },
+        } as unknown as RuntimeBridge}
+      />,
+    );
+
+    const frame = screen.getByTitle("HTML 预览") as HTMLIFrameElement;
+    await waitFor(() => {
+      expect(frame.getAttribute("src")).toBe(
+        "http://127.0.0.1:8765/api/local-preview/html/content/token",
+      );
+    });
+    expect(prepareHtmlContent).toHaveBeenCalledWith(html);
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(frame.getAttribute("sandbox")).not.toContain("allow-same-origin");
+    expect(frame.getAttribute("srcdoc")).toBeNull();
+    expect(frame.getAttribute("data-preview-source")).toBe("isolated-local-content");
+  });
+
   it("shows fenced json preview by default and switches back to source", async () => {
     render(
       <MessageText

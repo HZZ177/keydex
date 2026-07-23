@@ -134,6 +134,7 @@ export type {
   WebSettingsResponse,
 } from "./settings";
 export type {
+  LocalHtmlContentPreviewResponse,
   LocalHtmlPreviewResponse,
   LocalPreviewFileResponse,
   LocalPreviewDocumentReadOptions,

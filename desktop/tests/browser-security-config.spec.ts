@@ -28,16 +28,24 @@ describe("browser webview security configuration", () => {
     expect(csp).toContain("default-src 'self'");
     expect(csp).toContain("connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* ws://127.0.0.1:*");
     expect(csp).toContain("object-src 'none'");
-    expect(csp).toContain("frame-src 'none'");
+    expect(csp).toContain(
+      "frame-src 'self' http://127.0.0.1:* http://localhost:* https://127.0.0.1:* https://localhost:*",
+    );
+    expect(csp).not.toContain("frame-src *");
+    expect(csp).not.toContain("frame-src https:");
     expect(csp).not.toContain("unsafe-eval");
     expect(csp).not.toContain("127.0.0.1:5173");
 
     expect(devCsp).toContain("http://127.0.0.1:5173");
     expect(devCsp).toContain("ws://127.0.0.1:*");
     expect(devCsp).toContain("'unsafe-eval'");
+    expect(devCsp).toContain(
+      "frame-src 'self' http://127.0.0.1:* http://localhost:* https://127.0.0.1:* https://localhost:*",
+    );
+    expect(devCsp).not.toContain("frame-src *");
   });
 
-  it("builds release without devtools and enables it only in the explicit dev script", () => {
+  it("enables devtools explicitly for both development and release builds", () => {
     const cargo = readFileSync(resolve(tauriRoot, "Cargo.toml"), "utf8");
     const packageJson = JSON.parse(readFileSync(resolve(process.cwd(), "package.json"), "utf8")) as {
       scripts: Record<string, string>;
@@ -47,6 +55,7 @@ describe("browser webview security configuration", () => {
     expect(cargo).toContain('tauri = { version = "2", features = ["tray-icon", "unstable"] }');
     expect(cargo).not.toContain('features = ["devtools", "tray-icon"]');
     expect(packageJson.scripts["tauri:dev"]).toBe("tauri dev --features browser-devtools");
+    expect(packageJson.scripts["tauri:build"]).toBe("tauri build --features browser-devtools");
   });
 
   it("keeps a second caller-label check in the BrowserHost boundary", () => {
@@ -67,7 +76,7 @@ describe("browser webview security configuration", () => {
     expect(commandBlocks.length).toBeGreaterThanOrEqual(20);
     expect(historyHelper).toContain("ensure_main_webview_caller(&caller)");
     for (const block of commandBlocks) {
-      const commandName = block.match(/browser_[a-z_]+/u)?.[0];
+      const commandName = block.match(/browser_[a-z_]+|reload_main_webview/u)?.[0];
       expect(commandName).toBeTruthy();
       expect(
         block.includes("dispatch_history_command") ? historyHelper : block,

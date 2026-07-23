@@ -15,6 +15,10 @@ import { ThemeProvider } from "@/renderer/providers/ThemeProvider";
 import { ActiveProjectCoordinatorProvider } from "@/renderer/providers/ActiveProjectCoordinatorProvider";
 import { TerminalSessionScopeProvider } from "@/renderer/providers/TerminalSessionScopeProvider";
 import { TerminalProvider } from "@/renderer/features/terminal";
+import {
+  browserPanelRuntime,
+  browserRuntimePanelId,
+} from "@/renderer/features/browser/runtime";
 import type { SubagentRunSnapshot } from "@/types/subagents";
 
 afterEach(() => {
@@ -505,6 +509,27 @@ describe("Layout", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "关闭侧边栏窗口 审阅" }));
     expect(screen.getByTestId("app-shell").dataset.rightSidebar).toBe("closed");
+  });
+
+  it("disposes a retained browser surface when its sidebar tab is explicitly closed", () => {
+    const disposeCurrent = vi.spyOn(browserPanelRuntime, "disposeCurrent");
+    try {
+      renderLayout(
+        <Layout>
+          <div>内容区</div>
+        </Layout>,
+      );
+
+      fireEvent.click(screen.getByLabelText("展开右侧栏"));
+      fireEvent.click(screen.getByRole("button", { name: "浏览器" }));
+      fireEvent.click(screen.getByRole("button", { name: "关闭侧边栏窗口 新标签页" }));
+
+      expect(disposeCurrent).toHaveBeenCalledWith(
+        browserRuntimePanelId("global", "right-sidebar:browser:1"),
+      );
+    } finally {
+      disposeCurrent.mockRestore();
+    }
   });
 
   it("collapses the right sidebar when navigating to the new conversation page", () => {

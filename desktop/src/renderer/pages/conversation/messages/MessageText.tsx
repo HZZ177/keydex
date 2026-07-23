@@ -251,8 +251,11 @@ function MessageTextComponent({
   const showStreamingCursor =
     !suppressStreamingCursor && !isUser && isStreaming && !isAnimating && !hasPendingDisplayBacklog && !cancelled;
   const conversationRuntimeRegistry = useMemo(
-    () => createConversationMarkdownRendererRegistry({ previewContext: previewContextRef.current }),
-    [previewAvailable, previewPanelActiveEntryId, previewPanelOpen, previewScopeKey],
+    () => createConversationMarkdownRendererRegistry({
+      htmlPreviewRuntime: workspaceRuntime?.localPreview,
+      previewContext: previewContextRef.current,
+    }),
+    [previewAvailable, previewPanelActiveEntryId, previewPanelOpen, previewScopeKey, workspaceRuntime],
   );
   const conversationImageRuntime = useMemo(
     () => new ImageResourceRuntime({

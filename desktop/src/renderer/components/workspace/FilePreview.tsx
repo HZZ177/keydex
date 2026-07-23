@@ -110,6 +110,7 @@ import {
 } from "@/renderer/utils/fileLinks";
 import {
   HTML_PREVIEW_VIEWPORT_MESSAGE_TYPE,
+  ISOLATED_HTML_PREVIEW_SANDBOX,
   resolveHtmlPreviewFrameSource,
 } from "@/renderer/utils/htmlPreviewFrame";
 import { openSkillResourcePreview, skillResourcePreviewError } from "@/renderer/utils/skillResourcePreview";
@@ -2108,6 +2109,7 @@ export function FilePreview({
               className={styles.htmlFrame}
               ref={setHtmlFrameElement}
               title="HTML 文件预览"
+              sandbox={ISOLATED_HTML_PREVIEW_SANDBOX}
               src={directHtmlPreviewUrl}
             />
           </PreviewScrollPane>

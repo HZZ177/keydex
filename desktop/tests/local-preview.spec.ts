@@ -55,4 +55,27 @@ describe("LocalPreviewRuntime", () => {
     });
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
+
+  it("prepares isolated html content through the local preview server", async () => {
+    const content = "<main>Preview<script>document.body.dataset.ready='true'</script></main>";
+    const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      expect(String(input)).toBe("http://127.0.0.1:8765/api/local-preview/html/content/register");
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toEqual({ content });
+      return new Response(JSON.stringify({
+        url: "http://127.0.0.1:8765/api/local-preview/html/content/token",
+      }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const runtime = createLocalPreviewRuntime(createHttpClient({
+      baseUrl: "http://127.0.0.1:8765",
+      fetcher: fetcher as typeof fetch,
+    }));
+
+    await expect(runtime.prepareHtmlContent(content)).resolves.toEqual({
+      url: "http://127.0.0.1:8765/api/local-preview/html/content/token",
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
 });

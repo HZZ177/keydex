@@ -23,23 +23,19 @@ export interface BrowserSurfacePlaceholderProps extends Omit<HTMLAttributes<HTML
   readonly active: boolean;
   readonly surface: BrowserSurfaceRef | null;
   readonly resourceState?: BrowserSurfaceResourceState;
-  onVisibilityChange(input: BrowserSurfaceVisibilityInput): void;
 }
 
 export function BrowserSurfacePlaceholder({
   active,
   className = "",
-  onVisibilityChange,
   resourceState = "visible",
   surface,
   ...props
 }: BrowserSurfacePlaceholderProps) {
   const elementRef = useRef<HTMLDivElement | null>(null);
   const frameRef = useRef<number | null>(null);
-  const onVisibilityChangeRef = useRef(onVisibilityChange);
   const [hasPositiveArea, setHasPositiveArea] = useState(false);
   const { count: occlusionCount } = useBrowserOcclusionSnapshot();
-  onVisibilityChangeRef.current = onVisibilityChange;
 
   const measure = useCallback(() => {
     frameRef.current = null;
@@ -101,8 +97,13 @@ export function BrowserSurfacePlaceholder({
     const previous = lastVisibilityRef.current;
     if (previous?.visible === visibility.visible && previous.reason === visibility.reason) return;
     lastVisibilityRef.current = visibility;
-    if (surface) browserGeometryCoordinator.setVisibility(surface, visibility.visible);
-    onVisibilityChangeRef.current(visibility);
+    if (surface) {
+      if (!visibility.visible && visibility.reason === "inactive_tab") {
+        browserGeometryCoordinator.markInactive(surface);
+      } else {
+        browserGeometryCoordinator.setVisibility(surface, visibility.visible);
+      }
+    }
   }, [surface, visibility.reason, visibility.visible]);
 
   return (
