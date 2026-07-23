@@ -209,6 +209,17 @@ function reduceBrowserEvent(
         errorCategory: event.payload.errorCategory,
       };
       break;
+    case "download.requested":
+    case "download.started":
+      // WebView2 may report a failed top-level navigation before it reports that
+      // the same response became a download. The download owns that response;
+      // it must not replace the still-live document with our navigation error UI.
+      navigation = {
+        ...navigation,
+        loading: false,
+        errorCategory: null,
+      };
+      break;
     case "page.title":
       navigation = { ...navigation, title: event.payload.title };
       break;

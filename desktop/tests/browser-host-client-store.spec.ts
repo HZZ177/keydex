@@ -146,4 +146,34 @@ describe("browserRuntimeStore", () => {
     store.getState().forget("panel-1", 1);
     expect(store.getState().surfaces["panel-1"]).toBeDefined();
   });
+
+  it("reconciles a failed download navigation back to the still-live page", () => {
+    const store = createBrowserRuntimeStore();
+    store.getState().beginCreate("panel-1", 1, "persistent", "https://example.com/releases");
+    store.getState().applyEvent(event("surface.ready", 1, {
+      profileMode: "persistent",
+      capabilities: ["navigation", "downloads"],
+    }));
+    store.getState().applyEvent(event("navigation.failed", 2, {
+      url: "https://cdn.example.com/setup.exe",
+      isMainFrame: true,
+      errorCategory: "connection",
+    }));
+
+    expect(store.getState().surfaces["panel-1"]?.navigation.errorCategory).toBe("connection");
+
+    store.getState().applyEvent(event("download.requested", 3, {
+      downloadId: "download-1",
+      url: "https://cdn.example.com/setup.exe",
+      suggestedFilename: "setup.exe",
+      totalBytes: 1024,
+      mimeType: "application/octet-stream",
+      dangerKind: "safe",
+    }));
+
+    expect(store.getState().surfaces["panel-1"]?.navigation).toMatchObject({
+      loading: false,
+      errorCategory: null,
+    });
+  });
 });

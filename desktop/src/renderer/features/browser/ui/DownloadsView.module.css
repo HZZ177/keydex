@@ -242,26 +242,26 @@
 
 .confirmLayer {
   position: absolute;
-  z-index: 2;
+  z-index: 12;
   display: grid;
-  inset: 48px 0 0;
+  inset: 0;
   place-items: center;
-  background: color-mix(in srgb, var(--surface-bg) 78%, transparent);
-  padding: 12px;
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  padding: 24px;
+  pointer-events: none;
 }
 
 .confirmCard {
   display: grid;
-  width: min(320px, 100%);
+  width: min(360px, calc(100% - 32px));
   box-sizing: border-box;
   gap: 8px;
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-lg);
   background: var(--surface-bg);
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--shell-bg) 24%, transparent);
   color: var(--color-text-1);
   padding: 14px;
+  pointer-events: auto;
 }
 
 .confirmCard > strong {

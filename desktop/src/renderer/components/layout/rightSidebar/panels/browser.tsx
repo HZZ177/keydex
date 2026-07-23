@@ -48,6 +48,7 @@ import {
   DangerousDownloadPrompt,
   DownloadsView,
   PermissionPrompt,
+  type BrowserDownloadIndicator,
   type BrowserPermissionRequest,
 } from "@/renderer/features/browser/ui";
 import browserStyles from "@/renderer/features/browser/ui/BrowserPanel.module.css";
@@ -223,7 +224,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
   const [externalProtocolRequest, setExternalProtocolRequest] = useState<BrowserExternalProtocolRequest | null>(null);
   const [respondingPermission, setRespondingPermission] = useState(false);
   const [downloadsOpen, setDownloadsOpen] = useState(false);
-  const [downloadsAttention, setDownloadsAttention] = useState(false);
+  const [downloadsIndicator, setDownloadsIndicator] = useState<BrowserDownloadIndicator | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findFocusRequestId, setFindFocusRequestId] = useState(0);
   const [findQuery, setFindQuery] = useState("");
@@ -286,7 +287,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
   const annotationHighlighterRef = useRef<WebAnnotationHighlightSynchronizer | null>(null);
   const annotationHighlightContentRef = useRef<Readonly<Record<string, { readonly bodyMarkdown: string }>>>({});
   const annotationItemsRef = useRef<readonly WebAnnotationItem[]>([]);
-  const completedDownloadIdsRef = useRef<Set<string> | null>(null);
+  const downloadStateSnapshotRef = useRef<Readonly<Record<string, string | undefined>>>({});
   const addAnnotationToComposerRef = useRef<(item: WebAnnotationItem) => ReturnType<typeof emitAddWebAnnotationToComposer>>(
     () => "unhandled",
   );
@@ -339,24 +340,32 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
     emitRemoveWebAnnotationFromComposers(annotationId);
   };
   useEffect(() => {
-    const completedIds = new Set(
+    const current = Object.fromEntries(
       Object.values(downloads).flatMap((item) => (
-        item
-        && item.surface.panelId === state.id
-        && item.state === "completed"
-          ? [item.id]
-          : []
+        item && item.surface.panelId === state.id ? [[item.id, item.state] as const] : []
       )),
     );
-    const previous = completedDownloadIdsRef.current;
-    completedDownloadIdsRef.current = completedIds;
-    if (previous === null) return;
-    const hasNewCompletion = [...completedIds].some((id) => !previous.has(id));
-    if (hasNewCompletion && !downloadsOpen) setDownloadsAttention(true);
+    const previous = downloadStateSnapshotRef.current;
+    downloadStateSnapshotRef.current = current;
+    if (downloadsOpen) {
+      setDownloadsIndicator(null);
+      return;
+    }
+    const changedStates = Object.entries(current).flatMap(([id, downloadState]) => (
+      previous[id] !== downloadState ? [downloadState] : []
+    ));
+    if (changedStates.includes("failed")) {
+      setDownloadsIndicator("error");
+    } else if (changedStates.includes("completed")) {
+      setDownloadsIndicator("success");
+    } else if (changedStates.includes("paused")) {
+      setDownloadsIndicator("error");
+    } else if (changedStates.includes("downloading")) {
+      setDownloadsIndicator("loading");
+    } else if (changedStates.includes("cancelled")) {
+      setDownloadsIndicator(null);
+    }
   }, [downloads, downloadsOpen, state.id]);
-  useEffect(() => {
-    if (downloadsOpen) setDownloadsAttention(false);
-  }, [downloadsOpen]);
   const updateAnnotationModeActive = useCallback((next: boolean) => {
     annotationModeActiveRef.current = next;
     setAnnotationModeActive(next);
@@ -1110,7 +1119,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
           </>
         )}
         downloadsActive={downloadsOpen}
-        downloadsAttention={downloadsAttention}
+        downloadsIndicator={downloadsIndicator}
         zoomFactor={state.zoomFactor}
         onAddressChange={setAddress}
         onAddressSubmit={(value) => {
@@ -1133,10 +1142,12 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
         onDownloads={() => {
           setFindOpen(false);
           setZoomOpen(false);
-          setDownloadsAttention(false);
           setDownloadsOpen((value) => {
             const open = !value;
-            if (open) setAnnotationsOpen(false);
+            if (open) {
+              setDownloadsIndicator(null);
+              setAnnotationsOpen(false);
+            }
             return open;
           });
         }}

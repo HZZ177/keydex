@@ -166,9 +166,13 @@ describe("BrowserPanel chrome", () => {
     expect(view.container.querySelector(".lucide-globe-2")).toBeNull();
   });
 
-  it("marks newly completed downloads with a toolbar attention dot", () => {
-    renderPanel({ downloadsAttention: true, onDownloads: vi.fn() });
+  it.each([
+    ["loading", "下载进行中"],
+    ["success", "下载完成"],
+    ["error", "下载失败"],
+  ] as const)("shows the %s download status on the toolbar indicator", (indicator, label) => {
+    renderPanel({ downloadsIndicator: indicator, onDownloads: vi.fn() });
 
-    expect(screen.getByRole("button", { name: "下载" }).getAttribute("data-attention")).toBe("true");
+    expect(screen.getByRole("button", { name: label }).getAttribute("data-download-indicator")).toBe(indicator);
   });
 });

@@ -160,29 +160,49 @@
 }
 
 .toolbarButton[data-active="true"] {
-  background: color-mix(in srgb, var(--annotation-accent) 12%, transparent);
-  color: var(--annotation-accent);
-  outline: 1px solid color-mix(in srgb, var(--annotation-accent) 28%, transparent);
+  background: var(--surface-active);
+  color: var(--color-text-1);
+  outline: 1px solid var(--color-border-subtle);
   outline-offset: -1px;
 }
 
 .toolbarButton[data-active="true"]:hover,
 .toolbarButton[data-active="true"]:focus-visible {
-  background: color-mix(in srgb, var(--annotation-accent) 17%, transparent);
-  color: var(--annotation-accent);
+  background: color-mix(in srgb, var(--surface-active) 82%, var(--surface-hover));
+  color: var(--color-text-1);
 }
 
-.toolbarButton[data-attention="true"]::after {
+.toolbarButton[data-download-indicator]::after {
   position: absolute;
-  top: 3px;
-  right: 3px;
+  top: 2px;
+  right: 2px;
   width: 6px;
   height: 6px;
-  border: 1.5px solid color-mix(in srgb, var(--surface-bg) 92%, transparent);
+  box-sizing: border-box;
+  border: 1.5px solid var(--surface-bg);
   border-radius: var(--radius-pill);
-  background: var(--color-info-6);
   content: "";
   pointer-events: none;
+}
+
+.toolbarButton[data-download-indicator="loading"]::after {
+  width: 8px;
+  height: 8px;
+  border-color:
+    color-mix(in srgb, var(--color-info-6) 28%, var(--surface-bg))
+    color-mix(in srgb, var(--color-info-6) 28%, var(--surface-bg))
+    var(--color-info-6)
+    var(--color-info-6);
+  background: var(--surface-bg);
+  animation: browser-download-indicator-spin 720ms linear infinite;
+}
+
+.toolbarButton[data-download-indicator="success"]::after {
+  background: var(--color-info-6);
+}
+
+.toolbarButton[data-download-indicator="error"]::after {
+  background: var(--color-danger-6);
 }
 
 .toolbarButton:active:not(:disabled) {
@@ -509,6 +529,12 @@
   }
 }
 
+@keyframes browser-download-indicator-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .toolbarButton,
   .annotationToggle,
@@ -522,5 +548,9 @@
   .loadingTrack span {
     animation: none;
     width: 100%;
+  }
+
+  .toolbarButton[data-download-indicator="loading"]::after {
+    animation: none;
   }
 }

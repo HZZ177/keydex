@@ -103,6 +103,7 @@ export function DownloadsView({ onClose }: DownloadsViewProps) {
       const target = event.target;
       if (!(target instanceof Element)) return;
       if (popoverRef.current?.contains(target)) return;
+      if (target.closest("[role='alertdialog']")) return;
       if (target.closest("[data-browser-toolbar-anchor='downloads']")) return;
       if (target.closest("[role='menu'][aria-label='页面右键菜单']")) return;
       onClose();
@@ -128,9 +129,10 @@ export function DownloadsView({ onClose }: DownloadsViewProps) {
     setBusyAction("reveal");
     try {
       await downloadActions.reveal(item);
+      setBusyAction(null);
+      onClose();
     } catch (error) {
       setActionError(errorMessage(error, "无法在资源管理器中显示该文件"));
-    } finally {
       setBusyAction(null);
     }
   };
@@ -232,34 +234,39 @@ export function DownloadsView({ onClose }: DownloadsViewProps) {
           )}
         </div>
 
-        {deleteTarget ? (
-          <div aria-labelledby="download-remove-title" className={styles.confirmLayer} role="alertdialog">
-            <div className={styles.confirmCard}>
-              <strong id="download-remove-title">{removeTitle(deleteTarget)}</strong>
-              <p>{removeDescription(deleteTarget)}</p>
-              <code>{deleteTarget.filename}</code>
-              <span className={styles.confirmActions}>
-                <button
-                  className={styles.secondaryButton}
-                  disabled={busyAction === "delete"}
-                  onClick={() => setDeleteTarget(null)}
-                  type="button"
-                >
-                  取消
-                </button>
-                <button
-                  className={styles.dangerButton}
-                  disabled={busyAction === "delete"}
-                  onClick={() => void removeDownload()}
-                  type="button"
-                >
-                  {busyAction === "delete" ? "处理中" : removeConfirmLabel(deleteTarget)}
-                </button>
-              </span>
-            </div>
-          </div>
-        ) : null}
       </section>
+      {deleteTarget ? (
+        <div className={styles.confirmLayer}>
+          <div
+            aria-labelledby="download-remove-title"
+            className={styles.confirmCard}
+            data-browser-surface-occlusion="true"
+            role="alertdialog"
+          >
+            <strong id="download-remove-title">{removeTitle(deleteTarget)}</strong>
+            <p>{removeDescription(deleteTarget)}</p>
+            <code>{deleteTarget.filename}</code>
+            <span className={styles.confirmActions}>
+              <button
+                className={styles.secondaryButton}
+                disabled={busyAction === "delete"}
+                onClick={() => setDeleteTarget(null)}
+                type="button"
+              >
+                取消
+              </button>
+              <button
+                className={styles.dangerButton}
+                disabled={busyAction === "delete"}
+                onClick={() => void removeDownload()}
+                type="button"
+              >
+                {busyAction === "delete" ? "处理中" : removeConfirmLabel(deleteTarget)}
+              </button>
+            </span>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }
@@ -453,6 +460,7 @@ export function downloadContextMenuItems(
 function progressLabel(item: BrowserDownloadItem): string {
   if (item.receivedBytes === 0) return "正在连接…";
   if (!item.totalBytes) return `${formatBytes(item.receivedBytes)} 已下载`;
+  if (item.receivedBytes >= item.totalBytes) return "正在完成…";
   return `${downloadProgress(item)}% · ${formatBytes(item.totalBytes)}`;
 }
 
@@ -487,7 +495,7 @@ function isMissingFileError(error: unknown): boolean {
 
 function downloadErrorLabel(category: string | null): string {
   switch (category) {
-    case "no_progress": return "长时间未收到下载数据";
+    case "finalization_failed": return "下载文件未能完成落盘";
     case "policy_or_access": return "目标文件不可写";
     case "no_space": return "磁盘空间不足";
     case "too_large": return "文件过大";

@@ -66,6 +66,49 @@ function started(
   };
 }
 
+function interrupted(id = "download-1"): BrowserEventEnvelope<"download.interrupted"> {
+  return {
+    schemaVersion: 1,
+    kind: "download.interrupted",
+    panelId: "panel-1",
+    surfaceId: "surface-1",
+    generation: 1,
+    sequence: 3,
+    occurredAt: "2026-07-21T00:00:02Z",
+    payload: {
+      downloadId: id,
+      errorCategory: "paused",
+      canResume: true,
+    },
+  };
+}
+
+function resumed(id = "download-1"): BrowserEventEnvelope<"download.resumed"> {
+  return {
+    schemaVersion: 1,
+    kind: "download.resumed",
+    panelId: "panel-1",
+    surfaceId: "surface-1",
+    generation: 1,
+    sequence: 4,
+    occurredAt: "2026-07-21T00:00:03Z",
+    payload: { downloadId: id },
+  };
+}
+
+function failed(errorCategory = "cancelled", id = "download-1"): BrowserEventEnvelope<"download.failed"> {
+  return {
+    schemaVersion: 1,
+    kind: "download.failed",
+    panelId: "panel-1",
+    surfaceId: "surface-1",
+    generation: 1,
+    sequence: 5,
+    occurredAt: "2026-07-21T00:00:04Z",
+    payload: { downloadId: id, errorCategory },
+  };
+}
+
 describe("BrowserDownloadController", () => {
   it("auto-accepts ordinary files into the host-managed Downloads target", async () => {
     let listener: ((event: BrowserEventEnvelope) => void) | null = null;
@@ -80,6 +123,7 @@ describe("BrowserDownloadController", () => {
       downloadId: "download-1",
       decision: "accept",
     }));
+    (listener as ((event: BrowserEventEnvelope) => void) | null)?.(started());
     expect(controller.store.getState().items["download-1"]?.state).toBe("downloading");
   });
 
@@ -92,7 +136,10 @@ describe("BrowserDownloadController", () => {
     controller.start({ send, subscribe: (next: (event: BrowserEventEnvelope) => void) => { listener = next; return vi.fn(); } } as never);
     (listener as ((event: BrowserEventEnvelope) => void) | null)?.(requested("setup.exe"));
     expect(send).not.toHaveBeenCalled();
-    await controller.respond("download-1", "cancel");
+    const response = controller.respond("download-1", "cancel");
+    await vi.waitFor(() => expect(send).toHaveBeenCalled());
+    (listener as ((event: BrowserEventEnvelope) => void) | null)?.(failed());
+    await response;
     expect(send).toHaveBeenCalledWith("browser_respond_download", expect.objectContaining({ decision: "cancel" }));
     expect(onIdle).toHaveBeenCalledOnce();
     expect(isDangerousFilename("script.PS1")).toBe(true);
@@ -179,20 +226,23 @@ describe("BrowserDownloadController", () => {
     expect(send).toHaveBeenLastCalledWith("browser_control_download", expect.objectContaining({
       action: "pause",
     }));
+    (listener as ((event: BrowserEventEnvelope) => void) | null)?.(interrupted());
     expect(controller.store.getState().items["download-1"]?.state).toBe("paused");
 
     await controller.control("download-1", "resume");
     expect(send).toHaveBeenLastCalledWith("browser_control_download", expect.objectContaining({
       action: "resume",
     }));
+    (listener as ((event: BrowserEventEnvelope) => void) | null)?.(resumed());
     await controller.control("download-1", "cancel");
     expect(send).toHaveBeenLastCalledWith("browser_control_download", expect.objectContaining({
       action: "cancel",
     }));
+    (listener as ((event: BrowserEventEnvelope) => void) | null)?.(failed());
     expect(controller.store.getState().items["download-1"]?.state).toBe("cancelled");
   });
 
-  it("turns a download with no progress into an actionable failure instead of spinning forever", async () => {
+  it("never turns a quiet active download into an automatic cancellation", async () => {
     vi.useFakeTimers();
     try {
       let listener: ((event: BrowserEventEnvelope) => void) | null = null;
@@ -208,19 +258,62 @@ describe("BrowserDownloadController", () => {
 
       (listener as ((event: BrowserEventEnvelope) => void) | null)?.(requested("setup.exe"));
       await controller.respond("download-1", "accept");
-      await vi.advanceTimersByTimeAsync(60_000);
+      (listener as ((event: BrowserEventEnvelope) => void) | null)?.(started("setup.exe"));
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
 
-      expect(send).toHaveBeenLastCalledWith("browser_control_download", expect.objectContaining({
-        action: "cancel",
-      }));
-      expect(controller.store.getState().items["download-1"]).toMatchObject({
-        state: "failed",
-        errorCategory: "no_progress",
-      });
+      expect(send).not.toHaveBeenCalledWith(
+        "browser_control_download",
+        expect.objectContaining({ action: "cancel" }),
+      );
+      expect(controller.store.getState().items["download-1"]?.state).toBe("downloading");
     } finally {
       vi.useRealTimers();
     }
   });
+
+  it("keeps a native terminal event authoritative when it arrives before the command response", async () => {
+    let listener: ((event: BrowserEventEnvelope) => void) | null = null;
+    const send = vi.fn(async () => {
+      (listener as ((event: BrowserEventEnvelope) => void) | null)?.(started());
+      (listener as ((event: BrowserEventEnvelope) => void) | null)?.(completed());
+      return { ok: true, requestId: "request" };
+    });
+    const controller = new BrowserDownloadController();
+    controller.start({
+      send,
+      subscribe: (next: (event: BrowserEventEnvelope) => void) => {
+        listener = next;
+        return vi.fn();
+      },
+    } as never);
+
+    (listener as ((event: BrowserEventEnvelope) => void) | null)?.(requested("report.pdf"));
+    await vi.waitFor(() => expect(controller.store.getState().items["download-1"]?.state).toBe("completed"));
+  });
+
+  it("never reopens a terminal download when a late progress event arrives", async () => {
+    let listener: ((event: BrowserEventEnvelope) => void) | null = null;
+    const controller = new BrowserDownloadController();
+    controller.start({
+      send: vi.fn().mockResolvedValue({ ok: true, requestId: "request" }),
+      subscribe: (next: (event: BrowserEventEnvelope) => void) => {
+        listener = next;
+        return vi.fn();
+      },
+    } as never);
+    (listener as ((event: BrowserEventEnvelope) => void) | null)?.(requested("report.pdf"));
+    (listener as ((event: BrowserEventEnvelope) => void) | null)?.(started());
+    (listener as ((event: BrowserEventEnvelope) => void) | null)?.(completed());
+    (listener as ((event: BrowserEventEnvelope) => void) | null)?.({
+      ...started(),
+      kind: "download.progress",
+      sequence: 6,
+      payload: { downloadId: "download-1", receivedBytes: 2_048, totalBytes: 2_048 },
+    } as BrowserEventEnvelope<"download.progress">);
+
+    expect(controller.store.getState().items["download-1"]?.state).toBe("completed");
+  });
+
 });
 
 describe("download UI", () => {
@@ -236,6 +329,7 @@ describe("download UI", () => {
       errorCategory: null,
       dangerous: true,
       filePath: null,
+      canResume: false,
     };
     const onAccept = vi.fn();
     render(<DangerousDownloadPrompt item={item} responding={false} onAccept={onAccept} onCancel={vi.fn()} />);
@@ -245,6 +339,7 @@ describe("download UI", () => {
 
   it("renders a selectable themed downloads popover with quick and context actions", async () => {
     const revealPath = vi.spyOn(runtimeBridge.desktopPicker, "revealPath").mockResolvedValue(undefined);
+    const onClose = vi.fn();
     browserDownloadController.store.setState({
       items: {
         complete: {
@@ -258,12 +353,13 @@ describe("download UI", () => {
           errorCategory: null,
           dangerous: false,
           filePath: "C:\\Users\\tester\\Downloads\\report.pdf",
+          canResume: false,
         },
       },
     });
     render(
       <AppContextMenuProvider>
-        <div data-theme="dark"><DownloadsView onClose={vi.fn()} /></div>
+        <div data-theme="dark"><DownloadsView onClose={onClose} /></div>
       </AppContextMenuProvider>,
     );
     expect(screen.getByRole("dialog", { name: "下载" }).getAttribute("aria-modal")).toBe("false");
@@ -273,8 +369,13 @@ describe("download UI", () => {
     const row = screen.getByRole("option", { name: "report.pdf，已完成" });
     fireEvent.click(row);
     expect(row.getAttribute("aria-selected")).toBe("true");
-    fireEvent.click(screen.getByRole("button", { name: "在资源管理器中显示 report.pdf" }));
-    expect(revealPath).toHaveBeenCalledWith("C:\\Users\\tester\\Downloads\\report.pdf");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "在资源管理器中显示 report.pdf" }));
+    });
+    await vi.waitFor(() => {
+      expect(revealPath).toHaveBeenCalledWith("C:\\Users\\tester\\Downloads\\report.pdf");
+      expect(onClose).toHaveBeenCalledOnce();
+    });
 
     fireEvent.contextMenu(row, { clientX: 24, clientY: 24 });
     expect(await screen.findByRole("menuitem", { name: "在资源管理器中显示" })).not.toBeNull();
@@ -291,7 +392,7 @@ describe("download UI", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it("confirms deletion inside the download popover without opening a global dialog", async () => {
+  it("opens deletion confirmation as a centered sibling overlay instead of clipping it inside the popover", async () => {
     const deleteBrowserDownload = vi.spyOn(
       runtimeBridge.desktopPicker,
       "deleteBrowserDownload",
@@ -309,14 +410,19 @@ describe("download UI", () => {
           errorCategory: null,
           dangerous: false,
           filePath: "C:\\Users\\tester\\Downloads\\report.pdf",
+          canResume: false,
         },
       },
     });
 
     render(<DownloadsView onClose={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "删除 report.pdf" }));
-    expect(screen.getByRole("alertdialog", { name: "删除下载文件？" })).not.toBeNull();
-    expect(screen.getByRole("dialog", { name: "下载" })).not.toBeNull();
+    const confirmation = screen.getByRole("alertdialog", { name: "删除下载文件？" });
+    const popover = screen.getByRole("dialog", { name: "下载" });
+    expect(confirmation).not.toBeNull();
+    expect(popover.contains(confirmation)).toBe(false);
+    fireEvent.pointerDown(confirmation);
+    expect(popover).not.toBeNull();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "删除文件" }));
       await Promise.resolve();

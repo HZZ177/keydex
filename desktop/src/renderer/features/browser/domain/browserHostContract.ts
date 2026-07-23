@@ -277,6 +277,12 @@ export interface BrowserEventPayloadByKind {
     readonly receivedBytes: number;
     readonly totalBytes: number | null;
   };
+  readonly "download.interrupted": {
+    readonly downloadId: string;
+    readonly errorCategory: string;
+    readonly canResume: boolean;
+  };
+  readonly "download.resumed": { readonly downloadId: string };
   readonly "download.completed": { readonly downloadId: string; readonly filePath: string };
   readonly "download.failed": { readonly downloadId: string; readonly errorCategory: string };
   readonly "capture.completed": {
@@ -521,6 +527,14 @@ const eventValidators: Readonly<Record<BrowserEventKind, Validator>> = {
     downloadId: idValidator,
     receivedBytes: nonNegativeIntegerValidator,
     totalBytes: nullableValidator(nonNegativeIntegerValidator),
+  }),
+  "download.interrupted": objectValidator(["downloadId", "errorCategory", "canResume"], {
+    downloadId: idValidator,
+    errorCategory: stringValidator(1, 128),
+    canResume: booleanValidator,
+  }),
+  "download.resumed": objectValidator(["downloadId"], {
+    downloadId: idValidator,
   }),
   "download.completed": objectValidator(["downloadId", "filePath"], {
     downloadId: idValidator,

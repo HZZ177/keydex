@@ -415,6 +415,10 @@ pub(crate) enum BrowserEvent {
     DownloadStarted(DownloadStartedPayload),
     #[serde(rename = "download.progress")]
     DownloadProgress(DownloadProgressPayload),
+    #[serde(rename = "download.interrupted")]
+    DownloadInterrupted(DownloadInterruptedPayload),
+    #[serde(rename = "download.resumed")]
+    DownloadResumed(DownloadResumedPayload),
     #[serde(rename = "download.completed")]
     DownloadCompleted(DownloadCompletedPayload),
     #[serde(rename = "download.failed")]
@@ -576,6 +580,20 @@ pub(crate) struct DownloadProgressPayload {
     pub(crate) download_id: String,
     pub(crate) received_bytes: u64,
     pub(crate) total_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct DownloadInterruptedPayload {
+    pub(crate) download_id: String,
+    pub(crate) error_category: String,
+    pub(crate) can_resume: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct DownloadResumedPayload {
+    pub(crate) download_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1096,6 +1114,10 @@ fn validate_event_payload_keys(kind: &str, payload: &Value) -> Result<(), Browse
         "download.progress" => {
             exact_payload(payload, &["downloadId", "receivedBytes", "totalBytes"], &[])
         }
+        "download.interrupted" => {
+            exact_payload(payload, &["downloadId", "errorCategory", "canResume"], &[])
+        }
+        "download.resumed" => exact_payload(payload, &["downloadId"], &[]),
         "download.completed" => exact_payload(payload, &["downloadId", "filePath"], &[]),
         "download.failed" => exact_payload(payload, &["downloadId", "errorCategory"], &[]),
         "capture.completed" => exact_payload(payload, &["captureRequestId", "asset"], &[]),
@@ -1298,6 +1320,14 @@ fn validate_event(event: &BrowserEvent) -> Result<(), BrowserContractError> {
             Ok(())
         }
         BrowserEvent::DownloadProgress(payload) => validate_id(&payload.download_id, "downloadId"),
+        BrowserEvent::DownloadInterrupted(payload) => {
+            validate_id(&payload.download_id, "downloadId")?;
+            if payload.error_category.trim().is_empty() || payload.error_category.len() > 128 {
+                return Err(BrowserContractError::InvalidValue("errorCategory"));
+            }
+            Ok(())
+        }
+        BrowserEvent::DownloadResumed(payload) => validate_id(&payload.download_id, "downloadId"),
         BrowserEvent::DownloadCompleted(payload) => {
             validate_id(&payload.download_id, "downloadId")?;
             if payload.file_path.trim().is_empty() || payload.file_path.len() > 4_096 {

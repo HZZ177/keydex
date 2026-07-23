@@ -1,12 +1,11 @@
 use std::{
     cell::RefCell,
     collections::HashMap,
-    fs,
+    fs::{self, File, OpenOptions},
+    io::{Read, Write},
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Condvar, Mutex, Once},
+    time::Duration,
 };
 
 use uuid::Uuid;
@@ -15,8 +14,8 @@ use super::{
     contract::{
         BrowserDownloadControlAction, BrowserDownloadDecision, BrowserEvent, BrowserSurfaceRef,
         ControlDownloadInput, DownloadCompletedPayload, DownloadFailedPayload,
-        DownloadProgressPayload, DownloadRequestedPayload, DownloadStartedPayload,
-        RespondDownloadInput,
+        DownloadInterruptedPayload, DownloadProgressPayload, DownloadRequestedPayload,
+        DownloadResumedPayload, DownloadStartedPayload, RespondDownloadInput,
     },
     ui_actor::NativeBrowserSurface,
 };
@@ -25,7 +24,9 @@ use super::{
 struct PendingDownload {
     id: String,
     surface: BrowserSurfaceRef,
+    url: String,
     suggested_filename: String,
+    total_bytes: Option<u64>,
 }
 
 #[derive(Debug, Default)]
@@ -120,28 +121,45 @@ struct NativeDownloadHandle {
     surface: BrowserSurfaceRef,
     args: webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2DownloadStartingEventArgs,
     deferral: webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Deferral,
-    operation: webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2DownloadOperation,
     emit: Arc<dyn Fn(BrowserEvent) + Send + Sync>,
 }
 
-#[cfg(windows)]
-#[derive(Clone)]
-struct ActiveDownloadHandle {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ManagedTransferCommand {
+    Running,
+    Paused,
+    Cancelled,
+}
+
+struct ManagedDownloadControl {
     surface: BrowserSurfaceRef,
-    operation: webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2DownloadOperation,
+    command: Mutex<ManagedTransferCommand>,
+    wake: Condvar,
+}
+
+struct ManagedDownloadRequest {
+    download_id: String,
+    url: String,
+    cookie_header: Option<String>,
+    referrer: Option<String>,
+    user_agent: Option<String>,
+    target_path: PathBuf,
+    total_bytes_hint: Option<u64>,
+    emit: Arc<dyn Fn(BrowserEvent) + Send + Sync>,
+    control: Arc<ManagedDownloadControl>,
+    transfers: Arc<Mutex<HashMap<String, Arc<ManagedDownloadControl>>>>,
 }
 
 #[cfg(windows)]
 thread_local! {
     static NATIVE_DOWNLOAD_HANDLES: RefCell<HashMap<String, NativeDownloadHandle>> =
         RefCell::new(HashMap::new());
-    static ACTIVE_DOWNLOAD_HANDLES: RefCell<HashMap<String, ActiveDownloadHandle>> =
-        RefCell::new(HashMap::new());
 }
 
 #[derive(Clone, Default)]
 pub(crate) struct DownloadManager {
     ledger: Arc<Mutex<DownloadLedger>>,
+    transfers: Arc<Mutex<HashMap<String, Arc<ManagedDownloadControl>>>>,
 }
 
 impl DownloadManager {
@@ -193,54 +211,49 @@ impl DownloadManager {
             }
             BrowserDownloadDecision::Cancel => None,
         };
-        resolve_native_download(webview, pending.id, target)
+        resolve_native_download(webview, pending, target, self.transfers.clone())
     }
 
     #[cfg(windows)]
     pub(crate) fn control(
         &self,
-        webview: &NativeBrowserSurface,
+        _webview: &NativeBrowserSurface,
         input: &ControlDownloadInput,
     ) -> Result<(), String> {
         let surface = input.surface.clone();
         let download_id = input.download_id.clone();
-        let action = input.action.clone();
-        webview.run(move |_| unsafe {
-            let handle = ACTIVE_DOWNLOAD_HANDLES.with(|handles| {
-                handles
-                    .borrow()
-                    .get(&download_id)
-                    .filter(|handle| handle.surface == surface)
-                    .cloned()
-            });
-            let Some(handle) = handle else {
-                return Err("下载任务已结束或不属于当前网页".to_string());
-            };
-            match action {
-                BrowserDownloadControlAction::Pause => handle
-                    .operation
-                    .Pause()
-                    .map_err(|error| format!("暂停下载失败: {error}")),
-                BrowserDownloadControlAction::Resume => {
-                    let mut can_resume = windows_061::core::BOOL::default();
-                    handle
-                        .operation
-                        .CanResume(&mut can_resume)
-                        .map_err(|error| format!("无法确认下载是否可恢复: {error}"))?;
-                    if !can_resume.as_bool() {
-                        return Err("该下载任务当前无法恢复".to_string());
-                    }
-                    handle
-                        .operation
-                        .Resume()
-                        .map_err(|error| format!("恢复下载失败: {error}"))
-                }
-                BrowserDownloadControlAction::Cancel => handle
-                    .operation
-                    .Cancel()
-                    .map_err(|error| format!("取消下载失败: {error}")),
+        let control = self
+            .transfers
+            .lock()
+            .map_err(|_| "下载管理器暂不可用".to_string())?
+            .get(&download_id)
+            .filter(|control| control.surface == surface)
+            .cloned()
+            .ok_or_else(|| "下载任务已结束或不属于当前网页".to_string())?;
+        let mut command = control
+            .command
+            .lock()
+            .map_err(|_| "下载任务状态暂不可用".to_string())?;
+        match input.action {
+            BrowserDownloadControlAction::Pause if *command == ManagedTransferCommand::Running => {
+                *command = ManagedTransferCommand::Paused;
             }
-        })
+            BrowserDownloadControlAction::Resume if *command == ManagedTransferCommand::Paused => {
+                *command = ManagedTransferCommand::Running;
+                control.wake.notify_all();
+            }
+            BrowserDownloadControlAction::Cancel => {
+                *command = ManagedTransferCommand::Cancelled;
+                control.wake.notify_all();
+            }
+            BrowserDownloadControlAction::Pause => {
+                return Err("该下载任务当前无法暂停".to_string());
+            }
+            BrowserDownloadControlAction::Resume => {
+                return Err("该下载任务当前无法恢复".to_string());
+            }
+        }
+        Ok(())
     }
 
     #[cfg(not(windows))]
@@ -275,8 +288,16 @@ impl DownloadManager {
         #[cfg(windows)]
         if let Some(webview) = webview {
             for id in ids {
-                let _ = resolve_native_download(webview, id, None);
+                let pending = PendingDownload {
+                    id,
+                    surface: surface.clone(),
+                    url: String::new(),
+                    suggested_filename: "download".to_string(),
+                    total_bytes: None,
+                };
+                let _ = resolve_native_download(webview, pending, None, self.transfers.clone());
             }
+            cancel_managed_downloads_for_surface(&self.transfers, surface);
         }
         #[cfg(not(windows))]
         let _ = (ids, webview);
@@ -295,7 +316,8 @@ pub(crate) fn attach_download_manager(
     use windows_061::core::Interface;
 
     webview.run(move |surface_handle| unsafe {
-        let Ok(core) = surface_handle.core().cast::<ICoreWebView2_4>() else {
+        let base_core = surface_handle.core().clone();
+        let Ok(core) = base_core.cast::<ICoreWebView2_4>() else {
             return Err("WebView2 download API is unavailable".to_string());
         };
         let mut token = 0_i64;
@@ -332,7 +354,6 @@ pub(crate) fn attach_download_manager(
                             surface: surface.clone(),
                             args,
                             deferral,
-                            operation,
                             emit: emit.clone(),
                         },
                     );
@@ -340,7 +361,9 @@ pub(crate) fn attach_download_manager(
                 manager.insert(PendingDownload {
                     id: download_id.clone(),
                     surface: surface.clone(),
+                    url: url.clone(),
                     suggested_filename: suggested_filename.clone(),
+                    total_bytes: u64::try_from(total).ok(),
                 });
                 emit(BrowserEvent::DownloadRequested(DownloadRequestedPayload {
                     download_id,
@@ -370,11 +393,13 @@ pub(crate) fn attach_download_manager(
 #[cfg(windows)]
 fn resolve_native_download(
     webview: &NativeBrowserSurface,
-    download_id: String,
+    pending: PendingDownload,
     target: Option<PathBuf>,
+    transfers: Arc<Mutex<HashMap<String, Arc<ManagedDownloadControl>>>>,
 ) -> Result<(), String> {
     webview
-        .run(move |_| unsafe {
+        .run(move |surface_handle| unsafe {
+            let download_id = pending.id.clone();
             let handle =
                 NATIVE_DOWNLOAD_HANDLES.with(|handles| handles.borrow_mut().remove(&download_id));
             let Some(handle) = handle else {
@@ -388,6 +413,10 @@ fn resolve_native_download(
                 handle.deferral.Complete().map_err(|error| {
                     format!("Failed to complete download cancellation: {error}")
                 })?;
+                (handle.emit)(BrowserEvent::DownloadFailed(DownloadFailedPayload {
+                    download_id,
+                    error_category: "cancelled".to_string(),
+                }));
                 return Ok(());
             };
             let target_path = target.to_string_lossy().to_string();
@@ -395,51 +424,51 @@ fn resolve_native_download(
                 .file_name()
                 .map(|name| name.to_string_lossy().to_string())
                 .unwrap_or_else(|| "download".to_string());
-            let target = windows_061::core::HSTRING::from(target.as_os_str());
-            if handle.args.SetResultFilePath(&target).is_err() {
-                let _ = handle.args.SetCancel(true);
-                let _ = handle.deferral.Complete();
-                return Err("Failed to set managed download path".to_string());
-            }
-            if let Err(error) = attach_download_progress(
-                &handle.operation,
-                download_id.clone(),
-                target_path.clone(),
-                handle.emit.clone(),
-            ) {
-                let _ = handle.args.SetCancel(true);
-                let _ = handle.operation.Cancel();
-                let _ = handle.deferral.Complete();
-                return Err(error);
-            }
-            ACTIVE_DOWNLOAD_HANDLES.with(|handles| {
-                handles.borrow_mut().insert(
-                    download_id.clone(),
-                    ActiveDownloadHandle {
-                        surface: handle.surface,
-                        operation: handle.operation.clone(),
-                    },
-                );
+            let cookie_header =
+                read_cookie_header(surface_handle.core(), &pending.url).unwrap_or_default();
+            let referrer = read_operation_string(|value| surface_handle.core().Source(value));
+            let user_agent = read_browser_user_agent(surface_handle.core());
+            handle
+                .args
+                .SetCancel(true)
+                .map_err(|error| format!("Failed to hand download to Keydex: {error}"))?;
+            handle
+                .deferral
+                .Complete()
+                .map_err(|error| format!("Failed to release browser download: {error}"))?;
+
+            let control = Arc::new(ManagedDownloadControl {
+                surface: handle.surface,
+                command: Mutex::new(ManagedTransferCommand::Running),
+                wake: Condvar::new(),
             });
+            transfers
+                .lock()
+                .map_err(|_| "Download manager is unavailable".to_string())?
+                .insert(download_id.clone(), control.clone());
             (handle.emit)(BrowserEvent::DownloadStarted(DownloadStartedPayload {
                 download_id: download_id.clone(),
                 file_path: target_path,
                 filename,
             }));
-            if let Err(error) = handle.args.SetCancel(false) {
-                ACTIVE_DOWNLOAD_HANDLES.with(|handles| {
-                    handles.borrow_mut().remove(&download_id);
-                });
-                let _ = handle.operation.Cancel();
-                let _ = handle.deferral.Complete();
-                return Err(format!("Failed to accept download: {error}"));
-            }
-            if let Err(error) = handle.deferral.Complete() {
-                ACTIVE_DOWNLOAD_HANDLES.with(|handles| {
-                    handles.borrow_mut().remove(&download_id);
-                });
-                let _ = handle.operation.Cancel();
-                return Err(format!("Failed to complete download request: {error}"));
+            let request = ManagedDownloadRequest {
+                download_id: download_id.clone(),
+                url: pending.url,
+                cookie_header: (!cookie_header.is_empty()).then_some(cookie_header),
+                referrer: referrer.filter(|value| !value.is_empty()),
+                user_agent,
+                target_path: target,
+                total_bytes_hint: pending.total_bytes,
+                emit: handle.emit,
+                control,
+                transfers: transfers.clone(),
+            };
+            if let Err(error) = spawn_managed_download(request) {
+                transfers
+                    .lock()
+                    .ok()
+                    .and_then(|mut transfers| transfers.remove(&download_id));
+                return Err(error);
             }
             Ok(())
         })
@@ -447,103 +476,295 @@ fn resolve_native_download(
 }
 
 #[cfg(windows)]
-unsafe fn attach_download_progress(
-    operation: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2DownloadOperation,
-    download_id: String,
-    file_path: String,
-    emit: Arc<dyn Fn(BrowserEvent) + Send + Sync>,
-) -> Result<(), String> {
-    use webview2_com::Microsoft::Web::WebView2::Win32::{
-        COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON, COREWEBVIEW2_DOWNLOAD_STATE,
-        COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED, COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED,
+fn spawn_managed_download(request: ManagedDownloadRequest) -> Result<(), String> {
+    std::thread::Builder::new()
+        .name(format!("keydex-download-{}", request.download_id))
+        .spawn(move || run_managed_download(request))
+        .map(|_| ())
+        .map_err(|error| format!("Failed to start managed download: {error}"))
+}
+
+fn run_managed_download(request: ManagedDownloadRequest) {
+    let partial_path = managed_partial_path(&request.target_path, &request.download_id);
+    let client = match build_download_client(request.user_agent.as_deref()) {
+        Ok(client) => client,
+        Err(_) => {
+            finish_managed_download(&request, &partial_path, "client_unavailable");
+            return;
+        }
     };
-    use webview2_com::{BytesReceivedChangedEventHandler, StateChangedEventHandler};
+    let mut received_bytes = fs::metadata(&partial_path)
+        .map(|metadata| metadata.len())
+        .unwrap_or_default();
+    let mut total_bytes = request.total_bytes_hint;
+    let mut paused_event_emitted = false;
 
-    let terminal_emitted = Arc::new(AtomicBool::new(false));
-    let progress_id = download_id.clone();
-    let progress_emit = emit.clone();
-    let progress_file_path = file_path.clone();
-    let progress_terminal_emitted = terminal_emitted.clone();
-    let mut progress_token = 0_i64;
-    operation
-        .add_BytesReceivedChanged(
-            &BytesReceivedChangedEventHandler::create(Box::new(move |sender, _| {
-                if let Some(sender) = sender {
-                    let mut received = 0_i64;
-                    let mut total = -1_i64;
-                    let _ = sender.BytesReceived(&mut received);
-                    let _ = sender.TotalBytesToReceive(&mut total);
-                    progress_emit(BrowserEvent::DownloadProgress(DownloadProgressPayload {
-                        download_id: progress_id.clone(),
-                        received_bytes: u64::try_from(received).unwrap_or_default(),
-                        total_bytes: u64::try_from(total).ok(),
+    'transfer: loop {
+        let command = match wait_until_runnable(&request.control) {
+            Ok(command) => command,
+            Err(_) => {
+                finish_managed_download(&request, &partial_path, "state_unavailable");
+                return;
+            }
+        };
+        if command == ManagedTransferCommand::Cancelled {
+            finish_managed_download(&request, &partial_path, "cancelled");
+            return;
+        }
+        if paused_event_emitted {
+            (request.emit)(BrowserEvent::DownloadResumed(DownloadResumedPayload {
+                download_id: request.download_id.clone(),
+            }));
+        }
+
+        let mut builder = client.get(&request.url);
+        if received_bytes > 0 {
+            builder = builder.header(reqwest::header::RANGE, format!("bytes={received_bytes}-"));
+        }
+        if let Some(cookie_header) = &request.cookie_header {
+            builder = builder.header(reqwest::header::COOKIE, cookie_header);
+        }
+        if let Some(referrer) = &request.referrer {
+            builder = builder.header(reqwest::header::REFERER, referrer);
+        }
+        let mut response = match builder.send() {
+            Ok(response) if response.status().is_success() => response,
+            Ok(response) => {
+                finish_managed_download(
+                    &request,
+                    &partial_path,
+                    &format!("http_{}", response.status().as_u16()),
+                );
+                return;
+            }
+            Err(_) => {
+                if !pause_after_transfer_error(&request, "network") {
+                    finish_managed_download(&request, &partial_path, "cancelled");
+                    return;
+                }
+                paused_event_emitted = true;
+                continue;
+            }
+        };
+
+        let resumed = received_bytes > 0;
+        if resumed && response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+            received_bytes = 0;
+        }
+        total_bytes = response_total_bytes(&response, received_bytes).or(total_bytes);
+        let mut file = match open_partial_file(&partial_path, received_bytes > 0) {
+            Ok(file) => file,
+            Err(_) => {
+                finish_managed_download(&request, &partial_path, "file_unavailable");
+                return;
+            }
+        };
+        let mut buffer = vec![0_u8; 128 * 1024];
+        loop {
+            let command = request
+                .control
+                .command
+                .lock()
+                .map(|command| *command)
+                .unwrap_or(ManagedTransferCommand::Cancelled);
+            if command == ManagedTransferCommand::Cancelled {
+                drop(file);
+                finish_managed_download(&request, &partial_path, "cancelled");
+                return;
+            }
+            if command == ManagedTransferCommand::Paused {
+                (request.emit)(BrowserEvent::DownloadInterrupted(
+                    DownloadInterruptedPayload {
+                        download_id: request.download_id.clone(),
+                        error_category: "paused".to_string(),
+                        can_resume: true,
+                    },
+                ));
+                paused_event_emitted = true;
+                continue 'transfer;
+            }
+            match response.read(&mut buffer) {
+                Ok(0) => {
+                    if total_bytes.is_some_and(|total| received_bytes < total) {
+                        if !pause_after_transfer_error(&request, "network") {
+                            drop(file);
+                            finish_managed_download(&request, &partial_path, "cancelled");
+                            return;
+                        }
+                        paused_event_emitted = true;
+                        continue 'transfer;
+                    }
+                    if file.flush().is_err() || file.sync_all().is_err() {
+                        drop(file);
+                        finish_managed_download(&request, &partial_path, "file_unavailable");
+                        return;
+                    }
+                    drop(file);
+                    if fs::rename(&partial_path, &request.target_path).is_err() {
+                        finish_managed_download(&request, &partial_path, "target_conflict");
+                        return;
+                    }
+                    remove_managed_transfer(&request);
+                    (request.emit)(BrowserEvent::DownloadCompleted(DownloadCompletedPayload {
+                        download_id: request.download_id,
+                        file_path: request.target_path.to_string_lossy().to_string(),
                     }));
-                    if total > 0 && received >= total {
-                        let mut state = COREWEBVIEW2_DOWNLOAD_STATE::default();
-                        let _ = sender.State(&mut state);
-                        if state == COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED
-                            && !progress_terminal_emitted.swap(true, Ordering::AcqRel)
-                        {
-                            ACTIVE_DOWNLOAD_HANDLES.with(|handles| {
-                                handles.borrow_mut().remove(&progress_id);
-                            });
-                            progress_emit(BrowserEvent::DownloadCompleted(
-                                DownloadCompletedPayload {
-                                    download_id: progress_id.clone(),
-                                    file_path: progress_file_path.clone(),
-                                },
-                            ));
-                        }
-                    }
+                    return;
                 }
-                Ok(())
-            })),
-            &mut progress_token,
-        )
-        .map_err(|error| format!("Failed to observe download progress: {error}"))?;
+                Ok(read) => {
+                    if file.write_all(&buffer[..read]).is_err() {
+                        drop(file);
+                        finish_managed_download(&request, &partial_path, "file_unavailable");
+                        return;
+                    }
+                    received_bytes = received_bytes.saturating_add(read as u64);
+                    (request.emit)(BrowserEvent::DownloadProgress(DownloadProgressPayload {
+                        download_id: request.download_id.clone(),
+                        received_bytes,
+                        total_bytes,
+                    }));
+                }
+                Err(_) => {
+                    drop(file);
+                    if !pause_after_transfer_error(&request, "network") {
+                        finish_managed_download(&request, &partial_path, "cancelled");
+                        return;
+                    }
+                    paused_event_emitted = true;
+                    continue 'transfer;
+                }
+            }
+        }
+    }
+}
 
-    let state_terminal_emitted = terminal_emitted;
-    let mut state_token = 0_i64;
-    operation
-        .add_StateChanged(
-            &StateChangedEventHandler::create(Box::new(move |sender, _| {
-                if let Some(sender) = sender {
-                    let mut state = COREWEBVIEW2_DOWNLOAD_STATE::default();
-                    let _ = sender.State(&mut state);
-                    if state == COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED
-                        && !state_terminal_emitted.swap(true, Ordering::AcqRel)
-                    {
-                        ACTIVE_DOWNLOAD_HANDLES.with(|handles| {
-                            handles.borrow_mut().remove(&download_id);
-                        });
-                        emit(BrowserEvent::DownloadCompleted(DownloadCompletedPayload {
-                            download_id: download_id.clone(),
-                            file_path: file_path.clone(),
-                        }));
-                    } else if state == COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED
-                        && !state_terminal_emitted.swap(true, Ordering::AcqRel)
-                    {
-                        let mut reason = COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON::default();
-                        let _ = sender.InterruptReason(&mut reason);
-                        let category = download_interrupt_category(reason.0);
-                        ACTIVE_DOWNLOAD_HANDLES.with(|handles| {
-                            handles.borrow_mut().remove(&download_id);
-                        });
-                        if category == "cancelled" {
-                            let _ = fs::remove_file(&file_path);
-                        }
-                        emit(BrowserEvent::DownloadFailed(DownloadFailedPayload {
-                            download_id: download_id.clone(),
-                            error_category: category.to_string(),
-                        }));
-                    }
-                }
-                Ok(())
-            })),
-            &mut state_token,
-        )
-        .map_err(|error| format!("Failed to observe download state: {error}"))?;
-    Ok(())
+fn build_download_client(user_agent: Option<&str>) -> Result<reqwest::blocking::Client, String> {
+    install_download_tls_provider()?;
+    let mut builder = reqwest::blocking::Client::builder().connect_timeout(Duration::from_secs(30));
+    if let Some(user_agent) = user_agent.filter(|value| !value.is_empty()) {
+        builder = builder.user_agent(user_agent);
+    }
+    builder
+        .build()
+        .map_err(|error| format!("Failed to prepare HTTP client: {error}"))
+}
+
+fn install_download_tls_provider() -> Result<(), String> {
+    static INSTALL_PROVIDER: Once = Once::new();
+    INSTALL_PROVIDER.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+    rustls::crypto::CryptoProvider::get_default()
+        .map(|_| ())
+        .ok_or_else(|| "Failed to install the browser download TLS provider".to_string())
+}
+
+fn wait_until_runnable(control: &ManagedDownloadControl) -> Result<ManagedTransferCommand, String> {
+    let mut command = control
+        .command
+        .lock()
+        .map_err(|_| "Download state is unavailable".to_string())?;
+    while *command == ManagedTransferCommand::Paused {
+        command = control
+            .wake
+            .wait(command)
+            .map_err(|_| "Download state is unavailable".to_string())?;
+    }
+    Ok(*command)
+}
+
+fn pause_after_transfer_error(request: &ManagedDownloadRequest, category: &str) -> bool {
+    let mut command = match request.control.command.lock() {
+        Ok(command) => command,
+        Err(_) => return false,
+    };
+    if *command == ManagedTransferCommand::Cancelled {
+        return false;
+    }
+    *command = ManagedTransferCommand::Paused;
+    drop(command);
+    (request.emit)(BrowserEvent::DownloadInterrupted(
+        DownloadInterruptedPayload {
+            download_id: request.download_id.clone(),
+            error_category: category.to_string(),
+            can_resume: true,
+        },
+    ));
+    true
+}
+
+fn response_total_bytes(response: &reqwest::blocking::Response, offset: u64) -> Option<u64> {
+    response
+        .headers()
+        .get(reqwest::header::CONTENT_RANGE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.rsplit_once('/'))
+        .and_then(|(_, total)| total.parse::<u64>().ok())
+        .or_else(|| response.content_length().map(|length| length + offset))
+}
+
+fn open_partial_file(path: &Path, append: bool) -> Result<File, String> {
+    let mut options = OpenOptions::new();
+    options.create(true).write(true);
+    if append {
+        options.append(true);
+    } else {
+        options.truncate(true);
+    }
+    options
+        .open(path)
+        .map_err(|error| format!("Failed to open partial download: {error}"))
+}
+
+fn managed_partial_path(target: &Path, download_id: &str) -> PathBuf {
+    let filename = target
+        .file_name()
+        .map(|value| value.to_string_lossy().to_string())
+        .unwrap_or_else(|| "download".to_string());
+    target.with_file_name(format!(".{filename}.{download_id}.part"))
+}
+
+fn remove_managed_transfer(request: &ManagedDownloadRequest) {
+    if let Ok(mut transfers) = request.transfers.lock() {
+        transfers.remove(&request.download_id);
+    }
+}
+
+fn finish_managed_download(
+    request: &ManagedDownloadRequest,
+    partial_path: &Path,
+    error_category: &str,
+) {
+    remove_managed_transfer(request);
+    if error_category == "cancelled" {
+        let _ = fs::remove_file(partial_path);
+    }
+    (request.emit)(BrowserEvent::DownloadFailed(DownloadFailedPayload {
+        download_id: request.download_id.clone(),
+        error_category: error_category.to_string(),
+    }));
+}
+
+fn cancel_managed_downloads_for_surface(
+    transfers: &Arc<Mutex<HashMap<String, Arc<ManagedDownloadControl>>>>,
+    surface: &BrowserSurfaceRef,
+) {
+    let controls = transfers
+        .lock()
+        .map(|transfers| {
+            transfers
+                .values()
+                .filter(|control| control.surface == *surface)
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    for control in controls {
+        if let Ok(mut command) = control.command.lock() {
+            *command = ManagedTransferCommand::Cancelled;
+            control.wake.notify_all();
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -557,6 +778,79 @@ unsafe fn read_operation_string(
     let result = unsafe { value.to_string().ok() };
     unsafe { windows_061::Win32::System::Com::CoTaskMemFree(Some(value.0.cast())) };
     result
+}
+
+#[cfg(windows)]
+unsafe fn read_cookie_header(
+    core: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2,
+    url: &str,
+) -> Result<String, String> {
+    use std::sync::mpsc;
+
+    use webview2_com::{
+        GetCookiesCompletedHandler, Microsoft::Web::WebView2::Win32::ICoreWebView2_2,
+    };
+    use windows_061::core::{Interface, HSTRING, PCWSTR};
+
+    let core = core
+        .cast::<ICoreWebView2_2>()
+        .map_err(|error| format!("Cookie manager is unavailable: {error}"))?;
+    let manager = core
+        .CookieManager()
+        .map_err(|error| format!("Cookie manager is unavailable: {error}"))?;
+    let uri = HSTRING::from(url);
+    let (sender, receiver) = mpsc::channel();
+    manager
+        .GetCookies(
+            PCWSTR::from_raw(uri.as_ptr()),
+            &GetCookiesCompletedHandler::create(Box::new(move |status, cookies| {
+                let result: windows_061::core::Result<Vec<(String, String)>> = (move || {
+                    status?;
+                    let Some(cookies) = cookies else {
+                        return Ok(Vec::<(String, String)>::new());
+                    };
+                    let mut count = 0_u32;
+                    cookies.Count(&mut count)?;
+                    let mut result = Vec::with_capacity(count as usize);
+                    for index in 0..count {
+                        let cookie = cookies.GetValueAtIndex(index)?;
+                        let name = read_operation_string(|value| cookie.Name(value));
+                        let value = read_operation_string(|output| cookie.Value(output));
+                        if let (Some(name), Some(value)) = (name, value) {
+                            result.push((name, value));
+                        }
+                    }
+                    Ok(result)
+                })();
+                sender
+                    .send(result)
+                    .map_err(|_| windows_061::core::Error::from_win32())
+            })),
+        )
+        .map_err(|error| format!("Failed to request browser cookies: {error}"))?;
+    let cookies = webview2_com::wait_with_pump(receiver)
+        .map_err(|error| format!("Failed to receive browser cookies: {error}"))?
+        .map_err(|error| format!("Failed to read browser cookies: {error}"))?;
+    Ok(cookies
+        .into_iter()
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect::<Vec<_>>()
+        .join("; "))
+}
+
+#[cfg(windows)]
+unsafe fn read_browser_user_agent(
+    core: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2,
+) -> Option<String> {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings2;
+    use windows_061::core::Interface;
+
+    let settings = core
+        .Settings()
+        .ok()?
+        .cast::<ICoreWebView2Settings2>()
+        .ok()?;
+    read_operation_string(|value| settings.UserAgent(value))
 }
 
 pub(crate) fn sanitize_download_filename(value: &str) -> String {
@@ -652,23 +946,13 @@ pub(crate) fn sanitize_download_url(value: &str) -> String {
     url.to_string()
 }
 
-pub(crate) fn download_interrupt_category(reason: i32) -> &'static str {
-    match reason {
-        2 | 8 | 9 => "policy_or_access",
-        3 => "no_space",
-        5 => "too_large",
-        6 | 11 => "security",
-        12..=16 => "network",
-        20 | 22 => "authentication",
-        21 => "tls_certificate",
-        26..=28 => "cancelled",
-        29 => "process_failed",
-        _ => "download_failed",
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::{
+        net::TcpListener,
+        sync::atomic::{AtomicBool, Ordering},
+    };
+
     use super::*;
 
     fn surface(panel: &str) -> BrowserSurfaceRef {
@@ -702,12 +986,71 @@ mod tests {
     }
 
     #[test]
-    fn dangerous_types_and_interrupts_are_classified() {
+    fn managed_transfer_commits_only_after_response_eof() {
+        let root = std::env::temp_dir().join(format!("keydex-download-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let target = root.join("report.txt");
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello")
+                .unwrap();
+        });
+        let completed = Arc::new(AtomicBool::new(false));
+        let completed_for_event = completed.clone();
+        let emit: Arc<dyn Fn(BrowserEvent) + Send + Sync> = Arc::new(move |event| {
+            if matches!(event, BrowserEvent::DownloadCompleted(_)) {
+                completed_for_event.store(true, Ordering::Release);
+            }
+        });
+        let control = Arc::new(ManagedDownloadControl {
+            surface: surface("current"),
+            command: Mutex::new(ManagedTransferCommand::Running),
+            wake: Condvar::new(),
+        });
+        let transfers = Arc::new(Mutex::new(HashMap::from([(
+            "download-1".to_string(),
+            control.clone(),
+        )])));
+        run_managed_download(ManagedDownloadRequest {
+            download_id: "download-1".to_string(),
+            url: format!("http://{address}/report.txt"),
+            cookie_header: None,
+            referrer: None,
+            user_agent: None,
+            target_path: target.clone(),
+            total_bytes_hint: None,
+            emit,
+            control,
+            transfers: transfers.clone(),
+        });
+        server.join().unwrap();
+
+        assert_eq!(fs::read(&target).unwrap(), b"hello");
+        assert!(completed.load(Ordering::Acquire));
+        assert!(transfers.lock().unwrap().is_empty());
+        assert!(!managed_partial_path(&target, "download-1").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dangerous_types_are_classified_before_user_confirmation() {
         assert!(is_dangerous_download("setup.EXE"));
         assert!(is_dangerous_download("script.ps1"));
         assert!(!is_dangerous_download("report.pdf"));
-        assert_eq!(download_interrupt_category(29), "process_failed");
-        assert_eq!(download_interrupt_category(21), "tls_certificate");
+    }
+
+    #[test]
+    fn managed_download_uses_a_distinct_partial_path_until_protocol_eof() {
+        let target = PathBuf::from(r"C:\Downloads\report.pdf");
+        assert_eq!(
+            managed_partial_path(&target, "download-1"),
+            PathBuf::from(r"C:\Downloads\.report.pdf.download-1.part")
+        );
     }
 
     #[test]
@@ -725,7 +1068,9 @@ mod tests {
         ledger.insert(PendingDownload {
             id: "download-current".to_string(),
             surface: current.clone(),
+            url: "https://example.com/setup.exe".to_string(),
             suggested_filename: "setup.exe".to_string(),
+            total_bytes: Some(12),
         });
 
         // Responding to the download may happen before WebView2 reports the
@@ -739,7 +1084,9 @@ mod tests {
         ledger.insert(PendingDownload {
             id: "download-stale".to_string(),
             surface: current.clone(),
+            url: "https://example.com/report.pdf".to_string(),
             suggested_filename: "report.pdf".to_string(),
+            total_bytes: None,
         });
         ledger.begin_navigation(&current);
         assert!(!ledger.consume_navigation_failure(&current));
@@ -757,7 +1104,9 @@ mod tests {
             ledger.insert(PendingDownload {
                 id: id.to_string(),
                 surface,
+                url: "https://example.com/report.pdf".to_string(),
                 suggested_filename: "report.pdf".to_string(),
+                total_bytes: None,
             });
         }
 

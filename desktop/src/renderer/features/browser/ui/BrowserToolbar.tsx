@@ -28,7 +28,7 @@ export interface BrowserToolbarProps {
   readonly annotationDisabledReason?: string;
   readonly disabled?: boolean;
   readonly downloadsActive?: boolean;
-  readonly downloadsAttention?: boolean;
+  readonly downloadsIndicator?: BrowserDownloadIndicator | null;
   readonly addressInputRef?: Ref<HTMLInputElement>;
   onAddressChange(value: string): void;
   onAddressSubmit(value: string): void;
@@ -43,6 +43,8 @@ export interface BrowserToolbarProps {
   onChromeInteraction?(): void;
 }
 
+export type BrowserDownloadIndicator = "loading" | "success" | "error";
+
 export function BrowserToolbar({
   address,
   addressInputRef,
@@ -53,7 +55,7 @@ export function BrowserToolbar({
   canGoForward,
   disabled = false,
   downloadsActive = false,
-  downloadsAttention = false,
+  downloadsIndicator = null,
   loading,
   profileMode,
   zoomFactor,
@@ -133,9 +135,17 @@ export function BrowserToolbar({
         <ToolbarButton
           active={downloadsActive}
           anchor="downloads"
-          attention={downloadsAttention}
           compactOnly
-          label={downloadsActive ? "关闭下载" : "下载"}
+          indicator={downloadsIndicator}
+          label={downloadsActive
+            ? "关闭下载"
+            : downloadsIndicator === "loading"
+              ? "下载进行中"
+              : downloadsIndicator === "success"
+                ? "下载完成"
+                : downloadsIndicator === "error"
+                  ? "下载失败"
+                  : "下载"}
           disabled={disabled}
           onClick={onDownloads}
         >
@@ -191,19 +201,19 @@ function AnnotationModeButton({
 function ToolbarButton({
   active = false,
   anchor,
-  attention = false,
   children,
   compactOnly = false,
   disabled,
+  indicator = null,
   label,
   onClick,
 }: {
   readonly active?: boolean;
   readonly anchor?: "downloads";
-  readonly attention?: boolean;
   readonly children: React.ReactNode;
   readonly compactOnly?: boolean;
   readonly disabled: boolean;
+  readonly indicator?: BrowserDownloadIndicator | null;
   readonly label: string;
   onClick?(): void;
 }) {
@@ -213,9 +223,9 @@ function ToolbarButton({
       aria-pressed={active ? true : undefined}
       className={styles.toolbarButton}
       data-active={active ? "true" : undefined}
-      data-attention={attention ? "true" : undefined}
       data-browser-secondary-action={compactOnly ? "true" : undefined}
       data-browser-toolbar-anchor={anchor}
+      data-download-indicator={indicator ?? undefined}
       data-tooltip-label={label}
       disabled={disabled || !onClick}
       onClick={onClick}
