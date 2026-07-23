@@ -219,6 +219,7 @@ async def test_chat_service_emits_skill_activation_context_before_user_message(
         session_id=session.id,
         message="拆 issues",
         model="qwen-coder",
+        client_input_id="client-input-skill-1",
     )
 
     await service._emit_skill_activation_context(
@@ -243,6 +244,7 @@ async def test_chat_service_emits_skill_activation_context_before_user_message(
     messages = service.message_event_service.get_display_messages(session.id)
 
     assert messages[0]["content"] == "拆 issues"
+    assert messages[0]["clientInputId"] == "client-input-skill-1"
     item = messages[0]["contextItems"][0]
     assert item["type"] == "skill"
     assert item["label"] == "/dev-plan"

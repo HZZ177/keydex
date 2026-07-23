@@ -421,8 +421,9 @@ describe("useAgentSessionController thread tasks", () => {
           metadata: expect.objectContaining({
             annotation_id: "annotation-1",
             annotation_revision: 1,
-            resolution: "orphaned",
-            freshness: "last-known",
+            schema_version: 2,
+            resolution: "missing",
+            freshness: "captured_only",
           }),
         })],
         message_injection: [expect.objectContaining({
@@ -435,37 +436,11 @@ describe("useAgentSessionController thread tasks", () => {
     expect(get).toHaveBeenCalledTimes(1);
   });
 
-  it("clones region evidence before optimistic state and includes the immutable attachment in transport", async () => {
+  it("sends region annotations as structured envelopes without screenshot attachments", async () => {
     const { channel, runtime } = fakeRuntime();
-    const cloneEvidence = vi.fn().mockImplementation(async (
-      annotationId: string,
-      assetId: string,
-      input: { sessionId: string; contextDigest: string },
-    ) => ({
-      schemaVersion: 1 as const,
-      annotationId,
-      assetId,
-      contextDigest: input.contextDigest,
-      reused: false,
-      attachment: {
-        id: "attachment-1",
-        attachmentId: "attachment-1",
-        sessionId: input.sessionId,
-        userId: "user-1",
-        type: "image" as const,
-        source: "web_annotation" as const,
-        name: "web-annotation.png",
-        path: "D:/data/attachments/attachment-1/web-annotation.png",
-        mimeType: "image/png" as const,
-        size: 128,
-        createdAt: "2026-07-22T08:01:00Z",
-        updatedAt: "2026-07-22T08:01:00Z",
-      },
-    }));
     const coordinator = new WebAnnotationSendCoordinator({
       client: {
         get: vi.fn().mockResolvedValue(webRegionAnnotationDetail()),
-        cloneEvidence,
       },
       panelRegistry: new WebAnnotationPanelRegistry(),
       now: () => "2026-07-22T08:01:00Z",
@@ -483,32 +458,71 @@ describe("useAgentSessionController thread tasks", () => {
 
     let sent = false;
     await act(async () => {
-      sent = await result.current.sendText("检查截图", selectedModel(), {
+      sent = await result.current.sendText("检查区域", selectedModel(), {
         webAnnotations: [webAnnotationReference()],
       });
     });
 
     expect(sent).toBe(true);
-    expect(cloneEvidence).toHaveBeenCalledWith(
-      "annotation-1",
-      "web-capture-00000000000000000000000000000001",
-      expect.objectContaining({ sessionId: "ses-1" }),
-    );
     expect(channel.chat).toHaveBeenCalledWith(expect.objectContaining({
-      attachments: [expect.objectContaining({
-        id: "attachment-1",
-        attachment_id: "attachment-1",
-        source: "web_annotation",
-      })],
       runtime_params: expect.objectContaining({
         message_context_items: [expect.objectContaining({
-          metadata: expect.objectContaining({ attachment_id: "attachment-1" }),
+          metadata: expect.objectContaining({
+            schema_version: 2,
+            resolution: "missing",
+            snapshot: expect.objectContaining({
+              anchor: expect.objectContaining({ kind: "region" }),
+            }),
+          }),
         })],
       }),
     }));
-    expect(result.current.agentMessages.at(-1)?.attachments).toEqual([
-      expect.objectContaining({ attachment_id: "attachment-1", source: "web_annotation" }),
-    ]);
+    expect(vi.mocked(channel.chat).mock.calls.at(-1)?.[0].attachments ?? []).toEqual([]);
+    expect(result.current.agentMessages.at(-1)?.attachments ?? []).toEqual([]);
+  });
+
+  it("prewarms a draft web annotation and reuses that envelope when the user sends", async () => {
+    const { channel, runtime } = fakeRuntime();
+    const get = vi.fn().mockResolvedValue(webAnnotationDetail());
+    const coordinator = webAnnotationCoordinator(get, 60_000);
+    const { result } = renderHook(
+      () => useAgentSessionController({
+        runtime,
+        sessionId: "ses-1",
+        webAnnotationSendCoordinator: coordinator,
+      }),
+      { wrapper: ({ children }) => <AgentSessionProvider runtime={runtime}>{children}</AgentSessionProvider> },
+    );
+    await waitFor(() => expect(result.current.session?.id).toBe("ses-1"));
+
+    act(() => {
+      result.current.restoreComposerDraft({
+        value: "检查预热后的网页证据",
+        webAnnotations: [webAnnotationReference()],
+      });
+    });
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
+
+    let sent = false;
+    await act(async () => {
+      sent = await result.current.sendText("检查预热后的网页证据", selectedModel(), {
+        webAnnotations: [webAnnotationReference()],
+      });
+    });
+
+    expect(sent).toBe(true);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(channel.chat).toHaveBeenCalledWith(expect.objectContaining({
+      runtime_params: expect.objectContaining({
+        message_context_items: [expect.objectContaining({
+          type: "web_annotation",
+          metadata: expect.objectContaining({
+            annotation_id: "annotation-1",
+            annotation_revision: 1,
+          }),
+        })],
+      }),
+    }));
   });
 
   it("resends a restored web annotation snapshot without reading or cloning the mutable source again", async () => {
@@ -517,34 +531,23 @@ describe("useAgentSessionController thread tasks", () => {
     const coordinator = webAnnotationCoordinator(get, 0);
     const snapshot = replayedWebAnnotationSnapshot();
     const contextItem = {
-      id: `web-annotation:${snapshot.annotationId}:${snapshot.digest}`,
+      id: `web-annotation:${snapshot.reference.annotationId}:${snapshot.integrity.digest}`,
       type: "web_annotation",
       label: "网页批注 · Example",
       content: "发送时的不可变网页内容",
       role: "HumanMessage",
       source: "follow",
       metadata: {
-        annotation_id: snapshot.annotationId,
-        annotation_revision: snapshot.annotationRevision,
-        snapshot_digest: snapshot.digest,
+        annotation_id: snapshot.reference.annotationId,
+        annotation_revision: snapshot.reference.revision,
+        snapshot_digest: snapshot.integrity.digest,
         snapshot,
       },
     };
     const reference = {
-      annotationId: snapshot.annotationId,
-      selectedRevision: snapshot.annotationRevision,
-      selectedAt: snapshot.capturedAt,
-    };
-    const attachment = {
-      id: "attachment-history-1",
-      attachment_id: "attachment-history-1",
-      type: "image" as const,
-      name: "web-annotation.png",
-      path: "D:/data/attachments/attachment-history-1/web-annotation.png",
-      mime_type: "image/png",
-      size: 128,
-      source: "web_annotation",
-      previewUrl: null,
+      annotationId: snapshot.reference.annotationId,
+      selectedRevision: snapshot.reference.revision,
+      selectedAt: snapshot.reference.assembledAt,
     };
     const { result } = renderHook(
       () => useAgentSessionController({
@@ -559,22 +562,17 @@ describe("useAgentSessionController thread tasks", () => {
       text: "再次检查",
       webAnnotations: [reference],
       replayedContextItems: [contextItem],
-      attachments: [attachment],
     }));
     await waitFor(() => expect(result.current.composerDraft.replayedContextItems).toHaveLength(1));
 
     let sent = false;
     await act(async () => {
-      sent = await result.current.send([], [], [attachment], selectedModel(), {}, [reference]);
+      sent = await result.current.send([], [], [], selectedModel(), {}, [reference]);
     });
 
     expect(sent).toBe(true);
     expect(get).not.toHaveBeenCalled();
     expect(channel.chat).toHaveBeenCalledWith(expect.objectContaining({
-      attachments: [expect.objectContaining({
-        attachment_id: "attachment-history-1",
-        source: "web_annotation",
-      })],
       runtime_params: expect.objectContaining({
         message_context_items: [expect.objectContaining({
           metadata: expect.objectContaining({ snapshot }),
@@ -584,6 +582,7 @@ describe("useAgentSessionController thread tasks", () => {
         })],
       }),
     }));
+    expect(vi.mocked(channel.chat).mock.calls.at(-1)?.[0].attachments ?? []).toEqual([]);
   });
 
   it("sends a confirmed incognito reference from memory and clears it only after transport succeeds", async () => {
@@ -645,9 +644,11 @@ describe("useAgentSessionController thread tasks", () => {
           metadata: expect.objectContaining({
             incognito_source: true,
             snapshot: expect.objectContaining({
-              annotationId: registration.reference.annotationId,
-              source: expect.objectContaining({
-                url: "https://example.test/private?view=public",
+              reference: expect.objectContaining({
+                annotationId: registration.reference.annotationId,
+              }),
+              page: expect.objectContaining({
+                documentUrl: "https://example.test/private?view=public",
               }),
             }),
           }),
@@ -913,51 +914,73 @@ function webRegionAnnotationDetail(): WebAnnotationDetail {
 }
 
 function replayedWebAnnotationSnapshot() {
+  const machineTarget = {
+    type: "region" as const,
+    rect: { x: 0, y: 0, width: 120, height: 80 },
+    viewport: { width: 800, height: 600 },
+    scroll: { x: 0, y: 0 },
+    frame: { url: "https://example.test/history", indexPath: [] },
+  };
   return {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     type: "web_annotation" as const,
-    annotationId: "annotation-history-1",
-    annotationRevision: 2,
-    capturedAt: "2026-07-22T08:00:00Z",
-    source: {
-      title: "Example",
-      url: "https://example.test/history",
-      urlKey: "b".repeat(64),
-      origin: "https://example.test",
+    reference: {
+      annotationId: "annotation-history-1",
+      revision: 2,
+      anchorId: "wa_history00000001",
+      createdAt: "2026-07-22T08:00:00Z",
+      assembledAt: "2026-07-22T08:00:00Z",
     },
-    target: {
-      type: "region" as const,
-      summary: "截图区域",
-      resolution: "orphaned" as const,
-      freshness: "last-known" as const,
+    trust: {
+      userComment: "user_instruction" as const,
+      pageEvidence: "untrusted_reference" as const,
+      hostObservation: "trusted_application_observation" as const,
     },
-    evidence: { attachmentId: "attachment-history-1" },
-    perception: {
-      originalTarget: {
-        type: "region" as const,
-        rect: { x: 0, y: 0, width: 120, height: 80 },
-        viewport: { width: 800, height: 600 },
-        scroll: { x: 0, y: 0 },
-        frame: { url: "https://example.test/history", indexPath: [] },
-      },
-      currentTarget: null,
-      resolution: {
-        navigationId: "navigation-history",
-        frameRevision: 1,
-        frameKey: "main",
-        reason: "no_candidate",
-        settledAt: "2026-07-22T08:00:00Z",
-        candidateIds: [],
-        evidence: null,
-        change: { kinds: [], materialKinds: [], signals: [], material: false },
-      },
-    },
-    annotation: {
+    comment: {
       bodyMarkdown: "发送时正文",
       tags: ["history"],
       properties: [],
     },
-    digest: "digest-history-1",
+    page: {
+      title: "Example",
+      documentUrl: "https://example.test/history",
+      canonicalUrl: null,
+      urlKey: "b".repeat(64),
+      origin: "https://example.test",
+      frame: machineTarget.frame,
+    },
+    anchor: {
+      kind: "region" as const,
+      display: { label: "页面区域 120 × 80" },
+      semantic: { stableAttributes: [] },
+      content: {},
+      structure: {
+        locators: [{
+          kind: "coordinate_region" as const,
+          stability: "weak" as const,
+          value: "region:0,0,120,80",
+        }],
+        headingPath: [],
+      },
+      geometry: {
+        rects: [machineTarget.rect],
+        viewport: machineTarget.viewport,
+        scroll: machineTarget.scroll,
+      },
+      machineTarget,
+    },
+    observation: {
+      status: "missing" as const,
+      freshness: "last_known" as const,
+      observedAt: "2026-07-22T08:00:00Z",
+      match: { strategy: null, confidence: 0, candidateCount: 0 },
+      currentTarget: null,
+      changes: { kinds: [], materialKinds: [], signals: [], material: false },
+    },
+    integrity: {
+      canonicalization: "keydex-json-c14n/v1" as const,
+      digest: `sha256:${"d".repeat(64)}`,
+    },
   };
 }
 

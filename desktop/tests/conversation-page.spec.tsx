@@ -2078,7 +2078,7 @@ describe("ConversationPage", () => {
 
     await waitFor(() => {
       expect(channel.chat).toHaveBeenCalledWith({
-        client_input_id: expect.any(String),
+        client_input_id: queued.id,
         delivery_mode: "steer",
         session_id: "ses-1",
         message: "从快速对话发送",
@@ -2130,7 +2130,7 @@ describe("ConversationPage", () => {
 
     await waitFor(() => {
       expect(channel.chat).toHaveBeenCalledWith({
-        client_input_id: expect.any(String),
+        client_input_id: queued.id,
         delivery_mode: "steer",
         session_id: "ses-1",
         message: "冷启动快速对话",
@@ -2170,13 +2170,16 @@ describe("ConversationPage", () => {
   });
 
   it("does not resend the queued quick chat message when history already has the matching user message", async () => {
-    const { runtime, channel } = fakeRuntime({
-      history: [historyMessage("user", "从快速对话发送")],
-    });
     const queued = queueQuickChatSend({
       sessionId: "ses-1",
       model: { providerId: "provider-1", model: "deepseek-coder" },
       message: "从快速对话发送",
+    });
+    const { runtime, channel } = fakeRuntime({
+      history: [historyMessage("user", "从快速对话发送", {
+        clientInputId: queued.id,
+        messageEventId: "evt-quick-send",
+      })],
     });
     const onQuickSendConsumed = vi.fn();
 

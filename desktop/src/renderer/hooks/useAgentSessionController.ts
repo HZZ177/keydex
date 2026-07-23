@@ -137,6 +137,7 @@ export interface AgentSessionSendTextOptions {
   readonly attachments?: ChatPayload["attachments"];
   readonly skipOptimistic?: boolean;
   readonly allowWhileBusy?: boolean;
+  readonly clientInputId?: string;
   readonly deliveryMode?: PendingInputMode;
   readonly reverseDeliveryMode?: boolean;
   readonly targetSessionId?: string | null;
@@ -322,6 +323,22 @@ export function useAgentSessionController({
     sendPreparationAbortRef.current?.abort();
     webAnnotationSendCoordinator.clear();
   }, [webAnnotationSendCoordinator]);
+
+  useEffect(() => {
+    const references = selectReplayedWebAnnotationContext(
+      composerDraft.replayedContextItems,
+      composerDraft.webAnnotations,
+    ).liveReferences.filter((reference) => !isIncognitoWebAnnotationId(reference.annotationId));
+    if (!references.length) return;
+    void webAnnotationSendCoordinator.prewarm(references).catch(() => {
+      // Preparation is opportunistic. The send path retries and reports a
+      // source error if the annotation is still unavailable at that point.
+    });
+  }, [
+    composerDraft.replayedContextItems,
+    composerDraft.webAnnotations,
+    webAnnotationSendCoordinator,
+  ]);
 
   const loadSessionHistory = useCallback(
     async (options: Parameters<RuntimeBridge["conversation"]["loadHistory"]>[1] = {}) => {
@@ -860,11 +877,13 @@ export function useAgentSessionController({
             ? reversePendingInputMode(conversationSendDefaultMode)
             : conversationSendDefaultMode
         );
+        const clientInputId = options.clientInputId?.trim() || createClientInputId();
         if (!options.skipOptimistic && !submittingWhileBusy) {
           dispatch({
             type: "message/addUser",
             sessionId: targetSessionId,
             content: preparedText,
+            clientInputId,
             contextItems,
             attachments,
           });
@@ -882,7 +901,7 @@ export function useAgentSessionController({
           provider_id: providerId,
           model: trimmedModel,
           delivery_mode: deliveryMode,
-          client_input_id: createClientInputId(),
+          client_input_id: clientInputId,
           ...(attachments.length ? { attachments } : {}),
           ...(Object.keys(runtimeParams).length ? { runtime_params: runtimeParams } : {}),
         };
@@ -970,7 +989,7 @@ export function useAgentSessionController({
         ));
         const stableReplayItems = replay.contextItems.filter((item) => {
           const snapshot = replayedWebAnnotationContexts([item])[0]?.snapshot;
-          return !snapshot || !isIncognitoWebAnnotationId(snapshot.annotationId);
+          return !snapshot || !isIncognitoWebAnnotationId(snapshot.reference.annotationId);
         });
         const replayPrepared = prepareReplayedContextItems(stableReplayItems);
         const preparedContextItems = [...prepared.contextItems, ...replayPrepared.contextItems];
@@ -1515,7 +1534,7 @@ function selectReplayedWebAnnotationContext(
 } {
   const replayByRevision = new Map(
     replayedWebAnnotationContexts(storedItems).map(({ item, snapshot }) => [
-      `${snapshot.annotationId}:${snapshot.annotationRevision}`,
+      `${snapshot.reference.annotationId}:${snapshot.reference.revision}`,
       item,
     ]),
   );

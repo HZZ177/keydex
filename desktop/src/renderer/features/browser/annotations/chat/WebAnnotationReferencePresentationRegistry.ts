@@ -38,6 +38,15 @@ export class WebAnnotationReferencePresentationRegistry {
     this.#listeners.forEach((listener) => listener());
   }
 
+  remove(annotationId: string): void {
+    const normalizedId = annotationId.trim();
+    if (!normalizedId || !this.#snapshot[normalizedId]) return;
+    const next = { ...this.#snapshot };
+    delete next[normalizedId];
+    this.#snapshot = Object.freeze(next);
+    this.#listeners.forEach((listener) => listener());
+  }
+
   clear(): void {
     if (!Object.keys(this.#snapshot).length) return;
     this.#snapshot = Object.freeze({});

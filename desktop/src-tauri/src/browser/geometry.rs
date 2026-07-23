@@ -12,6 +12,8 @@ pub(crate) struct BrowserGeometryInput {
     pub(crate) generation: u64,
     pub(crate) revision: u64,
     pub(crate) rect: BrowserCssRect,
+    #[serde(default)]
+    pub(crate) occlusions: Vec<BrowserCssRect>,
     pub(crate) visible: bool,
 }
 
@@ -63,6 +65,7 @@ pub(crate) struct BrowserGeometryFrame {
     pub(crate) generation: u64,
     pub(crate) revision: u64,
     pub(crate) rect: BrowserCssRect,
+    pub(crate) occlusions: Vec<BrowserCssRect>,
     pub(crate) device_scale_factor: f64,
     pub(crate) visible: bool,
 }
@@ -70,6 +73,13 @@ pub(crate) struct BrowserGeometryFrame {
 impl BrowserGeometryFrame {
     pub(crate) fn physical_rect(&self) -> BrowserPhysicalRect {
         physical_rect(self.rect, self.device_scale_factor)
+    }
+
+    pub(crate) fn physical_occlusions(&self) -> Vec<BrowserPhysicalRect> {
+        self.occlusions
+            .iter()
+            .map(|rect| physical_rect(*rect, self.device_scale_factor))
+            .collect()
     }
 }
 
@@ -202,6 +212,7 @@ mod tests {
                 width: 200.4,
                 height: 300.8,
             },
+            occlusions: Vec::new(),
             device_scale_factor: 1.25,
             visible: true,
         }

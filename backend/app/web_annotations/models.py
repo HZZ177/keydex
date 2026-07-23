@@ -17,7 +17,7 @@ from backend.app.web_annotations.url_identity import (
     sanitize_url_reference,
 )
 
-MAX_ANNOTATION_BODY_BYTES = 32 * 1024
+MAX_ANNOTATION_BODY_CHARACTERS = 32 * 1024
 MAX_ANNOTATION_TARGET_BYTES = 64 * 1024
 MAX_ANNOTATION_PROPERTIES_BYTES = 16 * 1024
 MAX_ANNOTATION_TAGS = 20
@@ -469,7 +469,7 @@ class WebAnnotationCreateRequest(StrictWebAnnotationModel):
     @field_validator("body_markdown")
     @classmethod
     def validate_body(cls, value: str) -> str:
-        _validate_utf8_size(value, MAX_ANNOTATION_BODY_BYTES, "body_markdown")
+        _validate_character_count(value, MAX_ANNOTATION_BODY_CHARACTERS, "body_markdown")
         return value
 
     @field_validator("tags")
@@ -503,7 +503,7 @@ class WebAnnotationPatchRequest(StrictWebAnnotationModel):
     @classmethod
     def validate_body(cls, value: str | None) -> str | None:
         if value is not None:
-            _validate_utf8_size(value, MAX_ANNOTATION_BODY_BYTES, "body_markdown")
+            _validate_character_count(value, MAX_ANNOTATION_BODY_CHARACTERS, "body_markdown")
         return value
 
     @field_validator("tags")
@@ -597,7 +597,7 @@ class WebAnnotationRecord(StrictWebAnnotationModel):
     @field_validator("body_markdown")
     @classmethod
     def validate_body(cls, value: str) -> str:
-        _validate_utf8_size(value, MAX_ANNOTATION_BODY_BYTES, "body_markdown")
+        _validate_character_count(value, MAX_ANNOTATION_BODY_CHARACTERS, "body_markdown")
         return value
 
     @field_validator("tags")
@@ -808,6 +808,11 @@ def _validate_utf8_size(value: str, limit: int, field_name: str) -> None:
         raise ValueError(f"{field_name} cannot exceed {limit} UTF-8 bytes")
 
 
+def _validate_character_count(value: str, limit: int, field_name: str) -> None:
+    if len(value) > limit:
+        raise ValueError(f"{field_name} cannot exceed {limit} characters")
+
+
 def _json_bytes(value: object) -> int:
     return len(
         json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
@@ -815,7 +820,7 @@ def _json_bytes(value: object) -> int:
 
 
 __all__ = [
-    "MAX_ANNOTATION_BODY_BYTES",
+    "MAX_ANNOTATION_BODY_CHARACTERS",
     "MAX_ANNOTATION_PROPERTIES",
     "MAX_ANNOTATION_PROPERTIES_BYTES",
     "MAX_ANNOTATION_TAGS",

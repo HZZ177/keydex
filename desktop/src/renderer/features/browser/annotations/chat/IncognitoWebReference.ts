@@ -7,10 +7,11 @@ import type { WebAnnotationTarget } from "../../runtime/bridgeProtocol";
 import type { WebAnnotationTypedProperty } from "../api";
 import type { WebAnnotationDraft } from "../state/WebAnnotationSession";
 import {
+  buildWebAnnotationEnvelopeAnchor,
+  createWebAnnotationAnchorId,
   finalizeWebAnnotationContextSnapshot,
   sanitizeWebAnnotationTargetForAgent,
   type SelectedWebAnnotationReference,
-  type UnfinalizedWebAnnotationContextSnapshot,
   type WebAnnotationContextSnapshot,
 } from "./WebAnnotationContextAssembler";
 import type { WebAnnotationReferencePresentation } from "./WebAnnotationReferencePresentationRegistry";
@@ -46,14 +47,12 @@ export interface IncognitoWebReferencePreparation {
 interface PreparedEntry {
   readonly contextItem: AgentContextItem;
   readonly attachment: AgentFileAttachment | null;
-  readonly runtime: RuntimeBridge | null;
 }
 
 interface IncognitoWebReferenceEntry {
   readonly draftId: string;
   readonly reference: SelectedWebAnnotationReference;
   readonly snapshot: WebAnnotationContextSnapshot;
-  readonly evidenceBlob: Blob | null;
   readonly preparations: Map<string, Promise<PreparedEntry>>;
   state: "active" | "acknowledged" | "discarded";
 }
@@ -76,71 +75,60 @@ export class IncognitoWebReferenceRegistry {
     if (!sourceUrl) throw new Error("当前无痕页面地址不能作为网页引用发送");
     const target = input.draft.target;
     validateBudgets(input.bodyMarkdown, input.properties, target);
-    const evidenceBlob = input.evidenceBlob ?? null;
-    if (target.type === "region" && (!evidenceBlob || evidenceBlob.type !== "image/png")) {
-      throw new Error("无痕区域引用缺少可用的临时截图");
-    }
-    if (target.type !== "region" && evidenceBlob) {
-      throw new Error("只有区域引用可以携带临时截图");
-    }
     const url = new URL(sourceUrl);
+    const urlKey = await sha256Hex(sourceUrl);
+    const sanitizedTarget = sanitizeWebAnnotationTargetForAgent(target, url.origin);
     const snapshot = await finalizeWebAnnotationContextSnapshot({
-      schemaVersion: 1,
+      schemaVersion: 2,
       type: "web_annotation",
-      annotationId,
-      annotationRevision: 1,
-      capturedAt,
-      source: {
-        title: sanitizeBrowserTitle(input.title),
-        url: sourceUrl,
-        urlKey: await sha256Hex(sourceUrl),
-        origin: url.origin,
+      reference: {
+        annotationId,
+        revision: 1,
+        anchorId: await createWebAnnotationAnchorId(urlKey, sanitizedTarget),
+        createdAt: capturedAt,
+        assembledAt: capturedAt,
       },
-      target: {
-        type: target.type,
-        summary: targetSummary(target),
-        resolution: "resolved",
-        freshness: "current",
+      trust: {
+        userComment: "user_instruction",
+        pageEvidence: "untrusted_reference",
+        hostObservation: "trusted_application_observation",
       },
-      evidence: targetEvidence(target),
-      perception: {
-        originalTarget: sanitizeWebAnnotationTargetForAgent(target, url.origin),
-        currentTarget: sanitizeWebAnnotationTargetForAgent(target, url.origin),
-        resolution: {
-          navigationId: null,
-          frameRevision: null,
-          frameKey: null,
-          reason: "user_selected",
-          settledAt: capturedAt,
-          candidateIds: [],
-          change: {
-            kinds: [],
-            materialKinds: [],
-            signals: [],
-            material: false,
-          },
-          evidence: {
-            strategy: target.type === "text"
-              ? "dom_range"
-              : target.type === "element"
-                ? "stable_dom_path"
-                : target.relativeElement
-                  ? "relative_region"
-                  : "coordinate_only_region",
-            score: 1,
-            rects: target.type === "text"
-              ? target.rects.map((rect) => ({ ...rect }))
-              : [{ ...target.rect }],
-            candidateCount: 1,
-            truncated: false,
-            changedSignals: [],
-          },
-        },
-      },
-      annotation: {
+      comment: {
         bodyMarkdown: input.bodyMarkdown.trim(),
         tags: [...input.tags].sort((left, right) => left.localeCompare(right)),
         properties: input.properties.map(sanitizeProperty).sort(propertyOrder),
+      },
+      page: {
+        title: sanitizeBrowserTitle(input.title),
+        documentUrl: sourceUrl,
+        canonicalUrl: null,
+        urlKey,
+        origin: url.origin,
+        frame: sanitizedTarget.frame,
+      },
+      anchor: buildWebAnnotationEnvelopeAnchor(sanitizedTarget),
+      observation: {
+        status: "exact",
+        freshness: "live",
+        observedAt: capturedAt,
+        match: {
+          strategy: target.type === "text"
+            ? "dom_range"
+            : target.type === "element"
+              ? "stable_dom_path"
+              : target.relativeElement
+                ? "relative_region"
+                : "coordinate_only_region",
+          confidence: 1,
+          candidateCount: 1,
+        },
+        currentTarget: sanitizedTarget,
+        changes: {
+          kinds: [],
+          materialKinds: [],
+          signals: [],
+          material: false,
+        },
       },
     });
     const reference: SelectedWebAnnotationReference = Object.freeze({
@@ -153,7 +141,6 @@ export class IncognitoWebReferenceRegistry {
       draftId: input.draft.draftId,
       reference,
       snapshot,
-      evidenceBlob,
       preparations: new Map(),
       state: "active",
     });
@@ -232,54 +219,18 @@ export class IncognitoWebReferenceRegistry {
 
   async #prepareEntry(
     entry: IncognitoWebReferenceEntry,
-    runtime: RuntimeBridge,
-    sessionId: string,
+    _runtime: RuntimeBridge,
+    _sessionId: string,
     signal?: AbortSignal,
   ): Promise<PreparedEntry> {
-    if (!entry.evidenceBlob) {
-      return { contextItem: incognitoContextItem(entry.snapshot), attachment: null, runtime: null };
-    }
     assertNotAborted(signal);
-    const record = await runtime.attachments.uploadImage(entry.evidenceBlob, {
-      filename: "web-annotation.png",
-      source: "web_annotation",
-      sessionId,
-    });
-    const attachmentId = record.attachment_id || record.id;
-    try {
-      assertNotAborted(signal);
-      const snapshot = await finalizeWebAnnotationContextSnapshot({
-        ...withoutDigest(entry.snapshot),
-        evidence: { ...entry.snapshot.evidence, attachmentId },
-      });
-      return {
-        contextItem: incognitoContextItem(snapshot),
-        attachment: Object.freeze({
-          id: record.id,
-          attachment_id: attachmentId,
-          type: "image",
-          source: "web_annotation",
-          name: record.name,
-          path: record.path,
-          mime_type: record.mime_type,
-          size: record.size,
-        }),
-        runtime,
-      };
-    } catch (error) {
-      await cleanupUploadedAttachment(runtime, attachmentId);
-      throw error;
-    }
+    return { contextItem: incognitoContextItem(entry.snapshot), attachment: null };
   }
 
   #discardEntry(annotationId: string, entry: IncognitoWebReferenceEntry): void {
     entry.state = "discarded";
     this.#entries.delete(annotationId);
-    for (const preparation of new Set(entry.preparations.values())) {
-      void preparation
-        .then((prepared) => cleanupPreparedEntry(prepared))
-        .catch(() => undefined);
-    }
+    entry.preparations.clear();
   }
 }
 
@@ -293,38 +244,21 @@ function incognitoContextItem(snapshot: WebAnnotationContextSnapshot): AgentCont
   const item = webAnnotationContextItemFromSnapshot(snapshot);
   return Object.freeze({
     ...item,
-    label: `无痕网页引用 · ${snapshot.source.title || snapshot.source.origin}`,
+    label: `无痕网页引用 · ${snapshot.page.title || snapshot.page.origin}`,
     metadata: Object.freeze({ ...item.metadata, incognito_source: true }),
   });
 }
 
 function presentation(snapshot: WebAnnotationContextSnapshot): WebAnnotationReferencePresentation {
   return Object.freeze({
-    annotationId: snapshot.annotationId,
-    title: snapshot.source.title,
-    summary: snapshot.target.summary,
-    bodyMarkdown: snapshot.annotation.bodyMarkdown,
-    origin: snapshot.source.origin,
+    annotationId: snapshot.reference.annotationId,
+    title: snapshot.page.title,
+    summary: snapshot.anchor.display.label,
+    bodyMarkdown: snapshot.comment.bodyMarkdown,
+    origin: snapshot.page.origin,
     status: "resolved",
-    updatedAt: snapshot.capturedAt,
+    updatedAt: snapshot.reference.assembledAt,
   });
-}
-
-function targetEvidence(target: WebAnnotationTarget): UnfinalizedWebAnnotationContextSnapshot["evidence"] {
-  if (target.type === "text") return { originalQuote: target.quote.exact };
-  if (target.type === "element") {
-    return {
-      ...(target.role ? { elementRole: target.role } : {}),
-      ...(target.accessibleName ? { elementName: target.accessibleName } : {}),
-    };
-  }
-  return {};
-}
-
-function targetSummary(target: WebAnnotationTarget): string {
-  if (target.type === "text") return target.quote.exact;
-  if (target.type === "element") return target.accessibleName || target.textSummary || `<${target.tag}>`;
-  return `页面区域 ${Math.round(target.rect.width)} × ${Math.round(target.rect.height)}`;
 }
 
 function validateBudgets(
@@ -356,13 +290,6 @@ function propertyOrder(left: WebAnnotationTypedProperty, right: WebAnnotationTyp
     || String(left.value).localeCompare(String(right.value));
 }
 
-function withoutDigest(
-  snapshot: WebAnnotationContextSnapshot,
-): UnfinalizedWebAnnotationContextSnapshot {
-  const { digest: _digest, ...rest } = snapshot;
-  return rest;
-}
-
 async function sha256Hex(value: string): Promise<string> {
   const subtle = globalThis.crypto?.subtle;
   if (!subtle) throw new Error("无法生成无痕网页引用摘要");
@@ -381,20 +308,4 @@ function createId(): string {
 
 function assertNotAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
-}
-
-async function cleanupPreparedEntry(prepared: PreparedEntry): Promise<void> {
-  const attachmentId = prepared.attachment?.attachment_id || prepared.attachment?.id;
-  if (!attachmentId || !prepared.runtime) return;
-  await cleanupUploadedAttachment(prepared.runtime, attachmentId);
-}
-
-async function cleanupUploadedAttachment(runtime: RuntimeBridge, attachmentId: string): Promise<void> {
-  try {
-    await runtime.attachments.deleteUnreferencedWebAnnotation(attachmentId);
-  } catch {
-    console.warn("[IncognitoWebReference] Failed to clean abandoned attachment", {
-      attachmentId,
-    });
-  }
 }

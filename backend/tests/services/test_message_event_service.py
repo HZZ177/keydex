@@ -34,7 +34,12 @@ def test_message_event_service_aggregates_user_stream_tool_and_completed(tmp_pat
     repositories = _repositories(tmp_path)
     service = MessageEventService(repositories.message_events)
 
-    _append(repositories, "evt_1", "user_message", {"content": "读文件"})
+    _append(
+        repositories,
+        "evt_1",
+        "user_message",
+        {"content": "读文件", "client_input_id": "client-input-1"},
+    )
     _append(repositories, "evt_2", "stream_batch", {"content": "我来"})
     _append(repositories, "evt_3", "stream_batch", {"content": "读取"})
     _append(
@@ -66,6 +71,7 @@ def test_message_event_service_aggregates_user_stream_tool_and_completed(tmp_pat
 
     assert messages[0]["role"] == "user"
     assert messages[0]["content"] == "读文件"
+    assert messages[0]["clientInputId"] == "client-input-1"
     assert messages[0]["attachments"] == []
     assert isinstance(messages[0]["timestamp"], int)
     assert messages[1]["role"] == "assistant"

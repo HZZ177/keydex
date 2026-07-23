@@ -973,14 +973,14 @@ function MessageQuoteContextChip({ item }: { item: AgentContextItem }) {
 function MessageWebAnnotationContextChip({ item }: { item: AgentContextItem }) {
   const snapshot = webAnnotationSnapshotFromContextItem(item);
   if (!snapshot) return <MessagePlainContextChip item={item} />;
-  const label = snapshot.source.title
-    ? `网页批注 · ${snapshot.source.title}`
+  const label = snapshot.page.title
+    ? `网页批注 · ${snapshot.page.title}`
     : item.label || "网页批注";
   const status = webAnnotationSnapshotStatusLabel(snapshot);
   const description = [
-    snapshot.source.url,
-    `${snapshot.target.summary} · ${status}`,
-    snapshot.annotation.bodyMarkdown,
+    snapshot.page.documentUrl,
+    `${snapshot.anchor.display.label} · ${status}`,
+    snapshot.comment.bodyMarkdown,
   ].filter(Boolean).join("\n\n");
   return (
     <FloatingQuotePreview
@@ -994,13 +994,13 @@ function MessageWebAnnotationContextChip({ item }: { item: AgentContextItem }) {
       chipElement="button"
       chipButtonProps={{
         type: "button",
-        "aria-label": `打开网页批注来源 ${snapshot.source.title || snapshot.source.origin}`,
+        "aria-label": `打开网页批注来源 ${snapshot.page.title || snapshot.page.origin}`,
         onClick: () => emitNavigateToWebAnnotation(snapshot),
       }}
       chipProps={{
         "data-clickable": "true",
         "data-context-type": "web_annotation",
-        "data-annotation-resolution": snapshot.target.resolution,
+        "data-annotation-resolution": snapshot.observation.status,
       }}
       showCopyAction={false}
     >
@@ -1013,14 +1013,11 @@ function MessageWebAnnotationContextChip({ item }: { item: AgentContextItem }) {
 }
 
 function webAnnotationSnapshotStatusLabel(snapshot: WebAnnotationContextSnapshot): string {
-  if (snapshot.target.resolution === "resolved") {
-    return snapshot.perception.resolution.change.material
-      ? "发送时已定位，目标有变化"
-      : "发送时已定位";
-  }
-  if (snapshot.target.resolution === "changed") return "发送时已定位，目标有变化";
-  if (snapshot.target.resolution === "ambiguous") return "发送时存在多个候选";
-  return "发送时仅保留原始证据";
+  if (snapshot.observation.status === "exact") return "发送时已唯一定位";
+  if (snapshot.observation.status === "relocated") return "发送时已定位，结构或位置有漂移";
+  if (snapshot.observation.status === "changed") return "发送时已定位，目标有变化";
+  if (snapshot.observation.status === "ambiguous") return "发送时存在多个候选";
+  return "发送时仅保留原始锚点";
 }
 
 function MessagePlainContextChip({ item }: { item: AgentContextItem }) {

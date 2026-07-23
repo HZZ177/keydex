@@ -190,13 +190,13 @@ describe("MessageText", () => {
       <MessageText
         message={message("user", "检查这处网页内容", "completed", {
           contextItems: [{
-            id: `web-annotation:${snapshot.annotationId}:${snapshot.digest}`,
+            id: `web-annotation:${snapshot.reference.annotationId}:${snapshot.integrity.digest}`,
             type: "web_annotation",
             label: "网页批注 · Example article",
             content: "发送时快照",
             metadata: {
-              annotation_id: snapshot.annotationId,
-              snapshot_digest: snapshot.digest,
+              annotation_id: snapshot.reference.annotationId,
+              snapshot_digest: snapshot.integrity.digest,
               snapshot,
             },
           }],
@@ -2180,62 +2180,75 @@ function message(
 }
 
 function webAnnotationSnapshot() {
+  const originalTarget = {
+    type: "text" as const,
+    quote: { exact: "旧内容", prefix: "", suffix: "" },
+    context: { headingPath: [] },
+    rects: [{ x: 0, y: 0, width: 80, height: 20 }],
+    frame: { url: "https://example.com/article", indexPath: [] },
+  };
+  const currentTarget = {
+    ...originalTarget,
+    quote: { exact: "新内容", prefix: "", suffix: "" },
+  };
   return {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     type: "web_annotation" as const,
-    annotationId: "annotation-history-1",
-    annotationRevision: 4,
-    capturedAt: "2026-07-22T08:00:00Z",
-    source: {
-      title: "Example article",
-      url: "https://example.com/article",
-      urlKey: "https://example.com/article",
-      origin: "https://example.com",
+    reference: {
+      annotationId: "annotation-history-1",
+      revision: 4,
+      anchorId: "wa_message00000001",
+      createdAt: "2026-07-22T08:00:00Z",
+      assembledAt: "2026-07-22T08:00:00Z",
     },
-    target: {
-      type: "text" as const,
-      summary: "关键段落",
-      resolution: "resolved" as const,
-      freshness: "last-known" as const,
+    trust: {
+      userComment: "user_instruction" as const,
+      pageEvidence: "untrusted_reference" as const,
+      hostObservation: "trusted_application_observation" as const,
     },
-    evidence: { originalQuote: "旧内容", currentQuote: "新内容" },
-    perception: {
-      originalTarget: {
-        type: "text" as const,
-        quote: { exact: "旧内容", prefix: "", suffix: "" },
-        context: { headingPath: [] },
-        rects: [{ x: 0, y: 0, width: 80, height: 20 }],
-        frame: { url: "https://example.com/article", indexPath: [] },
-      },
-      currentTarget: {
-        type: "text" as const,
-        quote: { exact: "新内容", prefix: "", suffix: "" },
-        context: { headingPath: [] },
-        rects: [{ x: 0, y: 0, width: 80, height: 20 }],
-        frame: { url: "https://example.com/article", indexPath: [] },
-      },
-      resolution: {
-        navigationId: "navigation-history",
-        frameRevision: 2,
-        frameKey: "main",
-        reason: "content_changed",
-        settledAt: "2026-07-22T08:00:00Z",
-        candidateIds: [],
-        evidence: null,
-        change: {
-          kinds: ["content"] as const,
-          materialKinds: ["content"] as const,
-          signals: ["quote_changed"],
-          material: true,
-        },
-      },
-    },
-    annotation: {
+    comment: {
       bodyMarkdown: "发送时正文，不读取当前批注",
       tags: ["history"],
       properties: [],
     },
-    digest: "digest-history-1",
+    page: {
+      title: "Example article",
+      documentUrl: "https://example.com/article",
+      canonicalUrl: null,
+      urlKey: "https://example.com/article",
+      origin: "https://example.com",
+      frame: originalTarget.frame,
+    },
+    anchor: {
+      kind: "text" as const,
+      display: { label: "关键段落", quote: "旧内容" },
+      semantic: { stableAttributes: [] },
+      content: { exactText: "旧内容", prefix: "", suffix: "" },
+      structure: {
+        locators: [{ kind: "text_quote" as const, stability: "medium" as const, value: "旧内容" }],
+        headingPath: [],
+      },
+      geometry: { rects: originalTarget.rects },
+      machineTarget: originalTarget,
+    },
+    observation: {
+      status: "changed" as const,
+      freshness: "last_known" as const,
+      observedAt: "2026-07-22T08:00:00Z",
+      match: { strategy: "exact_quote" as const, confidence: 1, candidateCount: 1 },
+      currentQuote: "新内容",
+      currentTarget,
+      changes: {
+        kinds: ["content"] as const,
+        materialKinds: ["content"] as const,
+        signals: ["quote_changed"],
+        material: true,
+      },
+    },
+    integrity: {
+      canonicalization: "keydex-json-c14n/v1" as const,
+      digest: `sha256:${"f".repeat(64)}`,
+    },
   };
 }
 

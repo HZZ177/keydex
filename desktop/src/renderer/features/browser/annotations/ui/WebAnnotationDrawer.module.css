@@ -1,7 +1,163 @@
+.sidebar {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border-left: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-1);
+}
+
+.sidebar[data-variant="shelf"] {
+  height: auto;
+  max-height: min(52vh, 478px);
+  border-left: 0;
+  background: var(--color-bg-elevated);
+}
+
+.sidebar[data-variant="shelf"] .drawerBody {
+  max-height: min(52vh, 478px);
+  gap: 9px;
+  overflow: auto;
+  padding: 10px;
+}
+
+.sidebar[data-variant="shelf"] .listSection {
+  gap: 7px;
+}
+
+.sidebar[data-variant="shelf"] .sectionHeading {
+  min-height: 22px;
+}
+
+.sidebar[data-variant="shelf"] .card {
+  padding: 7px 8px 7px 9px;
+}
+
+.sidebar[data-variant="shelf"] .card[data-editing="false"] {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: 22px 28px;
+  gap: 3px 8px;
+}
+
+.sidebar[data-variant="shelf"] .card[data-editing="false"] .cardHeader {
+  min-width: 0;
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+
+.sidebar[data-variant="shelf"] .card[data-editing="false"] .compactTargetSummary {
+  display: block;
+}
+
+.sidebar[data-variant="shelf"] .card[data-editing="false"] .targetSummary,
+.sidebar[data-variant="shelf"] .card[data-editing="false"] .candidateList,
+.sidebar[data-variant="shelf"] .card[data-editing="false"] .tags,
+.sidebar[data-variant="shelf"] .card[data-editing="false"] .propertyList,
+.sidebar[data-variant="shelf"] .card[data-editing="false"] .cardFooter > span,
+.sidebar[data-variant="shelf"] .card[data-editing="false"] .revision {
+  display: none;
+}
+
+.sidebar[data-variant="shelf"] .card[data-editing="false"] .body {
+  min-width: 0;
+  align-self: center;
+  grid-column: 1;
+  grid-row: 2;
+  overflow: hidden;
+  line-height: 28px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar[data-variant="shelf"] .card[data-editing="false"] .cardFooter {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.sidebar[data-variant="shelf"] .card[data-editing="true"] {
+  gap: 9px;
+}
+
+.sidebar[data-variant="shelf"] .card[data-editing="true"] .field textarea {
+  min-height: 96px;
+  max-height: 180px;
+  overflow: auto;
+  resize: none;
+}
+
+.sidebarHeader {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  align-items: center;
+  border-bottom: 1px solid var(--color-border-subtle);
+  padding: 10px 10px 8px 12px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 94%, var(--surface-muted));
+}
+
+.sidebarHeading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.sidebarCount {
+  display: inline-flex;
+  min-width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  padding: 0 5px;
+  background: color-mix(in srgb, var(--annotation-accent) 13%, var(--surface-muted));
+  color: var(--annotation-accent);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sidebarClose {
+  display: inline-grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-3);
+  cursor: pointer;
+}
+
+.sidebarClose:hover,
+.sidebarClose:focus-visible {
+  outline: none;
+  background: var(--surface-hover);
+  color: var(--color-text-1);
+}
+
+.sidebarDescription {
+  min-width: 0;
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: var(--color-text-4);
+  font-size: 9px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .drawerTitle {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  color: var(--color-text-1);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .drawerBody {
@@ -10,7 +166,7 @@
   gap: 14px;
   overflow: auto;
   padding: 14px;
-  background: color-mix(in srgb, var(--color-bg-elevated) 96%, var(--surface-muted));
+  background: color-mix(in srgb, var(--color-bg-elevated) 97%, var(--surface-muted));
 }
 
 .selectionActions {
@@ -323,8 +479,21 @@
   font-size: 10px;
 }
 
+.compactTargetSummary {
+  display: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-3);
+  font-size: 11px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .cardHeader time {
   margin-left: auto;
+  flex: 0 0 auto;
   color: var(--color-text-4);
 }
 
@@ -442,6 +611,7 @@
 
 .cardFooter > div {
   display: inline-flex;
+  flex: 0 0 auto;
   gap: 4px;
 }
 

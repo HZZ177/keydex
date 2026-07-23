@@ -502,7 +502,7 @@ class ChatStreamManager:
         *,
         session_id: str | None = None,
     ) -> list[str]:
-        """Reconcile persisted running sessions whose owning process no longer exists."""
+        """Reconcile persisted active sessions whose owning process no longer exists."""
         repositories = getattr(self._chat_service, "repositories", None)
         if repositories is None or not hasattr(repositories, "sessions"):
             return []
@@ -512,13 +512,24 @@ class ChatStreamManager:
         async with self._lock:
             if cleaned:
                 record = repositories.sessions.get(cleaned)
-                candidates = [record] if record is not None and record.status == "running" else []
-            else:
-                candidates = repositories.sessions.list(
-                    status="running",
-                    include_internal=True,
-                    limit=500,
+                candidates = (
+                    [record]
+                    if record is not None and record.status in {"running", "waiting_approval"}
+                    else []
                 )
+            else:
+                candidates = [
+                    *repositories.sessions.list(
+                        status="running",
+                        include_internal=True,
+                        limit=500,
+                    ),
+                    *repositories.sessions.list(
+                        status="waiting_approval",
+                        include_internal=True,
+                        limit=500,
+                    ),
+                ]
 
             for record in candidates:
                 run = self._runs.get(record.id)
@@ -538,7 +549,7 @@ class ChatStreamManager:
 
         if recovered:
             logger.warning(
-                "[ChatStreamManager] 已恢复后端重启遗留的运行中会话 | "
+                "[ChatStreamManager] 已恢复后端重启遗留的活动会话 | "
                 f"count={len(recovered)} | session_ids={','.join(recovered)}"
             )
         return recovered

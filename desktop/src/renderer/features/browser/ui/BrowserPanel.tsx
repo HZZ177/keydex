@@ -8,6 +8,7 @@ import type { BrowserNavigationFailure } from "../runtime/BrowserPolicyCoordinat
 import { BrowserErrorView } from "./BrowserErrorView";
 import type { BrowserSurfaceVisibilityInput } from "./BrowserSurfacePlaceholder";
 import { BrowserSurfacePlaceholder } from "./BrowserSurfacePlaceholder";
+import { BrowserSurfaceOverlay } from "./BrowserSurfaceOverlay";
 import { BrowserToolbar, type BrowserToolbarProps } from "./BrowserToolbar";
 
 import styles from "./BrowserPanel.module.css";
@@ -22,6 +23,7 @@ export interface BrowserPanelProps extends Omit<BrowserToolbarProps, "profileMod
   readonly title: string;
   readonly toolbarAccessory?: ReactNode;
   readonly resourceState?: React.ComponentProps<typeof BrowserSurfacePlaceholder>["resourceState"];
+  readonly surfaceOverlay?: ReactNode;
   onRetry(): void;
   onVisibilityChange(input: BrowserSurfaceVisibilityInput): void;
 }
@@ -36,6 +38,7 @@ export function BrowserPanel({
   title,
   toolbarAccessory,
   resourceState,
+  surfaceOverlay,
   onRetry,
   onVisibilityChange,
   ...toolbarProps
@@ -64,6 +67,9 @@ export function BrowserPanel({
           className={styles.surface}
           onVisibilityChange={onVisibilityChange}
         />
+        {surfaceOverlay ? (
+          <BrowserSurfaceOverlay surface={surface}>{surfaceOverlay}</BrowserSurfaceOverlay>
+        ) : null}
         {error ? <BrowserErrorView {...error} onRetry={onRetry} /> : null}
         {surfaceReady && empty && !error ? (
           <div className={styles.emptyState} role="status">

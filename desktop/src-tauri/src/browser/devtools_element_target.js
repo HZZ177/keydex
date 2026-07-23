@@ -6,6 +6,19 @@ function () {
     : (this && this.parentElement instanceof Element ? this.parentElement : null);
   if (!selected) return null;
 
+  const selectedRoot = selected.getRootNode();
+  const existingAnnotationMarker = selectedRoot instanceof ShadowRoot
+    && selectedRoot.host?.getAttribute?.("data-keydex-annotation-overlay-root") === "true"
+    ? selected.closest?.("[part='annotation-highlight'][data-annotation-id]")
+    : null;
+  const existingAnnotationId = existingAnnotationMarker?.getAttribute("data-annotation-id")?.trim();
+  if (existingAnnotationId) {
+    return {
+      keydexOverlayAction: "open_existing_annotation",
+      annotationId: existingAnnotationId.slice(0, 128),
+    };
+  }
+
   const stableAttributeNames = [
     "id", "name", "type", "href", "src", "alt", "title", "aria-label", "role",
   ];

@@ -438,6 +438,147 @@ describe("agentSessionStore reducer", () => {
     expect(selectAgentMessages(state, "ses-1")).toHaveLength(1);
   });
 
+  it("keeps a locally submitted user message through an idle status race until history confirms it", () => {
+    let state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "sessions/set",
+      sessions: [session("ses-1", "2026-06-18T08:00:00Z")],
+    });
+    state = agentConversationReducer(state, {
+      type: "message/addUser",
+      sessionId: "ses-1",
+      content: "不要让这条消息消失",
+      clientInputId: "client-input-1",
+      id: "local-user-1",
+      timestamp: 1_782_600_000_000,
+    });
+    state = agentConversationReducer(state, {
+      type: "runtime/setState",
+      sessionId: "ses-1",
+      runtimeState: "running",
+    });
+
+    state = reduceAgentWsEvent(state, {
+      action: "status",
+      data: {
+        status: "idle",
+        running_sessions: [],
+        waiting_approval_sessions: [],
+        waiting_input_sessions: [],
+      },
+    });
+    expect(selectAgentRuntimeState(state, "ses-1")).toBe("idle");
+
+    state = agentConversationReducer(state, {
+      type: "history/loaded",
+      sessionId: "ses-1",
+      history: history([]),
+    });
+    expect(selectAgentMessages(state, "ses-1")).toMatchObject([
+      {
+        id: "local-user-1",
+        role: "user",
+        content: "不要让这条消息消失",
+        clientInputId: "client-input-1",
+      },
+    ]);
+
+    state = reduceAgentWsEvent(state, {
+      action: "user_message",
+      data: {
+        session_id: "ses-1",
+        content: "不要让这条消息消失",
+        client_input_id: "client-input-1",
+        message_event_id: "evt-user-1",
+        turn_index: 1,
+        trace_id: "trace-1",
+      },
+    });
+    expect(selectAgentMessages(state, "ses-1")).toMatchObject([
+      {
+        id: "local-user-1",
+        role: "user",
+        clientInputId: "client-input-1",
+        messageEventId: "evt-user-1",
+        turnIndex: 1,
+      },
+    ]);
+    expect(selectAgentMessages(state, "ses-1")).toHaveLength(1);
+
+    state = agentConversationReducer(state, {
+      type: "history/loaded",
+      sessionId: "ses-1",
+      history: history([
+        {
+          role: "user",
+          content: "不要让这条消息消失",
+          clientInputId: "client-input-1",
+          messageEventId: "evt-user-1",
+          turnIndex: 1,
+          timestamp: 1_782_600_000_010,
+        },
+      ]),
+    });
+    expect(selectAgentMessages(state, "ses-1")).toMatchObject([
+      {
+        role: "user",
+        clientInputId: "client-input-1",
+        messageEventId: "evt-user-1",
+        hydratedFromHistory: true,
+      },
+    ]);
+    expect(selectAgentMessages(state, "ses-1")).toHaveLength(1);
+  });
+
+  it("does not confuse a repeated local user message with older hydrated content", () => {
+    let state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "history/loaded",
+      sessionId: "ses-1",
+      history: history([
+        {
+          role: "user",
+          content: "继续",
+          clientInputId: "client-input-old",
+          messageEventId: "evt-user-old",
+          turnIndex: 1,
+          timestamp: 1_782_600_000_000,
+        },
+      ]),
+    });
+    state = agentConversationReducer(state, {
+      type: "message/addUser",
+      sessionId: "ses-1",
+      content: "继续",
+      clientInputId: "client-input-new",
+      id: "local-user-new",
+      timestamp: 1_782_600_001_000,
+    });
+    state = agentConversationReducer(state, {
+      type: "runtime/setState",
+      sessionId: "ses-1",
+      runtimeState: "running",
+    });
+
+    state = agentConversationReducer(state, {
+      type: "history/loaded",
+      sessionId: "ses-1",
+      history: history([
+        {
+          role: "user",
+          content: "继续",
+          clientInputId: "client-input-old",
+          messageEventId: "evt-user-old",
+          turnIndex: 1,
+          timestamp: 1_782_600_000_000,
+        },
+      ]),
+    });
+
+    expect(selectAgentMessages(state, "ses-1").map((message) => message.clientInputId)).toEqual([
+      "client-input-old",
+      "client-input-new",
+    ]);
+  });
+
   it("restores pending command approval from history", () => {
     const approval = commandApproval("approval-history");
     const state = agentConversationReducer(createInitialAgentConversationState(), {
@@ -461,6 +602,49 @@ describe("agentSessionStore reducer", () => {
       role: "approval",
       status: "pending",
       approval: { details: { command: "pnpm test" } },
+    });
+  });
+
+  it("uses authoritative approval state when stale history lacks tool and approval terminal events", () => {
+    const resolvedApproval = {
+      ...commandApproval("approval-stale-history", "rejected"),
+      decision: "rejected" as const,
+    };
+    const staleHistory = history([
+      {
+        role: "tool",
+        content: "",
+        toolName: "run_cmd",
+        runId: "run-command",
+        status: "running",
+        toolParams: { command: "pnpm test", cwd: "D:/repo" },
+      },
+      approvalHistoryMessage(resolvedApproval),
+    ]);
+    staleHistory.pending_approvals = [];
+
+    const state = agentConversationReducer(createInitialAgentConversationState(), {
+      type: "history/loaded",
+      sessionId: "ses-1",
+      history: staleHistory,
+    });
+
+    const view = selectAgentSessionState(state, "ses-1");
+    expect(view).toMatchObject({
+      runtimeState: "idle",
+      pendingApproval: null,
+    });
+    expect(selectAgentMessages(state, "ses-1")[0]).toMatchObject({
+      role: "tool",
+      status: "error",
+      uiPayload: {
+        status: "rejected",
+        can_terminate: false,
+        approval: {
+          approval_id: "approval-stale-history",
+          status: "rejected",
+        },
+      },
     });
   });
 

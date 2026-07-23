@@ -25,12 +25,12 @@ use super::contract::{
     BrowserCommandErrorCode, BrowserCommandResponse, BrowserEvent, BrowserHighlightState,
     BrowserNewWindowDisposition, BrowserReloadMode, BrowserSelectionMode, BrowserSurfaceRef,
     BrowserVisibilityReason, CaptureCompletedPayload, CaptureFailedPayload, CaptureRegionInput,
-    ClearHighlightsInput, ClearProfileDataInput, ConfigureAppearanceInput, CreateSurfaceInput,
-    DiscardCaptureInput, ExternalProtocolPayload, FindInput, NavigateAnnotationTargetInput,
-    NavigateInput, NavigationFailedPayload, NavigationPayload, NewWindowPayload,
-    PageHistoryPayload, PageLoadingPayload, PageSourcePayload, PageTitlePayload, ReasonPayload,
-    ReloadInput, RenderHighlightsInput, ResolveAnnotationsInput, ResourceStatePayload,
-    RespondDownloadInput, RespondPermissionInput, SelectionCancelledPayload,
+    ClearHighlightsInput, ClearProfileDataInput, ConfigureAppearanceInput, ControlDownloadInput,
+    CreateSurfaceInput, DiscardCaptureInput, ExternalProtocolPayload, FindInput,
+    NavigateAnnotationTargetInput, NavigateInput, NavigationFailedPayload, NavigationPayload,
+    NewWindowPayload, PageHistoryPayload, PageLoadingPayload, PageSourcePayload, PageTitlePayload,
+    ReasonPayload, ReloadInput, RenderHighlightsInput, ResolveAnnotationsInput,
+    ResourceStatePayload, RespondDownloadInput, RespondPermissionInput, SelectionCancelledPayload,
     SelectionFailedPayload, SelectionResultPayload, SetResourceStateInput, SetVisibilityInput,
     SetZoomInput, StartSelectionInput, SurfaceReadyPayload, TakeIncognitoCaptureInput,
     BROWSER_EVENT_TOPIC,
@@ -673,6 +673,29 @@ pub(crate) async fn browser_respond_download(
 }
 
 #[tauri::command]
+pub(crate) async fn browser_control_download(
+    caller: Webview,
+    request_id: String,
+    payload: ControlDownloadInput,
+) -> BrowserCommandResponse {
+    if let Err(error) = ensure_main_webview_caller(&caller) {
+        return failure(request_id, error);
+    }
+    let state = caller.state::<BrowserHostState>().inner().clone();
+    let webview = match exact_surface(&state, &payload.surface) {
+        Ok(webview) => webview,
+        Err(code) => return surface_resolution_failure(request_id, code),
+    };
+    match state.downloads.control(&webview, &payload) {
+        Ok(()) => success(request_id),
+        Err(reason) => failure(
+            request_id,
+            error(BrowserCommandErrorCode::HostFailure, &reason, true),
+        ),
+    }
+}
+
+#[tauri::command]
 pub(crate) async fn browser_respond_permission(
     caller: Webview,
     request_id: String,
@@ -1021,6 +1044,22 @@ fn resolve_geometry_input(
     {
         return Err("Browser geometry is invalid".to_string());
     }
+    if payload.occlusions.len() > 16
+        || payload.occlusions.iter().any(|rect| {
+            !rect.x.is_finite()
+                || !rect.y.is_finite()
+                || !rect.width.is_finite()
+                || !rect.height.is_finite()
+                || rect.x < 0.0
+                || rect.y < 0.0
+                || rect.width < 0.0
+                || rect.height < 0.0
+                || rect.x + rect.width > payload.rect.width + 0.01
+                || rect.y + rect.height > payload.rect.height + 0.01
+        })
+    {
+        return Err("Browser overlay occlusion geometry is invalid".to_string());
+    }
     let surface_ref = BrowserSurfaceRef {
         panel_id: payload.panel_id,
         surface_id: payload.surface_id,
@@ -1033,6 +1072,7 @@ fn resolve_geometry_input(
         generation: surface_ref.generation,
         revision: payload.revision,
         rect: payload.rect,
+        occlusions: payload.occlusions,
         device_scale_factor: scale,
         visible: payload.visible,
     };
@@ -1468,6 +1508,13 @@ pub(crate) async fn browser_render_highlights(
         if validate_web_annotation_target(&resolution.target).is_err() {
             return host_failure(request_id, "Structured page highlight target is invalid");
         }
+        if resolution
+            .body_markdown
+            .as_ref()
+            .is_some_and(|body| body.chars().count() > 32 * 1024)
+        {
+            return host_failure(request_id, "Structured page highlight content is invalid");
+        }
         let frame_key = annotation_target_frame_key(&resolution.target);
         if !ready_frames.contains(&frame_key) {
             return host_failure(request_id, "Structured page highlight frame is not ready");
@@ -1477,16 +1524,20 @@ pub(crate) async fn browser_render_highlights(
             BrowserHighlightState::Resolved => "resolved",
             BrowserHighlightState::Changed => "changed",
         };
+        let mut bridge_payload = serde_json::json!({
+            "annotationId": resolution.annotation_id.clone(),
+            "target": resolution.target.clone(),
+            "state": resolution_state,
+        });
+        if let Some(body_markdown) = &resolution.body_markdown {
+            bridge_payload["bodyMarkdown"] = serde_json::Value::String(body_markdown.clone());
+        }
         let envelope = match state.bridge.prepare_host_envelope(
             &payload.surface,
             &frame_key,
             &bridge_request_id,
             "highlight.render",
-            serde_json::json!({
-                "annotationId": resolution.annotation_id.clone(),
-                "target": resolution.target.clone(),
-                "state": resolution_state,
-            }),
+            bridge_payload,
         ) {
             Ok(envelope) => envelope,
             Err(error) => return bridge_command_failure(request_id, error),
@@ -1858,6 +1909,7 @@ fn attach_page_lifecycle_observers(
                 }
                 let url = value.to_string().unwrap_or_default();
                 CoTaskMemFree(Some(value.0.cast()));
+                start_state.downloads.begin_navigation(&start_surface);
                 let navigation_id = format!("native-{}", uuid::Uuid::new_v4().simple());
                 if !start_state
                     .lifecycle
@@ -1990,13 +2042,15 @@ fn emit_native_navigation_event(
                 }
             }
             if let Some(category) = snapshot.error_category {
-                emit_navigation_failed(
-                    emitter,
-                    state,
-                    surface,
-                    source.as_deref().unwrap_or("about:blank"),
-                    &category,
-                );
+                if !state.downloads.consume_navigation_failure(surface) {
+                    emit_navigation_failed(
+                        emitter,
+                        state,
+                        surface,
+                        source.as_deref().unwrap_or("about:blank"),
+                        &category,
+                    );
+                }
             }
             emit_browser_event(
                 emitter,
@@ -2159,6 +2213,7 @@ fn composition_webview2_capabilities() -> Vec<String> {
         "permission_requested",
         "process_failed",
         "download_progress",
+        "download_control",
         "file_chooser_observation",
         "find_in_page",
         "fixed_web_message_bridge",
@@ -2327,7 +2382,7 @@ mod tests {
         )
         .validate()
         .is_ok());
-        assert_eq!(composition_webview2_capabilities().len(), 8);
+        assert_eq!(composition_webview2_capabilities().len(), 9);
     }
 
     #[test]

@@ -15,6 +15,7 @@ describe("browser find and zoom chrome", () => {
     const onClose = vi.fn();
     const view = render(
       <BrowserFindBar
+        focusRequestId={1}
         matchCase={false}
         query="中文🙂"
         onClose={onClose}
@@ -33,8 +34,11 @@ describe("browser find and zoom chrome", () => {
     expect(onQueryChange).toHaveBeenCalledWith("");
     fireEvent.keyDown(input, { key: "Escape" });
     expect(onClose).toHaveBeenCalledOnce();
+    (input as HTMLInputElement).blur();
+    expect(document.activeElement).not.toBe(input);
     view.rerender(
       <BrowserFindBar
+        focusRequestId={2}
         matchCase={false}
         query=""
         onClose={onClose}
@@ -43,6 +47,7 @@ describe("browser find and zoom chrome", () => {
         onSearch={onSearch}
       />,
     );
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "查找内容" }));
     expect(screen.getByRole("button", { name: "下一个匹配项" }).hasAttribute("disabled")).toBe(true);
   });
 

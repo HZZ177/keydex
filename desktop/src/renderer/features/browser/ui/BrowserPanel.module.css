@@ -1,3 +1,22 @@
+.workspace {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  background: var(--surface-bg);
+}
+
+.browserMain {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .panel {
   container-type: inline-size;
   display: grid;
@@ -133,25 +152,6 @@
     transform var(--motion-fast) var(--motion-ease-standard);
 }
 
-.toolbarCount {
-  position: absolute;
-  top: -3px;
-  right: -3px;
-  display: inline-flex;
-  min-width: 14px;
-  height: 14px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--surface-bg);
-  border-radius: var(--radius-pill);
-  padding: 0 3px;
-  color: var(--color-text-inverse);
-  background: var(--annotation-accent);
-  font-size: 8px;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-
 .toolbarButton:hover:not(:disabled),
 .toolbarButton:focus-visible {
   outline: none;
@@ -170,6 +170,19 @@
 .toolbarButton[data-active="true"]:focus-visible {
   background: color-mix(in srgb, var(--annotation-accent) 17%, transparent);
   color: var(--annotation-accent);
+}
+
+.toolbarButton[data-attention="true"]::after {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border: 1.5px solid color-mix(in srgb, var(--surface-bg) 92%, transparent);
+  border-radius: var(--radius-pill);
+  background: var(--color-info-6);
+  content: "";
+  pointer-events: none;
 }
 
 .toolbarButton:active:not(:disabled) {
@@ -391,6 +404,18 @@
   min-height: 0;
   overflow: hidden;
   background: var(--surface-bg);
+}
+
+.surfaceOverlay {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.surfaceOverlay [data-browser-surface-occlusion="true"] {
+  pointer-events: auto;
 }
 
 .surface {

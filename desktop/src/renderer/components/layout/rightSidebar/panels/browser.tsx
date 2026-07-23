@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 import { persistableBrowserMetadata, resolveBrowserAddress, sanitizeBrowserRestoreUrl } from "@/renderer/features/browser/domain/browserNavigation";
 import {
@@ -13,6 +20,7 @@ import {
   createWebAnnotationStore,
   WebAnnotationHighlightSynchronizer,
   WebAnnotationDrawer,
+  WebAnnotationShelf,
   webAnnotationPanelRegistry,
   webAnnotationReferencePresentations,
   summarizeWebAnnotationChanges,
@@ -42,9 +50,13 @@ import {
   PermissionPrompt,
   type BrowserPermissionRequest,
 } from "@/renderer/features/browser/ui";
+import browserStyles from "@/renderer/features/browser/ui/BrowserPanel.module.css";
 import { openExternalProtocol } from "@/runtime/externalLinks";
 import { runtimeBridge } from "@/runtime";
-import { emitAddWebAnnotationToComposer } from "@/renderer/events/webAnnotationContext";
+import {
+  emitAddWebAnnotationToComposer,
+  emitRemoveWebAnnotationFromComposers,
+} from "@/renderer/events/webAnnotationContext";
 import {
   COMPOSER_NEW_CHAT_DRAFT_SCOPE,
   composerNewWorkspaceDraftScope,
@@ -211,7 +223,9 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
   const [externalProtocolRequest, setExternalProtocolRequest] = useState<BrowserExternalProtocolRequest | null>(null);
   const [respondingPermission, setRespondingPermission] = useState(false);
   const [downloadsOpen, setDownloadsOpen] = useState(false);
+  const [downloadsAttention, setDownloadsAttention] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
+  const [findFocusRequestId, setFindFocusRequestId] = useState(0);
   const [findQuery, setFindQuery] = useState("");
   const [findMatchCase, setFindMatchCase] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
@@ -229,6 +243,11 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
     () => createWebAnnotationStore(createWebAnnotationClient(runtimeBridge.http)),
     [],
   );
+  const requestFind = useCallback(() => {
+    setZoomOpen(false);
+    setFindOpen(true);
+    setFindFocusRequestId((current) => current + 1);
+  }, []);
   const annotationHighlightPort = useMemo(
     () => createWebAnnotationHighlightPort(browserPanelRuntime),
     [],
@@ -262,7 +281,16 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
   const surfaceRef = useRef(surface);
   const navigationRef = useRef(navigation);
   const annotationResolverRef = useRef(annotationResolver);
+  const annotationSessionRef = useRef(annotationSession);
   const annotationModeActiveRef = useRef(annotationModeActive);
+  const annotationHighlighterRef = useRef<WebAnnotationHighlightSynchronizer | null>(null);
+  const annotationHighlightContentRef = useRef<Readonly<Record<string, { readonly bodyMarkdown: string }>>>({});
+  const annotationItemsRef = useRef<readonly WebAnnotationItem[]>([]);
+  const completedDownloadIdsRef = useRef<Set<string> | null>(null);
+  const addAnnotationToComposerRef = useRef<(item: WebAnnotationItem) => ReturnType<typeof emitAddWebAnnotationToComposer>>(
+    () => "unhandled",
+  );
+  const deleteAnnotationRef = useRef<(annotationId: string) => Promise<void>>(async () => undefined);
   const lastUrlKeyRef = useRef<string | null>(null);
   const lastUrlKeyNavigationIdRef = useRef<string | null>(null);
   const lastDocumentUrlRef = useRef(state.restoreUrl);
@@ -271,11 +299,68 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
   surfaceRef.current = surface;
   navigationRef.current = navigation;
   annotationResolverRef.current = annotationResolver;
+  annotationSessionRef.current = annotationSession;
   annotationModeActiveRef.current = annotationModeActive;
-  const updateAnnotationModeActive = (next: boolean) => {
+  annotationItemsRef.current = annotationEntry?.items ?? [];
+  annotationHighlightContentRef.current = Object.fromEntries(
+    annotationItemsRef.current.map((item) => [
+      item.annotation.id,
+      { bodyMarkdown: item.annotation.bodyMarkdown },
+    ]),
+  );
+  addAnnotationToComposerRef.current = (item) => {
+    const composerScopeKey = browserAnnotationComposerScopeKey(scopeKey);
+    if (!composerScopeKey) return "unhandled";
+    const settled = annotationResolutionDetails[item.annotation.id]?.settled
+      ?? annotationResolutionDetails[item.annotation.id]?.lastKnown
+      ?? null;
+    return emitAddWebAnnotationToComposer({
+      composerScopeKey,
+      reference: {
+        annotationId: item.annotation.id,
+        selectedRevision: item.annotation.revision,
+        selectedAt: new Date().toISOString(),
+        sourcePanelId: state.id,
+      },
+      presentation: {
+        annotationId: item.annotation.id,
+        title: item.resource.title,
+        summary: webAnnotationTargetSummary(item.annotation.target),
+        bodyMarkdown: item.annotation.bodyMarkdown,
+        origin: item.resource.origin,
+        status: annotationResolutionStatuses[item.annotation.id],
+        change: summarizeWebAnnotationChanges(settled?.evidence?.changedSignals),
+        updatedAt: item.annotation.updatedAt,
+      },
+    });
+  };
+  deleteAnnotationRef.current = async (annotationId) => {
+    await annotationStore.getState().deleteAnnotation(annotationId);
+    emitRemoveWebAnnotationFromComposers(annotationId);
+  };
+  useEffect(() => {
+    const completedIds = new Set(
+      Object.values(downloads).flatMap((item) => (
+        item
+        && item.surface.panelId === state.id
+        && item.state === "completed"
+          ? [item.id]
+          : []
+      )),
+    );
+    const previous = completedDownloadIdsRef.current;
+    completedDownloadIdsRef.current = completedIds;
+    if (previous === null) return;
+    const hasNewCompletion = [...completedIds].some((id) => !previous.has(id));
+    if (hasNewCompletion && !downloadsOpen) setDownloadsAttention(true);
+  }, [downloads, downloadsOpen, state.id]);
+  useEffect(() => {
+    if (downloadsOpen) setDownloadsAttention(false);
+  }, [downloadsOpen]);
+  const updateAnnotationModeActive = useCallback((next: boolean) => {
     annotationModeActiveRef.current = next;
     setAnnotationModeActive(next);
-  };
+  }, []);
   if (annotationEntry?.resource) {
     lastUrlKeyRef.current = annotationEntry.resource.urlKey;
     lastUrlKeyNavigationIdRef.current = annotationState.activePage?.navigationId ?? null;
@@ -378,6 +463,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
       surface,
       port: annotationHighlightPort,
     });
+    annotationHighlighterRef.current = highlighter;
     const router = new BrowserBridgeRouter(surface);
     const savingSelectionIds = new Set<string>();
     let disposed = false;
@@ -432,8 +518,55 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
           ? envelope.payload.bodyMarkdown.length
           : undefined,
       });
+      if (envelope.kind === "page.interaction") {
+        setAnnotationsOpen(false);
+        setDownloadsOpen(false);
+        return;
+      }
       session.applyBridgeEnvelope(envelope);
       resolver.applyBridgeEnvelope(envelope);
+      if (envelope.kind === "selection.result") setAnnotationsOpen(false);
+      if (envelope.kind === "highlight.action") {
+        const action = envelope as BrowserBridgeEnvelope<"highlight.action">;
+        if (action.payload.action === "resume_selection") {
+          if (!annotationModeActiveRef.current) return;
+          void session.startSelection("element").catch((error: unknown) => {
+            updateAnnotationModeActive(false);
+            void annotationHighlighterRef.current?.sync({}).catch(() => undefined);
+            notifications.error(error instanceof Error ? error.message : "无法继续网页批注模式");
+          });
+          return;
+        }
+        if (action.payload.action === "delete_annotation") {
+          const continueSelecting = annotationModeActiveRef.current;
+          void deleteAnnotationRef.current(action.payload.annotationId).then(() => {
+            notifications.success("网页批注已删除");
+          }).catch((error: unknown) => {
+            notifications.error(error instanceof Error ? error.message : "删除网页批注失败");
+          }).finally(() => {
+            if (!continueSelecting || !annotationModeActiveRef.current) return;
+            void session.startSelection("element").catch((error: unknown) => {
+              updateAnnotationModeActive(false);
+              void annotationHighlighterRef.current?.sync({}).catch(() => undefined);
+              notifications.error(error instanceof Error ? error.message : "无法继续网页批注模式");
+            });
+          });
+          return;
+        }
+        const item = annotationItemsRef.current.find((candidate) => (
+          candidate.annotation.id === action.payload.annotationId
+        ));
+        if (!item) {
+          notifications.error("该网页批注已不存在");
+          return;
+        }
+        const result = addAnnotationToComposerRef.current(item);
+        if (result === "added") notifications.success("网页批注已添加到输入框");
+        else if (result === "duplicate") notifications.info("该网页批注已在输入框中");
+        else if (result === "limit") notifications.warning("一次最多添加 20 条网页批注");
+        else notifications.error("当前没有可接收网页批注的输入框");
+        return;
+      }
       if (envelope.kind === "annotation.cancelled") {
         const cancellation = envelope as BrowserBridgeEnvelope<"annotation.cancelled">;
         const snapshot = session.getSnapshot();
@@ -497,7 +630,11 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
           selectionId: submission.payload.selectionId,
           annotationId: detail.annotation.id,
         });
-        notifications.success("网页批注已创建");
+        const addResult = addAnnotationToComposerRef.current(detail);
+        if (addResult === "added") notifications.success("网页批注已创建并添加到输入框");
+        else if (addResult === "duplicate") notifications.success("网页批注已创建，输入框中已存在该引用");
+        else if (addResult === "limit") notifications.warning("网页批注已创建；输入框最多添加 20 条网页批注");
+        else notifications.warning("网页批注已创建；当前没有可接收引用的输入框");
         void settleDraft("save");
       }).catch((error: unknown) => {
         traceBrowserAnnotation("renderer.annotation.create.failed", {
@@ -570,7 +707,10 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
       const snapshot = resolver.getSnapshot();
       setAnnotationResolutionStatuses(snapshot.visibleStatuses);
       setAnnotationResolutionDetails(snapshot.resolutions);
-      void highlighter.sync(snapshot.resolutions).catch(() => undefined);
+      void highlighter.sync(
+        annotationModeActiveRef.current ? snapshot.resolutions : {},
+        annotationHighlightContentRef.current,
+      ).catch(() => undefined);
       webAnnotationPanelRegistry.notify();
     });
     setAnnotationSession(session);
@@ -585,6 +725,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
       unbindRouter();
       resolver.dispose();
       void highlighter.dispose().catch(() => undefined);
+      if (annotationHighlighterRef.current === highlighter) annotationHighlighterRef.current = null;
       void session.closePanel();
       setAnnotationSession((current) => current === session ? null : current);
       updateAnnotationModeActive(false);
@@ -606,6 +747,15 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
       })),
     });
   }, [annotationEntry?.items, annotationEntry?.resource, annotationResolver, annotationState.activePage]);
+  useEffect(() => {
+    const highlighter = annotationHighlighterRef.current;
+    const resolver = annotationResolverRef.current;
+    if (!highlighter || !resolver) return;
+    void highlighter.sync(
+      annotationModeActive ? resolver.getSnapshot().resolutions : {},
+      annotationHighlightContentRef.current,
+    ).catch(() => undefined);
+  }, [annotationEntry?.items, annotationModeActive]);
   useEffect(() => {
     for (const item of annotationEntry?.items ?? []) {
       const settled = annotationResolutionDetails[item.annotation.id]?.settled
@@ -664,8 +814,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
     if (event.kind === "permission.requested") setPermissionRequest(event.payload);
     if (event.kind === "shortcut.requested") {
       if (event.payload.shortcut === "find") {
-        setZoomOpen(false);
-        setFindOpen(true);
+        requestFind();
       } else if (event.payload.shortcut === "focus_address") {
         addressInputRef.current?.focus();
         addressInputRef.current?.select();
@@ -679,7 +828,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
       event.kind === "permission.expired"
       && permissionRequest?.permissionRequestId === event.payload.permissionRequestId
     ) setPermissionRequest(null);
-  }), [generation, hostContext, permissionRequest?.permissionRequestId, state.id, surface?.surfaceId]);
+  }), [generation, hostContext, permissionRequest?.permissionRequestId, requestFind, state.id, surface?.surfaceId]);
   useEffect(() => {
     if (!surface) return;
     const coordinator = new BrowserPolicyCoordinator({
@@ -780,30 +929,80 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
         ? "网页批注正在准备"
         : undefined;
 
-  const stopAnnotationMode = () => {
+  const stopAnnotationMode = useCallback(() => {
+    setAnnotationsOpen(false);
     updateAnnotationModeActive(false);
-    if (!annotationSession) return;
-    const snapshot = annotationSession.getSnapshot();
+    void annotationHighlighterRef.current?.sync({}).catch(() => undefined);
+    const currentSession = annotationSessionRef.current;
+    if (!currentSession) return;
+    const snapshot = currentSession.getSnapshot();
     if (snapshot.status === "draft") {
-      annotationSession.cancelDraft();
+      currentSession.cancelDraft();
     } else if (snapshot.status !== "idle" && snapshot.status !== "cancelling") {
-      void annotationSession.cancelSelection("user");
+      void currentSession.cancelSelection("user");
     }
-  };
+  }, [updateAnnotationModeActive]);
 
   const startAnnotationMode = () => {
     if (!annotationSession) return;
     setAnnotationsOpen(false);
     updateAnnotationModeActive(true);
+    const resolutions = annotationResolverRef.current?.getSnapshot().resolutions ?? {};
+    void annotationHighlighterRef.current?.sync(
+      resolutions,
+      annotationHighlightContentRef.current,
+    ).catch(() => undefined);
     void annotationSession.startSelection("element").catch((error: unknown) => {
       updateAnnotationModeActive(false);
+      void annotationHighlighterRef.current?.sync({}).catch(() => undefined);
       notifications.error(error instanceof Error ? error.message : "无法进入网页批注模式");
     });
   };
 
+  const addAllAnnotationsToComposer = () => {
+    const items = annotationEntry?.items ?? [];
+    let added = 0;
+    let duplicates = 0;
+    let limited = false;
+    let unhandled = false;
+    for (const item of items) {
+      const result = addAnnotationToComposerRef.current(item);
+      if (result === "added") added += 1;
+      else if (result === "duplicate") duplicates += 1;
+      else if (result === "limit") {
+        limited = true;
+        break;
+      } else {
+        unhandled = true;
+        break;
+      }
+    }
+    if (added > 0) {
+      notifications.success(`已将 ${added} 条网页批注添加到输入框`);
+      if (limited) notifications.warning("输入框最多添加 20 条网页批注，其余批注未添加");
+    } else if (limited) {
+      notifications.warning("输入框最多添加 20 条网页批注");
+    } else if (unhandled) {
+      notifications.error("当前没有可接收网页批注的输入框");
+    } else if (duplicates > 0) {
+      notifications.info("当前页面的网页批注已全部在输入框中");
+    }
+  };
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.altKey || event.metaKey || !event.ctrlKey) return;
+      if (event.defaultPrevented) return;
+      if (event.key === "Escape" && annotationModeActiveRef.current) {
+        // The annotation button lives in the renderer chrome. Immediately
+        // after the first manual activation focus can therefore still belong
+        // to this window rather than the native WebView2 child, so Chromium's
+        // inspectModeCanceled event cannot observe Escape. Route that
+        // shell-focused case through the same stop boundary as the button.
+        event.preventDefault();
+        stopAnnotationMode();
+        return;
+      }
+      if (event.altKey || event.metaKey || !event.ctrlKey) return;
       const key = event.key.toLowerCase();
       if (key === "l") {
         event.preventDefault();
@@ -811,8 +1010,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
         addressInputRef.current?.select();
       } else if (key === "f") {
         event.preventDefault();
-        setZoomOpen(false);
-        setFindOpen(true);
+        requestFind();
       } else if (key === "r") {
         event.preventDefault();
         run((current) => browserPanelRuntime.history(current, "reload"));
@@ -823,12 +1021,45 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [generation, hostContext, state.id, surface?.surfaceId]);
+  }, [generation, hostContext, requestFind, state.id, stopAnnotationMode, surface?.surfaceId]);
+
+  const annotationShelf = annotationModeActive && annotationSession && state.profileMode === "persistent" ? (
+    <WebAnnotationShelf
+      count={annotationEntry?.items.length ?? 0}
+      open={annotationsOpen}
+      pageTitle={navigation?.title || state.title || "当前页面"}
+      pageUrl={navigation?.url || state.restoreUrl}
+      onAddAllToComposer={addAllAnnotationsToComposer}
+      onOpenChange={(open) => {
+        setAnnotationsOpen(open);
+        if (open) setDownloadsOpen(false);
+      }}
+    >
+      <WebAnnotationDrawer
+        open
+        profileMode={state.profileMode}
+        resolutionDetails={annotationResolutionDetails}
+        resolutions={annotationResolutionStatuses}
+        session={annotationSession}
+        showCreationActions={false}
+        store={annotationStore}
+        variant="shelf"
+        onAddToComposer={(item) => addAnnotationToComposerRef.current(item)}
+        onClose={() => setAnnotationsOpen(false)}
+        onDelete={(item) => deleteAnnotationRef.current(item.annotation.id)}
+      />
+    </WebAnnotationShelf>
+  ) : null;
 
   return (
-    <div className={layoutStyles.rightSidebarBody} data-content="browser" hidden={!active}>
-      <BrowserPanel
-        active={active && !annotationsOpen}
+    <div
+      className={`${layoutStyles.rightSidebarBody} ${browserStyles.workspace}`}
+      data-content="browser"
+      hidden={!active}
+    >
+      <div className={browserStyles.browserMain}>
+        <BrowserPanel
+        active={active}
         address={address}
         addressInputRef={addressInputRef}
         canGoBack={navigation?.canGoBack ?? false}
@@ -843,7 +1074,6 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
         empty={!navigation?.url}
         loading={navigation?.loading ?? runtime?.status === "creating"}
         annotationActive={annotationModeActive}
-        annotationCount={annotationEntry?.items.length ?? 0}
         annotationDisabled={Boolean(annotationDisabledReason)}
         annotationDisabledReason={annotationDisabledReason}
         profileMode={state.profileMode}
@@ -851,23 +1081,36 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
         surfaceReady={runtime?.status === "ready"}
         surface={surface}
         title={navigation?.title || state.title}
-        toolbarAccessory={findOpen ? (
-          <BrowserFindBar
-            matchCase={findMatchCase}
-            query={findQuery}
-            onClose={stopFind}
-            onMatchCaseChange={setFindMatchCase}
-            onQueryChange={(value) => {
-              setFindQuery(value);
-              if (!value) run((current) => browserPanelRuntime.stopFind(current));
-            }}
-            onSearch={(backwards) => {
-              if (findQuery) run((current) => browserPanelRuntime.find(current, findQuery, findMatchCase, backwards));
-            }}
-          />
-        ) : zoomOpen ? (
-          <BrowserZoomBar factor={state.zoomFactor} onChange={setZoom} onClose={() => setZoomOpen(false)} />
-        ) : null}
+        toolbarAccessory={(
+          <>
+            {findOpen ? (
+              <BrowserFindBar
+                focusRequestId={findFocusRequestId}
+                matchCase={findMatchCase}
+                query={findQuery}
+                onClose={stopFind}
+                onMatchCaseChange={setFindMatchCase}
+                onQueryChange={(value) => {
+                  setFindQuery(value);
+                  if (!value) run((current) => browserPanelRuntime.stopFind(current));
+                }}
+                onSearch={(backwards) => {
+                  if (findQuery) run((current) => browserPanelRuntime.find(current, findQuery, findMatchCase, backwards));
+                }}
+              />
+            ) : zoomOpen ? (
+              <BrowserZoomBar factor={state.zoomFactor} onChange={setZoom} onClose={() => setZoomOpen(false)} />
+            ) : null}
+          </>
+        )}
+        surfaceOverlay={(
+          <>
+            {annotationShelf}
+            {downloadsOpen ? <DownloadsView onClose={() => setDownloadsOpen(false)} /> : null}
+          </>
+        )}
+        downloadsActive={downloadsOpen}
+        downloadsAttention={downloadsAttention}
         zoomFactor={state.zoomFactor}
         onAddressChange={setAddress}
         onAddressSubmit={(value) => {
@@ -885,19 +1128,19 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
               else startAnnotationMode();
             }
           : undefined}
-        onAnnotationList={annotationsAvailable && state.profileMode === "persistent"
-          ? () => {
-              stopAnnotationMode();
-              setAnnotationsOpen(true);
-            }
-          : undefined}
         onBack={() => run((current) => browserPanelRuntime.history(current, "back"))}
         onForward={() => run((current) => browserPanelRuntime.history(current, "forward"))}
-        onDownloads={() => setDownloadsOpen(true)}
-        onFind={() => {
+        onDownloads={() => {
+          setFindOpen(false);
           setZoomOpen(false);
-          setFindOpen(true);
+          setDownloadsAttention(false);
+          setDownloadsOpen((value) => {
+            const open = !value;
+            if (open) setAnnotationsOpen(false);
+            return open;
+          });
         }}
+        onFind={requestFind}
         onReload={() => run((current) => browserPanelRuntime.history(current, "reload"))}
         onRetry={() => {
           if (surface) {
@@ -915,6 +1158,7 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
         }}
         onVisibilityChange={({ visible, reason }) => run((current) => browserPanelRuntime.setVisibility(current, visible, reason))}
       />
+      </div>
       {permissionRequest ? (
         <PermissionPrompt
           request={permissionRequest}
@@ -946,45 +1190,6 @@ function BrowserSidebarPanel({ active, hostContext, scopeKey, state, updateState
             void browserDownloadController.respond(dangerousDownload.id, "cancel")
               .finally(() => setRespondingDownload(false));
           }}
-        />
-      ) : null}
-      {downloadsOpen ? <DownloadsView onClose={() => setDownloadsOpen(false)} /> : null}
-      {annotationsOpen && annotationSession ? (
-        <WebAnnotationDrawer
-          open
-          profileMode={state.profileMode}
-          resolutionDetails={annotationResolutionDetails}
-          resolutions={annotationResolutionStatuses}
-          session={annotationSession}
-          showCreationActions={false}
-          store={annotationStore}
-          onAddToComposer={(item) => {
-            const composerScopeKey = browserAnnotationComposerScopeKey(scopeKey);
-            if (!composerScopeKey) return "unhandled";
-            const settled = annotationResolutionDetails[item.annotation.id]?.settled
-              ?? annotationResolutionDetails[item.annotation.id]?.lastKnown
-              ?? null;
-            return emitAddWebAnnotationToComposer({
-              composerScopeKey,
-              reference: {
-                annotationId: item.annotation.id,
-                selectedRevision: item.annotation.revision,
-                selectedAt: new Date().toISOString(),
-                sourcePanelId: state.id,
-              },
-              presentation: {
-                annotationId: item.annotation.id,
-                title: item.resource.title,
-                summary: webAnnotationTargetSummary(item.annotation.target),
-                bodyMarkdown: item.annotation.bodyMarkdown,
-                origin: item.resource.origin,
-                status: annotationResolutionStatuses[item.annotation.id],
-                change: summarizeWebAnnotationChanges(settled?.evidence?.changedSignals),
-                updatedAt: item.annotation.updatedAt,
-              },
-            });
-          }}
-          onClose={() => setAnnotationsOpen(false)}
         />
       ) : null}
     </div>

@@ -170,18 +170,18 @@ describe("composer draft store", () => {
     store.updateDraft(scope, {
       text: "重新发送",
       webAnnotations: [{
-        annotationId: snapshot.annotationId,
-        selectedRevision: snapshot.annotationRevision,
-        selectedAt: snapshot.capturedAt,
+        annotationId: snapshot.reference.annotationId,
+        selectedRevision: snapshot.reference.revision,
+        selectedAt: snapshot.reference.assembledAt,
       }],
       replayedContextItems: [{
-        id: `web-annotation:${snapshot.annotationId}:${snapshot.digest}`,
+        id: `web-annotation:${snapshot.reference.annotationId}:${snapshot.integrity.digest}`,
         type: "web_annotation",
         label: "网页批注 · History",
         content: "发送时内容",
         metadata: {
-          annotation_id: snapshot.annotationId,
-          snapshot_digest: snapshot.digest,
+          annotation_id: snapshot.reference.annotationId,
+          snapshot_digest: snapshot.integrity.digest,
           snapshot,
         },
       }],
@@ -199,16 +199,19 @@ describe("composer draft store", () => {
     const store = createComposerDraftStore({ storage, persistDelayMs: 0 });
     const snapshot = {
       ...replaySnapshot(),
-      annotationId: "incognito-web:runtime-only",
+      reference: {
+        ...replaySnapshot().reference,
+        annotationId: "incognito-web:runtime-only",
+      },
     };
     const contextItem = {
-      id: `web-annotation:${snapshot.annotationId}:${snapshot.digest}`,
+      id: `web-annotation:${snapshot.reference.annotationId}:${snapshot.integrity.digest}`,
       type: "web_annotation",
       label: "无痕网页引用 · History",
       content: "仅在运行内存保存",
       metadata: {
-        annotation_id: snapshot.annotationId,
-        snapshot_digest: snapshot.digest,
+        annotation_id: snapshot.reference.annotationId,
+        snapshot_digest: snapshot.integrity.digest,
         incognito_source: true,
         snapshot,
       },
@@ -216,9 +219,9 @@ describe("composer draft store", () => {
 
     store.updateDraft(scope, {
       webAnnotations: [{
-        annotationId: snapshot.annotationId,
-        selectedRevision: snapshot.annotationRevision,
-        selectedAt: snapshot.capturedAt,
+        annotationId: snapshot.reference.annotationId,
+        selectedRevision: snapshot.reference.revision,
+        selectedAt: snapshot.reference.assembledAt,
       }],
       replayedContextItems: [contextItem],
     });
@@ -261,52 +264,60 @@ describe("composer draft store", () => {
 });
 
 function replaySnapshot() {
+  const machineTarget = {
+    type: "text" as const,
+    quote: { exact: "历史片段", prefix: "", suffix: "" },
+    context: { headingPath: [] },
+    rects: [{ x: 0, y: 0, width: 80, height: 20 }],
+    frame: { url: "https://example.test/history", indexPath: [] },
+  };
   return {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     type: "web_annotation" as const,
-    annotationId: "annotation-replay-1",
-    annotationRevision: 2,
-    capturedAt: "2026-07-22T08:00:00Z",
-    source: {
+    reference: {
+      annotationId: "annotation-replay-1",
+      revision: 2,
+      anchorId: "wa_replay000000001",
+      createdAt: "2026-07-22T08:00:00Z",
+      assembledAt: "2026-07-22T08:00:00Z",
+    },
+    trust: {
+      userComment: "user_instruction" as const,
+      pageEvidence: "untrusted_reference" as const,
+      hostObservation: "trusted_application_observation" as const,
+    },
+    comment: { bodyMarkdown: "发送时正文", tags: [], properties: [] },
+    page: {
       title: "History",
-      url: "https://example.test/history",
+      documentUrl: "https://example.test/history",
+      canonicalUrl: null,
       urlKey: "c".repeat(64),
       origin: "https://example.test",
+      frame: machineTarget.frame,
     },
-    target: {
-      type: "text" as const,
-      summary: "历史片段",
-      resolution: "resolved" as const,
-      freshness: "current" as const,
+    anchor: {
+      kind: "text" as const,
+      display: { label: "历史片段", quote: "历史片段" },
+      semantic: { stableAttributes: [] },
+      content: { exactText: "历史片段", prefix: "", suffix: "" },
+      structure: {
+        locators: [{ kind: "text_quote" as const, stability: "medium" as const, value: "历史片段" }],
+        headingPath: [],
+      },
+      geometry: { rects: machineTarget.rects },
+      machineTarget,
     },
-    evidence: { originalQuote: "历史片段" },
-    perception: {
-      originalTarget: {
-        type: "text" as const,
-        quote: { exact: "历史片段", prefix: "", suffix: "" },
-        context: { headingPath: [] },
-        rects: [{ x: 0, y: 0, width: 80, height: 20 }],
-        frame: { url: "https://example.test/history", indexPath: [] },
-      },
-      currentTarget: {
-        type: "text" as const,
-        quote: { exact: "历史片段", prefix: "", suffix: "" },
-        context: { headingPath: [] },
-        rects: [{ x: 0, y: 0, width: 80, height: 20 }],
-        frame: { url: "https://example.test/history", indexPath: [] },
-      },
-      resolution: {
-        navigationId: "navigation-history",
-        frameRevision: 1,
-        frameKey: "main",
-        reason: "exact_match",
-        settledAt: "2026-07-22T08:00:00Z",
-        candidateIds: [],
-        evidence: null,
-        change: { kinds: [], materialKinds: [], signals: [], material: false },
-      },
+    observation: {
+      status: "exact" as const,
+      freshness: "live" as const,
+      observedAt: "2026-07-22T08:00:00Z",
+      match: { strategy: "exact_quote" as const, confidence: 1, candidateCount: 1 },
+      currentTarget: machineTarget,
+      changes: { kinds: [], materialKinds: [], signals: [], material: false },
     },
-    annotation: { bodyMarkdown: "发送时正文", tags: [], properties: [] },
-    digest: "digest-replay-1",
+    integrity: {
+      canonicalization: "keydex-json-c14n/v1" as const,
+      digest: `sha256:${"e".repeat(64)}`,
+    },
   };
 }

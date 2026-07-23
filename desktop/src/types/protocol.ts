@@ -1436,6 +1436,7 @@ export interface AgentHistoryResponse {
   session: AgentSession;
   event_total: number;
   pending_inputs?: AgentPendingInput[];
+  pending_approvals?: CommandApprovalRequest[];
   turn_indexes: number[];
   next_cursor?: string | null;
   prev_cursor?: string | null;
@@ -1835,6 +1836,7 @@ export interface AgentChatMessage {
   id: string;
   sessionId: string;
   messageEventId?: string;
+  clientInputId?: string;
   turnIndex?: number | null;
   role: AgentChatRole;
   content: string;

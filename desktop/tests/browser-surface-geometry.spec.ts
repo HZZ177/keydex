@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { BrowserOcclusionCoordinator } from "../src/renderer/features/browser/runtime";
+import { browserSurfaceOcclusionRects } from "../src/renderer/features/browser/runtime/BrowserGeometryCoordinator";
 import {
   logicalRectFromDomRect,
   resolveBrowserSurfaceVisibility,
@@ -20,6 +21,19 @@ describe("browser surface geometry and occlusion", () => {
       "utf8",
     );
     expect(source).not.toContain("devicePixelRatio");
+  });
+
+  it("cuts only the floating overlay intersection out of the native browser surface", () => {
+    expect(browserSurfaceOcclusionRects(
+      { left: 400, top: 100, right: 1_000, bottom: 800 },
+      [
+        { left: 760, top: 110, right: 990, bottom: 330, width: 230, height: 220 },
+        { left: 20, top: 20, right: 200, bottom: 80, width: 180, height: 60 },
+      ],
+      10,
+    )).toEqual([
+      { x: 350, y: 0, width: 250, height: 240 },
+    ]);
   });
 
   it("coalesces nested occlusion tokens and releases each token exactly once", () => {

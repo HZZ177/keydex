@@ -2655,6 +2655,7 @@ class ChatService:
                 "contextItems": context_items,
                 "context_items": context_items,
                 "pending_input_id": request.pending_input_id,
+                "client_input_id": request.client_input_id,
                 "session_id": session.id,
                 "trace_id": trace_id,
                 "trace_record_id": trace_id,

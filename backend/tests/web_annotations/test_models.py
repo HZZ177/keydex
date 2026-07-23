@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from backend.app.web_annotations.models import (
-    MAX_ANNOTATION_BODY_BYTES,
+    MAX_ANNOTATION_BODY_CHARACTERS,
     WebAnnotationCreateRequest,
     WebAnnotationPatchRequest,
     WebAnnotationRetargetRequest,
@@ -289,8 +289,12 @@ def test_rejects_duplicate_region_anchor_attributes() -> None:
 
 
 def test_enforces_body_tag_property_and_id_limits() -> None:
+    accepted = _create_payload()
+    accepted["body_markdown"] = "界" * MAX_ANNOTATION_BODY_CHARACTERS
+    assert len(WebAnnotationCreateRequest.model_validate(accepted).body_markdown) == MAX_ANNOTATION_BODY_CHARACTERS
+
     payload = _create_payload()
-    payload["body_markdown"] = "界" * (MAX_ANNOTATION_BODY_BYTES // 3 + 1)
+    payload["body_markdown"] = "界" * (MAX_ANNOTATION_BODY_CHARACTERS + 1)
     with pytest.raises(ValidationError, match="body_markdown"):
         WebAnnotationCreateRequest.model_validate(payload)
 

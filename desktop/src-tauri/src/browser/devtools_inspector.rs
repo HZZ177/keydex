@@ -44,6 +44,17 @@ const NATIVE_SELECTION_FUNCTION: &str = r#"function (detail) {
     binding,
   };
 }"#;
+const NATIVE_HIGHLIGHT_FUNCTION: &str = r#"function (detail) {
+  const view = this && this.ownerDocument && this.ownerDocument.defaultView;
+  const api = view && view.KeydexAnnotationOverlay;
+  if (!api || typeof api.openNativeHighlight !== 'function') {
+    return { opened: false, reason: 'page_bridge_unavailable' };
+  }
+  return {
+    opened: api.openNativeHighlight(detail.annotationId) === true,
+    reason: 'direct_bridge',
+  };
+}"#;
 const ROOT_SESSION: &str = "";
 
 #[cfg(windows)]
@@ -798,6 +809,56 @@ fn call_target_function(
                         );
                         return;
                     };
+                    if let Some(annotation_id) = native_highlight_annotation_id(&target) {
+                        let Some(snapshot) = result_inspector.selection_snapshot(&result_surface)
+                        else {
+                            release_object_group_on_core(
+                                &release_core,
+                                &release_session,
+                                &release_group,
+                            );
+                            return;
+                        };
+                        if snapshot.request_id != result_request
+                            || snapshot.phase != SelectionPhase::Resolving
+                        {
+                            release_object_group_on_core(
+                                &release_core,
+                                &release_session,
+                                &release_group,
+                            );
+                            return;
+                        }
+                        let mut sessions = snapshot.sessions;
+                        sessions.push(release_session.clone());
+                        sessions.sort();
+                        sessions.dedup();
+                        let barrier_core = release_core.clone();
+                        let barrier_session = release_session.clone();
+                        let barrier_inspector = result_inspector.clone();
+                        let barrier_surface = result_surface.clone();
+                        let barrier_request = result_request.clone();
+                        let barrier_route = result_route.clone();
+                        let marker_object_id = result_object_id.clone();
+                        force_deactivate_sessions_on_core_then(
+                            release_core,
+                            sessions,
+                            Box::new(move || {
+                                present_native_highlight(
+                                    barrier_core,
+                                    barrier_session,
+                                    marker_object_id,
+                                    release_group,
+                                    annotation_id,
+                                    barrier_inspector,
+                                    barrier_surface,
+                                    barrier_request,
+                                    barrier_route,
+                                )
+                            }),
+                        );
+                        return;
+                    }
                     if validate_web_annotation_target(&target).is_err() {
                         release_object_group_on_core(
                             &release_core,
@@ -886,6 +947,120 @@ fn call_target_function(
             &reason,
         );
     }
+}
+
+#[cfg(windows)]
+fn present_native_highlight(
+    core: webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2,
+    session_id: String,
+    object_id: String,
+    object_group: String,
+    annotation_id: String,
+    inspector: BrowserDevToolsInspector,
+    surface: BrowserSurfaceRef,
+    selection_request_id: String,
+    route: NativeInspectorRoute,
+) {
+    let is_resolving = inspector
+        .selection_snapshot(&surface)
+        .is_some_and(|snapshot| {
+            snapshot.request_id == selection_request_id
+                && snapshot.phase == SelectionPhase::Resolving
+        });
+    if !is_resolving {
+        release_object_group_on_core(&core, &session_id, &object_group);
+        return;
+    }
+    let release_core = core.clone();
+    let release_session = session_id.clone();
+    let release_group = object_group.clone();
+    let callback_inspector = inspector.clone();
+    let callback_surface = surface.clone();
+    let callback_request = selection_request_id.clone();
+    let callback_route = route.clone();
+    let dispatch = unsafe {
+        call_devtools_on_core(
+            &core,
+            &session_id,
+            "Runtime.callFunctionOn",
+            json!({
+                "functionDeclaration": NATIVE_HIGHLIGHT_FUNCTION,
+                "objectId": object_id,
+                "arguments": [{ "value": { "annotationId": annotation_id } }],
+                "returnByValue": true,
+                "awaitPromise": false,
+                "silent": true,
+                "objectGroup": object_group,
+            }),
+            Box::new(move |result| {
+                release_object_group_on_core(&release_core, &release_session, &release_group);
+                match result {
+                    Ok(value) => {
+                        let opened = value
+                            .get("result")
+                            .and_then(|result| result.get("value"))
+                            .and_then(|value| value.get("opened"))
+                            .and_then(Value::as_bool)
+                            == Some(true);
+                        if opened {
+                            return;
+                        }
+                        let reason = value
+                            .get("result")
+                            .and_then(|result| result.get("value"))
+                            .and_then(|value| value.get("reason"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("annotation_highlight_unavailable");
+                        finish_with_failure(
+                            &callback_inspector,
+                            &callback_surface,
+                            &callback_request,
+                            &callback_route,
+                            "annotation_highlight_open_failed",
+                            &format!("Existing web annotation did not open: {reason}"),
+                        );
+                    }
+                    Err(reason) => finish_with_failure(
+                        &callback_inspector,
+                        &callback_surface,
+                        &callback_request,
+                        &callback_route,
+                        "annotation_highlight_open_failed",
+                        &reason,
+                    ),
+                }
+            }),
+        )
+    };
+    if let Err(reason) = dispatch {
+        release_object_group_on_core(&core, &session_id, &object_group);
+        finish_with_failure(
+            &inspector,
+            &surface,
+            &selection_request_id,
+            &route,
+            "annotation_highlight_open_failed",
+            &reason,
+        );
+    }
+}
+
+fn native_highlight_annotation_id(value: &Value) -> Option<String> {
+    let object = value.as_object()?;
+    if object.len() != 2
+        || object.get("keydexOverlayAction").and_then(Value::as_str)
+            != Some("open_existing_annotation")
+    {
+        return None;
+    }
+    let annotation_id = object.get("annotationId").and_then(Value::as_str)?.trim();
+    if annotation_id.is_empty()
+        || annotation_id.len() > 128
+        || annotation_id.chars().any(char::is_control)
+    {
+        return None;
+    }
+    Some(annotation_id.to_string())
 }
 
 #[cfg(windows)]
@@ -1320,9 +1495,13 @@ fn inspect_mode_parameters(accent: InspectorColor) -> Value {
     json!({
         "mode": "searchForNode",
         "highlightConfig": {
-            "showInfo": true,
-            "showStyles": true,
-            "showAccessibilityInfo": true,
+            // Preserve Chromium's native hit-testing and box-model highlight,
+            // but keep Keydex annotation mode visually focused: the DevTools
+            // tag/size/style/accessibility tooltip is inspector chrome, not
+            // annotation content.
+            "showInfo": false,
+            "showStyles": false,
+            "showAccessibilityInfo": false,
             "contentColor": color(0.12),
             "paddingColor": color(0.18),
             "borderColor": color(0.96),
@@ -1525,6 +1704,32 @@ mod tests {
     }
 
     #[test]
+    fn accepts_only_the_exact_existing_annotation_overlay_action() {
+        assert_eq!(
+            native_highlight_annotation_id(&json!({
+                "keydexOverlayAction": "open_existing_annotation",
+                "annotationId": "annotation-1",
+            })),
+            Some("annotation-1".to_string())
+        );
+        assert_eq!(
+            native_highlight_annotation_id(&json!({
+                "keydexOverlayAction": "open_existing_annotation",
+                "annotationId": "annotation-1",
+                "selector": "button",
+            })),
+            None
+        );
+        assert_eq!(
+            native_highlight_annotation_id(&json!({
+                "keydexOverlayAction": "open_existing_annotation",
+                "annotationId": "\n",
+            })),
+            None
+        );
+    }
+
+    #[test]
     fn delayed_frame_activation_cannot_reopen_inspection_after_a_node_is_claimed() {
         let inspector = BrowserDevToolsInspector::default();
         let surface = surface();
@@ -1581,5 +1786,16 @@ mod tests {
         assert_eq!(parse_css_hex_color("#d87575").unwrap().red, 216);
         assert_eq!(parse_css_hex_color("#abc").unwrap().blue, 204);
         assert!(parse_css_hex_color("color-mix(in srgb, red, blue)").is_none());
+    }
+
+    #[test]
+    fn inspector_highlight_hides_native_element_information_popover() {
+        let parameters = inspect_mode_parameters(InspectorColor::default());
+        let configuration = &parameters["highlightConfig"];
+
+        assert_eq!(configuration["showInfo"], false);
+        assert_eq!(configuration["showStyles"], false);
+        assert_eq!(configuration["showAccessibilityInfo"], false);
+        assert_eq!(parameters["mode"], "searchForNode");
     }
 }

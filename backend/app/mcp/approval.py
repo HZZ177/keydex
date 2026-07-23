@@ -175,7 +175,7 @@ class McpApprovalService:
                 self.repositories.sessions.update(record.session_id, status="running")
                 return record
             if asyncio.get_running_loop().time() - started_at > request.wait_seconds:
-                resolved = self.repositories.command_approvals.resolve(
+                resolved, transitioned = self.repositories.command_approvals.resolve_pending(
                     approval_id,
                     status="expired",
                     decision="rejected",
@@ -183,17 +183,21 @@ class McpApprovalService:
                 )
                 if resolved is None:
                     return _decision_missing()
-                self.repositories.command_approval_audit.create(
-                    audit_id=new_id(),
-                    approval_id=resolved.id,
-                    session_id=resolved.session_id,
-                    command=resolved.command,
-                    cwd=resolved.cwd,
-                    decision="rejected",
-                    trust_scope="once",
-                    reject_message="MCP 审批等待超时",
-                    metadata={"source": "mcp_approval_timeout", "mcp": _mcp_metadata(resolved)},
-                )
+                if transitioned:
+                    self.repositories.command_approval_audit.create(
+                        audit_id=new_id(),
+                        approval_id=resolved.id,
+                        session_id=resolved.session_id,
+                        command=resolved.command,
+                        cwd=resolved.cwd,
+                        decision="rejected",
+                        trust_scope="once",
+                        reject_message="MCP 审批等待超时",
+                        metadata={
+                            "source": "mcp_approval_timeout",
+                            "mcp": _mcp_metadata(resolved),
+                        },
+                    )
                 self.repositories.sessions.update(resolved.session_id, status="running")
                 return resolved
             await asyncio.sleep(0.15)

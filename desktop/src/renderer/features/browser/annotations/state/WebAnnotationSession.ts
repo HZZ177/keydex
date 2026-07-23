@@ -271,7 +271,11 @@ export class WebAnnotationSession {
       case "selection.cancelled": {
         const cancelledEnvelope = envelope as BrowserBridgeEnvelope<"selection.cancelled">;
         if (!requestMatches(request, cancelledEnvelope.requestId, cancelledEnvelope.payload.selectionId)) return false;
+        const requiresSurfaceCleanup = this.#state.status !== "cancelling";
         this.#transition(idleState(cancelledEnvelope.payload.reason, null));
+        if (requiresSurfaceCleanup) {
+          void this.#enqueue(() => this.#port.cancelSelection(this.#surface).catch(() => undefined));
+        }
         return true;
       }
       case "bridge.error": {
@@ -310,7 +314,11 @@ export class WebAnnotationSession {
     }
     if (event.kind === "selection.cancelled") {
       if (!request || event.payload.selectionRequestId !== request.requestId) return false;
+      const requiresSurfaceCleanup = this.#state.status !== "cancelling";
       this.#transition(idleState(event.payload.reason, null));
+      if (requiresSurfaceCleanup) {
+        void this.#enqueue(() => this.#port.cancelSelection(this.#surface).catch(() => undefined));
+      }
       return true;
     }
     if (event.kind === "selection.failed") {

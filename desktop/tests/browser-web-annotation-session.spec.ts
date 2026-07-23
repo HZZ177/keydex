@@ -93,6 +93,20 @@ describe("WebAnnotationSession", () => {
     expect(harness.setProtection).toHaveBeenLastCalledWith("panel-1", "selection", false);
   });
 
+  it("runs the global surface teardown after Chromium reports an Escape cancellation", async () => {
+    const harness = createHarness(["selection-1"]);
+    await harness.session.startSelection("element");
+
+    expect(harness.session.applyHostEvent(nativeSelectionCancelled("selection-1"))).toBe(true);
+    await vi.waitFor(() => expect(harness.cancelSelection).toHaveBeenCalledWith(surface));
+
+    expect(harness.session.getSnapshot()).toEqual({
+      status: "idle",
+      lastExitReason: "user",
+      error: null,
+    });
+  });
+
   it("moves candidate to an unsaved protected draft and releases it only on save/cancel", async () => {
     const harness = createHarness(["selection-1", "selection-2"]);
     await harness.session.startSelection("region");
@@ -402,6 +416,23 @@ function nativeElementResult(
       frameKey: "devtools:iframe-session-1",
       binding: { documentId: "document-1", nodeHandleId: "node-1" },
       target: nativeElementTarget,
+    },
+  };
+}
+
+function nativeSelectionCancelled(
+  selectionRequestId: string,
+): import("../src/renderer/features/browser/domain").BrowserEventEnvelope<"selection.cancelled"> {
+  return {
+    schemaVersion: 1,
+    kind: "selection.cancelled",
+    ...surface,
+    sequence: 6,
+    navigationId: "navigation:1",
+    occurredAt: "2026-07-22T00:00:01.000Z",
+    payload: {
+      selectionRequestId,
+      reason: "user",
     },
   };
 }

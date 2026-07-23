@@ -159,7 +159,6 @@ const INITIAL_PANEL_ID_PREFIX = "right-sidebar:initial:";
 const CONVERSATION_PANEL_ID_PREFIX = "right-sidebar:conversation:";
 const REVIEW_PANEL_ID_PREFIX = "right-sidebar:review:";
 const GLOBAL_RIGHT_SIDEBAR_SCOPE = "global";
-const APP_MODE_SWITCH_NAVIGATION_DELAY_MS = 180;
 const FULL_CONTENT_MIN_WIDTH = 420;
 const RATIO_PRECISION = 1000;
 const RIGHT_SIDEBAR_TAB_MENU_WIDTH = 148;
@@ -345,7 +344,6 @@ export function Layout({
   const lastReviewPanelOpenRequestRef = useRef(previewContext?.reviewPanelRequest?.requestId ?? 0);
   const lastPreviewScopeKeyRef = useRef<string | null>(previewContext?.activeScopeKey ?? null);
   const lastRightSidebarResetKeyRef = useRef<string | null>(null);
-  const appModeNavigationTimerRef = useRef<number | null>(null);
   const shellWidthRef = useRef(initialShellWidth());
   const shellMeasureFrameRef = useRef<number | null>(null);
   const browserResizeSessionRef = useRef<number | null>(null);
@@ -1117,18 +1115,8 @@ export function Layout({
     [activePath, closeRightSidebar, onNavigate],
   );
 
-  const clearAppModeNavigationTimer = useCallback(() => {
-    if (appModeNavigationTimerRef.current === null || typeof window === "undefined") {
-      appModeNavigationTimerRef.current = null;
-      return;
-    }
-    window.clearTimeout(appModeNavigationTimerRef.current);
-    appModeNavigationTimerRef.current = null;
-  }, []);
-
   const switchAppMode = useCallback(
     (mode: AppMode) => {
-      clearAppModeNavigationTimer();
       if (mode === appMode) {
         return;
       }
@@ -1137,16 +1125,9 @@ export function Layout({
         return;
       }
       setLocalPrimarySurface("content");
-      if (typeof window === "undefined" || prefersReducedMotion()) {
-        onNavigate?.(target);
-        return;
-      }
-      appModeNavigationTimerRef.current = window.setTimeout(() => {
-        appModeNavigationTimerRef.current = null;
-        onNavigate?.(target);
-      }, APP_MODE_SWITCH_NAVIGATION_DELAY_MS);
+      onNavigate?.(target);
     },
-    [activePath, appMode, clearAppModeNavigationTimer, modeSwitchTargets, onNavigate],
+    [activePath, appMode, modeSwitchTargets, onNavigate],
   );
 
   const openProductShowcase = useCallback(() => {
@@ -1160,8 +1141,6 @@ export function Layout({
   const handleProductShowcaseExited = useCallback(() => {
     setProductShowcasePhase(null);
   }, []);
-
-  useEffect(() => () => clearAppModeNavigationTimer(), [clearAppModeNavigationTimer]);
 
   useEffect(() => {
     if (!gitEnabled && routePrimarySurface === undefined) {
@@ -1692,7 +1671,7 @@ function RightSidebarPanel({
       true,
       { restoreUrl: documentUrl },
     );
-    void createWebAnnotationClient(runtime.http).get(snapshot.annotationId)
+    void createWebAnnotationClient(runtime.http).get(snapshot.reference.annotationId)
       .then((detail) => webAnnotationNavigator.navigate({
         scopeKey: activeScopeKey,
         target: {
@@ -1711,7 +1690,7 @@ function RightSidebarPanel({
         }
       })
       .catch(() => {
-        openSourcePanel(snapshot.source.url);
+        openSourcePanel(snapshot.page.documentUrl);
         notifications.warning("源批注已删除或暂时不可用，已打开发送时页面；历史快照保持不变");
       });
   }, [activeScopeKey, notifications, openDefaultRegisteredPanel, runtime.http, webAnnotationNavigationRequest]);
@@ -2275,14 +2254,6 @@ function RightSidebarLoading({ label }: { label: string }) {
 
 function previewOpenStamp(entry: { id: string; openedAt: number } | null): string | null {
   return entry ? `${entry.id}:${entry.openedAt}` : null;
-}
-
-function prefersReducedMotion(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
 }
 
 function sameRightSidebarScopePanelState(

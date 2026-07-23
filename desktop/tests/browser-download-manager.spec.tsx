@@ -1,6 +1,7 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import { AppContextMenuProvider } from "../src/renderer/providers/AppContextMenuProvider";
 import type { BrowserEventEnvelope } from "../src/renderer/features/browser/domain";
 import {
   BrowserDownloadController,
@@ -9,6 +10,7 @@ import {
 } from "../src/renderer/features/browser/runtime/BrowserDownloadController";
 import { DangerousDownloadPrompt } from "../src/renderer/features/browser/ui/DangerousDownloadPrompt";
 import { DownloadsView } from "../src/renderer/features/browser/ui/DownloadsView";
+import { runtimeBridge } from "../src/runtime";
 
 function requested(filename: string, id = "download-1"): BrowserEventEnvelope<"download.requested"> {
   return {
@@ -24,6 +26,42 @@ function requested(filename: string, id = "download-1"): BrowserEventEnvelope<"d
       url: "https://example.com/file?token=%5Bredacted%5D",
       suggestedFilename: filename,
       totalBytes: 2_048,
+    },
+  };
+}
+
+function completed(id = "download-1"): BrowserEventEnvelope<"download.completed"> {
+  return {
+    schemaVersion: 1,
+    kind: "download.completed",
+    panelId: "panel-1",
+    surfaceId: "surface-1",
+    generation: 1,
+    sequence: 2,
+    occurredAt: "2026-07-21T00:00:01Z",
+    payload: {
+      downloadId: id,
+      filePath: `C:\\Users\\tester\\Downloads\\${id}.pdf`,
+    },
+  };
+}
+
+function started(
+  filename = "report.pdf",
+  id = "download-1",
+): BrowserEventEnvelope<"download.started"> {
+  return {
+    schemaVersion: 1,
+    kind: "download.started",
+    panelId: "panel-1",
+    surfaceId: "surface-1",
+    generation: 1,
+    sequence: 2,
+    occurredAt: "2026-07-21T00:00:01Z",
+    payload: {
+      downloadId: id,
+      filePath: `C:\\Users\\tester\\Downloads\\${filename}`,
+      filename,
     },
   };
 }
@@ -91,6 +129,98 @@ describe("BrowserDownloadController", () => {
       vi.useRealTimers();
     }
   });
+
+  it("keeps the host-owned completed path for reveal and delete actions", async () => {
+    let listener: ((event: BrowserEventEnvelope) => void) | null = null;
+    const controller = new BrowserDownloadController();
+    controller.start({
+      send: vi.fn().mockResolvedValue({ ok: true, requestId: "request" }),
+      subscribe: (next: (event: BrowserEventEnvelope) => void) => {
+        listener = next;
+        return vi.fn();
+      },
+    } as never);
+
+    (listener as ((event: BrowserEventEnvelope) => void) | null)?.(requested("report.pdf"));
+    (listener as ((event: BrowserEventEnvelope) => void) | null)?.(completed());
+
+    expect(controller.store.getState().items["download-1"]).toMatchObject({
+      state: "completed",
+      filePath: "C:\\Users\\tester\\Downloads\\download-1.pdf",
+    });
+    controller.remove("download-1");
+    expect(controller.store.getState().items["download-1"]).toBeUndefined();
+  });
+
+  it("uses the resolved duplicate filename and controls an active native download", async () => {
+    let listener: ((event: BrowserEventEnvelope) => void) | null = null;
+    const send = vi.fn().mockResolvedValue({ ok: true, requestId: "request" });
+    const controller = new BrowserDownloadController();
+    controller.start({
+      send,
+      subscribe: (next: (event: BrowserEventEnvelope) => void) => {
+        listener = next;
+        return vi.fn();
+      },
+    } as never);
+
+    (listener as ((event: BrowserEventEnvelope) => void) | null)?.(requested("report.pdf"));
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith(
+      "browser_respond_download",
+      expect.objectContaining({ decision: "accept" }),
+    ));
+    (listener as ((event: BrowserEventEnvelope) => void) | null)?.(started("report (1).pdf"));
+    expect(controller.store.getState().items["download-1"]).toMatchObject({
+      filename: "report (1).pdf",
+      filePath: "C:\\Users\\tester\\Downloads\\report (1).pdf",
+    });
+
+    await controller.control("download-1", "pause");
+    expect(send).toHaveBeenLastCalledWith("browser_control_download", expect.objectContaining({
+      action: "pause",
+    }));
+    expect(controller.store.getState().items["download-1"]?.state).toBe("paused");
+
+    await controller.control("download-1", "resume");
+    expect(send).toHaveBeenLastCalledWith("browser_control_download", expect.objectContaining({
+      action: "resume",
+    }));
+    await controller.control("download-1", "cancel");
+    expect(send).toHaveBeenLastCalledWith("browser_control_download", expect.objectContaining({
+      action: "cancel",
+    }));
+    expect(controller.store.getState().items["download-1"]?.state).toBe("cancelled");
+  });
+
+  it("turns a download with no progress into an actionable failure instead of spinning forever", async () => {
+    vi.useFakeTimers();
+    try {
+      let listener: ((event: BrowserEventEnvelope) => void) | null = null;
+      const send = vi.fn().mockResolvedValue({ ok: true, requestId: "request" });
+      const controller = new BrowserDownloadController();
+      controller.start({
+        send,
+        subscribe: (next: (event: BrowserEventEnvelope) => void) => {
+          listener = next;
+          return vi.fn();
+        },
+      } as never);
+
+      (listener as ((event: BrowserEventEnvelope) => void) | null)?.(requested("setup.exe"));
+      await controller.respond("download-1", "accept");
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(send).toHaveBeenLastCalledWith("browser_control_download", expect.objectContaining({
+        action: "cancel",
+      }));
+      expect(controller.store.getState().items["download-1"]).toMatchObject({
+        state: "failed",
+        errorCategory: "no_progress",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("download UI", () => {
@@ -105,6 +235,7 @@ describe("download UI", () => {
       state: "requested" as const,
       errorCategory: null,
       dangerous: true,
+      filePath: null,
     };
     const onAccept = vi.fn();
     render(<DangerousDownloadPrompt item={item} responding={false} onAccept={onAccept} onCancel={vi.fn()} />);
@@ -112,7 +243,8 @@ describe("download UI", () => {
     expect(onAccept).toHaveBeenCalledOnce();
   });
 
-  it("renders progress and completion in the themed downloads drawer", () => {
+  it("renders a selectable themed downloads popover with quick and context actions", async () => {
+    const revealPath = vi.spyOn(runtimeBridge.desktopPicker, "revealPath").mockResolvedValue(undefined);
     browserDownloadController.store.setState({
       items: {
         complete: {
@@ -125,12 +257,76 @@ describe("download UI", () => {
           state: "completed",
           errorCategory: null,
           dangerous: false,
+          filePath: "C:\\Users\\tester\\Downloads\\report.pdf",
         },
       },
     });
-    render(<div data-theme="dark"><DownloadsView onClose={vi.fn()} /></div>);
-    expect(screen.getByRole("dialog")).not.toBeNull();
+    render(
+      <AppContextMenuProvider>
+        <div data-theme="dark"><DownloadsView onClose={vi.fn()} /></div>
+      </AppContextMenuProvider>,
+    );
+    expect(screen.getByRole("dialog", { name: "下载" }).getAttribute("aria-modal")).toBe("false");
     expect(screen.getByText("report.pdf")).not.toBeNull();
     expect(screen.getByText("已完成")).not.toBeNull();
+
+    const row = screen.getByRole("option", { name: "report.pdf，已完成" });
+    fireEvent.click(row);
+    expect(row.getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "在资源管理器中显示 report.pdf" }));
+    expect(revealPath).toHaveBeenCalledWith("C:\\Users\\tester\\Downloads\\report.pdf");
+
+    fireEvent.contextMenu(row, { clientX: 24, clientY: 24 });
+    expect(await screen.findByRole("menuitem", { name: "在资源管理器中显示" })).not.toBeNull();
+    expect(screen.getByRole("menuitem", { name: "删除文件" })).not.toBeNull();
+  });
+
+  it("closes the downloads popover when the renderer page is clicked outside it", () => {
+    const onClose = vi.fn();
+    browserDownloadController.store.setState({ items: {} });
+
+    render(<DownloadsView onClose={onClose} />);
+    fireEvent.pointerDown(document.body);
+
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("confirms deletion inside the download popover without opening a global dialog", async () => {
+    const deleteBrowserDownload = vi.spyOn(
+      runtimeBridge.desktopPicker,
+      "deleteBrowserDownload",
+    ).mockResolvedValue(undefined);
+    browserDownloadController.store.setState({
+      items: {
+        complete: {
+          id: "complete",
+          surface: { panelId: "panel-1", surfaceId: "surface-1", generation: 1 },
+          url: "https://example.com/report.pdf",
+          filename: "report.pdf",
+          receivedBytes: 2_048,
+          totalBytes: 2_048,
+          state: "completed",
+          errorCategory: null,
+          dangerous: false,
+          filePath: "C:\\Users\\tester\\Downloads\\report.pdf",
+        },
+      },
+    });
+
+    render(<DownloadsView onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "删除 report.pdf" }));
+    expect(screen.getByRole("alertdialog", { name: "删除下载文件？" })).not.toBeNull();
+    expect(screen.getByRole("dialog", { name: "下载" })).not.toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "删除文件" }));
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(deleteBrowserDownload).toHaveBeenCalledWith(
+        "C:\\Users\\tester\\Downloads\\report.pdf",
+      );
+      expect(browserDownloadController.store.getState().items.complete).toBeUndefined();
+    });
   });
 });

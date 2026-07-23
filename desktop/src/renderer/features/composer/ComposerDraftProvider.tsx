@@ -22,7 +22,10 @@ import {
   type ComposerDraftUpdate,
 } from "./composerDraftStore";
 import { subscribeLifecycleEvents } from "@/renderer/events/lifecycleEvents";
-import { subscribeAddWebAnnotationToComposer } from "@/renderer/events/webAnnotationContext";
+import {
+  subscribeAddWebAnnotationToComposer,
+  subscribeRemoveWebAnnotationFromComposers,
+} from "@/renderer/events/webAnnotationContext";
 import { BROWSER_LIMITS } from "@/renderer/features/browser/config";
 import { incognitoWebReferenceRegistry } from "@/renderer/features/browser/annotations/chat";
 
@@ -83,10 +86,14 @@ export function ComposerDraftProvider({
       });
       detail.result = "added";
     });
+    const unsubscribeRemovedWebAnnotations = subscribeRemoveWebAnnotationFromComposers((detail) => {
+      detail.removedCount += store.removeWebAnnotation(detail.annotationId);
+    });
     window.addEventListener("pagehide", flush);
     return () => {
       unsubscribeLifecycle();
       unsubscribeWebAnnotations();
+      unsubscribeRemovedWebAnnotations();
       window.removeEventListener("pagehide", flush);
       store.dispose();
       incognitoWebReferenceRegistry.clear();

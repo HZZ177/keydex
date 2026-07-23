@@ -52,7 +52,12 @@ export function WebAnnotationCard({
   ).slice(0, 5);
 
   return (
-    <article className={styles.card} data-status={visibleStatus} data-target={record.target.type}>
+    <article
+      className={styles.card}
+      data-editing={editing ? "true" : "false"}
+      data-status={visibleStatus}
+      data-target={record.target.type}
+    >
       <header className={styles.cardHeader}>
         <span className={styles.targetBadge}>{target.label}</span>
         <span className={styles.statusBadge} data-status={visibleStatus}>{statusLabel(visibleStatus)}</span>
@@ -65,6 +70,7 @@ export function WebAnnotationCard({
             {changeLabel(changeSummary)}
           </span>
         ) : null}
+        <span className={styles.compactTargetSummary}>{target.summary}</span>
         <time dateTime={record.createdAt}>{formatTime(record.createdAt)}</time>
       </header>
       <blockquote className={styles.targetSummary}>{target.summary}</blockquote>
@@ -83,8 +89,6 @@ export function WebAnnotationCard({
         <WebAnnotationEditor
           initialValue={{
             bodyMarkdown: record.bodyMarkdown,
-            tags: record.tags,
-            properties: record.properties,
           }}
           pending={pending}
           submitLabel="保存修改"
@@ -103,24 +107,7 @@ export function WebAnnotationCard({
           }}
         />
       ) : (
-        <>
-          <p className={styles.body}>{record.bodyMarkdown}</p>
-          {record.tags.length ? (
-            <div className={styles.tags} aria-label="批注标签">
-              {record.tags.map((tag) => <span key={tag}>#{tag}</span>)}
-            </div>
-          ) : null}
-          {record.properties.length ? (
-            <dl className={styles.propertyList}>
-              {record.properties.map((property) => (
-                <div key={`${property.key}:${property.type}`}>
-                  <dt>{property.key}</dt>
-                  <dd>{propertyValue(property.value)}</dd>
-                </div>
-              ))}
-            </dl>
-          ) : null}
-        </>
+        <p className={styles.body}>{record.bodyMarkdown}</p>
       )}
       {inlineError ? <div className={styles.validationError} role="alert">{inlineError}</div> : null}
       {!editing ? (
@@ -128,18 +115,31 @@ export function WebAnnotationCard({
           <span title={item.resource.urlNormalized}><Link2 size={12} />{item.resource.origin}</span>
           <div>
             {onAddToComposer ? (
-              <button aria-label="添加网页批注到输入框" disabled={pending} onClick={() => onAddToComposer(item)} type="button">
+              <button
+                aria-label="添加网页批注到输入框"
+                data-tooltip-label="添加到输入框"
+                disabled={pending}
+                onClick={() => onAddToComposer(item)}
+                type="button"
+              >
                 <MessageSquarePlus size={14} />
               </button>
             ) : null}
             {onNavigate ? (
-              <button aria-label="定位网页批注" disabled={pending} onClick={() => onNavigate(item)} type="button">
+              <button
+                aria-label="定位网页批注"
+                data-tooltip-label="在页面中定位"
+                disabled={pending}
+                onClick={() => onNavigate(item)}
+                type="button"
+              >
                 <LocateFixed size={14} />
               </button>
             ) : null}
             {onRetarget && (visibleStatus === "ambiguous" || visibleStatus === "orphaned") ? (
               <button
                 aria-label={visibleStatus === "ambiguous" ? "选择正确目标" : "重新选择目标"}
+                data-tooltip-label={visibleStatus === "ambiguous" ? "选择正确目标" : "重新选择目标"}
                 disabled={pending}
                 onClick={() => onRetarget(item)}
                 type="button"
@@ -147,10 +147,22 @@ export function WebAnnotationCard({
                 <ScanSearch size={14} />
               </button>
             ) : null}
-            <button aria-label="编辑网页批注" disabled={pending} onClick={() => setEditing(true)} type="button">
+            <button
+              aria-label="编辑网页批注"
+              data-tooltip-label="编辑批注"
+              disabled={pending}
+              onClick={() => setEditing(true)}
+              type="button"
+            >
               <Pencil size={14} />
             </button>
-            <button aria-label="删除网页批注" disabled={pending} onClick={() => onDelete(item)} type="button">
+            <button
+              aria-label="删除网页批注"
+              data-tooltip-label="删除批注"
+              disabled={pending}
+              onClick={() => onDelete(item)}
+              type="button"
+            >
               <Trash2 size={14} />
             </button>
           </div>
@@ -221,10 +233,6 @@ function changeDescription(summary: WebAnnotationChangeSummary): string {
     unknown: "其他目标信息",
   })[kind]);
   return `目标仍已定位；检测到${labels.join("、")}发生变化`;
-}
-
-function propertyValue(value: string | number | boolean): string {
-  return typeof value === "boolean" ? (value ? "是" : "否") : String(value);
 }
 
 function formatTime(value: string): string {

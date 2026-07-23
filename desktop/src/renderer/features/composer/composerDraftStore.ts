@@ -53,6 +53,7 @@ export interface ComposerDraftStore {
   getDraft(scopeKey: string): ComposerDraft;
   subscribe(listener: () => void): () => void;
   updateDraft(scopeKey: string, update: ComposerDraftUpdate): void;
+  removeWebAnnotation(annotationId: string): number;
   replaceDraft(scopeKey: string, draft: ComposerDraft): void;
   copyDraft(sourceScopeKey: string, targetScopeKey: string): void;
   clearDraft(scopeKey: string): void;
@@ -155,6 +156,36 @@ export function createComposerDraftStore(options: ComposerDraftStoreOptions = {}
       const current = store.getDraft(scopeKey);
       const patch = typeof update === "function" ? update(current) : update;
       commit(scopeKey, { ...current, ...patch, updatedAt: now() });
+    },
+    removeWebAnnotation(annotationId) {
+      const normalizedId = annotationId.trim();
+      if (!normalizedId) return 0;
+      let removedCount = 0;
+      for (const [scopeKey, draft] of Object.entries(drafts)) {
+        const webAnnotations = draft.webAnnotations.filter((reference) => {
+          const remove = reference.annotationId === normalizedId;
+          if (remove) removedCount += 1;
+          return !remove;
+        });
+        const replayedContextItems = draft.replayedContextItems.filter((item) => {
+          const remove = webAnnotationSnapshotFromContextItem(item)?.reference.annotationId === normalizedId;
+          if (remove) removedCount += 1;
+          return !remove;
+        });
+        if (
+          webAnnotations.length === draft.webAnnotations.length
+          && replayedContextItems.length === draft.replayedContextItems.length
+        ) {
+          continue;
+        }
+        commit(scopeKey, {
+          ...draft,
+          webAnnotations,
+          replayedContextItems,
+          updatedAt: now(),
+        });
+      }
+      return removedCount;
     },
     replaceDraft(scopeKey, draft) {
       commit(scopeKey, draft);
@@ -295,7 +326,7 @@ function decodeDraft(value: unknown): ComposerDraft | null {
     replayedContextItems: normalizeReplayedContextItems(raw.replayedContextItems)
       .filter((item) => {
         const snapshot = webAnnotationSnapshotFromContextItem(item);
-        return !snapshot || !isIncognitoWebAnnotationId(snapshot.annotationId);
+        return !snapshot || !isIncognitoWebAnnotationId(snapshot.reference.annotationId);
       }),
     updatedAt,
   };
@@ -306,7 +337,7 @@ function persistableDraft(draft: ComposerDraft): ComposerDraft {
     .filter((reference) => !isIncognitoWebAnnotationId(reference.annotationId));
   const replayedContextItems = draft.replayedContextItems.filter((item) => {
     const snapshot = webAnnotationSnapshotFromContextItem(item);
-    return !snapshot || !isIncognitoWebAnnotationId(snapshot.annotationId);
+    return !snapshot || !isIncognitoWebAnnotationId(snapshot.reference.annotationId);
   });
   return {
     ...draft,

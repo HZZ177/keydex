@@ -105,6 +105,7 @@ export type AgentConversationAction =
       content: string;
       attachments?: AgentChatMessage["attachments"];
       contextItems?: AgentChatMessage["contextItems"];
+      clientInputId?: string;
       id?: string;
       timestamp?: number;
     }
@@ -541,7 +542,7 @@ function loadHistory(
   view.hasUnread = false;
   view.stale = false;
   view.pendingInputs = normalizePendingInputs(history.pending_inputs ?? previousView?.pendingInputs ?? []);
-  applyHydratedRuntimeState(view, previousView);
+  applyHydratedRuntimeState(view, previousView, pendingApprovalsFromHistory(history));
   if (view.runtimeState === "failed") {
     updateSessionStatus(next, sessionId, "failed");
   }
@@ -666,13 +667,14 @@ function mergeActiveLocalMessages(
 ): AgentChatMessage[] {
   const hydratedWithA2UIDebug = mergeHydratedA2UIDebugMessages(hydratedMessages, previousView);
   const hydratedWithStableA2UI = preserveStableLocalA2UIMessages(hydratedWithA2UIDebug, previousView);
-  if (!previousView || !isActiveRuntimeState(previousView.runtimeState)) {
+  if (!previousView) {
     return hydratedWithStableA2UI;
   }
 
+  const preserveActiveMessages = isActiveRuntimeState(previousView.runtimeState);
   const merged = [...hydratedWithStableA2UI];
   for (const message of previousView.messages) {
-    if (!shouldPreserveActiveLocalMessage(message)) {
+    if (!shouldPreserveLocalMessage(message, preserveActiveMessages)) {
       continue;
     }
     if (merged.some((candidate) => isEquivalentHydratedMessage(candidate, message))) {
@@ -833,11 +835,24 @@ function a2UIRawEventKey(event: A2UIDebugRawEvent): string {
   return `${event.action}:${event.timestamp}:${stableJsonStringify(event.data)}`;
 }
 
-function shouldPreserveActiveLocalMessage(message: AgentChatMessage): boolean {
+function shouldPreserveLocalMessage(
+  message: AgentChatMessage,
+  preserveActiveMessages: boolean,
+): boolean {
   if (!shouldDisplayAgentTranscriptMessage(message)) {
     return false;
   }
   if (message.id.startsWith("hist:")) {
+    return false;
+  }
+  if (
+    message.role === "user"
+    && Boolean(message.clientInputId)
+    && message.hydratedFromHistory !== true
+  ) {
+    return true;
+  }
+  if (!preserveActiveMessages) {
     return false;
   }
   if (message.role === "user") {
@@ -864,6 +879,9 @@ function isEquivalentHydratedMessage(candidate: AgentChatMessage, localMessage: 
   }
   if (candidate.role !== localMessage.role) {
     return false;
+  }
+  if (localMessage.role === "user" && localMessage.clientInputId) {
+    return candidate.clientInputId === localMessage.clientInputId;
   }
   const localCompressionNoticeId = compressionNoticeIdFromMessage(localMessage);
   if (
@@ -894,18 +912,33 @@ function isEquivalentHydratedMessage(candidate: AgentChatMessage, localMessage: 
   return false;
 }
 
-function applyHydratedRuntimeState(view: AgentSessionViewState, previousView?: AgentSessionViewState): void {
+function applyHydratedRuntimeState(
+  view: AgentSessionViewState,
+  previousView?: AgentSessionViewState,
+  authoritativePendingApprovals?: CommandApprovalRequest[],
+): void {
+  applyHydratedApprovalStatesToCommandMessages(view);
   const hasStreamingMessage = view.messages.some((message) => Boolean(message.streaming));
-  const pendingApproval = pendingApprovalForHydratedView(view.messages, previousView);
+  const pendingApproval = pendingApprovalForHydratedView(
+    view.messages,
+    previousView,
+    authoritativePendingApprovals,
+  );
   const pendingElicitation = pendingElicitationForHydratedView(view.messages, previousView);
   const pendingA2UIInput = hasWaitingA2UIInput(view.messages);
+  const persistedRuntimeState = runtimeStateFromSessionStatus(view.status);
+  const hasStaleWaitingApprovalStatus =
+    authoritativePendingApprovals !== undefined
+    && persistedRuntimeState === "waiting_approval";
   let runtimeState = pendingApproval || pendingElicitation
     ? "waiting_approval"
     : pendingA2UIInput
       ? "waiting_input"
       : hasStreamingMessage
         ? "running"
-        : runtimeStateFromSessionStatus(view.status);
+        : hasStaleWaitingApprovalStatus
+          ? "idle"
+          : persistedRuntimeState;
 
   if (runtimeState === "idle" && previousView && isActiveRuntimeState(previousView.runtimeState)) {
     runtimeState = previousView.runtimeState === "waiting_approval" ? runtimeState : previousView.runtimeState;
@@ -919,6 +952,9 @@ function applyHydratedRuntimeState(view: AgentSessionViewState, previousView?: A
     runtimeState = "failed";
   }
 
+  if (!pendingApproval && ["idle", "failed", "closed"].includes(runtimeState)) {
+    settleDanglingToolMessages(view);
+  }
   view.runtimeState = runtimeState;
   view.pendingApproval = pendingApproval;
   view.pendingElicitation = pendingElicitation;
@@ -939,6 +975,7 @@ function addUserMessage(
     sessionId: action.sessionId,
     role: "user",
     content: action.content,
+    clientInputId: action.clientInputId,
     attachments: action.attachments,
     contextItems: action.contextItems,
     timestamp: action.timestamp ?? Date.now(),
@@ -2373,14 +2410,25 @@ function settleMissingRunRuntimeState(
   sessionId: string,
 ): void {
   closeAllMessageStreams(view);
+  settleDanglingToolMessages(view);
+  view.runtimeState = "idle";
+  view.isStreaming = false;
+  view.isCancelling = false;
+  view.pendingApproval = null;
+  view.pendingElicitation = null;
+  view.firstTokenAtMs = null;
+  updateSessionStatus(state, sessionId, "active");
+}
+
+function settleDanglingToolMessages(view: AgentSessionViewState): void {
   for (const message of view.messages) {
     if (message.role === "tool" && message.status === "running") {
-      message.status = "cancelled";
+      markDanglingToolCancelled(message);
     }
     if (message.role === "subagent") {
       for (const tool of message.subagentToolCalls ?? []) {
         if (tool.status === "running") {
-          tool.status = "cancelled";
+          markDanglingToolCancelled(tool);
         }
       }
       for (const item of message.subagentItems ?? []) {
@@ -2390,13 +2438,23 @@ function settleMissingRunRuntimeState(
       }
     }
   }
-  view.runtimeState = "idle";
-  view.isStreaming = false;
-  view.isCancelling = false;
-  view.pendingApproval = null;
-  view.pendingElicitation = null;
-  view.firstTokenAtMs = null;
-  updateSessionStatus(state, sessionId, "active");
+}
+
+function markDanglingToolCancelled(message: {
+  status?: AgentChatMessage["status"];
+  toolName?: string;
+  uiPayload?: unknown;
+}): void {
+  message.status = "cancelled";
+  if (!isCommandToolName(stringValue(message.toolName))) {
+    return;
+  }
+  const uiPayload = asRecord(message.uiPayload);
+  message.uiPayload = {
+    ...(uiPayload ?? {}),
+    status: "cancelled",
+    can_terminate: false,
+  };
 }
 
 function applyWaitingInputRuntimeState(
@@ -2421,9 +2479,11 @@ function handleUserMessage(
   }
   const pendingInputId = stringValue(data.pending_input_id);
   const deliveryMode = stringValue(data.delivery_mode);
+  const clientInputId = stringValue(data.client_input_id) || stringValue(data.clientInputId);
+  const messageEventId = stringValue(data.message_event_id) || stringValue(data.event_id);
   const messageId = pendingInputId
     ? `pending-user:${pendingInputId}`
-    : stringValue(data.message_event_id) || stringValue(data.event_id) || nextMessageId(state, "user", sessionId);
+    : messageEventId || nextMessageId(state, "user", sessionId);
   const currentView = state.sessionStateById[sessionId];
   if (currentView?.messages.some((message) => message.id === messageId)) {
     return state;
@@ -2435,11 +2495,13 @@ function handleUserMessage(
       : [];
   const next = cloneState(state);
   const view = ensureSessionState(next, sessionId);
-  view.messages.push({
+  const incoming: AgentChatMessage = {
     id: messageId,
     sessionId,
     role: "user",
     content: stringValue(data.content) || stringValue(data.message),
+    ...(messageEventId ? { messageEventId } : {}),
+    ...(clientInputId ? { clientInputId } : {}),
     contextItems: rawContextItems.filter(
       (item): item is AgentContextItem => Boolean(item && typeof item === "object"),
     ),
@@ -2449,7 +2511,27 @@ function handleUserMessage(
     timestamp: timestampFromData(data),
     turnIndex: numberValue(data.turn_index),
     ...(stringValue(data.trace_id) ? { traceId: stringValue(data.trace_id) } : {}),
-  });
+  };
+  const optimisticIndex = clientInputId
+    ? view.messages.findIndex(
+        (message) => (
+          message.role === "user"
+          && message.clientInputId === clientInputId
+          && message.hydratedFromHistory !== true
+        ),
+      )
+    : -1;
+  if (optimisticIndex >= 0) {
+    const optimistic = view.messages[optimisticIndex];
+    view.messages[optimisticIndex] = {
+      ...optimistic,
+      ...incoming,
+      id: optimistic.id,
+      timestamp: optimistic.timestamp,
+    };
+    return next;
+  }
+  view.messages.push(incoming);
   return next;
 }
 
@@ -3151,7 +3233,11 @@ function mergeElicitationForDisplay(
 function pendingApprovalForHydratedView(
   messages: AgentChatMessage[],
   previousView?: AgentSessionViewState,
+  authoritativePendingApprovals?: CommandApprovalRequest[],
 ): CommandApprovalRequest | null {
+  if (authoritativePendingApprovals !== undefined) {
+    return authoritativePendingApprovals.find((approval) => approval.status === "pending") ?? null;
+  }
   const pendingApproval = firstPendingApproval(messages);
   if (pendingApproval) {
     return pendingApproval;
@@ -3332,7 +3418,12 @@ function commandStatusFromApproval(approval: CommandApprovalRequest): string {
   if (approval.status === "pending") {
     return "approval_pending";
   }
-  if (approval.status === "rejected") {
+  if (
+    approval.status === "rejected"
+    || approval.status === "cancelled"
+    || approval.status === "expired"
+    || approval.decision === "rejected"
+  ) {
     return "rejected";
   }
   return "running";
@@ -3472,6 +3563,25 @@ function closeTopLevelTextStreams(view: AgentSessionViewState, completedAt = Dat
       if (message.status === "streaming") {
         message.status = undefined;
       }
+    }
+  }
+}
+
+function pendingApprovalsFromHistory(
+  history: AgentHistoryResponse,
+): CommandApprovalRequest[] | undefined {
+  if (!Array.isArray(history.pending_approvals)) {
+    return undefined;
+  }
+  return history.pending_approvals
+    .map((approval) => approvalFromData({ approval }))
+    .filter((approval): approval is CommandApprovalRequest => Boolean(approval));
+}
+
+function applyHydratedApprovalStatesToCommandMessages(view: AgentSessionViewState): void {
+  for (const message of view.messages) {
+    if (message.role === "approval" && message.approval) {
+      applyApprovalStateToCommandMessage(view, message.approval);
     }
   }
 }

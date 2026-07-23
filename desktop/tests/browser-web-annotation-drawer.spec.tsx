@@ -44,7 +44,7 @@ const replacementTextTarget: WebTextTarget = {
 };
 
 describe("WebAnnotationDrawer", () => {
-  it("uses AppDialog occlusion and shows the current-page empty state", async () => {
+  it("renders as an inline sidebar without occluding the browser surface", async () => {
     const store = createWebAnnotationStore(client({
       list: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
     }));
@@ -52,17 +52,18 @@ describe("WebAnnotationDrawer", () => {
 
     renderDrawer(store, session(), { open: true });
 
-    expect(screen.getByRole("dialog", { name: "网页批注" })).not.toBeNull();
+    expect(screen.getByRole("complementary", { name: "网页批注" })).not.toBeNull();
     expect(screen.getByText("当前页面还没有批注")).not.toBeNull();
     await waitFor(() => {
-      expect(screen.getByTestId("occlusion-state").textContent).toBe("occluded");
+      expect(screen.getByTestId("occlusion-state").textContent).toBe("visible");
     });
+    expect(screen.getByRole("button", { name: "隐藏网页批注侧栏" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "选择文本" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "选择元素" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "选择区域" })).not.toBeNull();
   });
 
-  it("closes when the user clicks outside the annotation drawer", async () => {
+  it("stays open during page interaction and closes only from its explicit control", async () => {
     const onClose = vi.fn();
     const store = createWebAnnotationStore(client({
       list: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
@@ -71,10 +72,12 @@ describe("WebAnnotationDrawer", () => {
 
     renderDrawer(store, session(), { open: true, onClose });
 
-    const dialog = screen.getByRole("dialog", { name: "网页批注" });
-    fireEvent.mouseDown(dialog);
+    const sidebar = screen.getByRole("complementary", { name: "网页批注" });
+    fireEvent.mouseDown(sidebar);
     expect(onClose).not.toHaveBeenCalled();
-    fireEvent.mouseDown(dialog.parentElement as HTMLElement);
+    fireEvent.mouseDown(document.body);
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "隐藏网页批注侧栏" }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -91,6 +94,35 @@ describe("WebAnnotationDrawer", () => {
     expect(screen.queryByRole("button", { name: "选择元素" })).toBeNull();
     expect(screen.queryByRole("button", { name: "选择区域" })).toBeNull();
     expect(screen.queryByText("点击顶部批注按钮，然后在页面中选择元素。")).toBeNull();
+  });
+
+  it("exposes a compact two-line shelf card with named actions and expands only for editing", async () => {
+    const store = createWebAnnotationStore(client({
+      list: vi.fn().mockResolvedValue(page(item("annotation-shelf", "需要复核这段批注正文"))),
+    }));
+    await activate(store);
+
+    renderDrawer(store, session(), {
+      open: true,
+      showCreationActions: false,
+      variant: "shelf",
+      onAddToComposer: vi.fn().mockReturnValue("added"),
+    });
+
+    const drawer = screen.getByRole("complementary", { name: "网页批注" });
+    const card = screen.getByText("需要复核这段批注正文").closest("article");
+    expect(drawer.dataset.variant).toBe("shelf");
+    expect(card?.dataset.editing).toBe("false");
+    expect(within(card!).getByRole("button", { name: "添加网页批注到输入框" }).dataset.tooltipLabel)
+      .toBe("添加到输入框");
+    expect(within(card!).getByRole("button", { name: "编辑网页批注" }).dataset.tooltipLabel)
+      .toBe("编辑批注");
+    expect(within(card!).getByRole("button", { name: "删除网页批注" }).dataset.tooltipLabel)
+      .toBe("删除批注");
+
+    fireEvent.click(within(card!).getByRole("button", { name: "编辑网页批注" }));
+    expect(card?.dataset.editing).toBe("true");
+    expect(within(card!).getByRole("textbox", { name: "批注内容" })).not.toBeNull();
   });
 
   it("describes the single top-button element workflow in an empty saved-annotation viewer", async () => {
@@ -171,7 +203,7 @@ describe("WebAnnotationDrawer", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it("edits fields with revision and deletes only after ConfirmDialog", async () => {
+  it("edits the annotation body with revision and deletes only after ConfirmDialog", async () => {
     const original = item("annotation-1", "Original body");
     const patch = vi.fn().mockResolvedValue(detail(item("annotation-1", "Updated body", 2)));
     const remove = vi.fn().mockResolvedValue(undefined);
@@ -187,18 +219,14 @@ describe("WebAnnotationDrawer", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "批注内容" }), {
       target: { value: "Updated body" },
     });
-    fireEvent.change(screen.getByRole("textbox", { name: "批注标签" }), {
-      target: { value: "review, owner" },
-    });
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
 
     await waitFor(() => expect(patch).toHaveBeenCalledWith("annotation-1", {
       expectedRevision: 1,
       bodyMarkdown: "Updated body",
-      tags: ["review", "owner"],
-      properties: [{ key: "owner", type: "text", value: "Keydex" }],
     }));
     expect(await screen.findByText("Updated body")).not.toBeNull();
+    expect(screen.queryByLabelText("批注标签")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "删除网页批注" }));
     expect(screen.getByRole("dialog", { name: "删除网页批注？" })).not.toBeNull();
@@ -260,7 +288,7 @@ describe("WebAnnotationDrawer", () => {
     expect(within(comparison).getByText("新目标")).not.toBeNull();
     expect(comparison.textContent).toContain("Selected text");
     expect(comparison.textContent).toContain("Replacement text");
-    expect(comparison.textContent).toContain("正文、标签和结构化属性保持不变");
+    expect(comparison.textContent).toContain("批注内容保持不变");
     expect(retarget).not.toHaveBeenCalled();
 
     fireEvent.click(within(comparison).getByRole("button", { name: "确认重新绑定" }));
@@ -320,7 +348,7 @@ describe("WebAnnotationDrawer", () => {
     expect(screen.queryByText("内容变化")).toBeNull();
   });
 
-  it("enforces tag/property limits and keyboard cancellation without a second modal system", () => {
+  it("counts the annotation limit by Unicode characters and supports keyboard cancellation", () => {
     const onCancel = vi.fn();
     const onSubmit = vi.fn();
     render(
@@ -332,13 +360,12 @@ describe("WebAnnotationDrawer", () => {
       />,
     );
     fireEvent.change(screen.getByRole("textbox", { name: "批注内容" }), {
-      target: { value: "Body" },
+      target: { value: "界".repeat(12_000) },
     });
-    fireEvent.change(screen.getByRole("textbox", { name: "批注标签" }), {
-      target: { value: Array.from({ length: 21 }, (_, index) => `tag-${index}`).join(",") },
-    });
-    expect(screen.getByRole("alert").textContent).toContain("20");
-    expect((screen.getByRole("button", { name: "保存修改" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("12,000 / 32,768 字符")).not.toBeNull();
+    expect((screen.getByRole("button", { name: "保存修改" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByLabelText("批注标签")).toBeNull();
+    expect(screen.queryByLabelText("添加结构化属性")).toBeNull();
 
     fireEvent.keyDown(screen.getByRole("textbox", { name: "批注内容" }), { key: "Escape" });
     expect(onCancel).toHaveBeenCalledTimes(1);
@@ -369,9 +396,11 @@ function renderDrawer(
     readonly resolutions?: Readonly<Record<string, WebAnnotationVisibleStatus | undefined>>;
     readonly resolutionDetails?: Readonly<Record<string, WebAnnotationCoordinatorResolution | undefined>>;
     readonly onAddToComposer?: (item: WebAnnotationItem) => "added" | "duplicate" | "limit" | "unhandled";
+    readonly onDelete?: (item: WebAnnotationItem) => Promise<void>;
     readonly profileMode?: "persistent" | "incognito";
     readonly onCreateTemporaryReference?: Parameters<typeof WebAnnotationDrawer>[0]["onCreateTemporaryReference"];
     readonly showCreationActions?: boolean;
+    readonly variant?: "sidebar" | "shelf";
     readonly onClose?: () => void;
   },
 ) {
@@ -384,11 +413,13 @@ function renderDrawer(
           resolutionDetails={input.resolutionDetails}
           profileMode={input.profileMode}
           showCreationActions={input.showCreationActions}
+          variant={input.variant}
           session={annotationSession}
           store={store}
           onAddToComposer={input.onAddToComposer}
           onCreateTemporaryReference={input.onCreateTemporaryReference}
           onClose={input.onClose ?? vi.fn()}
+          onDelete={input.onDelete ?? ((item) => store.getState().deleteAnnotation(item.annotation.id))}
         />
         <OcclusionState />
       </NotificationProvider>

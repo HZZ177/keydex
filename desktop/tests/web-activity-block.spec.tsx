@@ -34,6 +34,7 @@ describe("WebActivityBlock", () => {
     const activity = screen.getByTestId("web-activity");
     expect(activity.getAttribute("data-state")).toBe("running");
     expect(within(activity).getByRole("status").textContent).toContain("正在搜索“Keydex native web search”");
+    expect(activity.querySelector(".lucide-scan-search")).not.toBeNull();
     expect(activity.textContent).not.toContain("Tavily");
     expect(activity.textContent).not.toContain("search_depth");
     expect(activity.textContent).not.toContain("schema_version");
@@ -52,8 +53,12 @@ describe("WebActivityBlock", () => {
     expect(toggle.tagName).toBe("BUTTON");
     expect(within(toggle).queryByRole("button")).toBeNull();
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.querySelector(".lucide-scan-search")).not.toBeNull();
     fireEvent.click(screen.getByText("已搜索“result” · 1 个来源"));
 
+    const sourceList = screen.getByRole("list", { name: "网络来源" });
+    expect(sourceList.querySelector("img")).not.toBeNull();
+    expect(sourceList.querySelector(".lucide-scan-search")).toBeNull();
     const link = screen.getByRole("link", { name: "打开来源：Example guide" });
     expect(link.getAttribute("href")).toBe(SOURCE.url);
     expect(link.getAttribute("target")).toBe("_blank");

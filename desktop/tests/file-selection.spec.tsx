@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { SendBox } from "@/renderer/components/chat/SendBox";
@@ -9,7 +9,7 @@ import {
   selectedFileKey,
   selectedFileFromFile,
 } from "@/renderer/components/chat/SendBox/fileSelection";
-import type { RuntimeBridge } from "@/runtime";
+import type { DesktopFileDragDropEvent, DesktopFileDragDropListener, RuntimeBridge } from "@/runtime";
 
 describe("SendBox file selection", () => {
   it("adds and removes file chips through the reducer", () => {
@@ -98,11 +98,52 @@ describe("SendBox file selection", () => {
 
     fireEvent.dragOver(form, { dataTransfer: { types: ["Files"], files: [file] } });
     expect(form.getAttribute("data-dragging")).toBe("true");
+    expect(screen.getByRole("status").textContent).toContain("松开以添加文件");
     fireEvent.drop(form, { dataTransfer: { types: ["Files"], files: [file] } });
 
+    expect(screen.queryByRole("status")).toBeNull();
     expect(screen.getByLabelText("已添加上下文").textContent).toContain("main.ts");
     fireEvent.click(screen.getByRole("button", { name: "移除文件引用 src/main.ts" }));
     expect(screen.queryByLabelText("移除文件引用 src/main.ts")).toBeNull();
+  });
+
+  it("adds native desktop drops by absolute path only when they target this send box", async () => {
+    const fixture = nativeDropRuntime();
+    const { unmount } = render(<FileSendBox runtime={fixture.runtime} fileAccessMode="full_access" />);
+    const form = screen.getByRole("form", { name: "继续对话输入" });
+    vi.spyOn(form, "getBoundingClientRect").mockReturnValue({
+      bottom: 160,
+      height: 120,
+      left: 20,
+      right: 320,
+      top: 40,
+      width: 300,
+      x: 20,
+      y: 40,
+      toJSON: () => ({}),
+    });
+    await waitFor(() => expect(fixture.listenForFileDragDrop).toHaveBeenCalledTimes(1));
+
+    fixture.emit({ type: "over", position: { x: 400, y: 300 } });
+    expect(form.getAttribute("data-dragging")).toBe("false");
+    fixture.emit({
+      type: "drop",
+      paths: ["D:\\outside\\ignored.txt"],
+      position: { x: 400, y: 300 },
+    });
+    expect(screen.queryByLabelText("移除文件引用 D:\\outside\\ignored.txt")).toBeNull();
+
+    fixture.emit({ type: "over", position: { x: 120, y: 80 } });
+    expect(form.getAttribute("data-dragging")).toBe("true");
+    fixture.emit({
+      type: "drop",
+      paths: ["D:\\outside\\notes.txt"],
+      position: { x: 120, y: 80 },
+    });
+
+    expect(await screen.findByLabelText("移除文件引用 D:\\outside\\notes.txt")).not.toBeNull();
+    unmount();
+    expect(fixture.unlisten).toHaveBeenCalledTimes(1);
   });
 
   it("rejects pasted files without a native path instead of creating temporary file chips", async () => {
@@ -119,7 +160,13 @@ describe("SendBox file selection", () => {
   });
 });
 
-function FileSendBox({ runtime }: { runtime?: RuntimeBridge }) {
+function FileSendBox({
+  runtime,
+  fileAccessMode,
+}: {
+  runtime?: RuntimeBridge;
+  fileAccessMode?: "no_file_access" | "workspace_read_only" | "workspace_trusted" | "full_access";
+}) {
   return (
     <SendBox
       value=""
@@ -130,8 +177,35 @@ function FileSendBox({ runtime }: { runtime?: RuntimeBridge }) {
       onSend={vi.fn()}
       onStop={vi.fn()}
       runtime={runtime}
+      fileAccessMode={fileAccessMode}
     />
   );
+}
+
+function nativeDropRuntime(): {
+  runtime: RuntimeBridge;
+  listenForFileDragDrop: ReturnType<typeof vi.fn>;
+  unlisten: ReturnType<typeof vi.fn>;
+  emit(event: DesktopFileDragDropEvent): void;
+} {
+  let listener: DesktopFileDragDropListener | null = null;
+  const unlisten = vi.fn();
+  const listenForFileDragDrop = vi.fn(async (nextListener: DesktopFileDragDropListener) => {
+    listener = nextListener;
+    return unlisten;
+  });
+  return {
+    runtime: {
+      desktopPicker: {
+        listenForFileDragDrop,
+      },
+    } as unknown as RuntimeBridge,
+    listenForFileDragDrop,
+    unlisten,
+    emit(event) {
+      act(() => listener?.(event));
+    },
+  };
 }
 
 function fileRuntime(): RuntimeBridge {

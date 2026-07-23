@@ -6,7 +6,7 @@ import {
   ExternalLink,
   Globe2,
   LoaderCircle,
-  Search,
+  ScanSearch,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -81,10 +81,10 @@ export function WebActivityBlock({ message }: { message: ConversationMessage }) 
     <>
       <span className={styles.leadingIcon} aria-hidden="true">
         <span className={styles.icon}>
-          {running ? (
+          {activity.activity_type === "search" ? (
+            <ScanSearch size={16} />
+          ) : running ? (
             <LoaderCircle size={16} />
-          ) : activity.activity_type === "search" ? (
-            <Search size={16} />
           ) : (
             <Globe2 size={16} />
           )}

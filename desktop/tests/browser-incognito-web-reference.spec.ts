@@ -49,23 +49,12 @@ describe("incognito web references", () => {
     expect(registry.size).toBe(0);
   });
 
-  it("uploads region evidence once per session so a failed transport can retry identically", async () => {
+  it("keeps region references structure-only and never uploads their capture to the Agent message", async () => {
     const registry = new IncognitoWebReferenceRegistry();
-    const deleteUnreferencedWebAnnotation = vi.fn();
-    const uploadImage = vi.fn().mockResolvedValue({
-      id: "attachment-private",
-      attachment_id: "attachment-private",
-      session_id: "session-private",
-      user_id: "user",
-      type: "image",
-      source: "web_annotation",
-      name: "web-annotation.png",
-      path: "attachments/attachment-private/web-annotation.png",
-      mime_type: "image/png",
-      size: 4,
-      created_at: NOW,
-      updated_at: NOW,
-    });
+    const uploadImage = vi.fn();
+    const runtime = {
+      attachments: { uploadImage },
+    } as unknown as RuntimeBridge;
     const registration = await registry.register({
       panelId: "browser-incognito-1",
       title: "Private region",
@@ -74,118 +63,22 @@ describe("incognito web references", () => {
       bodyMarkdown: "Inspect this region",
       tags: [],
       properties: [],
-      evidenceBlob: new Blob([new Uint8Array([1, 2, 3, 4]).buffer], { type: "image/png" }),
+      evidenceBlob: new Blob([new Uint8Array([1, 2, 3, 4])], { type: "image/png" }),
       now: NOW,
     });
-    const runtime = {
-      attachments: { uploadImage, deleteUnreferencedWebAnnotation },
-    } as unknown as RuntimeBridge;
 
-    const first = await registry.prepare([registration.reference], runtime, "session-private");
-    const retry = await registry.prepare([registration.reference], runtime, "session-private");
+    const prepared = await registry.prepare([registration.reference], runtime, "session-private");
 
-    expect(uploadImage).toHaveBeenCalledTimes(1);
-    expect(uploadImage).toHaveBeenCalledWith(expect.any(Blob), {
-      filename: "web-annotation.png",
-      source: "web_annotation",
-      sessionId: "session-private",
-    });
-    expect(retry).toEqual(first);
-    expect(first.attachments[0]).toMatchObject({
-      attachment_id: "attachment-private",
-      source: "web_annotation",
-    });
-    expect(first.contextItems[0].metadata).toMatchObject({
-      attachment_id: "attachment-private",
+    expect(uploadImage).not.toHaveBeenCalled();
+    expect(prepared.attachments).toEqual([]);
+    expect(prepared.contextItems[0].content).not.toContain("截图");
+    expect(prepared.contextItems[0].metadata).toMatchObject({
       incognito_source: true,
+      snapshot: expect.objectContaining({
+        schemaVersion: 2,
+        anchor: expect.objectContaining({ kind: "region" }),
+      }),
     });
-    registry.acknowledge([registration.reference]);
-    expect(registry.size).toBe(0);
-    expect(deleteUnreferencedWebAnnotation).not.toHaveBeenCalled();
-  });
-
-  it("deletes an uploaded region attachment when the failed send is abandoned", async () => {
-    const registry = new IncognitoWebReferenceRegistry();
-    const uploadImage = vi.fn().mockResolvedValue({
-      id: "attachment-abandoned",
-      attachment_id: "attachment-abandoned",
-      source: "web_annotation",
-      name: "web-annotation.png",
-      path: "attachments/attachment-abandoned/web-annotation.png",
-      mime_type: "image/png",
-      size: 4,
-    });
-    const deleteUnreferencedWebAnnotation = vi.fn().mockResolvedValue({
-      attachment_id: "attachment-abandoned",
-      deleted: true,
-    });
-    const runtime = {
-      attachments: { uploadImage, deleteUnreferencedWebAnnotation },
-    } as unknown as RuntimeBridge;
-    const registration = await registry.register({
-      panelId: "browser-incognito-1",
-      title: "Abandoned private region",
-      url: "https://example.test/abandoned",
-      draft: regionDraft(),
-      bodyMarkdown: "Abandon after a transport failure",
-      tags: [],
-      properties: [],
-      evidenceBlob: new Blob([new Uint8Array([1, 2, 3, 4])], { type: "image/png" }),
-      now: NOW,
-    });
-
-    await registry.prepare([registration.reference], runtime, "session-private");
-    registry.discard(registration.reference.annotationId);
-
-    await vi.waitFor(() => {
-      expect(deleteUnreferencedWebAnnotation).toHaveBeenCalledWith("attachment-abandoned");
-    });
-    expect(deleteUnreferencedWebAnnotation).toHaveBeenCalledTimes(1);
-    expect(registry.size).toBe(0);
-  });
-
-  it("cleans an upload that finishes after app-exit cleanup has started", async () => {
-    const registry = new IncognitoWebReferenceRegistry();
-    let finishUpload!: (value: Record<string, unknown>) => void;
-    const uploadImage = vi.fn().mockReturnValue(new Promise((resolve) => {
-      finishUpload = resolve;
-    }));
-    const deleteUnreferencedWebAnnotation = vi.fn().mockResolvedValue({
-      attachment_id: "attachment-late",
-      deleted: true,
-    });
-    const runtime = {
-      attachments: { uploadImage, deleteUnreferencedWebAnnotation },
-    } as unknown as RuntimeBridge;
-    const registration = await registry.register({
-      panelId: "browser-incognito-1",
-      title: "Late private region",
-      url: "https://example.test/late",
-      draft: regionDraft(),
-      bodyMarkdown: "Close while uploading",
-      tags: [],
-      properties: [],
-      evidenceBlob: new Blob([new Uint8Array([1, 2, 3, 4])], { type: "image/png" }),
-      now: NOW,
-    });
-
-    const preparation = registry.prepare([registration.reference], runtime, "session-private");
-    registry.clear();
-    finishUpload({
-      id: "attachment-late",
-      attachment_id: "attachment-late",
-      source: "web_annotation",
-      name: "web-annotation.png",
-      path: "attachments/attachment-late/web-annotation.png",
-      mime_type: "image/png",
-      size: 4,
-    });
-    await preparation;
-
-    await vi.waitFor(() => {
-      expect(deleteUnreferencedWebAnnotation).toHaveBeenCalledWith("attachment-late");
-    });
-    expect(registry.size).toBe(0);
   });
 
   it("takes a manifest-owned capture through the trusted command and verifies bytes before use", async () => {

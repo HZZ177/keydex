@@ -17,9 +17,11 @@
     "selection.cancelled",
     "annotation.submit",
     "annotation.cancelled",
+    "highlight.action",
     "resolution.result",
     "geometry.changed",
     "page.changed",
+    "page.interaction",
     "bridge.error"
   ],
   "hostToPage": [
@@ -312,6 +314,42 @@
       "requestId": "request-error",
       "sequence": 10,
       "payload": { "code": "unsupported_frame", "message": "Cross-origin frame is unavailable", "retryable": false }
+    },
+    {
+      "protocol": "keydex.web-annotation.v1",
+      "kind": "highlight.action",
+      "panelId": "panel-1",
+      "surfaceId": "surface-1",
+      "generation": 2,
+      "navigationId": "navigation-2",
+      "frameKey": "main",
+      "requestId": "request-highlight-action",
+      "sequence": 11,
+      "payload": { "annotationId": "annotation-1", "action": "add_to_composer" }
+    },
+    {
+      "protocol": "keydex.web-annotation.v1",
+      "kind": "highlight.action",
+      "panelId": "panel-1",
+      "surfaceId": "surface-1",
+      "generation": 2,
+      "navigationId": "navigation-2",
+      "frameKey": "main",
+      "requestId": "request-highlight-resume",
+      "sequence": 12,
+      "payload": { "annotationId": "annotation-1", "action": "resume_selection" }
+    },
+    {
+      "protocol": "keydex.web-annotation.v1",
+      "kind": "highlight.action",
+      "panelId": "panel-1",
+      "surfaceId": "surface-1",
+      "generation": 2,
+      "navigationId": "navigation-2",
+      "frameKey": "main",
+      "requestId": "request-highlight-delete",
+      "sequence": 13,
+      "payload": { "annotationId": "annotation-1", "action": "delete_annotation" }
     }
   ]
 }

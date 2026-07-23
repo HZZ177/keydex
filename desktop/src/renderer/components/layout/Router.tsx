@@ -56,6 +56,9 @@ import {
 } from "@/renderer/components/startup/launchIntent";
 import { NormalStartupBoundary } from "@/renderer/components/startup/NormalStartupBoundary";
 import { SettingsRuntimeGate } from "@/renderer/pages/settings/SettingsRuntimeGate";
+import { LoadingSkeleton } from "@/renderer/components/loading";
+
+import styles from "./Router.module.css";
 
 const EventReplayHarness = lazy(() =>
   import("@/renderer/devtools/EventReplayHarness").then((module) => ({ default: module.EventReplayHarness })),
@@ -66,11 +69,11 @@ const ConversationPage = lazy(() =>
 const HomePage = lazy(() =>
   import("@/renderer/pages/home/HomePage").then((module) => ({ default: module.HomePage })),
 );
-const WorkbenchModePage = lazy(() =>
+const loadWorkbenchModePage = () =>
   import("@/renderer/pages/workbench/WorkbenchModePage").then((module) => ({
     default: module.WorkbenchModePage,
-  })),
-);
+  }));
+const WorkbenchModePage = lazy(loadWorkbenchModePage);
 const ProjectModePage = lazy(() =>
   import("@/renderer/pages/project/ProjectModePage").then((module) => ({
     default: module.ProjectModePage,
@@ -172,6 +175,18 @@ function AppRoutes({
   }, []);
   const completeInitialLaunchResolution = useCallback(() => {
     dispatchLaunchIntent({ type: "initial-resolution-complete" });
+  }, []);
+
+  useEffect(() => {
+    const preload = () => {
+      void loadWorkbenchModePage().catch(() => undefined);
+    };
+    if (typeof window.requestIdleCallback === "function") {
+      const idleId = window.requestIdleCallback(preload, { timeout: 2_000 });
+      return () => window.cancelIdleCallback(idleId);
+    }
+    const timeoutId = window.setTimeout(preload, 500);
+    return () => window.clearTimeout(timeoutId);
   }, []);
 
   return (
@@ -839,29 +854,45 @@ function WorkbenchRoute({ runtime }: { runtime: RuntimeBridge }) {
       }
     >
       {gitRouteActive ? null : (
-        <WorkbenchModePage
-          runtime={runtime}
-          workspaceId={decodedWorkspaceId}
-          selectedSessionId={decodedSessionId}
-          externalPreviewPath={externalPreviewPath ?? undefined}
-          externalPreviewIntentPath={externalPreviewIntentPath}
-          externalPreviewIntentKey={externalPreviewIntentPath ? location.key : undefined}
-          selectedWorkspace={selectedWorkspace}
-          workspaces={workspaces}
-          workspaceLoading={workspaceLoading}
-          workspaceError={workspaceError}
-          onSelectWorkspace={navigateToWorkspace}
-          onAddWorkspace={addWorkspace}
-          onPickWorkspacePath={pickWorkspacePath}
-          onSessionSelected={handleWorkbenchSessionSelected}
-          onSessionCreated={handleWorkbenchSessionCreated}
-          onRequestNewSession={handleWorkbenchNewSessionRequested}
-          onExternalPreviewIntentConsumed={handleExternalPreviewIntentConsumed}
-          onExternalPreviewClosed={handleExternalPreviewClosed}
-          onOpenMcpSettings={() => void navigate("/settings/mcp", { state: { from: location.pathname } })}
-        />
+        <Suspense fallback={<WorkbenchRouteLoadingFallback />}>
+          <WorkbenchModePage
+            runtime={runtime}
+            workspaceId={decodedWorkspaceId}
+            selectedSessionId={decodedSessionId}
+            externalPreviewPath={externalPreviewPath ?? undefined}
+            externalPreviewIntentPath={externalPreviewIntentPath}
+            externalPreviewIntentKey={externalPreviewIntentPath ? location.key : undefined}
+            selectedWorkspace={selectedWorkspace}
+            workspaces={workspaces}
+            workspaceLoading={workspaceLoading}
+            workspaceError={workspaceError}
+            onSelectWorkspace={navigateToWorkspace}
+            onAddWorkspace={addWorkspace}
+            onPickWorkspacePath={pickWorkspacePath}
+            onSessionSelected={handleWorkbenchSessionSelected}
+            onSessionCreated={handleWorkbenchSessionCreated}
+            onRequestNewSession={handleWorkbenchNewSessionRequested}
+            onExternalPreviewIntentConsumed={handleExternalPreviewIntentConsumed}
+            onExternalPreviewClosed={handleExternalPreviewClosed}
+            onOpenMcpSettings={() => void navigate("/settings/mcp", { state: { from: location.pathname } })}
+          />
+        </Suspense>
       )}
     </RoutedLayout>
+  );
+}
+
+function WorkbenchRouteLoadingFallback() {
+  return (
+    <main
+      className={styles.centerPage}
+      data-testid="workbench-route-loading"
+      aria-label="正在进入工作台"
+    >
+      <span className={styles.mark}>Workbench</span>
+      <h1 className={styles.title}>正在进入工作台</h1>
+      <LoadingSkeleton label="正在准备工作空间" lineCount={4} width="compact" />
+    </main>
   );
 }
 

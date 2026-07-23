@@ -25,6 +25,7 @@ import { createPortal } from "react-dom";
 
 import {
   runtimeBridge,
+  type DesktopFileDragDropPosition,
   type KeydexDiagnostic,
   type RuntimeBridge,
   type SkillSummary,
@@ -264,6 +265,7 @@ export function SendBox({
   onListWorkspaceDirectory,
   onSearchWorkspace,
 }: SendBoxProps) {
+  const formRef = useRef<HTMLFormElement | null>(null);
   const inputRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const attachmentButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -971,6 +973,59 @@ export function SendBox({
     ],
   );
 
+  const nativeFileDragDropHandlersRef = useRef({
+    addPickedPaths,
+    dispatchFileSelection,
+  });
+  nativeFileDragDropHandlersRef.current = {
+    addPickedPaths,
+    dispatchFileSelection,
+  };
+
+  useEffect(() => {
+    const desktopPicker = runtime.desktopPicker;
+    const listenForFileDragDrop = desktopPicker?.listenForFileDragDrop;
+    if (typeof listenForFileDragDrop !== "function") {
+      return;
+    }
+
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    void listenForFileDragDrop
+      .call(desktopPicker, (event) => {
+        if (disposed) {
+          return;
+        }
+        if (event.type === "leave") {
+          nativeFileDragDropHandlersRef.current.dispatchFileSelection({ type: "dragging", dragging: false });
+          return;
+        }
+
+        const form = formRef.current;
+        const targetsThisSendBox = Boolean(form && desktopDropPositionTargetsForm(event.position, form));
+        nativeFileDragDropHandlersRef.current.dispatchFileSelection({
+          type: "dragging",
+          dragging: targetsThisSendBox,
+        });
+        if (event.type === "drop" && targetsThisSendBox) {
+          void nativeFileDragDropHandlersRef.current.addPickedPaths(event.paths, "dropped");
+        }
+      })
+      .then((cleanup) => {
+        if (disposed) {
+          cleanup();
+          return;
+        }
+        unlisten = cleanup;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [runtime.desktopPicker]);
+
   const addImageUrl = useCallback(
     async (url: string) => {
       setAttachmentLoading(true);
@@ -1458,6 +1513,7 @@ export function SendBox({
 
   return (
     <form
+      ref={formRef}
       className={[styles.root, className].filter(Boolean).join(" ")}
       data-sendbox-root="true"
       data-focused={focused ? "true" : "false"}
@@ -1475,6 +1531,17 @@ export function SendBox({
         }
       }}
     >
+      {fileSelection.dragging ? (
+        <div
+          className={styles.dropOverlay}
+          data-sendbox-drop-overlay="true"
+          role="status"
+        >
+          <Paperclip size={18} strokeWidth={1.7} aria-hidden="true" />
+          <span>松开以添加文件</span>
+        </div>
+      ) : null}
+
       <input
         ref={fileInputRef}
         className={styles.hiddenFileInput}
@@ -1730,6 +1797,21 @@ function filesArray(files: FileList | File[] | null): File[] {
     return [];
   }
   return Array.isArray(files) ? files : Array.from(files);
+}
+
+function desktopDropPositionTargetsForm(
+  position: DesktopFileDragDropPosition,
+  form: HTMLFormElement,
+): boolean {
+  const scaleFactor = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
+  const x = position.x / scaleFactor;
+  const y = position.y / scaleFactor;
+  const bounds = form.getBoundingClientRect();
+  if (x < bounds.left || x > bounds.right || y < bounds.top || y > bounds.bottom) {
+    return false;
+  }
+  const target = typeof document.elementFromPoint === "function" ? document.elementFromPoint(x, y) : null;
+  return target ? target.closest('[data-sendbox-root="true"]') === form : true;
 }
 
 function fileSystemPathFromFile(file: File): string | null {

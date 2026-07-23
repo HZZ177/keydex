@@ -629,7 +629,7 @@ export function ConversationSessionSurface({
           webAnnotations,
           replayedContextItems: replayedWebAnnotationContexts(current.replayedContextItems)
             .filter(({ snapshot }) => selectedRevisions.has(
-              `${snapshot.annotationId}:${snapshot.annotationRevision}`,
+              `${snapshot.reference.annotationId}:${snapshot.reference.revision}`,
             ))
             .map(({ item }) => item),
         };
@@ -892,6 +892,7 @@ export function ConversationSessionSurface({
           content: pending.message,
           contextItems: pending.contextItems,
           attachments: pending.attachments,
+          clientInputId: pending.id,
           id: quickSendUserMessageId(pending),
         });
         controller.dispatch({ type: "runtime/setState", sessionId: threadId, runtimeState: "running" });
@@ -921,6 +922,7 @@ export function ConversationSessionSurface({
         attachments: pending.attachments,
         skipOptimistic: true,
         allowWhileBusy: true,
+        clientInputId: pending.id,
       })
       .then((sent) => {
         if (!sent) {
@@ -1287,7 +1289,10 @@ function isTaskAlreadyOpenError(reason: unknown): boolean {
 function hasQuickSendUserMessage(messages: AgentChatMessage[], pending: QueuedQuickChatSend): boolean {
   return messages.some((message) => (
     message.role === "user"
-    && (message.id === quickSendUserMessageId(pending) || message.content === pending.message)
+    && (
+      message.id === quickSendUserMessageId(pending)
+      || message.clientInputId === pending.id
+    )
   ));
 }
 
@@ -1295,10 +1300,10 @@ function isPersistedQuickSendUserMessage(
   message: AgentChatMessage,
   pending: QueuedQuickChatSend,
 ): boolean {
-  if (message.role !== "user" || message.content !== pending.message) {
+  if (message.role !== "user" || message.clientInputId !== pending.id) {
     return false;
   }
-  return message.id !== quickSendUserMessageId(pending);
+  return Boolean(message.messageEventId || message.hydratedFromHistory);
 }
 
 function quickSendUserMessageId(pending: QueuedQuickChatSend): string {

@@ -1,9 +1,10 @@
 import { CaseSensitive, ChevronDown, ChevronUp, X } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 
 import styles from "./BrowserPanel.module.css";
 
 export function BrowserFindBar({
+  focusRequestId,
   matchCase,
   query,
   onClose,
@@ -11,6 +12,7 @@ export function BrowserFindBar({
   onQueryChange,
   onSearch,
 }: {
+  readonly focusRequestId: number;
   readonly matchCase: boolean;
   readonly query: string;
   onClose(): void;
@@ -19,10 +21,19 @@ export function BrowserFindBar({
   onSearch(backwards: boolean): void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    inputRef.current?.focus();
-    inputRef.current?.select();
-  }, []);
+  useLayoutEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    const focusInput = () => {
+      input.focus({ preventScroll: true });
+      input.select();
+    };
+    focusInput();
+    // Ctrl+F can originate from the native page WebView2. Reclaim focus again
+    // after that native shortcut event has fully unwound.
+    const frame = window.requestAnimationFrame(focusInput);
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusRequestId]);
 
   return (
     <div className={styles.findBar} role="search" aria-label="页内查找">

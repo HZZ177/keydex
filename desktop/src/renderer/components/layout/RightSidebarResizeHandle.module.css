@@ -2,11 +2,11 @@
   position: relative;
   z-index: 20;
   align-self: stretch;
-  flex: 0 0 9px;
-  width: 9px;
-  min-width: 9px;
-  margin-right: -5px;
-  margin-left: -4px;
+  flex: 0 0 16px;
+  width: 16px;
+  min-width: 16px;
+  box-sizing: border-box;
+  background: var(--surface-bg);
 }
 
 .root[data-placement="left"] {
@@ -36,10 +36,10 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 4px;
+  left: calc(50% - 0.5px);
   width: 1px;
   border-radius: var(--radius-pill);
-  background: transparent;
+  background: var(--color-border-2);
   content: "";
   transition:
     left var(--motion-fast) ease,
@@ -66,7 +66,7 @@
   position: absolute;
   z-index: 2;
   top: min(52%, 520px);
-  left: 4px;
+  left: 50%;
   display: inline-grid;
   width: 14px;
   height: 40px;
@@ -91,10 +91,6 @@
     color var(--motion-fast) ease,
     opacity var(--motion-fast) ease,
     transform var(--motion-fast) var(--motion-ease-standard);
-}
-
-.root[data-placement="left"] .swapButton {
-  left: 4.5px;
 }
 
 .swapButton:hover,

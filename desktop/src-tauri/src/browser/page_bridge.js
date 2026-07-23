@@ -10,9 +10,11 @@
     "selection.cancelled",
     "annotation.submit",
     "annotation.cancelled",
+    "highlight.action",
     "resolution.result",
     "geometry.changed",
     "page.changed",
+    "page.interaction",
     "bridge.error",
   ]);
   const hostToPageKinds = new Set([
@@ -389,6 +391,11 @@
     if (!isRecord(event.data) || event.data.channel !== relayChannel) return;
     dispatch(event.data.envelope);
   };
+  const onPagePointerDown = (event) => {
+    const target = event.target;
+    if (target instanceof Element && target.closest(overlaySelector)) return;
+    post("page.interaction", `page-interaction-${randomId()}`.slice(0, 128), {});
+  };
   const teardown = () => {
     if (disposed) return;
     for (const [requestId, request] of activeRequests) {
@@ -405,6 +412,7 @@
     }
     disposed = true;
     removeNativeMessageListener?.("message", onNativeMessage);
+    document.removeEventListener("pointerdown", onPagePointerDown, true);
     window.removeEventListener("message", onFrameRelay);
     window.removeEventListener("pagehide", teardown);
     if (typeof __KEYDEX_BRIDGE_RESPONSE_HANDLER__ === "undefined") {
@@ -425,6 +433,7 @@
   };
 
   addNativeMessageListener?.("message", onNativeMessage);
+  document.addEventListener("pointerdown", onPagePointerDown, true);
   window.addEventListener("message", onFrameRelay);
   window.addEventListener("pagehide", teardown, { once: true });
   if (typeof __KEYDEX_BRIDGE_RESPONSE_HANDLER__ === "undefined") {

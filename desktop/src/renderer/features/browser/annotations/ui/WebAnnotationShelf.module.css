@@ -1,0 +1,205 @@
+.root {
+  position: relative;
+  z-index: 8;
+  display: grid;
+  min-width: 0;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--surface-bg) 97%, var(--shell-bg));
+}
+
+.summary {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  padding: 0 5px 0 0;
+  color: var(--color-text-2);
+  background: transparent;
+}
+
+.summaryTrigger {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  padding: 0 4px 0 9px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition:
+    color var(--motion-fast) var(--motion-ease-out),
+    background-color var(--motion-fast) var(--motion-ease-out);
+}
+
+.summaryTrigger:hover,
+.summaryTrigger:focus-visible {
+  outline: none;
+  color: var(--color-text-1);
+  background: transparent;
+}
+
+.summaryTrigger:focus-visible,
+.toggle:focus-visible,
+.addAllButton:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--annotation-accent) 38%, transparent);
+}
+
+.leadingIcon,
+.toggle {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+}
+
+.leadingIcon {
+  color: var(--annotation-accent);
+}
+
+.pageCopy {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 7px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.pageCopy strong {
+  flex: 0 0 auto;
+  color: var(--color-text-1);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.pageCopy > span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-3);
+  font-size: 10px;
+  text-overflow: ellipsis;
+}
+
+.count {
+  flex: 0 0 auto;
+  color: var(--color-text-3);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.trailing {
+  display: inline-flex;
+  min-width: 0;
+  height: 30px;
+  align-items: center;
+  gap: 5px;
+}
+
+.toggle {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-3);
+  cursor: pointer;
+}
+
+.toggle:hover {
+  background: var(--surface-hover);
+  color: var(--color-text-1);
+}
+
+.toggle svg {
+  transition: transform var(--motion-panel) var(--motion-ease-standard);
+}
+
+.root[data-open="true"] .toggle svg {
+  transform: rotate(180deg);
+}
+
+.addAllButton {
+  display: inline-flex;
+  min-width: 0;
+  height: 22px;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--control-pill-border) 72%, transparent);
+  border-radius: var(--radius-pill);
+  padding: 0 7px;
+  background: color-mix(in srgb, var(--control-pill-bg) 72%, transparent);
+  box-shadow: none;
+  color: var(--color-text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.addAllButton:hover:not(:disabled) {
+  border-color: var(--control-pill-border);
+  background: var(--control-pill-hover-bg);
+  color: var(--color-text-1);
+}
+
+.addAllButton:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.collapse {
+  display: grid;
+  min-width: 0;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(-4px);
+  visibility: hidden;
+  transition:
+    grid-template-rows var(--motion-panel) var(--motion-ease-standard),
+    opacity var(--motion-fast) var(--motion-ease-out),
+    transform var(--motion-panel) var(--motion-ease-standard),
+    visibility 0s linear var(--motion-panel);
+}
+
+.collapse[data-open="true"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+.clip {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.floatingPanel {
+  min-width: 0;
+  max-height: min(52vh, 480px);
+  margin: 0 8px 8px;
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  background: var(--color-bg-elevated);
+  box-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .summary,
+  .toggle svg,
+  .collapse {
+    transition: none;
+  }
+}

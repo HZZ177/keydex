@@ -30,6 +30,7 @@ pub(crate) struct WindowedBrowserSurface {
     core: ICoreWebView2,
     window_host: BrowserWindowHost,
     applied_geometry_revision: u64,
+    overlay_occlusions: Vec<BrowserPhysicalRect>,
 }
 
 #[cfg(windows)]
@@ -69,6 +70,7 @@ impl WindowedBrowserSurface {
             core,
             window_host,
             applied_geometry_revision: 0,
+            overlay_occlusions: Vec::new(),
         })
     }
 
@@ -76,7 +78,9 @@ impl WindowedBrowserSurface {
         if frame.generation != self.generation || frame.revision <= self.applied_geometry_revision {
             return Ok(false);
         }
-        self.apply_physical_geometry(frame.physical_rect(), frame.visible)?;
+        let occlusions = frame.physical_occlusions();
+        self.apply_physical_geometry(frame.physical_rect(), frame.visible, &occlusions)?;
+        self.overlay_occlusions = occlusions;
         self.applied_geometry_revision = frame.revision;
         Ok(true)
     }
@@ -86,17 +90,18 @@ impl WindowedBrowserSurface {
         rect: BrowserPhysicalRect,
         visible: bool,
     ) -> Result<(), String> {
-        self.apply_physical_geometry(rect, visible)
+        self.apply_physical_geometry(rect, visible, &self.overlay_occlusions)
     }
 
     fn apply_physical_geometry(
         &self,
         rect: BrowserPhysicalRect,
         visible: bool,
+        occlusions: &[BrowserPhysicalRect],
     ) -> Result<(), String> {
         // BrowserWindowHost turns this SetWindowPos into WM_SIZE, and WM_SIZE
         // synchronously updates controller.Bounds before returning.
-        self.window_host.apply_geometry(rect, visible)?;
+        self.window_host.apply_geometry(rect, visible, occlusions)?;
         unsafe { self.controller.NotifyParentWindowPositionChanged() }
             .map_err(|error| format!("Failed to notify WebView2 parent geometry: {error}"))?;
         unsafe {
@@ -135,6 +140,7 @@ impl WindowedBrowserSurface {
                     height: 0,
                 },
                 false,
+                &[],
             )?;
         }
         unsafe { self.controller.SetIsVisible(visible) }

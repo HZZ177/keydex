@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from backend.app.api.dependencies import get_repositories
-from backend.app.command_approval import load_command_settings
+from backend.app.command_approval import approval_to_payload, load_command_settings
 from backend.app.core.config import AppSettings, get_settings
 from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
@@ -289,6 +289,7 @@ class SessionHistoryResponse(BaseModel):
     session: dict[str, Any]
     event_total: int
     pending_inputs: list[dict[str, Any]] = Field(default_factory=list)
+    pending_approvals: list[dict[str, Any]] = Field(default_factory=list)
     turn_indexes: list[int] = Field(default_factory=list)
     next_cursor: str | None = None
     prev_cursor: str | None = None
@@ -804,6 +805,14 @@ def _history_response(
             record.to_dict()
             for record in repositories.pending_inputs.list_active_by_session(request.session_id)
         ]
+    if hasattr(repositories, "command_approvals"):
+        _reconcile_approval_history(result, repositories)
+        result["pending_approvals"] = [
+            approval_to_payload(record)
+            for record in repositories.command_approvals.list_pending(
+                session_id=request.session_id
+            )
+        ]
     logger.debug(
         "[SessionsAPI] 查询会话历史 | "
         f"session_id={request.session_id} | turn_index={request.turn_index} | "
@@ -811,6 +820,40 @@ def _history_response(
         f"events={result.get('event_total', 0)} | messages={result.get('total', 0)}"
     )
     return SessionHistoryResponse(**result)
+
+
+def _reconcile_approval_history(
+    result: dict[str, Any],
+    repositories: StorageRepositories,
+) -> None:
+    messages = result.get("list")
+    session = result.get("session")
+    session_id = str(session.get("id") or "") if isinstance(session, dict) else ""
+    if not isinstance(messages, list):
+        return
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "approval":
+            continue
+        approval = message.get("approval")
+        if not isinstance(approval, dict):
+            continue
+        approval_id = str(approval.get("id") or "").strip()
+        if not approval_id:
+            continue
+        record = repositories.command_approvals.get(approval_id)
+        if record is None or record.session_id != session_id:
+            continue
+        payload = approval_to_payload(record)
+        message["approval"] = payload
+        message["status"] = payload["status"]
+        command = str(payload.get("details", {}).get("command") or "").strip()
+        if payload["status"] == "approved":
+            prefix = "已允许执行命令"
+        elif payload["status"] in {"rejected", "cancelled", "expired"}:
+            prefix = "已拒绝执行命令"
+        else:
+            prefix = "等待批准执行命令"
+        message["content"] = f"{prefix}: {command}" if command else prefix
 
 
 def _service(repositories: StorageRepositories) -> SessionService:

@@ -24,6 +24,13 @@ def test_retry_classifier_accepts_stream_chunk_timeout() -> None:
     assert factory_module._should_retry_llm_error(error) is True
 
 
+def test_llm_business_retry_schedule_uses_five_step_backoff() -> None:
+    assert factory_module._llm_business_max_retries() == 5
+    assert [
+        factory_module._llm_retry_delay_seconds(attempt) for attempt in range(1, 6)
+    ] == [1.0, 2.0, 3.0, 5.0, 10.0]
+
+
 @pytest.mark.asyncio
 async def test_patched_chat_openai_logs_non_streaming_completion(tmp_path) -> None:
     repositories = _repositories(tmp_path)
@@ -295,7 +302,7 @@ async def test_patched_chat_openai_retries_streaming_before_first_chunk(
             headers={"content-type": "text/event-stream; charset=utf-8"},
         )
 
-    monkeypatch.setattr(factory_module, "_LLM_RETRY_DELAYS_SECONDS", (0, 0, 0))
+    monkeypatch.setattr(factory_module, "_LLM_RETRY_DELAYS_SECONDS", (0, 0, 0, 0, 0))
     dispatcher = EventDispatcher([capture])
     llm = _llm(
         repositories,
@@ -322,7 +329,7 @@ async def test_patched_chat_openai_retries_streaming_before_first_chunk(
     assert sorted(record.status for record in records) == ["completed", "failed"]
     assert [event.payload["stage"] for event in progress_events] == ["retrying", "recovered"]
     assert progress_events[0].payload["retry_index"] == 1
-    assert progress_events[0].payload["max_retries"] == 3
+    assert progress_events[0].payload["max_retries"] == 5
     assert progress_events[0].payload["retry_after_ms"] == 0
     assert progress_events[1].payload["stage"] == "recovered"
 

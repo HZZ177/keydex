@@ -3,15 +3,19 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
 };
 
 use uuid::Uuid;
 
 use super::{
     contract::{
-        BrowserDownloadDecision, BrowserEvent, BrowserSurfaceRef, DownloadCompletedPayload,
-        DownloadFailedPayload, DownloadProgressPayload, DownloadRequestedPayload,
+        BrowserDownloadControlAction, BrowserDownloadDecision, BrowserEvent, BrowserSurfaceRef,
+        ControlDownloadInput, DownloadCompletedPayload, DownloadFailedPayload,
+        DownloadProgressPayload, DownloadRequestedPayload, DownloadStartedPayload,
         RespondDownloadInput,
     },
     ui_actor::NativeBrowserSurface,
@@ -27,11 +31,34 @@ struct PendingDownload {
 #[derive(Debug, Default)]
 struct DownloadLedger {
     pending: HashMap<String, PendingDownload>,
+    navigation_failures: HashMap<String, DownloadNavigationFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DownloadNavigationFailure {
+    surface: BrowserSurfaceRef,
+    remaining: u32,
 }
 
 impl DownloadLedger {
     fn insert(&mut self, download: PendingDownload) {
+        let surface = download.surface.clone();
         self.pending.insert(download.id.clone(), download);
+        let entry = self
+            .navigation_failures
+            .entry(surface.panel_id.clone())
+            .or_insert_with(|| DownloadNavigationFailure {
+                surface: surface.clone(),
+                remaining: 0,
+            });
+        if entry.surface != surface {
+            *entry = DownloadNavigationFailure {
+                surface,
+                remaining: 1,
+            };
+        } else {
+            entry.remaining = entry.remaining.saturating_add(1);
+        }
     }
 
     fn consume(&mut self, id: &str, surface: &BrowserSurfaceRef) -> Option<PendingDownload> {
@@ -52,13 +79,45 @@ impl DownloadLedger {
         for id in &ids {
             self.pending.remove(id);
         }
+        if self
+            .navigation_failures
+            .get(&surface.panel_id)
+            .is_some_and(|failure| failure.surface == *surface)
+        {
+            self.navigation_failures.remove(&surface.panel_id);
+        }
         ids
+    }
+
+    fn begin_navigation(&mut self, surface: &BrowserSurfaceRef) {
+        if self
+            .navigation_failures
+            .get(&surface.panel_id)
+            .is_some_and(|failure| failure.surface == *surface)
+        {
+            self.navigation_failures.remove(&surface.panel_id);
+        }
+    }
+
+    fn consume_navigation_failure(&mut self, surface: &BrowserSurfaceRef) -> bool {
+        let Some(failure) = self.navigation_failures.get_mut(&surface.panel_id) else {
+            return false;
+        };
+        if failure.surface != *surface || failure.remaining == 0 {
+            return false;
+        }
+        failure.remaining -= 1;
+        if failure.remaining == 0 {
+            self.navigation_failures.remove(&surface.panel_id);
+        }
+        true
     }
 }
 
 #[cfg(windows)]
 #[derive(Clone)]
 struct NativeDownloadHandle {
+    surface: BrowserSurfaceRef,
     args: webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2DownloadStartingEventArgs,
     deferral: webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Deferral,
     operation: webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2DownloadOperation,
@@ -66,8 +125,17 @@ struct NativeDownloadHandle {
 }
 
 #[cfg(windows)]
+#[derive(Clone)]
+struct ActiveDownloadHandle {
+    surface: BrowserSurfaceRef,
+    operation: webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2DownloadOperation,
+}
+
+#[cfg(windows)]
 thread_local! {
     static NATIVE_DOWNLOAD_HANDLES: RefCell<HashMap<String, NativeDownloadHandle>> =
+        RefCell::new(HashMap::new());
+    static ACTIVE_DOWNLOAD_HANDLES: RefCell<HashMap<String, ActiveDownloadHandle>> =
         RefCell::new(HashMap::new());
 }
 
@@ -81,6 +149,19 @@ impl DownloadManager {
         if let Ok(mut ledger) = self.ledger.lock() {
             ledger.insert(download);
         }
+    }
+
+    pub(crate) fn begin_navigation(&self, surface: &BrowserSurfaceRef) {
+        if let Ok(mut ledger) = self.ledger.lock() {
+            ledger.begin_navigation(surface);
+        }
+    }
+
+    pub(crate) fn consume_navigation_failure(&self, surface: &BrowserSurfaceRef) -> bool {
+        self.ledger
+            .lock()
+            .map(|mut ledger| ledger.consume_navigation_failure(surface))
+            .unwrap_or(false)
     }
 
     #[cfg(windows)]
@@ -115,12 +196,68 @@ impl DownloadManager {
         resolve_native_download(webview, pending.id, target)
     }
 
+    #[cfg(windows)]
+    pub(crate) fn control(
+        &self,
+        webview: &NativeBrowserSurface,
+        input: &ControlDownloadInput,
+    ) -> Result<(), String> {
+        let surface = input.surface.clone();
+        let download_id = input.download_id.clone();
+        let action = input.action.clone();
+        webview.run(move |_| unsafe {
+            let handle = ACTIVE_DOWNLOAD_HANDLES.with(|handles| {
+                handles
+                    .borrow()
+                    .get(&download_id)
+                    .filter(|handle| handle.surface == surface)
+                    .cloned()
+            });
+            let Some(handle) = handle else {
+                return Err("下载任务已结束或不属于当前网页".to_string());
+            };
+            match action {
+                BrowserDownloadControlAction::Pause => handle
+                    .operation
+                    .Pause()
+                    .map_err(|error| format!("暂停下载失败: {error}")),
+                BrowserDownloadControlAction::Resume => {
+                    let mut can_resume = windows_061::core::BOOL::default();
+                    handle
+                        .operation
+                        .CanResume(&mut can_resume)
+                        .map_err(|error| format!("无法确认下载是否可恢复: {error}"))?;
+                    if !can_resume.as_bool() {
+                        return Err("该下载任务当前无法恢复".to_string());
+                    }
+                    handle
+                        .operation
+                        .Resume()
+                        .map_err(|error| format!("恢复下载失败: {error}"))
+                }
+                BrowserDownloadControlAction::Cancel => handle
+                    .operation
+                    .Cancel()
+                    .map_err(|error| format!("取消下载失败: {error}")),
+            }
+        })
+    }
+
     #[cfg(not(windows))]
     pub(crate) fn respond(
         &self,
         _webview: &NativeBrowserSurface,
         _downloads_dir: &Path,
         _input: &RespondDownloadInput,
+    ) -> Result<(), String> {
+        Err("Downloads are only available on Windows".to_string())
+    }
+
+    #[cfg(not(windows))]
+    pub(crate) fn control(
+        &self,
+        _webview: &NativeBrowserSurface,
+        _input: &ControlDownloadInput,
     ) -> Result<(), String> {
         Err("Downloads are only available on Windows".to_string())
     }
@@ -192,6 +329,7 @@ pub(crate) fn attach_download_manager(
                     handles.borrow_mut().insert(
                         download_id.clone(),
                         NativeDownloadHandle {
+                            surface: surface.clone(),
                             args,
                             deferral,
                             operation,
@@ -252,21 +390,57 @@ fn resolve_native_download(
                 })?;
                 return Ok(());
             };
+            let target_path = target.to_string_lossy().to_string();
+            let filename = target
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_else(|| "download".to_string());
             let target = windows_061::core::HSTRING::from(target.as_os_str());
             if handle.args.SetResultFilePath(&target).is_err() {
                 let _ = handle.args.SetCancel(true);
                 let _ = handle.deferral.Complete();
                 return Err("Failed to set managed download path".to_string());
             }
-            attach_download_progress(&handle.operation, download_id.clone(), handle.emit.clone());
-            handle
-                .args
-                .SetCancel(false)
-                .map_err(|error| format!("Failed to accept download: {error}"))?;
-            handle
-                .deferral
-                .Complete()
-                .map_err(|error| format!("Failed to complete download request: {error}"))?;
+            if let Err(error) = attach_download_progress(
+                &handle.operation,
+                download_id.clone(),
+                target_path.clone(),
+                handle.emit.clone(),
+            ) {
+                let _ = handle.args.SetCancel(true);
+                let _ = handle.operation.Cancel();
+                let _ = handle.deferral.Complete();
+                return Err(error);
+            }
+            ACTIVE_DOWNLOAD_HANDLES.with(|handles| {
+                handles.borrow_mut().insert(
+                    download_id.clone(),
+                    ActiveDownloadHandle {
+                        surface: handle.surface,
+                        operation: handle.operation.clone(),
+                    },
+                );
+            });
+            (handle.emit)(BrowserEvent::DownloadStarted(DownloadStartedPayload {
+                download_id: download_id.clone(),
+                file_path: target_path,
+                filename,
+            }));
+            if let Err(error) = handle.args.SetCancel(false) {
+                ACTIVE_DOWNLOAD_HANDLES.with(|handles| {
+                    handles.borrow_mut().remove(&download_id);
+                });
+                let _ = handle.operation.Cancel();
+                let _ = handle.deferral.Complete();
+                return Err(format!("Failed to accept download: {error}"));
+            }
+            if let Err(error) = handle.deferral.Complete() {
+                ACTIVE_DOWNLOAD_HANDLES.with(|handles| {
+                    handles.borrow_mut().remove(&download_id);
+                });
+                let _ = handle.operation.Cancel();
+                return Err(format!("Failed to complete download request: {error}"));
+            }
             Ok(())
         })
         .map_err(|error| format!("Failed to resolve download request: {error}"))
@@ -276,59 +450,100 @@ fn resolve_native_download(
 unsafe fn attach_download_progress(
     operation: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2DownloadOperation,
     download_id: String,
+    file_path: String,
     emit: Arc<dyn Fn(BrowserEvent) + Send + Sync>,
-) {
+) -> Result<(), String> {
     use webview2_com::Microsoft::Web::WebView2::Win32::{
         COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON, COREWEBVIEW2_DOWNLOAD_STATE,
         COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED, COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED,
     };
     use webview2_com::{BytesReceivedChangedEventHandler, StateChangedEventHandler};
 
+    let terminal_emitted = Arc::new(AtomicBool::new(false));
     let progress_id = download_id.clone();
     let progress_emit = emit.clone();
+    let progress_file_path = file_path.clone();
+    let progress_terminal_emitted = terminal_emitted.clone();
     let mut progress_token = 0_i64;
-    let _ = operation.add_BytesReceivedChanged(
-        &BytesReceivedChangedEventHandler::create(Box::new(move |sender, _| {
-            if let Some(sender) = sender {
-                let mut received = 0_i64;
-                let mut total = -1_i64;
-                let _ = sender.BytesReceived(&mut received);
-                let _ = sender.TotalBytesToReceive(&mut total);
-                progress_emit(BrowserEvent::DownloadProgress(DownloadProgressPayload {
-                    download_id: progress_id.clone(),
-                    received_bytes: u64::try_from(received).unwrap_or_default(),
-                    total_bytes: u64::try_from(total).ok(),
-                }));
-            }
-            Ok(())
-        })),
-        &mut progress_token,
-    );
-
-    let mut state_token = 0_i64;
-    let _ = operation.add_StateChanged(
-        &StateChangedEventHandler::create(Box::new(move |sender, _| {
-            if let Some(sender) = sender {
-                let mut state = COREWEBVIEW2_DOWNLOAD_STATE::default();
-                let _ = sender.State(&mut state);
-                if state == COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED {
-                    emit(BrowserEvent::DownloadCompleted(DownloadCompletedPayload {
-                        download_id: download_id.clone(),
-                        staged_asset_id: format!("managed-download-{download_id}"),
+    operation
+        .add_BytesReceivedChanged(
+            &BytesReceivedChangedEventHandler::create(Box::new(move |sender, _| {
+                if let Some(sender) = sender {
+                    let mut received = 0_i64;
+                    let mut total = -1_i64;
+                    let _ = sender.BytesReceived(&mut received);
+                    let _ = sender.TotalBytesToReceive(&mut total);
+                    progress_emit(BrowserEvent::DownloadProgress(DownloadProgressPayload {
+                        download_id: progress_id.clone(),
+                        received_bytes: u64::try_from(received).unwrap_or_default(),
+                        total_bytes: u64::try_from(total).ok(),
                     }));
-                } else if state == COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED {
-                    let mut reason = COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON::default();
-                    let _ = sender.InterruptReason(&mut reason);
-                    emit(BrowserEvent::DownloadFailed(DownloadFailedPayload {
-                        download_id: download_id.clone(),
-                        error_category: download_interrupt_category(reason.0).to_string(),
-                    }));
+                    if total > 0 && received >= total {
+                        let mut state = COREWEBVIEW2_DOWNLOAD_STATE::default();
+                        let _ = sender.State(&mut state);
+                        if state == COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED
+                            && !progress_terminal_emitted.swap(true, Ordering::AcqRel)
+                        {
+                            ACTIVE_DOWNLOAD_HANDLES.with(|handles| {
+                                handles.borrow_mut().remove(&progress_id);
+                            });
+                            progress_emit(BrowserEvent::DownloadCompleted(
+                                DownloadCompletedPayload {
+                                    download_id: progress_id.clone(),
+                                    file_path: progress_file_path.clone(),
+                                },
+                            ));
+                        }
+                    }
                 }
-            }
-            Ok(())
-        })),
-        &mut state_token,
-    );
+                Ok(())
+            })),
+            &mut progress_token,
+        )
+        .map_err(|error| format!("Failed to observe download progress: {error}"))?;
+
+    let state_terminal_emitted = terminal_emitted;
+    let mut state_token = 0_i64;
+    operation
+        .add_StateChanged(
+            &StateChangedEventHandler::create(Box::new(move |sender, _| {
+                if let Some(sender) = sender {
+                    let mut state = COREWEBVIEW2_DOWNLOAD_STATE::default();
+                    let _ = sender.State(&mut state);
+                    if state == COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED
+                        && !state_terminal_emitted.swap(true, Ordering::AcqRel)
+                    {
+                        ACTIVE_DOWNLOAD_HANDLES.with(|handles| {
+                            handles.borrow_mut().remove(&download_id);
+                        });
+                        emit(BrowserEvent::DownloadCompleted(DownloadCompletedPayload {
+                            download_id: download_id.clone(),
+                            file_path: file_path.clone(),
+                        }));
+                    } else if state == COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED
+                        && !state_terminal_emitted.swap(true, Ordering::AcqRel)
+                    {
+                        let mut reason = COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON::default();
+                        let _ = sender.InterruptReason(&mut reason);
+                        let category = download_interrupt_category(reason.0);
+                        ACTIVE_DOWNLOAD_HANDLES.with(|handles| {
+                            handles.borrow_mut().remove(&download_id);
+                        });
+                        if category == "cancelled" {
+                            let _ = fs::remove_file(&file_path);
+                        }
+                        emit(BrowserEvent::DownloadFailed(DownloadFailedPayload {
+                            download_id: download_id.clone(),
+                            error_category: category.to_string(),
+                        }));
+                    }
+                }
+                Ok(())
+            })),
+            &mut state_token,
+        )
+        .map_err(|error| format!("Failed to observe download state: {error}"))?;
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -500,6 +715,34 @@ mod tests {
         let sanitized = sanitize_download_url("https://example.com/file?token=secret&view=1");
         assert!(!sanitized.contains("secret"));
         assert!(sanitized.contains("view=1"));
+    }
+
+    #[test]
+    fn download_navigation_failure_is_consumed_once_and_never_leaks_to_the_next_navigation() {
+        let current = surface("current");
+        let neighbor = surface("neighbor");
+        let mut ledger = DownloadLedger::default();
+        ledger.insert(PendingDownload {
+            id: "download-current".to_string(),
+            surface: current.clone(),
+            suggested_filename: "setup.exe".to_string(),
+        });
+
+        // Responding to the download may happen before WebView2 reports the
+        // terminal navigation event. The navigation guard must outlive the
+        // pending prompt entry.
+        assert!(ledger.consume("download-current", &current).is_some());
+        assert!(ledger.consume_navigation_failure(&current));
+        assert!(!ledger.consume_navigation_failure(&current));
+        assert!(!ledger.consume_navigation_failure(&neighbor));
+
+        ledger.insert(PendingDownload {
+            id: "download-stale".to_string(),
+            surface: current.clone(),
+            suggested_filename: "report.pdf".to_string(),
+        });
+        ledger.begin_navigation(&current);
+        assert!(!ledger.consume_navigation_failure(&current));
     }
 
     #[test]

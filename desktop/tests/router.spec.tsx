@@ -1815,8 +1815,10 @@ describe("AppRouter", () => {
     10000,
   );
 
-  it("switches app modes without local skeleton placeholders", async () => {
-    renderRouter(["/conversation/thread-1"]);
+  it("starts the workbench route and workspace request without waiting for the slider animation", async () => {
+    const { runtime } = renderRouter(["/conversation/thread-1"], {
+      routeExtra: <RouterLocationProbe />,
+    });
 
     expect(await screen.findByRole("heading", { name: /thread-1/ }, { timeout: 10000 })).not.toBeNull();
     expect(screen.queryByTestId("workbench-mode-page")).toBeNull();
@@ -1829,12 +1831,16 @@ describe("AppRouter", () => {
       expect(screen.getByTestId("app-shell").dataset.appModeLoading).toBeUndefined();
       expect(screen.queryByTestId("app-mode-session-loading-skeleton")).toBeNull();
       expect(screen.queryByTestId("app-mode-content-loading-skeleton")).toBeNull();
-      expect(screen.queryByTestId("workbench-mode-page")).toBeNull();
 
       await act(async () => {
-        vi.advanceTimersByTime(180);
         await Promise.resolve();
       });
+
+      expect(screen.getByTestId("router-location").textContent).toBe("/workbench");
+      expect(runtime.workspaces.list).toHaveBeenCalledTimes(1);
+      expect(
+        screen.queryByTestId("workbench-route-loading") ?? screen.queryByTestId("workbench-mode-page"),
+      ).not.toBeNull();
     } finally {
       vi.useRealTimers();
     }
@@ -1848,23 +1854,12 @@ describe("AppRouter", () => {
     expect(await screen.findByRole("heading", { name: /thread-1/ }, { timeout: 10000 })).not.toBeNull();
     expect(screen.queryByTestId("project-mode-page")).toBeNull();
 
-    vi.useFakeTimers();
-    try {
-      fireEvent.click(screen.getByRole("button", { name: "项目模式" }));
+    fireEvent.click(screen.getByRole("button", { name: "项目模式" }));
 
-      expect(screen.getByTestId("app-mode-switch").getAttribute("data-mode")).toBe("project");
-      expect(screen.getByTestId("app-shell").dataset.appModeLoading).toBeUndefined();
-      expect(screen.queryByTestId("app-mode-session-loading-skeleton")).toBeNull();
-      expect(screen.queryByTestId("app-mode-content-loading-skeleton")).toBeNull();
-      expect(screen.queryByTestId("project-mode-page")).toBeNull();
-
-      await act(async () => {
-        vi.advanceTimersByTime(180);
-        await Promise.resolve();
-      });
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(screen.getByTestId("app-mode-switch").getAttribute("data-mode")).toBe("project");
+    expect(screen.getByTestId("app-shell").dataset.appModeLoading).toBeUndefined();
+    expect(screen.queryByTestId("app-mode-session-loading-skeleton")).toBeNull();
+    expect(screen.queryByTestId("app-mode-content-loading-skeleton")).toBeNull();
 
     expect(await screen.findByTestId("project-mode-page", undefined, { timeout: 10000 })).not.toBeNull();
   });

@@ -2,7 +2,6 @@ import type { FormEvent, Ref } from "react";
 import {
   ArrowLeft,
   ArrowRight,
-  BanknoteArrowDown,
   Download,
   EyeOff,
   Globe,
@@ -24,11 +23,12 @@ export interface BrowserToolbarProps {
   readonly loading: boolean;
   readonly profileMode: BrowserProfileMode;
   readonly zoomFactor: number;
-  readonly annotationCount?: number;
   readonly annotationActive?: boolean;
   readonly annotationDisabled?: boolean;
   readonly annotationDisabledReason?: string;
   readonly disabled?: boolean;
+  readonly downloadsActive?: boolean;
+  readonly downloadsAttention?: boolean;
   readonly addressInputRef?: Ref<HTMLInputElement>;
   onAddressChange(value: string): void;
   onAddressSubmit(value: string): void;
@@ -40,7 +40,6 @@ export interface BrowserToolbarProps {
   onZoom?(): void;
   onDownloads?(): void;
   onAnnotations?(): void;
-  onAnnotationList?(): void;
   onChromeInteraction?(): void;
 }
 
@@ -48,19 +47,19 @@ export function BrowserToolbar({
   address,
   addressInputRef,
   annotationActive = false,
-  annotationCount = 0,
   annotationDisabled = false,
   annotationDisabledReason,
   canGoBack,
   canGoForward,
   disabled = false,
+  downloadsActive = false,
+  downloadsAttention = false,
   loading,
   profileMode,
   zoomFactor,
   onAddressChange,
   onAddressSubmit,
   onAnnotations,
-  onAnnotationList,
   onBack,
   onChromeInteraction,
   onDownloads,
@@ -131,7 +130,15 @@ export function BrowserToolbar({
         <ToolbarButton compactOnly label={`缩放 ${Math.round(zoomFactor * 100)}%`} disabled={disabled} onClick={onZoom}>
           <ZoomIn size={14} />
         </ToolbarButton>
-        <ToolbarButton compactOnly label="下载" disabled={disabled} onClick={onDownloads}>
+        <ToolbarButton
+          active={downloadsActive}
+          anchor="downloads"
+          attention={downloadsAttention}
+          compactOnly
+          label={downloadsActive ? "关闭下载" : "下载"}
+          disabled={disabled}
+          onClick={onDownloads}
+        >
           <Download size={14} />
         </ToolbarButton>
         {onAnnotations ? (
@@ -143,16 +150,6 @@ export function BrowserToolbar({
             disabled={disabled || annotationDisabled}
             onClick={onAnnotations}
           />
-        ) : null}
-        {onAnnotationList ? (
-          <ToolbarButton
-            label={`查看网页批注${annotationCount ? `（${annotationCount}）` : ""}`}
-            disabled={disabled}
-            onClick={onAnnotationList}
-          >
-            <BanknoteArrowDown size={14} />
-            {annotationCount ? <span className={styles.toolbarCount}>{annotationCount > 99 ? "99+" : annotationCount}</span> : null}
-          </ToolbarButton>
         ) : null}
       </div>
     </div>
@@ -193,6 +190,8 @@ function AnnotationModeButton({
 
 function ToolbarButton({
   active = false,
+  anchor,
+  attention = false,
   children,
   compactOnly = false,
   disabled,
@@ -200,6 +199,8 @@ function ToolbarButton({
   onClick,
 }: {
   readonly active?: boolean;
+  readonly anchor?: "downloads";
+  readonly attention?: boolean;
   readonly children: React.ReactNode;
   readonly compactOnly?: boolean;
   readonly disabled: boolean;
@@ -212,7 +213,9 @@ function ToolbarButton({
       aria-pressed={active ? true : undefined}
       className={styles.toolbarButton}
       data-active={active ? "true" : undefined}
+      data-attention={attention ? "true" : undefined}
       data-browser-secondary-action={compactOnly ? "true" : undefined}
+      data-browser-toolbar-anchor={anchor}
       data-tooltip-label={label}
       disabled={disabled || !onClick}
       onClick={onClick}

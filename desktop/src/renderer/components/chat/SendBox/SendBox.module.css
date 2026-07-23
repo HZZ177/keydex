@@ -49,8 +49,44 @@
 }
 
 .root[data-dragging="true"] {
-  border-color: color-mix(in srgb, var(--color-accent) 48%, var(--composer-border));
-  background: color-mix(in srgb, var(--color-accent) 5%, var(--composer-bg));
+  border-color: var(--composer-border);
+  background: var(--composer-bg);
+}
+
+.dropOverlay {
+  position: absolute;
+  z-index: 20;
+  inset: 6px;
+  display: grid;
+  box-sizing: border-box;
+  place-content: center;
+  justify-items: center;
+  gap: 7px;
+  border: 1px dashed color-mix(in srgb, var(--color-text-tertiary) 52%, var(--color-border-default));
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 90%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: 0.01em;
+  pointer-events: none;
+  backdrop-filter: blur(4px);
+  animation: dropOverlayEnter 120ms ease-out both;
+}
+
+.dropOverlay svg {
+  color: var(--color-text-tertiary);
+}
+
+@keyframes dropOverlayEnter {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 .input {

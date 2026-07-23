@@ -3,7 +3,13 @@ import { createStore, type StoreApi } from "zustand/vanilla";
 import type { BrowserEventEnvelope, BrowserSurfaceRef } from "../domain";
 import type { BrowserHostClient } from "./BrowserHostClient";
 
-export type BrowserDownloadState = "requested" | "downloading" | "completed" | "failed" | "cancelled";
+export type BrowserDownloadState =
+  | "requested"
+  | "downloading"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
 export interface BrowserDownloadItem {
   readonly id: string;
@@ -15,6 +21,7 @@ export interface BrowserDownloadItem {
   readonly state: BrowserDownloadState;
   readonly errorCategory: string | null;
   readonly dangerous: boolean;
+  readonly filePath: string | null;
 }
 
 interface BrowserDownloadRuntimeState {
@@ -24,6 +31,7 @@ interface BrowserDownloadRuntimeState {
 export class BrowserDownloadController {
   readonly store: StoreApi<BrowserDownloadRuntimeState> = createStore(() => ({ items: {} }));
   readonly #pendingTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  readonly #progressTimers = new Map<string, ReturnType<typeof setTimeout>>();
   #client: Pick<BrowserHostClient, "send" | "subscribe"> | null = null;
   #unsubscribe: (() => void) | null = null;
   #onSurfaceIdle: ((surface: BrowserSurfaceRef) => void) | null = null;
@@ -44,19 +52,19 @@ export class BrowserDownloadController {
       && item.surface.panelId === surface.panelId
       && item.surface.surfaceId === surface.surfaceId
       && item.surface.generation === surface.generation
-      && (item.state === "requested" || item.state === "downloading"));
+      && (item.state === "requested" || item.state === "downloading" || item.state === "paused"));
   }
 
   failSurface(surface: BrowserSurfaceRef, errorCategory = "process_failed"): void {
     const failedIds = Object.values(this.store.getState().items).flatMap((item) =>
       item
         && sameSurface(item.surface, surface)
-        && (item.state === "requested" || item.state === "downloading")
+        && (item.state === "requested" || item.state === "downloading" || item.state === "paused")
         ? [item.id]
         : [],
     );
     if (failedIds.length === 0) return;
-    for (const id of failedIds) this.#clearTimer(id);
+    for (const id of failedIds) this.#clearTimers(id);
     const failed = new Set(failedIds);
     this.store.setState((state) => ({
       items: Object.fromEntries(Object.entries(state.items).map(([id, item]) => [
@@ -72,16 +80,63 @@ export class BrowserDownloadController {
   async respond(downloadId: string, decision: "accept" | "cancel"): Promise<void> {
     const item = this.store.getState().items[downloadId];
     if (!item || item.state !== "requested" || !this.#client) return;
-    this.#clearTimer(downloadId);
-    await this.#client.send("browser_respond_download", {
+    this.#clearPendingTimer(downloadId);
+    try {
+      await this.#client.send("browser_respond_download", {
+        ...item.surface,
+        downloadId,
+        decision,
+      });
+      this.#update(downloadId, {
+        state: decision === "accept" ? "downloading" : "cancelled",
+        errorCategory: null,
+      });
+      if (decision === "accept") this.#armProgressWatchdog(downloadId);
+      else this.#releaseIfIdle(item.surface);
+    } catch (error) {
+      this.#update(downloadId, { state: "failed", errorCategory: "host_rejected" });
+      this.#releaseIfIdle(item.surface);
+      throw error;
+    }
+  }
+
+  async control(downloadId: string, action: "pause" | "resume" | "cancel"): Promise<void> {
+    const item = this.store.getState().items[downloadId];
+    if (!item || !this.#client) return;
+    if (item.state === "requested" && action === "cancel") {
+      await this.respond(downloadId, "cancel");
+      return;
+    }
+    const allowed = (action === "pause" && item.state === "downloading")
+      || (action === "resume" && item.state === "paused")
+      || (action === "cancel" && (item.state === "downloading" || item.state === "paused"));
+    if (!allowed) return;
+    await this.#client.send("browser_control_download", {
       ...item.surface,
       downloadId,
-      decision,
+      action,
     });
-    this.#update(downloadId, {
-      state: decision === "accept" ? "downloading" : "cancelled",
+    if (action === "pause") {
+      this.#clearProgressTimer(downloadId);
+      this.#update(downloadId, { state: "paused", errorCategory: null });
+    } else if (action === "resume") {
+      this.#update(downloadId, { state: "downloading", errorCategory: null });
+      this.#armProgressWatchdog(downloadId);
+    } else {
+      this.#clearProgressTimer(downloadId);
+      this.#update(downloadId, { state: "cancelled", errorCategory: null });
+      this.#releaseIfIdle(item.surface);
+    }
+  }
+
+  remove(downloadId: string): void {
+    this.#clearTimers(downloadId);
+    this.store.setState((state) => {
+      if (!state.items[downloadId]) return state;
+      const items = { ...state.items };
+      delete items[downloadId];
+      return { items };
     });
-    if (decision === "cancel") this.#releaseIfIdle(item.surface);
   }
 
   #handle(event: BrowserEventEnvelope): void {
@@ -100,15 +155,13 @@ export class BrowserDownloadController {
         state: "requested",
         errorCategory: null,
         dangerous: isDangerousFilename(event.payload.suggestedFilename),
+        filePath: null,
       };
       this.store.setState((state) => ({ items: { ...state.items, [item.id]: item } }));
       if (item.dangerous) {
         this.#pendingTimers.set(item.id, setTimeout(() => void this.respond(item.id, "cancel"), 30_000));
       } else {
-        void this.respond(item.id, "accept").catch(() => {
-          this.#update(item.id, { state: "failed", errorCategory: "host_rejected" });
-          this.#releaseIfIdle(item.surface);
-        });
+        void this.respond(item.id, "accept").catch(() => undefined);
       }
       return;
     }
@@ -116,17 +169,39 @@ export class BrowserDownloadController {
     if (!payload.downloadId) return;
     const current = this.store.getState().items[payload.downloadId];
     if (!current) return;
-    if (event.kind === "download.progress") {
+    if (event.kind === "download.started") {
+      this.#update(payload.downloadId, {
+        filename: event.payload.filename,
+        filePath: event.payload.filePath,
+        state: "downloading",
+        errorCategory: null,
+      });
+      this.#armProgressWatchdog(payload.downloadId);
+    } else if (event.kind === "download.progress") {
       this.#update(payload.downloadId, {
         receivedBytes: event.payload.receivedBytes,
         totalBytes: event.payload.totalBytes,
-        state: "downloading",
+        state: current.state === "paused" ? "paused" : "downloading",
       });
+      if (current.state !== "paused" && event.payload.receivedBytes > current.receivedBytes) {
+        this.#armProgressWatchdog(payload.downloadId);
+      }
     } else if (event.kind === "download.completed") {
-      this.#update(payload.downloadId, { state: "completed" });
+      this.#clearTimers(payload.downloadId);
+      this.#update(payload.downloadId, {
+        state: "completed",
+        filePath: event.payload.filePath,
+      });
       this.#releaseIfIdle(current.surface);
     } else if (event.kind === "download.failed") {
-      this.#update(payload.downloadId, { state: "failed", errorCategory: event.payload.errorCategory });
+      this.#clearTimers(payload.downloadId);
+      const timedOut = current.state === "failed" && current.errorCategory === "no_progress";
+      this.#update(payload.downloadId, {
+        state: event.payload.errorCategory === "cancelled" && !timedOut ? "cancelled" : "failed",
+        errorCategory: event.payload.errorCategory === "cancelled" && !timedOut
+          ? null
+          : timedOut ? "no_progress" : event.payload.errorCategory,
+      });
       this.#releaseIfIdle(current.surface);
     }
   }
@@ -142,10 +217,37 @@ export class BrowserDownloadController {
     if (!this.hasWork(surface)) this.#onSurfaceIdle?.(surface);
   }
 
-  #clearTimer(id: string): void {
+  #armProgressWatchdog(id: string): void {
+    this.#clearProgressTimer(id);
+    this.#progressTimers.set(id, setTimeout(() => {
+      const item = this.store.getState().items[id];
+      if (!item || item.state !== "downloading") return;
+      void this.#client?.send("browser_control_download", {
+        ...item.surface,
+        downloadId: id,
+        action: "cancel",
+      }).catch(() => undefined);
+      this.#update(id, { state: "failed", errorCategory: "no_progress" });
+      this.#releaseIfIdle(item.surface);
+      this.#clearProgressTimer(id);
+    }, 60_000));
+  }
+
+  #clearPendingTimer(id: string): void {
     const timer = this.#pendingTimers.get(id);
     if (timer) clearTimeout(timer);
     this.#pendingTimers.delete(id);
+  }
+
+  #clearProgressTimer(id: string): void {
+    const timer = this.#progressTimers.get(id);
+    if (timer) clearTimeout(timer);
+    this.#progressTimers.delete(id);
+  }
+
+  #clearTimers(id: string): void {
+    this.#clearPendingTimer(id);
+    this.#clearProgressTimer(id);
   }
 }
 

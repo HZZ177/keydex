@@ -29,6 +29,9 @@ describe("web annotation highlight synchronization", () => {
       changed: resolution("changed", elementTarget("changed")),
       ambiguous: resolution("ambiguous", null),
       orphaned: resolution("orphaned", null),
+    }, {
+      resolved: { bodyMarkdown: "Resolved note" },
+      changed: { bodyMarkdown: "Changed note" },
     });
     expect(renderHighlights).toHaveBeenCalledTimes(1);
     expect(renderHighlights.mock.calls[0][0].resolutions.map((item) => [item.annotationId, item.state])).toEqual([
@@ -40,11 +43,18 @@ describe("web annotation highlight synchronization", () => {
     await synchronizer.sync({
       resolved: resolution("ambiguous", null),
       changed: resolution("changed", elementTarget("changed-updated")),
+    }, {
+      changed: { bodyMarkdown: "Changed note" },
     });
     expect(clearHighlights).toHaveBeenCalledWith({ surface, annotationIds: ["resolved"] });
     expect(renderHighlights).toHaveBeenLastCalledWith({
       surface,
-      resolutions: [{ annotationId: "changed", state: "changed", target: elementTarget("changed-updated") }],
+      resolutions: [{
+        annotationId: "changed",
+        state: "changed",
+        target: elementTarget("changed-updated"),
+        bodyMarkdown: "Changed note",
+      }],
     });
 
     await synchronizer.sync({});
@@ -65,6 +75,63 @@ describe("web annotation highlight synchronization", () => {
     await synchronizer.sync(resolutions);
 
     expect(renderHighlights.mock.calls.map(([input]) => input.resolutions.length)).toEqual([50, 1]);
+  });
+
+  it("keeps the current last-known highlight visible while the resolver revalidates it", async () => {
+    const renderHighlights = vi.fn<WebAnnotationHighlightPort["renderHighlights"]>().mockResolvedValue(undefined);
+    const clearHighlights = vi.fn<WebAnnotationHighlightPort["clearHighlights"]>().mockResolvedValue(undefined);
+    const synchronizer = new WebAnnotationHighlightSynchronizer({
+      surface,
+      port: { renderHighlights, clearHighlights, navigateToTarget: vi.fn() },
+    });
+    const verified = resolution("resolved", elementTarget("stable"));
+
+    await synchronizer.sync({ stable: verified });
+    await synchronizer.sync({
+      stable: {
+        ...verified,
+        status: "resolving",
+        reason: "dom_changed",
+        requestId: "resolve-2",
+        settled: null,
+      },
+    });
+
+    expect(renderHighlights).toHaveBeenCalledTimes(1);
+    expect(clearHighlights).not.toHaveBeenCalled();
+  });
+
+  it("replays highlights when a newer sync supersedes an in-flight clear", async () => {
+    let finishClear!: () => void;
+    const clearBarrier = new Promise<void>((resolve) => {
+      finishClear = resolve;
+    });
+    const renderHighlights = vi.fn<WebAnnotationHighlightPort["renderHighlights"]>().mockResolvedValue(undefined);
+    const clearHighlights = vi.fn<WebAnnotationHighlightPort["clearHighlights"]>()
+      .mockImplementationOnce(() => clearBarrier);
+    const synchronizer = new WebAnnotationHighlightSynchronizer({
+      surface,
+      port: { renderHighlights, clearHighlights, navigateToTarget: vi.fn() },
+    });
+    const verified = { stable: resolution("resolved", elementTarget("stable")) };
+
+    await synchronizer.sync(verified);
+    const clearing = synchronizer.sync({});
+    await vi.waitFor(() => expect(clearHighlights).toHaveBeenCalledTimes(1));
+    const restoring = synchronizer.sync(verified);
+    finishClear();
+    await Promise.all([clearing, restoring]);
+
+    expect(renderHighlights).toHaveBeenCalledTimes(2);
+    expect(renderHighlights).toHaveBeenLastCalledWith({
+      surface,
+      resolutions: [{
+        annotationId: "stable",
+        state: "resolved",
+        target: elementTarget("stable"),
+        bodyMarkdown: "",
+      }],
+    });
   });
 });
 

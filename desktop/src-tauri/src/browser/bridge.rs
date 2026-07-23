@@ -69,9 +69,11 @@ pub(crate) const PAGE_TO_HOST_KINDS: &[&str] = &[
     "selection.cancelled",
     "annotation.submit",
     "annotation.cancelled",
+    "highlight.action",
     "resolution.result",
     "geometry.changed",
     "page.changed",
+    "page.interaction",
     "bridge.error",
 ];
 
@@ -1015,7 +1017,11 @@ fn validate_bridge_payload(kind: &str, value: &Value) -> Result<(), BrowserBridg
             validate_target(required(object, "target")?)?;
         }
         "highlight.render" => {
-            exact_keys(object, &["annotationId", "target", "state"], &[])?;
+            exact_keys(
+                object,
+                &["annotationId", "target", "state"],
+                &["bodyMarkdown"],
+            )?;
             read_id(object, "annotationId", MAX_ID_LENGTH)?;
             validate_target(required(object, "target")?)?;
             read_enum(
@@ -1023,6 +1029,9 @@ fn validate_bridge_payload(kind: &str, value: &Value) -> Result<(), BrowserBridg
                 "state",
                 &["resolved", "changed", "ambiguous", "orphaned"],
             )?;
+            if object.contains_key("bodyMarkdown") {
+                read_string(object, "bodyMarkdown", 32 * 1024, true)?;
+            }
         }
         "highlight.clear" | "geometry.changed" => {
             exact_keys(object, &["annotationIds"], &[])?;
@@ -1033,6 +1042,9 @@ fn validate_bridge_payload(kind: &str, value: &Value) -> Result<(), BrowserBridg
             read_enum(object, "reason", &["dom"])?;
             read_non_negative_u64(object, "revision")?;
             validate_id_array(required(object, "annotationIds")?, 50)?;
+        }
+        "page.interaction" => {
+            exact_keys(object, &[], &[])?;
         }
         "bridge.ready" => {
             exact_keys(object, &["href", "top"], &[])?;
@@ -1100,6 +1112,15 @@ fn validate_bridge_payload(kind: &str, value: &Value) -> Result<(), BrowserBridg
         "annotation.cancelled" => {
             exact_keys(object, &["selectionId"], &[])?;
             read_id(object, "selectionId", MAX_ID_LENGTH)?;
+        }
+        "highlight.action" => {
+            exact_keys(object, &["annotationId", "action"], &[])?;
+            read_id(object, "annotationId", MAX_ID_LENGTH)?;
+            read_enum(
+                object,
+                "action",
+                &["add_to_composer", "delete_annotation", "resume_selection"],
+            )?;
         }
         "resolution.result" => {
             exact_keys(

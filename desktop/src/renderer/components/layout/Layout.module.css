@@ -181,6 +181,14 @@
   order: 5;
 }
 
+.shell[data-right-sidebar="open"][data-right-sidebar-placement="right"] .content {
+  border-right-color: transparent;
+}
+
+.shell[data-right-sidebar="open"][data-right-sidebar-placement="left"] .content {
+  border-left-color: transparent;
+}
+
 .shell[data-right-sidebar-placement="left"][data-right-sidebar="open"] .content {
   border-radius: 0;
 }
@@ -644,6 +652,13 @@
   overflow: hidden;
   padding: 0;
   position: relative;
+}
+
+.rightSidebarBody[data-content="browser"] {
+  display: grid;
+  position: relative;
+  overflow: hidden;
+  padding: 0;
 }
 
 .rightSidebarBody[data-content="files"] {

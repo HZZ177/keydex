@@ -1365,9 +1365,9 @@ function composerDraftContextFromItems(
   const webAnnotations: SelectedWebAnnotationReference[] = replayedContexts.map(({ snapshot }) => {
     webAnnotationReferencePresentations.upsert(webAnnotationPresentationFromSnapshot(snapshot));
     return {
-      annotationId: snapshot.annotationId,
-      selectedRevision: snapshot.annotationRevision,
-      selectedAt: snapshot.capturedAt,
+      annotationId: snapshot.reference.annotationId,
+      selectedRevision: snapshot.reference.revision,
+      selectedAt: snapshot.reference.assembledAt,
     };
   });
   return {

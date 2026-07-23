@@ -77,6 +77,17 @@ describe("BrowserPanel chrome", () => {
     expect(screen.queryByRole("button", { name: "新建浏览器面板" })).toBeNull();
   });
 
+  it("mounts browser popovers inside the native-surface overlay instead of the layout accessory row", () => {
+    const view = renderPanel({
+      surfaceOverlay: <div data-browser-surface-occlusion="true">浮层内容</div>,
+    });
+
+    const overlay = view.container.querySelector("[class*='surfaceOverlay']");
+    const accessory = view.container.querySelector("[class*='toolbarAccessory']");
+    expect(overlay?.textContent).toContain("浮层内容");
+    expect(accessory?.textContent).not.toContain("浮层内容");
+  });
+
   it("submits the address by keyboard and exposes focus-visible native controls", () => {
     const onAddressSubmit = vi.fn();
     renderPanel({ onAddressSubmit });
@@ -111,7 +122,7 @@ describe("BrowserPanel chrome", () => {
 
   it("starts the current-page annotation mode from the themed toolbar badge", () => {
     const onAnnotations = vi.fn();
-    renderPanel({ annotationCount: 3, onAnnotationList: vi.fn(), onAnnotations });
+    renderPanel({ onAnnotations });
 
     const button = screen.getByRole("button", { name: "网页批注" });
     expect(button.getAttribute("data-active")).toBe("false");
@@ -119,7 +130,7 @@ describe("BrowserPanel chrome", () => {
     fireEvent.click(button);
 
     expect(onAnnotations).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("button", { name: "查看网页批注（3）" })).not.toBeNull();
+    expect(screen.queryByRole("button", { name: /查看网页批注/ })).toBeNull();
   });
 
   it("uses the shared Keydex tooltip layer for browser toolbar buttons", () => {
@@ -153,5 +164,11 @@ describe("BrowserPanel chrome", () => {
     const view = renderPanel({ address: "", empty: true });
     expect(view.container.querySelectorAll(".lucide-globe").length).toBeGreaterThanOrEqual(2);
     expect(view.container.querySelector(".lucide-globe-2")).toBeNull();
+  });
+
+  it("marks newly completed downloads with a toolbar attention dot", () => {
+    renderPanel({ downloadsAttention: true, onDownloads: vi.fn() });
+
+    expect(screen.getByRole("button", { name: "下载" }).getAttribute("data-attention")).toBe("true");
   });
 });

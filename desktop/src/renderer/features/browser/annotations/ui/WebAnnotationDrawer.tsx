@@ -1,7 +1,7 @@
-import { BoxSelect, MousePointer2, Quote, RefreshCw, StickyNote } from "lucide-react";
+import { BoxSelect, MousePointer2, Quote, RefreshCw, StickyNote, X } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
-import { AppDialog, ConfirmDialog } from "@/renderer/components/dialog";
+import { ConfirmDialog } from "@/renderer/components/dialog";
 import { useNotifications } from "@/renderer/providers/NotificationProvider";
 
 import type { WebSelectionMode } from "../../runtime";
@@ -28,6 +28,8 @@ export function WebAnnotationDrawer({
   resolutionDetails = {},
   profileMode = "persistent",
   showCreationActions = true,
+  variant = "sidebar",
+  onDelete,
   onNavigate,
   onAddToComposer,
   onCreateTemporaryReference,
@@ -41,6 +43,8 @@ export function WebAnnotationDrawer({
   readonly resolutionDetails?: Readonly<Record<string, WebAnnotationCoordinatorResolution | undefined>>;
   readonly profileMode?: "persistent" | "incognito";
   readonly showCreationActions?: boolean;
+  readonly variant?: "sidebar" | "shelf";
+  onDelete(item: WebAnnotationItem): Promise<void>;
   onNavigate?(item: WebAnnotationItem): Promise<WebAnnotationNavigationResult>;
   onAddToComposer?(item: WebAnnotationItem): AddWebAnnotationToComposerResult;
   onCreateTemporaryReference?(
@@ -110,17 +114,20 @@ export function WebAnnotationDrawer({
 
   return (
     <>
-      <AppDialog
-        ariaLabel="网页批注"
-        backdrop="panel"
-        bodyClassName={styles.drawerBody}
-        description={state.activePage?.url ?? "当前网页"}
-        inset="below-titlebar"
-        onClose={onClose}
-        placement="right"
-        size="drawer"
-        title={<span className={styles.drawerTitle}><StickyNote size={16} />网页批注</span>}
-      >
+      <aside aria-label="网页批注" className={styles.sidebar} data-variant={variant}>
+        {variant === "sidebar" ? <header className={styles.sidebarHeader}>
+          <div className={styles.sidebarHeading}>
+            <span className={styles.drawerTitle}><StickyNote size={15} />网页批注</span>
+            <span className={styles.sidebarCount}>{entry?.items.length ?? 0}</span>
+          </div>
+          <button aria-label="隐藏网页批注侧栏" className={styles.sidebarClose} onClick={onClose} type="button">
+            <X size={14} />
+          </button>
+          <span className={styles.sidebarDescription} title={state.activePage?.url ?? "当前网页"}>
+            {state.activePage?.url ?? "当前网页"}
+          </span>
+        </header> : null}
+        <div className={styles.drawerBody} data-custom-scrollbar="true">
         {showCreationActions ? (
           <div className={styles.selectionActions} aria-label="创建网页批注">
             <SelectionButton icon={<Quote size={14} />} label="选择文本" onClick={() => beginSelection("text")} />
@@ -269,19 +276,20 @@ export function WebAnnotationDrawer({
             />
           ))}
         </section> : null}
-      </AppDialog>
+        </div>
+      </aside>
       {deleteTarget ? (
         <ConfirmDialog
           cancelDisabled={pending}
           confirmDisabled={pending}
           confirmLabel="永久删除"
           confirmTone="danger"
-          description="此操作会删除批注及其区域证据；已经发送到对话的历史内容不受影响。"
+          description="此操作会删除批注及其区域证据，并从尚未发送的输入框中移除对应胶囊；已经发送到对话的历史内容不受影响。"
           preview={<span>{deleteTarget.annotation.bodyMarkdown}</span>}
           title="删除网页批注？"
           onCancel={() => setDeleteTarget(null)}
           onConfirm={() => {
-            void store.getState().deleteAnnotation(deleteTarget.annotation.id).then(() => {
+            void onDelete(deleteTarget).then(() => {
               setDeleteTarget(null);
               notifications.success("网页批注已删除");
             }).catch((error: unknown) => {

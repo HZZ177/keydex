@@ -54,6 +54,41 @@ describe("DesktopPickerRuntime", () => {
     });
   });
 
+  it("forwards native Tauri file drag-drop paths and exposes cleanup", async () => {
+    const unlisten = vi.fn();
+    const subscribeFileDragDrop = vi.fn(async (listener) => {
+      listener({
+        type: "drop",
+        paths: ["D:\\outside\\notes.txt"],
+        position: { x: 120, y: 80 },
+      });
+      return unlisten;
+    });
+    const runtime = createDesktopPickerRuntime({ subscribeFileDragDrop });
+    const listener = vi.fn();
+
+    const cleanup = await runtime.listenForFileDragDrop(listener);
+
+    expect(listener).toHaveBeenCalledWith({
+      type: "drop",
+      paths: ["D:\\outside\\notes.txt"],
+      position: { x: 120, y: 80 },
+    });
+    cleanup();
+    expect(unlisten).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses a no-op file drag-drop listener outside Tauri", async () => {
+    const runtime = createDesktopPickerRuntime({
+      getTauriGlobal: () => ({}),
+      isTauriRuntime: () => false,
+    });
+
+    const cleanup = await runtime.listenForFileDragDrop(vi.fn());
+
+    expect(cleanup()).toBeUndefined();
+  });
+
   it("reports a broken Tauri dialog API instead of silently doing nothing", async () => {
     const runtime = createDesktopPickerRuntime({
       getTauriGlobal: () => ({}),
@@ -74,6 +109,19 @@ describe("DesktopPickerRuntime", () => {
 
     await expect(runtime.revealPath(" D:\\repo ")).resolves.toBeUndefined();
     expect(invoke).toHaveBeenCalledWith("open_path_in_file_manager", { path: "D:\\repo" });
+  });
+
+  it("uses the restricted desktop command to delete a browser download", async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined);
+    const runtime = createDesktopPickerRuntime({
+      invoke,
+      isTauriRuntime: () => true,
+    });
+
+    await expect(runtime.deleteBrowserDownload(" D:\\Downloads\\report.pdf ")).resolves.toBeUndefined();
+    expect(invoke).toHaveBeenCalledWith("delete_browser_download", {
+      path: "D:\\Downloads\\report.pdf",
+    });
   });
 
   it("reports a clear capability error instead of calling Tauri invoke in a browser", async () => {

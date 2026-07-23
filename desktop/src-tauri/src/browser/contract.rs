@@ -101,6 +101,10 @@ surface_input!(RespondDownloadInput {
     decision: BrowserDownloadDecision,
     target_path: Option<String>
 });
+surface_input!(ControlDownloadInput {
+    download_id: String,
+    action: BrowserDownloadControlAction
+});
 surface_input!(StartSelectionInput {
     selection_request_id: String,
     mode: BrowserSelectionMode
@@ -173,6 +177,14 @@ pub(crate) enum BrowserDownloadDecision {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub(crate) enum BrowserDownloadControlAction {
+    Pause,
+    Resume,
+    Cancel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum BrowserSelectionMode {
     Text,
     Element,
@@ -221,6 +233,7 @@ pub(crate) struct BrowserHighlightResolution {
     pub(crate) annotation_id: String,
     pub(crate) target: serde_json::Value,
     pub(crate) state: BrowserHighlightState,
+    pub(crate) body_markdown: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -285,6 +298,8 @@ pub(crate) enum BrowserCommand {
     RespondPermission(RespondPermissionInput),
     #[serde(rename = "browser_respond_download")]
     RespondDownload(RespondDownloadInput),
+    #[serde(rename = "browser_control_download")]
+    ControlDownload(ControlDownloadInput),
     #[serde(rename = "browser_start_selection")]
     StartSelection(StartSelectionInput),
     #[serde(rename = "browser_configure_appearance")]
@@ -396,6 +411,8 @@ pub(crate) enum BrowserEvent {
     PermissionExpired(PermissionExpiredPayload),
     #[serde(rename = "download.requested")]
     DownloadRequested(DownloadRequestedPayload),
+    #[serde(rename = "download.started")]
+    DownloadStarted(DownloadStartedPayload),
     #[serde(rename = "download.progress")]
     DownloadProgress(DownloadProgressPayload),
     #[serde(rename = "download.completed")]
@@ -547,6 +564,14 @@ pub(crate) struct DownloadRequestedPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct DownloadStartedPayload {
+    pub(crate) download_id: String,
+    pub(crate) file_path: String,
+    pub(crate) filename: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct DownloadProgressPayload {
     pub(crate) download_id: String,
     pub(crate) received_bytes: u64,
@@ -557,7 +582,7 @@ pub(crate) struct DownloadProgressPayload {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct DownloadCompletedPayload {
     pub(crate) download_id: String,
-    pub(crate) staged_asset_id: String,
+    pub(crate) file_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -948,6 +973,11 @@ fn validate_command_payload_keys(kind: &str, payload: &Value) -> Result<(), Brow
             ],
             &["targetPath"],
         ),
+        "browser_control_download" => exact_payload(
+            payload,
+            &["panelId", "surfaceId", "generation", "downloadId", "action"],
+            &[],
+        ),
         "browser_start_selection" => exact_payload(
             payload,
             &[
@@ -1062,10 +1092,11 @@ fn validate_event_payload_keys(kind: &str, payload: &Value) -> Result<(), Browse
             &["downloadId", "url", "suggestedFilename", "totalBytes"],
             &[],
         ),
+        "download.started" => exact_payload(payload, &["downloadId", "filePath", "filename"], &[]),
         "download.progress" => {
             exact_payload(payload, &["downloadId", "receivedBytes", "totalBytes"], &[])
         }
-        "download.completed" => exact_payload(payload, &["downloadId", "stagedAssetId"], &[]),
+        "download.completed" => exact_payload(payload, &["downloadId", "filePath"], &[]),
         "download.failed" => exact_payload(payload, &["downloadId", "errorCategory"], &[]),
         "capture.completed" => exact_payload(payload, &["captureRequestId", "asset"], &[]),
         "capture.failed" => exact_payload(payload, &["captureRequestId", "errorCategory"], &[]),
@@ -1147,6 +1178,10 @@ fn validate_command(command: &BrowserCommand) -> Result<(), BrowserContractError
             validate_id(&input.permission_request_id, "permissionRequestId")?;
         }
         BrowserCommand::RespondDownload(input) => {
+            validate_surface(&input.surface)?;
+            validate_id(&input.download_id, "downloadId")?;
+        }
+        BrowserCommand::ControlDownload(input) => {
             validate_surface(&input.surface)?;
             validate_id(&input.download_id, "downloadId")?;
         }
@@ -1251,8 +1286,25 @@ fn validate_event(event: &BrowserEvent) -> Result<(), BrowserContractError> {
             validate_id(&payload.permission_request_id, "permissionRequestId")
         }
         BrowserEvent::DownloadRequested(payload) => validate_id(&payload.download_id, "downloadId"),
+        BrowserEvent::DownloadStarted(payload) => {
+            validate_id(&payload.download_id, "downloadId")?;
+            if payload.file_path.trim().is_empty()
+                || payload.file_path.len() > 4_096
+                || payload.filename.trim().is_empty()
+                || payload.filename.len() > 512
+            {
+                return Err(BrowserContractError::InvalidValue("download target"));
+            }
+            Ok(())
+        }
         BrowserEvent::DownloadProgress(payload) => validate_id(&payload.download_id, "downloadId"),
-        BrowserEvent::DownloadCompleted(payload) => validate_id(&payload.download_id, "downloadId"),
+        BrowserEvent::DownloadCompleted(payload) => {
+            validate_id(&payload.download_id, "downloadId")?;
+            if payload.file_path.trim().is_empty() || payload.file_path.len() > 4_096 {
+                return Err(BrowserContractError::InvalidValue("filePath"));
+            }
+            Ok(())
+        }
         BrowserEvent::DownloadFailed(payload) => validate_id(&payload.download_id, "downloadId"),
         BrowserEvent::CaptureCompleted(payload) => {
             validate_id(&payload.capture_request_id, "captureRequestId")?;

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from backend.app.command_approval import approval_to_payload
 from backend.app.core.config import AppSettings
 from backend.app.main import create_app
 from backend.app.tools.command_runtime.discovery import ShellDiscoveryResult
@@ -283,6 +284,128 @@ def test_approval_decision_api_creates_trusted_rule_and_history(tmp_path) -> Non
         assert history.status_code == 200
         assert history.json()["total"] == 1
         assert history.json()["list"][0]["approval_id"] == "approval-api"
+
+
+def test_approval_decision_is_idempotent_and_persists_resolved_event(tmp_path) -> None:
+    app = create_app(AppSettings(data_dir=tmp_path / "data"))
+    repositories = app.state.repositories
+
+    with TestClient(app) as client:
+        repositories.sessions.create(
+            session_id="ses-idempotent-approval",
+            user_id="local-user",
+            scene_id="desktop-agent",
+            title="幂等审批",
+        )
+        repositories.command_approvals.create(
+            approval_id="approval-idempotent",
+            session_id="ses-idempotent-approval",
+            command="pnpm test",
+            cwd=".",
+            title="是否允许执行命令？",
+            workspace_root="d:/project",
+            tool_name="run_cmd",
+            shell="cmd",
+            turn_index=1,
+            run_id="run-idempotent",
+            details={"command": "pnpm test"},
+        )
+
+        first = client.post(
+            "/api/approvals/approval-idempotent/decision",
+            json={"decision": "rejected", "trust_scope": "once"},
+        )
+        repeated = client.post(
+            "/api/approvals/approval-idempotent/decision",
+            json={"decision": "approved", "trust_scope": "once"},
+        )
+
+    assert first.status_code == 200
+    assert repeated.status_code == 200
+    assert first.json()["status"] == "rejected"
+    assert repeated.json()["status"] == "rejected"
+    audits, total = repositories.command_approval_audit.list(
+        session_id="ses-idempotent-approval"
+    )
+    assert total == 1
+    assert audits[0].decision == "rejected"
+    resolution_events = [
+        event
+        for event in repositories.message_events.list_by_session(
+            "ses-idempotent-approval"
+        )
+        if event.action == "approval_resolved"
+    ]
+    assert len(resolution_events) == 1
+    assert resolution_events[0].data["approval"]["status"] == "rejected"
+
+
+def test_history_reconciles_stale_pending_approval_from_authoritative_record(tmp_path) -> None:
+    app = create_app(AppSettings(data_dir=tmp_path / "data"))
+    repositories = app.state.repositories
+
+    with TestClient(app) as client:
+        repositories.sessions.create(
+            session_id="ses-stale-approval",
+            user_id="local-user",
+            scene_id="desktop-agent",
+            title="历史审批恢复",
+        )
+        pending = repositories.command_approvals.create(
+            approval_id="approval-stale-history",
+            session_id="ses-stale-approval",
+            command="pnpm test",
+            cwd=".",
+            title="是否允许执行命令？",
+            workspace_root="d:/project",
+            tool_name="run_cmd",
+            shell="cmd",
+            turn_index=1,
+            run_id="run-stale-history",
+            details={"command": "pnpm test", "tool_name": "run_cmd"},
+        )
+        repositories.message_events.append_many(
+            session_id="ses-stale-approval",
+            events=[
+                {
+                    "event_id": "evt-stale-tool-start",
+                    "turn_index": 1,
+                    "action": "tool_start",
+                    "data": {
+                        "tool": "run_cmd",
+                        "run_id": "run-stale-history",
+                        "tool_call_id": "call-stale-history",
+                        "params": {"command": "pnpm test"},
+                    },
+                },
+                {
+                    "event_id": "evt-stale-approval-requested",
+                    "turn_index": 1,
+                    "action": "approval_requested",
+                    "data": {"approval": approval_to_payload(pending)},
+                },
+            ],
+        )
+        repositories.command_approvals.resolve(
+            pending.id,
+            status="rejected",
+            decision="rejected",
+            trust_scope="once",
+        )
+
+        response = client.get(
+            "/api/sessions/ses-stale-approval/history?all_turns=true"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["pending_approvals"] == []
+    approval_messages = [
+        message for message in payload["list"] if message["role"] == "approval"
+    ]
+    assert len(approval_messages) == 1
+    assert approval_messages[0]["status"] == "rejected"
+    assert approval_messages[0]["approval"]["status"] == "rejected"
 
 
 def test_approval_decision_api_rejects_broad_prefix(tmp_path) -> None:

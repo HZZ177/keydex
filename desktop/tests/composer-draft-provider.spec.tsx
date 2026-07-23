@@ -7,6 +7,10 @@ import {
   useComposerDraft,
 } from "@/renderer/features/composer";
 import { emitLifecycleEvent } from "@/renderer/events/lifecycleEvents";
+import {
+  emitAddWebAnnotationToComposer,
+  emitRemoveWebAnnotationFromComposers,
+} from "@/renderer/events/webAnnotationContext";
 
 class MemoryStorage implements Storage {
   private readonly values = new Map<string, string>();
@@ -74,6 +78,44 @@ describe("ComposerDraftProvider", () => {
 
     expect((screen.getByRole("textbox") as HTMLInputElement).value).toBe("");
   });
+
+  it("removes a deleted web annotation capsule from the unsent composer draft", () => {
+    const scope = composerSessionDraftScope("ses-web-annotation");
+    render(
+      <ComposerDraftProvider storage={null}>
+        <DraftAnnotationCount scope={scope} />
+      </ComposerDraftProvider>,
+    );
+
+    act(() => {
+      expect(emitAddWebAnnotationToComposer({
+        composerScopeKey: scope,
+        reference: {
+          annotationId: "annotation-delete",
+          selectedRevision: 1,
+          selectedAt: "2026-07-23T00:00:00.000Z",
+          sourcePanelId: "browser-1",
+        },
+        presentation: {
+          annotationId: "annotation-delete",
+          title: "Page",
+          summary: "Selected element",
+          bodyMarkdown: "Delete me",
+          origin: "https://example.test",
+          updatedAt: "2026-07-23T00:00:00.000Z",
+        },
+      })).toBe("added");
+    });
+    expect(screen.getByTestId("annotation-count").textContent).toBe("1");
+
+    let removedCount = 0;
+    act(() => {
+      removedCount = emitRemoveWebAnnotationFromComposers("annotation-delete");
+    });
+
+    expect(removedCount).toBe(1);
+    expect(screen.getByTestId("annotation-count").textContent).toBe("0");
+  });
 });
 
 function DraftInput({ scope }: { scope: string }) {
@@ -85,4 +127,9 @@ function DraftInput({ scope }: { scope: string }) {
       onChange={(event) => binding.setText(event.currentTarget.value)}
     />
   );
+}
+
+function DraftAnnotationCount({ scope }: { scope: string }) {
+  const binding = useComposerDraft(scope);
+  return <output data-testid="annotation-count">{binding.draft.webAnnotations.length}</output>;
 }

@@ -32,6 +32,7 @@ export interface BrowserLogicalRect {
 }
 
 export interface BrowserGeometryFrame extends BrowserSurfaceRef {
+  readonly occlusions: readonly BrowserLogicalRect[];
   readonly revision: number;
   readonly rect: BrowserLogicalRect;
   readonly visible: boolean;
@@ -111,6 +112,10 @@ export interface BrowserCommandPayloadByKind {
     readonly decision: "accept" | "cancel";
     readonly targetPath?: string;
   };
+  readonly browser_control_download: BrowserSurfaceRef & {
+    readonly downloadId: string;
+    readonly action: "pause" | "resume" | "cancel";
+  };
   readonly browser_start_selection: BrowserSurfaceRef & {
     readonly selectionRequestId: string;
     readonly mode: "text" | "element" | "region";
@@ -137,6 +142,7 @@ export interface BrowserCommandPayloadByKind {
       readonly annotationId: string;
       readonly target: unknown;
       readonly state: "resolved" | "changed";
+      readonly bodyMarkdown?: string;
     }[];
   };
   readonly browser_clear_highlights: BrowserSurfaceRef & {
@@ -261,12 +267,17 @@ export interface BrowserEventPayloadByKind {
     readonly suggestedFilename: string;
     readonly totalBytes: number | null;
   };
+  readonly "download.started": {
+    readonly downloadId: string;
+    readonly filePath: string;
+    readonly filename: string;
+  };
   readonly "download.progress": {
     readonly downloadId: string;
     readonly receivedBytes: number;
     readonly totalBytes: number | null;
   };
-  readonly "download.completed": { readonly downloadId: string; readonly stagedAssetId: string };
+  readonly "download.completed": { readonly downloadId: string; readonly filePath: string };
   readonly "download.failed": { readonly downloadId: string; readonly errorCategory: string };
   readonly "capture.completed": {
     readonly captureRequestId: string;
@@ -382,6 +393,10 @@ const commandValidators: Readonly<Record<BrowserCommandKind, Validator>> = {
     },
     ["targetPath"],
   ),
+  browser_control_download: surfaceRefValidator({
+    downloadId: idValidator,
+    action: enumValidator(["pause", "resume", "cancel"]),
+  }),
   browser_start_selection: surfaceRefValidator({
     selectionRequestId: idValidator,
     mode: enumValidator(["text", "element", "region"]),
@@ -423,7 +438,8 @@ const commandValidators: Readonly<Record<BrowserCommandKind, Validator>> = {
         annotationId: idValidator,
         target: recordValidator,
         state: enumValidator(["resolved", "changed"]),
-      }),
+        bodyMarkdown: unicodeStringValidator(0, 32 * 1024),
+      }, ["bodyMarkdown"]),
       MAX_COLLECTION_SIZE,
     ),
   }),
@@ -496,14 +512,19 @@ const eventValidators: Readonly<Record<BrowserEventKind, Validator>> = {
     suggestedFilename: stringValidator(1, 512),
     totalBytes: nullableValidator(nonNegativeIntegerValidator),
   }),
+  "download.started": objectValidator(["downloadId", "filePath", "filename"], {
+    downloadId: idValidator,
+    filePath: stringValidator(1, 4_096),
+    filename: stringValidator(1, 512),
+  }),
   "download.progress": objectValidator(["downloadId", "receivedBytes", "totalBytes"], {
     downloadId: idValidator,
     receivedBytes: nonNegativeIntegerValidator,
     totalBytes: nullableValidator(nonNegativeIntegerValidator),
   }),
-  "download.completed": objectValidator(["downloadId", "stagedAssetId"], {
+  "download.completed": objectValidator(["downloadId", "filePath"], {
     downloadId: idValidator,
-    stagedAssetId: idValidator,
+    filePath: stringValidator(1, 4_096),
   }),
   "download.failed": objectValidator(["downloadId", "errorCategory"], {
     downloadId: idValidator,
@@ -813,6 +834,14 @@ function stringValidator(minLength: number, maxLength: number): Validator {
     if (typeof value !== "string" || value.length < minLength || value.length > maxLength) {
       throw new Error(`${path} is invalid`);
     }
+  };
+}
+
+function unicodeStringValidator(minLength: number, maxLength: number): Validator {
+  return (value, path) => {
+    if (typeof value !== "string") throw new Error(`${path} is invalid`);
+    const length = Array.from(value).length;
+    if (length < minLength || length > maxLength) throw new Error(`${path} is invalid`);
   };
 }
 

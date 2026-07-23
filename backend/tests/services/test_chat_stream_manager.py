@@ -539,6 +539,37 @@ async def test_chat_stream_manager_recovers_persisted_run_after_backend_restart(
 
 
 @pytest.mark.asyncio
+async def test_chat_stream_manager_recovers_orphaned_waiting_approval(tmp_path) -> None:
+    repositories = StorageRepositories(init_database(tmp_path / "app.db"))
+    repositories.sessions.create(
+        session_id="ses-orphaned-approval",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        status="waiting_approval",
+    )
+    approval = repositories.command_approvals.create(
+        approval_id="approval-orphaned",
+        session_id="ses-orphaned-approval",
+        command="pnpm test",
+        cwd=".",
+        title="是否允许执行命令？",
+    )
+    service = BlockingChatService()
+    service.repositories = repositories
+    manager = ChatStreamManager(service)  # type: ignore[arg-type]
+
+    recovered = await manager.recover_interrupted_sessions()
+
+    assert recovered == ["ses-orphaned-approval"]
+    assert repositories.sessions.get("ses-orphaned-approval").status == "active"
+    resolved = repositories.command_approvals.get(approval.id)
+    assert resolved is not None
+    assert resolved.status == "cancelled"
+    assert resolved.decision == "rejected"
+    assert (await manager.status("ses-orphaned-approval"))["status"] == "idle"
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_manager_does_not_recover_live_in_memory_run(tmp_path) -> None:
     repositories = StorageRepositories(init_database(tmp_path / "app.db"))
     repositories.sessions.create(

@@ -8550,10 +8550,32 @@ class CommandApprovalRequestsRepository:
         reject_message: str | None = None,
         trusted_rule_id: str | None = None,
     ) -> CommandApprovalRequestRecord | None:
+        record, _ = self.resolve_pending(
+            approval_id,
+            status=status,
+            decision=decision,
+            trust_scope=trust_scope,
+            rule_match_type=rule_match_type,
+            reject_message=reject_message,
+            trusted_rule_id=trusted_rule_id,
+        )
+        return record
+
+    def resolve_pending(
+        self,
+        approval_id: str,
+        *,
+        status: str,
+        decision: str | None,
+        trust_scope: str | None = None,
+        rule_match_type: str | None = None,
+        reject_message: str | None = None,
+        trusted_rule_id: str | None = None,
+    ) -> tuple[CommandApprovalRequestRecord | None, bool]:
         self._validate_status(status)
         now = to_iso_z(utc_now())
-        with self.db.transaction() as conn:
-            conn.execute(
+        with self.db.transaction(immediate=True) as conn:
+            cursor = conn.execute(
                 """
                 update command_approval_requests set
                   status = ?,
@@ -8564,7 +8586,7 @@ class CommandApprovalRequestsRepository:
                   trusted_rule_id = ?,
                   resolved_at = ?,
                   updated_at = ?
-                where id = ? and is_deleted = 0
+                where id = ? and status = 'pending' and is_deleted = 0
                 """,
                 (
                     status,
@@ -8578,7 +8600,11 @@ class CommandApprovalRequestsRepository:
                     approval_id,
                 ),
             )
-        return self.get(approval_id)
+            row = conn.execute(
+                "select * from command_approval_requests where id = ? and is_deleted = 0",
+                (approval_id,),
+            ).fetchone()
+        return (self._from_row(row) if row else None, int(cursor.rowcount or 0) == 1)
 
     def cancel_pending_for_session(self, session_id: str) -> int:
         now = to_iso_z(utc_now())

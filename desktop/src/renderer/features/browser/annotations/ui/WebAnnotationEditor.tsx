@@ -1,19 +1,11 @@
-import { Plus, Trash2 } from "lucide-react";
 import { useMemo, useState, type KeyboardEvent } from "react";
-
-import type { WebAnnotationTypedProperty } from "../api";
 
 import styles from "./WebAnnotationDrawer.module.css";
 
-const MAX_BODY_BYTES = 32 * 1024;
-const MAX_TAGS = 20;
-const MAX_PROPERTIES = 20;
-const MAX_PROPERTIES_BYTES = 16 * 1024;
+const MAX_BODY_CHARACTERS = 32 * 1024;
 
 export interface WebAnnotationEditorValue {
   readonly bodyMarkdown: string;
-  readonly tags: readonly string[];
-  readonly properties: readonly WebAnnotationTypedProperty[];
 }
 
 export function WebAnnotationEditor({
@@ -30,17 +22,11 @@ export function WebAnnotationEditor({
   onSubmit(value: WebAnnotationEditorValue): void;
 }) {
   const [body, setBody] = useState(initialValue?.bodyMarkdown ?? "");
-  const [tagsText, setTagsText] = useState((initialValue?.tags ?? []).join(", "));
-  const [properties, setProperties] = useState<readonly WebAnnotationTypedProperty[]>(
-    initialValue?.properties ?? [],
-  );
-  const validation = useMemo(
-    () => validateEditor(body, tagsText, properties),
-    [body, properties, tagsText],
-  );
+  const characterCount = useMemo(() => unicodeCharacterCount(body), [body]);
+  const validation = useMemo(() => validateEditor(body, characterCount), [body, characterCount]);
   const submit = () => {
     if (pending || !validation.ok) return;
-    onSubmit({ bodyMarkdown: body.trim(), tags: validation.tags, properties });
+    onSubmit({ bodyMarkdown: body.trim() });
   };
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key === "Escape") {
@@ -60,53 +46,16 @@ export function WebAnnotationEditor({
           autoFocus
           aria-label="批注内容"
           disabled={pending}
-          maxLength={MAX_BODY_BYTES}
-          onChange={(event) => setBody(event.currentTarget.value)}
+          onChange={(event) => setBody(limitUnicodeCharacters(
+            event.currentTarget.value,
+            MAX_BODY_CHARACTERS,
+          ))}
           placeholder="记录这段网页内容为什么重要…"
           rows={5}
           value={body}
         />
-        <small>{utf8Bytes(body).toLocaleString()} / {MAX_BODY_BYTES.toLocaleString()} 字节</small>
+        <small>{characterCount.toLocaleString()} / {MAX_BODY_CHARACTERS.toLocaleString()} 字符</small>
       </label>
-      <label className={styles.field}>
-        <span>标签</span>
-        <input
-          aria-label="批注标签"
-          disabled={pending}
-          onChange={(event) => setTagsText(event.currentTarget.value)}
-          placeholder="研究, 待确认（用逗号分隔）"
-          value={tagsText}
-        />
-        <small>最多 {MAX_TAGS} 个，每个不超过 64 字符</small>
-      </label>
-      <div className={styles.properties}>
-        <div className={styles.propertiesHeader}>
-          <span>结构化属性</span>
-          <button
-            aria-label="添加结构化属性"
-            disabled={pending || properties.length >= MAX_PROPERTIES}
-            onClick={() => setProperties((current) => [
-              ...current,
-              { key: "", type: "text", value: "" },
-            ])}
-            type="button"
-          >
-            <Plus size={13} /> 添加
-          </button>
-        </div>
-        {properties.map((property, index) => (
-          <PropertyRow
-            disabled={pending}
-            index={index}
-            key={`${index}:${property.type}`}
-            property={property}
-            onChange={(next) => setProperties((current) => current.map((entry, entryIndex) =>
-              entryIndex === index ? next : entry))}
-            onDelete={() => setProperties((current) => current.filter((_, entryIndex) => entryIndex !== index))}
-          />
-        ))}
-        {properties.length === 0 ? <p className={styles.propertiesEmpty}>可选；用于记录负责人、日期、结论等字段。</p> : null}
-      </div>
       {!validation.ok ? <div className={styles.validationError} role="alert">{validation.message}</div> : null}
       <div className={styles.editorActions}>
         <span>Ctrl/⌘ + Enter 保存 · Esc 取消</span>
@@ -124,110 +73,22 @@ export function WebAnnotationEditor({
   );
 }
 
-function PropertyRow({
-  disabled,
-  index,
-  property,
-  onChange,
-  onDelete,
-}: {
-  readonly disabled: boolean;
-  readonly index: number;
-  readonly property: WebAnnotationTypedProperty;
-  onChange(value: WebAnnotationTypedProperty): void;
-  onDelete(): void;
-}) {
-  const setType = (type: WebAnnotationTypedProperty["type"]) => {
-    const key = property.key;
-    if (type === "number") onChange({ key, type, value: 0 });
-    else if (type === "boolean") onChange({ key, type, value: false });
-    else onChange({ key, type, value: "" });
-  };
-  return (
-    <div className={styles.propertyRow}>
-      <input
-        aria-label={`属性 ${index + 1} 名称`}
-        disabled={disabled}
-        maxLength={64}
-        onChange={(event) => onChange({ ...property, key: event.currentTarget.value })}
-        placeholder="字段名"
-        value={property.key}
-      />
-      <select
-        aria-label={`属性 ${index + 1} 类型`}
-        disabled={disabled}
-        onChange={(event) => setType(event.currentTarget.value as WebAnnotationTypedProperty["type"])}
-        value={property.type}
-      >
-        <option value="text">文本</option>
-        <option value="number">数字</option>
-        <option value="boolean">布尔</option>
-        <option value="date">日期</option>
-        <option value="url">链接</option>
-      </select>
-      {property.type === "boolean" ? (
-        <select
-          aria-label={`属性 ${index + 1} 值`}
-          disabled={disabled}
-          onChange={(event) => onChange({ ...property, value: event.currentTarget.value === "true" })}
-          value={String(property.value)}
-        >
-          <option value="true">是</option>
-          <option value="false">否</option>
-        </select>
-      ) : (
-        <input
-          aria-label={`属性 ${index + 1} 值`}
-          disabled={disabled}
-          maxLength={property.type === "text" ? 8 * 1024 : undefined}
-          onChange={(event) => onChange(property.type === "number"
-            ? { ...property, value: event.currentTarget.valueAsNumber }
-            : { ...property, value: event.currentTarget.value })}
-          type={property.type === "number" ? "number" : property.type === "date" ? "date" : "text"}
-          value={String(property.value)}
-        />
-      )}
-      <button aria-label={`删除属性 ${index + 1}`} disabled={disabled} onClick={onDelete} type="button">
-        <Trash2 size={13} />
-      </button>
-    </div>
-  );
-}
-
 function validateEditor(
   body: string,
-  tagsText: string,
-  properties: readonly WebAnnotationTypedProperty[],
-): { readonly ok: true; readonly tags: readonly string[] } | { readonly ok: false; readonly message: string; readonly tags: readonly string[] } {
-  const tags = normalizedTags(tagsText);
-  if (!body.trim()) return { ok: false, message: "批注内容不能为空", tags };
-  if (utf8Bytes(body) > MAX_BODY_BYTES) return { ok: false, message: "批注内容超过 32 KiB", tags };
-  if (tags.length > MAX_TAGS) return { ok: false, message: `标签不能超过 ${MAX_TAGS} 个`, tags };
-  if (tags.some((tag) => tag.length > 64)) return { ok: false, message: "每个标签不能超过 64 字符", tags };
-  if (properties.length > MAX_PROPERTIES) return { ok: false, message: `结构化属性不能超过 ${MAX_PROPERTIES} 个`, tags };
-  const keys = properties.map((property) => property.key.trim().toLocaleLowerCase());
-  if (keys.some((key) => !key)) return { ok: false, message: "结构化属性名称不能为空", tags };
-  if (new Set(keys).size !== keys.length) return { ok: false, message: "结构化属性名称不能重复", tags };
-  if (properties.some((property) => property.type === "number" && !Number.isFinite(property.value))) {
-    return { ok: false, message: "数字属性必须是有效数字", tags };
+  characterCount: number,
+): { readonly ok: true } | { readonly ok: false; readonly message: string } {
+  if (!body.trim()) return { ok: false, message: "批注内容不能为空" };
+  if (characterCount > MAX_BODY_CHARACTERS) {
+    return { ok: false, message: `批注内容不能超过 ${MAX_BODY_CHARACTERS.toLocaleString()} 字符` };
   }
-  if (utf8Bytes(JSON.stringify(properties)) > MAX_PROPERTIES_BYTES) {
-    return { ok: false, message: "结构化属性总量超过 16 KiB", tags };
-  }
-  return { ok: true, tags };
+  return { ok: true };
 }
 
-function normalizedTags(value: string): readonly string[] {
-  const seen = new Set<string>();
-  return value.split(/[,，]/u).map((tag) => tag.trim()).filter((tag) => {
-    if (!tag) return false;
-    const key = tag.toLocaleLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+function unicodeCharacterCount(value: string): number {
+  return Array.from(value).length;
 }
 
-function utf8Bytes(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
+function limitUnicodeCharacters(value: string, limit: number): string {
+  const characters = Array.from(value);
+  return characters.length <= limit ? value : characters.slice(0, limit).join("");
 }

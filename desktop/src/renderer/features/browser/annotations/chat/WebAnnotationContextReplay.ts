@@ -27,55 +27,63 @@ export function webAnnotationSnapshotFromContextItem(
   if (item.type !== "web_annotation") return null;
   const metadata = record(item.metadata);
   const snapshot = record(metadata?.snapshot);
-  const source = record(snapshot?.source);
-  const target = record(snapshot?.target);
-  const evidence = record(snapshot?.evidence);
-  const perception = record(snapshot?.perception);
-  const originalTarget = record(perception?.originalTarget);
-  const perceptionResolution = record(perception?.resolution);
-  const perceptionChange = record(perceptionResolution?.change);
-  const annotation = record(snapshot?.annotation);
+  const reference = record(snapshot?.reference);
+  const trust = record(snapshot?.trust);
+  const comment = record(snapshot?.comment);
+  const page = record(snapshot?.page);
+  const anchor = record(snapshot?.anchor);
+  const machineTarget = record(anchor?.machineTarget);
+  const observation = record(snapshot?.observation);
+  const changes = record(observation?.changes);
+  const integrity = record(snapshot?.integrity);
   if (
-    snapshot?.schemaVersion !== 1
+    snapshot?.schemaVersion !== 2
     || snapshot.type !== "web_annotation"
-    || !nonEmptyString(snapshot.annotationId)
-    || !positiveInteger(snapshot.annotationRevision)
-    || !nonEmptyString(snapshot.capturedAt)
-    || !nonEmptyString(snapshot.digest)
-    || !source
-    || typeof source.title !== "string"
-    || !nonEmptyString(source.url)
-    || !nonEmptyString(source.urlKey)
-    || !nonEmptyString(source.origin)
-    || !target
-    || !webAnnotationTargetType(target.type)
-    || typeof target.summary !== "string"
-    || !settledStatus(target.resolution)
-    || (target.freshness !== "current" && target.freshness !== "last-known")
-    || !evidence
-    || !perception
-    || !originalTarget
-    || !webAnnotationTargetType(originalTarget.type)
-    || (perception.currentTarget !== null && !webAnnotationTargetType(record(perception.currentTarget)?.type))
-    || !perceptionResolution
-    || !Array.isArray(perceptionResolution.candidateIds)
-    || !perceptionChange
-    || !stringArray(perceptionChange.kinds)
-    || !stringArray(perceptionChange.materialKinds)
-    || !stringArray(perceptionChange.signals)
-    || typeof perceptionChange.material !== "boolean"
-    || !annotation
-    || typeof annotation.bodyMarkdown !== "string"
-    || !stringArray(annotation.tags)
-    || !Array.isArray(annotation.properties)
+    || !reference
+    || !nonEmptyString(reference.annotationId)
+    || !positiveInteger(reference.revision)
+    || !nonEmptyString(reference.anchorId)
+    || !nonEmptyString(reference.createdAt)
+    || !nonEmptyString(reference.assembledAt)
+    || !trust
+    || trust.userComment !== "user_instruction"
+    || trust.pageEvidence !== "untrusted_reference"
+    || trust.hostObservation !== "trusted_application_observation"
+    || !comment
+    || typeof comment.bodyMarkdown !== "string"
+    || !stringArray(comment.tags)
+    || !Array.isArray(comment.properties)
+    || !page
+    || typeof page.title !== "string"
+    || !nonEmptyString(page.documentUrl)
+    || !nonEmptyString(page.urlKey)
+    || !nonEmptyString(page.origin)
+    || !record(page.frame)
+    || !anchor
+    || !webAnnotationTargetType(anchor.kind)
+    || !record(anchor.display)
+    || !machineTarget
+    || !webAnnotationTargetType(machineTarget.type)
+    || !observation
+    || !observationStatus(observation.status)
+    || !observationFreshness(observation.freshness)
+    || (observation.currentTarget !== null && !webAnnotationTargetType(record(observation.currentTarget)?.type))
+    || !changes
+    || !stringArray(changes.kinds)
+    || !stringArray(changes.materialKinds)
+    || !stringArray(changes.signals)
+    || typeof changes.material !== "boolean"
+    || !integrity
+    || integrity.canonicalization !== "keydex-json-c14n/v1"
+    || !nonEmptyString(integrity.digest)
   ) {
     return null;
   }
   const metadataAnnotationId = optionalString(metadata?.annotation_id);
   const metadataDigest = optionalString(metadata?.snapshot_digest);
   if (
-    (metadataAnnotationId && metadataAnnotationId !== snapshot.annotationId)
-    || (metadataDigest && metadataDigest !== snapshot.digest)
+    (metadataAnnotationId && metadataAnnotationId !== reference.annotationId)
+    || (metadataDigest && metadataDigest !== integrity.digest)
   ) {
     return null;
   }
@@ -86,14 +94,14 @@ export function webAnnotationPresentationFromSnapshot(
   snapshot: WebAnnotationContextSnapshot,
 ): WebAnnotationReferencePresentation {
   return {
-    annotationId: snapshot.annotationId,
-    title: snapshot.source.title,
-    summary: snapshot.target.summary,
-    bodyMarkdown: snapshot.annotation.bodyMarkdown,
-    origin: snapshot.source.origin,
-    status: visibleWebAnnotationStatus(snapshot.target.resolution),
-    change: summarizeWebAnnotationChanges(snapshot.perception.resolution.change.signals),
-    updatedAt: snapshot.capturedAt,
+    annotationId: snapshot.reference.annotationId,
+    title: snapshot.page.title,
+    summary: snapshot.anchor.display.label,
+    bodyMarkdown: snapshot.comment.bodyMarkdown,
+    origin: snapshot.page.origin,
+    status: visibleWebAnnotationStatus(replayResolutionStatus(snapshot.observation.status)),
+    change: summarizeWebAnnotationChanges(snapshot.observation.changes.signals),
+    updatedAt: snapshot.reference.assembledAt,
   };
 }
 
@@ -123,6 +131,18 @@ function webAnnotationTargetType(value: unknown): boolean {
   return value === "text" || value === "element" || value === "region";
 }
 
-function settledStatus(value: unknown): boolean {
-  return value === "resolved" || value === "changed" || value === "ambiguous" || value === "orphaned";
+function observationStatus(value: unknown): boolean {
+  return value === "exact" || value === "relocated" || value === "changed" || value === "ambiguous" || value === "missing";
+}
+
+function observationFreshness(value: unknown): boolean {
+  return value === "live" || value === "last_known" || value === "captured_only";
+}
+
+function replayResolutionStatus(
+  status: WebAnnotationContextSnapshot["observation"]["status"],
+): "resolved" | "changed" | "ambiguous" | "orphaned" {
+  if (status === "exact" || status === "relocated") return "resolved";
+  if (status === "missing") return "orphaned";
+  return status;
 }

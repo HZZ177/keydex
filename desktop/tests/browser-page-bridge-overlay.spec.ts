@@ -11,6 +11,10 @@ import {
 
 const bridgeSource = readFileSync(resolve(process.cwd(), "src-tauri", "src", "browser", "page_bridge.js"), "utf8");
 const overlaySource = readFileSync(resolve(process.cwd(), "src-tauri", "src", "browser", "page_bridge_overlay.js"), "utf8");
+const devtoolsElementTargetSource = readFileSync(
+  resolve(process.cwd(), "src-tauri", "src", "browser", "devtools_element_target.js"),
+  "utf8",
+);
 const openDoms: JSDOM[] = [];
 type DOMWindow = JSDOM["window"];
 
@@ -19,6 +23,25 @@ afterEach(() => {
 });
 
 describe("page bridge themed overlay", () => {
+  it("reports native page pointer interaction while ignoring its own annotation overlay", () => {
+    const run = createRun("<button id='page-action'>Page action</button>");
+    const countInteractions = () => run.messages.filter((message) => message.kind === "page.interaction").length;
+
+    run.document.querySelector("#page-action")?.dispatchEvent(new run.window.MouseEvent("pointerdown", {
+      bubbles: true,
+    }));
+    expect(countInteractions()).toBe(1);
+
+    run.configure("light", false);
+    run.send("highlight.render", "highlight-interaction", {
+      annotationId: "annotation-interaction",
+      state: "resolved",
+      target: elementTarget(documentPath(0), { x: 24, y: 40, width: 180, height: 36 }),
+    });
+    run.root().dispatchEvent(new run.window.MouseEvent("pointerdown", { bubbles: true }));
+    expect(countInteractions()).toBe(1);
+  });
+
   it("isolates its styles, applies controlled light/dark tokens, and honors reduced motion", () => {
     const run = createRun(`
       <style>div { all: unset !important; background: red !important; z-index: 1 !important; }</style>
@@ -72,6 +95,88 @@ describe("page bridge themed overlay", () => {
 
     run.send("highlight.clear", "highlight-clear", { annotationIds: ["annotation-text"] });
     expect(run.document.querySelector("[data-keydex-annotation-overlay-root='true']")).toBeNull();
+  });
+
+  it("opens annotation content from a clickable highlight and requests adding it to the Agent composer", () => {
+    const run = createRun("<article>Page content</article>");
+    run.configure("light", false);
+    run.send("highlight.render", "highlight-action-request", {
+      annotationId: "annotation-action",
+      state: "resolved",
+      bodyMarkdown: "请让 Agent 检查这个区域。",
+      target: elementTarget(documentPath(0), { x: 24, y: 40, width: 180, height: 36 }),
+    });
+
+    const marker = run.marker("annotation-action");
+    expect(marker?.getAttribute("role")).toBe("button");
+    marker?.click();
+
+    const popover = run.root().shadowRoot?.querySelector<HTMLElement>("[part='annotation-highlight-popover']");
+    expect(popover?.textContent).toContain("请让 Agent 检查这个区域。");
+    popover?.querySelector<HTMLButtonElement>("[aria-label='将网页批注发送给 Agent']")?.click();
+    expect(run.message("highlight.action", "highlight-action-request")?.payload).toEqual({
+      annotationId: "annotation-action",
+      action: "add_to_composer",
+    });
+    expect(run.root().shadowRoot?.querySelector("[part='annotation-highlight-popover']")).toBeNull();
+  });
+
+  it("requires inline confirmation before requesting deletion from the annotation popover", () => {
+    const run = createRun("<article>Page content</article>");
+    run.configure("light", false);
+    run.send("highlight.render", "highlight-delete-request", {
+      annotationId: "annotation-delete",
+      state: "resolved",
+      bodyMarkdown: "删除这条批注。",
+      target: elementTarget(documentPath(0), { x: 24, y: 40, width: 180, height: 36 }),
+    });
+
+    run.marker("annotation-delete")?.click();
+    const popover = run.root().shadowRoot?.querySelector<HTMLElement>("[part='annotation-highlight-popover']");
+    const remove = popover?.querySelector<HTMLButtonElement>("[aria-label='删除网页批注']");
+    remove?.click();
+
+    expect(run.message("highlight.action", "highlight-delete-request")).toBeNull();
+    expect(remove?.textContent).toBe("确认删除");
+    remove?.click();
+    expect(run.message("highlight.action", "highlight-delete-request")?.payload).toEqual({
+      annotationId: "annotation-delete",
+      action: "delete_annotation",
+    });
+    expect(run.root().shadowRoot?.querySelector("[part='annotation-highlight-popover']")).toBeNull();
+  });
+
+  it("recognizes a native-inspected annotation marker and resumes selection after its popover closes", () => {
+    const run = createRun("<article>Page content</article>");
+    run.configure("light", false);
+    run.send("highlight.render", "highlight-native-existing", {
+      annotationId: "annotation-native-existing",
+      state: "resolved",
+      bodyMarkdown: "已有批注内容",
+      target: elementTarget(documentPath(0), { x: 24, y: 40, width: 180, height: 36 }),
+    });
+    const marker = run.marker("annotation-native-existing")!;
+    const serializeTarget = run.window.eval(`(${devtoolsElementTargetSource})`) as (
+      this: Element,
+    ) => Record<string, unknown>;
+
+    expect(serializeTarget.call(marker)).toEqual({
+      keydexOverlayAction: "open_existing_annotation",
+      annotationId: "annotation-native-existing",
+    });
+    const overlayApi = (run.window as unknown as {
+      KeydexAnnotationOverlay: { openNativeHighlight(annotationId: string): boolean };
+    }).KeydexAnnotationOverlay;
+    expect(overlayApi.openNativeHighlight("annotation-native-existing")).toBe(true);
+    expect(run.root().shadowRoot?.querySelector("[part='annotation-highlight-popover']")).not.toBeNull();
+
+    run.root().shadowRoot
+      ?.querySelector<HTMLButtonElement>("[aria-label='关闭批注内容']")
+      ?.click();
+    expect(run.message("highlight.action", "highlight-native-existing")?.payload).toEqual({
+      annotationId: "annotation-native-existing",
+      action: "resume_selection",
+    });
   });
 
   it("draws selection candidates, keeps the page non-interactive, and clears after terminal selection", () => {
@@ -218,6 +323,28 @@ describe("page bridge themed overlay", () => {
 
     run.window.dispatchEvent(new run.window.Event("pagehide"));
     expect(run.document.querySelector("[data-keydex-annotation-overlay-root='true']")).toBeNull();
+  });
+
+  it("keeps a newly saved fallback highlight anchored to the document while resolution catches up", async () => {
+    const run = createRun("<main>Page content</main>");
+    Object.defineProperty(run.window, "scrollX", { configurable: true, value: 0 });
+    Object.defineProperty(run.window, "scrollY", { configurable: true, value: 120 });
+    run.configure("light", false);
+    run.send("highlight.render", "highlight-new-fallback", {
+      annotationId: "annotation-new-fallback",
+      state: "resolved",
+      target: elementTarget(documentPath(99), { x: 24, y: 340, width: 180, height: 36 }),
+    });
+    expect(run.marker("annotation-new-fallback")?.style.top).toBe("340px");
+
+    Object.defineProperty(run.window, "scrollY", { configurable: true, value: 200 });
+    run.window.dispatchEvent(new run.window.Event("scroll"));
+    await run.nextFrame();
+
+    expect(run.marker("annotation-new-fallback")?.style.top).toBe("260px");
+    expect(run.message("geometry.changed", "highlight-new-fallback")?.payload).toEqual({
+      annotationIds: ["annotation-new-fallback"],
+    });
   });
 
   it("scrolls text-node targets through their containing element and flashes the verified highlight", async () => {

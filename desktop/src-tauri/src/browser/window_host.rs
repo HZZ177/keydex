@@ -5,9 +5,10 @@ use std::{ffi::c_void, mem::size_of, sync::OnceLock};
 use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller;
 #[cfg(windows)]
 use windows_061::{
-    core::{w, PCWSTR},
+    core::{w, Free, PCWSTR},
     Win32::{
         Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM},
+        Graphics::Gdi::{CombineRgn, CreateRectRgn, SetWindowRgn, RGN_DIFF},
         System::LibraryLoader::GetModuleHandleW,
         UI::{
             Input::KeyboardAndMouse::SetFocus,
@@ -82,6 +83,7 @@ impl BrowserWindowHost {
         &self,
         rect: BrowserPhysicalRect,
         visible: bool,
+        occlusions: &[BrowserPhysicalRect],
     ) -> Result<(), String> {
         unsafe {
             // SetWindowPos synchronously emits WM_SIZE on this actor thread.
@@ -97,6 +99,7 @@ impl BrowserWindowHost {
                 SWP_NOACTIVATE | SWP_NOOWNERZORDER,
             )
             .map_err(|error| format!("Failed to position browser window host: {error}"))?;
+            apply_window_occlusions(self.hwnd, rect.width.max(1), rect.height.max(1), occlusions)?;
             let _ = ShowWindow(
                 self.hwnd,
                 if visible && rect.width > 0 && rect.height > 0 {
@@ -114,6 +117,61 @@ impl BrowserWindowHost {
             let _ = SetFocus(Some(self.hwnd));
         }
     }
+}
+
+#[cfg(windows)]
+unsafe fn apply_window_occlusions(
+    hwnd: HWND,
+    width: i32,
+    height: i32,
+    occlusions: &[BrowserPhysicalRect],
+) -> Result<(), String> {
+    if occlusions.is_empty() {
+        if unsafe { SetWindowRgn(hwnd, None, true) } == 0 {
+            return Err(format!(
+                "Failed to clear browser overlay clipping: {}",
+                windows_061::core::Error::from_win32()
+            ));
+        }
+        return Ok(());
+    }
+
+    let mut visible_region = unsafe { CreateRectRgn(0, 0, width, height) };
+    if visible_region.is_invalid() {
+        return Err("Failed to allocate browser visible region".to_string());
+    }
+    for rect in occlusions {
+        let left = rect.left.clamp(0, width);
+        let top = rect.top.clamp(0, height);
+        let right = rect.left.saturating_add(rect.width).clamp(0, width);
+        let bottom = rect.top.saturating_add(rect.height).clamp(0, height);
+        if right <= left || bottom <= top {
+            continue;
+        }
+        let mut cutout = unsafe { CreateRectRgn(left, top, right, bottom) };
+        if cutout.is_invalid() {
+            unsafe { visible_region.free() };
+            return Err("Failed to allocate browser overlay cutout".to_string());
+        }
+        unsafe {
+            CombineRgn(
+                Some(visible_region),
+                Some(visible_region),
+                Some(cutout),
+                RGN_DIFF,
+            );
+            cutout.free();
+        }
+    }
+
+    if unsafe { SetWindowRgn(hwnd, Some(visible_region), true) } == 0 {
+        unsafe { visible_region.free() };
+        return Err(format!(
+            "Failed to apply browser overlay clipping: {}",
+            windows_061::core::Error::from_win32()
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(windows)]

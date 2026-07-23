@@ -25,9 +25,9 @@ mod terminal;
 use browser::host::{
     browser_begin_interactive_resize, browser_cancel_selection, browser_capture_region,
     browser_clear_highlights, browser_clear_profile_data, browser_configure_appearance,
-    browser_create_surface, browser_destroy_surface, browser_discard_capture,
-    browser_end_interactive_resize, browser_find, browser_go_back, browser_go_forward,
-    browser_navigate, browser_navigate_to_annotation_target, browser_reload,
+    browser_control_download, browser_create_surface, browser_destroy_surface,
+    browser_discard_capture, browser_end_interactive_resize, browser_find, browser_go_back,
+    browser_go_forward, browser_navigate, browser_navigate_to_annotation_target, browser_reload,
     browser_render_highlights, browser_resolve_annotations, browser_respond_download,
     browser_respond_permission, browser_set_resource_state, browser_set_visibility,
     browser_set_zoom, browser_start_selection, browser_stop, browser_stop_find,
@@ -415,6 +415,36 @@ fn open_path_in_file_manager(path: String) -> Result<(), String> {
         let _ = path;
         Err("当前平台暂不支持在资源管理器中打开".to_string())
     }
+}
+
+#[tauri::command]
+fn delete_browser_download(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let downloads_dir = app
+        .path()
+        .download_dir()
+        .map_err(|error| format!("无法定位系统下载目录: {error}"))?;
+    let target = resolve_browser_download_deletion_target(&downloads_dir, &path)?;
+    std::fs::remove_file(target).map_err(|error| format!("删除下载文件失败: {error}"))
+}
+
+fn resolve_browser_download_deletion_target(
+    downloads_dir: &std::path::Path,
+    path: &str,
+) -> Result<PathBuf, String> {
+    let cleaned = path.trim();
+    if cleaned.is_empty() {
+        return Err("下载文件路径不能为空".to_string());
+    }
+    let downloads_root = downloads_dir
+        .canonicalize()
+        .map_err(|error| format!("无法访问系统下载目录: {error}"))?;
+    let target = PathBuf::from(cleaned)
+        .canonicalize()
+        .map_err(|error| format!("下载文件不存在: {error}"))?;
+    if !target.is_file() || target.parent() != Some(downloads_root.as_path()) {
+        return Err("只能删除由浏览器保存到系统下载目录的文件".to_string());
+    }
+    Ok(target)
 }
 
 #[tauri::command]
@@ -958,6 +988,7 @@ pub fn run() {
             hide_main_window,
             request_app_exit,
             open_path_in_file_manager,
+            delete_browser_download,
             read_text_file,
             write_text_file,
             copy_file_to_clipboard,
@@ -992,6 +1023,7 @@ pub fn run() {
             browser_clear_profile_data,
             browser_respond_permission,
             browser_respond_download,
+            browser_control_download,
             terminal_list_profiles,
             terminal_create,
             terminal_list,
@@ -1030,8 +1062,8 @@ mod tests {
     };
     #[cfg(windows)]
     use super::{
-        windows_file_manager_command, windows_file_manager_target, windows_shell_compatible_path,
-        WindowsFileManagerTarget,
+        resolve_browser_download_deletion_target, windows_file_manager_command,
+        windows_file_manager_target, windows_shell_compatible_path, WindowsFileManagerTarget,
     };
     use std::fs;
     #[cfg(windows)]
@@ -1039,6 +1071,44 @@ mod tests {
     use std::sync::mpsc;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
     use tauri::{PhysicalPosition, PhysicalSize};
+
+    #[cfg(windows)]
+    #[test]
+    fn browser_download_delete_target_is_restricted_to_the_downloads_root() {
+        let base = std::env::temp_dir().join(format!(
+            "keydex-download-delete-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        let downloads = base.join("Downloads");
+        let nested = downloads.join("nested");
+        fs::create_dir_all(&nested).expect("temporary downloads directory");
+        let managed = downloads.join("report.pdf");
+        let outside = base.join("outside.pdf");
+        let nested_file = nested.join("nested.pdf");
+        fs::write(&managed, b"managed").expect("managed download");
+        fs::write(&outside, b"outside").expect("outside file");
+        fs::write(&nested_file, b"nested").expect("nested file");
+
+        assert_eq!(
+            resolve_browser_download_deletion_target(&downloads, &managed.to_string_lossy())
+                .expect("managed file should be accepted"),
+            managed.canonicalize().expect("canonical managed path"),
+        );
+        assert!(
+            resolve_browser_download_deletion_target(&downloads, &outside.to_string_lossy())
+                .is_err()
+        );
+        assert!(resolve_browser_download_deletion_target(
+            &downloads,
+            &nested_file.to_string_lossy()
+        )
+        .is_err());
+
+        fs::remove_dir_all(base).expect("temporary download test directory should be removed");
+    }
 
     #[test]
     fn dev_agent_connection_accepts_an_explicit_loopback_http_endpoint() {

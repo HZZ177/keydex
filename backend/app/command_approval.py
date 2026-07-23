@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -348,7 +349,7 @@ class ApprovalService:
                 await self._emit(DomainEventType.APPROVAL_RESOLVED, record=record, user_id=user_id)
                 return record
             if time.perf_counter() - started_at > wait_seconds:
-                resolved = self.repositories.command_approvals.resolve(
+                resolved, transitioned = self.repositories.command_approvals.resolve_pending(
                     approval_id,
                     status="expired",
                     decision="rejected",
@@ -356,15 +357,16 @@ class ApprovalService:
                 )
                 if resolved is None:
                     raise CommandApprovalError("审批请求不存在")
-                self.repositories.command_approval_audit.create(
-                    audit_id=new_id(),
-                    approval_id=resolved.id,
-                    session_id=resolved.session_id,
-                    command=resolved.command,
-                    cwd=resolved.cwd,
-                    decision="rejected",
-                    reject_message="审批等待超时",
-                )
+                if transitioned:
+                    self.repositories.command_approval_audit.create(
+                        audit_id=new_id(),
+                        approval_id=resolved.id,
+                        session_id=resolved.session_id,
+                        command=resolved.command,
+                        cwd=resolved.cwd,
+                        decision="rejected",
+                        reject_message="审批等待超时",
+                    )
                 self.repositories.sessions.update(resolved.session_id, status="running")
                 await self._emit(
                     DomainEventType.APPROVAL_RESOLVED,
@@ -386,7 +388,8 @@ class ApprovalService:
         if record is None:
             raise CommandApprovalError("审批请求不存在")
         if record.status != "pending":
-            raise CommandApprovalError("审批请求已经处理")
+            self._persist_resolution_event(record)
+            return record
         _validate_decision_scope(record, decision)
         mcp_trust_rule_plan = _mcp_trust_rule_plan(self.repositories, record, decision)
 
@@ -422,7 +425,7 @@ class ApprovalService:
             rule_match_type = resolved_match_type
 
         status = "approved" if decision.decision == "approved" else "rejected"
-        resolved = self.repositories.command_approvals.resolve(
+        resolved, transitioned = self.repositories.command_approvals.resolve_pending(
             approval_id,
             status=status,
             decision=decision.decision,
@@ -433,6 +436,11 @@ class ApprovalService:
         )
         if resolved is None:
             raise CommandApprovalError("审批请求不存在")
+        if not transitioned:
+            if trusted_rule_id:
+                self.repositories.trusted_command_rules.delete(trusted_rule_id)
+            self._persist_resolution_event(resolved)
+            return resolved
         mcp_server_trusted = _apply_mcp_server_trust(
             self.repositories,
             resolved,
@@ -461,6 +469,7 @@ class ApprovalService:
             ),
         )
         self.repositories.sessions.update(resolved.session_id, status="running")
+        self._persist_resolution_event(resolved)
         await self._emit(
             DomainEventType.APPROVAL_RESOLVED,
             record=resolved,
@@ -483,6 +492,30 @@ class ApprovalService:
                     user_id=user_id,
                 )
         return count
+
+    def _persist_resolution_event(self, record: CommandApprovalRequestRecord) -> None:
+        if self.dispatcher is not None or record.status == "pending":
+            return
+        event_id = f"approval-resolved:{record.id}"
+        if self.repositories.message_events.get(event_id) is not None:
+            return
+        try:
+            self.repositories.message_events.append(
+                event_id=event_id,
+                session_id=record.session_id,
+                trace_record_id=record.trace_id,
+                turn_index=int(record.turn_index or 0),
+                action="approval_resolved",
+                data={
+                    "id": record.id,
+                    "approval_id": record.id,
+                    "approval": approval_to_payload(record),
+                    "session_id": record.session_id,
+                },
+            )
+        except sqlite3.IntegrityError:
+            if self.repositories.message_events.get(event_id) is None:
+                raise
 
     async def _emit(
         self,

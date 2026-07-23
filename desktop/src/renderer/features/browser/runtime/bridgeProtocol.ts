@@ -23,9 +23,11 @@ export const PAGE_TO_HOST_BRIDGE_KINDS = [
   "selection.cancelled",
   "annotation.submit",
   "annotation.cancelled",
+  "highlight.action",
   "resolution.result",
   "geometry.changed",
   "page.changed",
+  "page.interaction",
   "bridge.error",
 ] as const;
 
@@ -191,6 +193,7 @@ interface BridgePayloadByKind {
     readonly annotationId: string;
     readonly target: WebAnnotationTarget;
     readonly state: WebAnnotationResolutionStatus;
+    readonly bodyMarkdown?: string;
   };
   readonly "highlight.clear": { readonly annotationIds: readonly string[] };
   readonly "navigate.toTarget": { readonly annotationId: string; readonly target: WebAnnotationTarget };
@@ -218,6 +221,10 @@ interface BridgePayloadByKind {
     readonly bodyMarkdown: string;
   };
   readonly "annotation.cancelled": { readonly selectionId: string };
+  readonly "highlight.action": {
+    readonly annotationId: string;
+    readonly action: "add_to_composer" | "delete_annotation" | "resume_selection";
+  };
   readonly "resolution.result": {
     readonly annotationId: string;
     readonly status: WebAnnotationResolutionStatus;
@@ -231,6 +238,7 @@ interface BridgePayloadByKind {
     readonly revision: number;
     readonly annotationIds: readonly string[];
   };
+  readonly "page.interaction": Record<string, never>;
   readonly "bridge.error": {
     readonly code: "unsupported_frame" | "invalid_selection" | "navigation_changed" | "protocol_mismatch" | "internal";
     readonly message: string;
@@ -372,9 +380,11 @@ function validatePayload(kind: BrowserBridgeKind, payload: unknown): boolean {
       return isExactRecord(payload, ["annotationId", "target"])
         && isBoundedId(payload.annotationId) && validateTarget(payload.target);
     case "highlight.render":
-      return isExactRecord(payload, ["annotationId", "target", "state"])
+      return isRecordWithOptional(payload, ["annotationId", "target", "state"], ["bodyMarkdown"])
         && isBoundedId(payload.annotationId) && validateTarget(payload.target)
-        && isResolutionStatus(payload.state);
+        && isResolutionStatus(payload.state)
+        && (payload.bodyMarkdown === undefined
+          || isBoundedUnicodeString(payload.bodyMarkdown, 32 * 1024));
     case "highlight.clear":
     case "geometry.changed":
       return isExactRecord(payload, ["annotationIds"])
@@ -384,6 +394,8 @@ function validatePayload(kind: BrowserBridgeKind, payload: unknown): boolean {
         && payload.reason === "dom"
         && isNonNegativeInteger(payload.revision)
         && validateIds(payload.annotationIds, 50);
+    case "page.interaction":
+      return isExactRecord(payload, []);
     case "bridge.ready":
       return isExactRecord(payload, ["href", "top"])
         && isSafePageUrl(payload.href) && typeof payload.top === "boolean";
@@ -406,11 +418,14 @@ function validatePayload(kind: BrowserBridgeKind, payload: unknown): boolean {
     case "annotation.submit":
       return isExactRecord(payload, ["selectionId", "bodyMarkdown"])
         && isBoundedId(payload.selectionId)
-        && isBoundedString(payload.bodyMarkdown, 32 * 1024, 1)
-        && byteLength(payload.bodyMarkdown) <= 32 * 1024;
+        && isBoundedUnicodeString(payload.bodyMarkdown, 32 * 1024, 1);
     case "annotation.cancelled":
       return isExactRecord(payload, ["selectionId"])
         && isBoundedId(payload.selectionId);
+    case "highlight.action":
+      return isExactRecord(payload, ["annotationId", "action"])
+        && isBoundedId(payload.annotationId)
+        && isOneOf(payload.action, ["add_to_composer", "delete_annotation", "resume_selection"]);
     case "resolution.result": {
       if (!isRecordWithOptional(payload, ["annotationId", "status"], ["target", "candidateIds", "evidence"])) return false;
       if (!isBoundedId(payload.annotationId) || !isResolutionStatus(payload.status)) return false;
@@ -621,6 +636,12 @@ function isBoundedId(value: unknown): value is string {
 
 function isBoundedString(value: unknown, max: number, min = 0): value is string {
   return typeof value === "string" && value.length >= min && value.length <= max;
+}
+
+function isBoundedUnicodeString(value: unknown, max: number, min = 0): value is string {
+  if (typeof value !== "string") return false;
+  const length = Array.from(value).length;
+  return length >= min && length <= max;
 }
 
 function isSafeCssColor(value: unknown): value is string {

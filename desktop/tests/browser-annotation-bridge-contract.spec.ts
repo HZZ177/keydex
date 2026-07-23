@@ -73,6 +73,23 @@ describe("web annotation bridge v1", () => {
       .toEqual({ ok: false, error: "oversize" });
   });
 
+  it("accepts only an empty payload for native page interaction dismissal", () => {
+    const ready = structuredClone(fixture.pageToHost[0]);
+    const interaction = {
+      ...ready,
+      kind: "page.interaction",
+      requestId: "request-interaction",
+      sequence: 2,
+      payload: {},
+    };
+
+    expect(parseBrowserBridgeEnvelope(interaction, "page-to-host")).toMatchObject({ ok: true });
+    expect(parseBrowserBridgeEnvelope({
+      ...interaction,
+      payload: { source: "forged" },
+    }, "page-to-host")).toEqual({ ok: false, error: "invalid_value" });
+  });
+
   it("drops stale surface, navigation, frame, and replayed sequence", () => {
     const gate = new BrowserBridgeEnvelopeGate({
       surface: { panelId: "panel-1", surfaceId: "surface-1", generation: 2 },

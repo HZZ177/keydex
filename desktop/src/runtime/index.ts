@@ -265,6 +265,9 @@ export type {
   TextSelector,
 } from "./annotations";
 export type {
+  DesktopFileDragDropEvent,
+  DesktopFileDragDropListener,
+  DesktopFileDragDropPosition,
   DesktopPickerRuntime,
   DesktopPickerRuntimeOptions,
 } from "./desktopPicker";

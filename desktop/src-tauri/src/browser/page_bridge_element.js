@@ -8,6 +8,16 @@
   const responseTarget = typeof __KEYDEX_BRIDGE_RESPONSE_TARGET__ === "undefined"
     ? document : __KEYDEX_BRIDGE_RESPONSE_TARGET__;
   const stableAttributeNames = ["id", "name", "type", "href", "src", "alt", "title", "aria-label", "role"];
+  const materialAnnotationChangeSignals = new Set([
+    "accessible_name_changed",
+    "text_changed",
+    "tag_changed",
+    "role_changed",
+    "stable_attributes_changed",
+  ]);
+  const hasMaterialAnnotationChange = (signals) => (
+    Array.isArray(signals) && signals.some((signal) => materialAnnotationChangeSignals.has(signal))
+  );
   const implicitRoles = new Map([
     ["A", "link"], ["BUTTON", "button"], ["SELECT", "combobox"], ["TEXTAREA", "textbox"],
     ["IMG", "img"], ["TABLE", "table"], ["TR", "row"], ["TH", "columnheader"], ["TD", "cell"],
@@ -71,6 +81,7 @@
   };
 
   const onPointerMove = (event) => {
+    if (isAnnotationOverlayInteraction(event)) return;
     const target = eventElement(event);
     if (!active) return;
     stopPagePropagation(event);
@@ -87,6 +98,7 @@
 
   const onPointerOut = (event) => {
     if (!active) return;
+    if (isAnnotationOverlayInteraction(event)) return;
     stopPagePropagation(event);
     if (event.relatedTarget === null) clearCandidate();
   };
@@ -106,6 +118,7 @@
 
   const suppressPageAction = (event) => {
     if (!active) return;
+    if (isAnnotationOverlayInteraction(event)) return;
     if (event.cancelable) event.preventDefault();
     stopPagePropagation(event);
   };
@@ -117,6 +130,7 @@
 
   const onClick = (event) => {
     if (!active) return;
+    if (isAnnotationOverlayInteraction(event)) return;
     const target = eventElement(event);
     suppressPageAction(event);
     if (target?.isConnected) updateCandidates(target, active.candidateIndex);
@@ -125,6 +139,7 @@
 
   const onKeyDown = (event) => {
     if (!active) return;
+    if (isAnnotationOverlayInteraction(event)) return;
     stopPagePropagation(event);
     if (event.key === "Escape") {
       event.preventDefault();
@@ -147,6 +162,16 @@
       confirmCandidate();
     }
   };
+
+  const isAnnotationOverlayInteraction = (event) => (
+    typeof event?.composedPath === "function"
+    && event.composedPath().some((node) => (
+      node !== null
+      && typeof node === "object"
+      && typeof node.getAttribute === "function"
+      && node.getAttribute("data-keydex-annotation-overlay-root") === "true"
+    ))
+  );
 
   const updateCandidates = (target, preferredIndex) => {
     if (!active) return;

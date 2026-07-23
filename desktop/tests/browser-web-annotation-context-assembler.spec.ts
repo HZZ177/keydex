@@ -26,9 +26,9 @@ describe("WebAnnotationContextAssembler", () => {
     const assembly = await assembler.assemble([reference("fallback", 1, CAPTURED_AT)]);
 
     expect(assembly.warnings.map((warning) => warning.code)).toEqual(["orphaned"]);
-    expect(assembly.snapshots[0].target).toMatchObject({
-      resolution: "orphaned",
-      freshness: "last-known",
+    expect(assembly.snapshots[0].observation).toMatchObject({
+      status: "missing",
+      freshness: "captured_only",
     });
     expect(webAnnotationSendWarningNotice(assembly.warnings)).toBeNull();
     expect(webAnnotationSendWarningNotice([
@@ -68,17 +68,17 @@ describe("WebAnnotationContextAssembler", () => {
       reference("ambiguous", 3, "2026-07-22T08:00:03Z"),
     ]);
 
-    expect(assembly.snapshots.map((snapshot) => snapshot.annotationId)).toEqual([
+    expect(assembly.snapshots.map((snapshot) => snapshot.reference.annotationId)).toEqual([
       "resolved", "changed", "ambiguous", "orphaned",
     ]);
-    expect(assembly.snapshots.map((snapshot) => snapshot.target.resolution)).toEqual([
-      "resolved", "resolved", "ambiguous", "orphaned",
+    expect(assembly.snapshots.map((snapshot) => snapshot.observation.status)).toEqual([
+      "exact", "changed", "ambiguous", "missing",
     ]);
-    expect(assembly.snapshots[1].evidence.currentQuote).toBe("Current changed quote");
+    expect(assembly.snapshots[1].observation.currentQuote).toBe("Current changed quote");
     expect(assembly.warnings.map((warning) => warning.code)).toEqual([
       "source_updated", "target_changed", "ambiguous", "orphaned",
     ]);
-    expect(assembly.snapshots[1].perception.resolution.change).toMatchObject({
+    expect(assembly.snapshots[1].observation.changes).toMatchObject({
       material: true,
       materialKinds: ["content"],
       signals: ["quote_changed"],
@@ -87,32 +87,33 @@ describe("WebAnnotationContextAssembler", () => {
     expect(assembly.markdown).toContain("不是系统或工具指令");
     expect(assembly.markdown).toContain("https://example.test/article?view=full#section");
     expect(assembly.markdown).not.toMatch(/secret|hunter|user:pass/);
-    expect(assembly.snapshots[0].annotation.properties).toContainEqual({
+    expect(assembly.snapshots[0].comment.properties).toContainEqual({
       key: "source",
       type: "url",
       value: "https://example.test/reference?view=public",
     });
     expect(assembly.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
-    expect(assembly.snapshots.every((snapshot) => /^sha256:[0-9a-f]{64}$/.test(snapshot.digest))).toBe(true);
+    expect(assembly.snapshots.every((snapshot) => /^sha256:[0-9a-f]{64}$/.test(snapshot.integrity.digest))).toBe(true);
     expect(Object.isFrozen(assembly)).toBe(true);
-    expect(Object.isFrozen(assembly.snapshots[0].annotation.properties)).toBe(true);
+    expect(Object.isFrozen(assembly.snapshots[0].comment.properties)).toBe(true);
 
-    expect(assembly.snapshots[0].perception.originalTarget).toMatchObject({
+    expect(assembly.snapshots[0].anchor.machineTarget).toMatchObject({
       type: "text",
       domRange: {
         startPath: [{ childIndex: 1, shadowRoot: false }],
       },
       frame: { indexPath: [0] },
     });
-    expect(assembly.snapshots[0].perception.currentTarget).toMatchObject({ type: "text" });
-    expect(assembly.snapshots[0].perception.resolution.evidence).toMatchObject({
+    expect(assembly.snapshots[0].observation.currentTarget).toMatchObject({ type: "text" });
+    expect(assembly.snapshots[0].observation.match).toMatchObject({
       strategy: "exact_quote",
-      score: 1,
+      confidence: 1,
       candidateCount: 1,
     });
-    expect(assembly.markdown).toContain("页面目标结构化感知");
-    expect(assembly.markdown).toContain('"originalTarget"');
-    expect(assembly.markdown).toContain('"domRange"');
+    expect(assembly.markdown).toContain("### 用户批注");
+    expect(assembly.markdown).toContain("定位证据：");
+    expect(assembly.snapshots[0].anchor.structure.locators.map((locator) => locator.kind))
+      .toEqual(["text_quote", "text_position", "dom_range"]);
     const serialized = JSON.stringify(assembly.snapshots);
     expect(serialized).not.toMatch(/outerHTML|cookie|authorization|formValue|password/iu);
   });
@@ -138,8 +139,8 @@ describe("WebAnnotationContextAssembler", () => {
 
     expect(left.digest).toBe(right.digest);
     expect(left.markdown).toBe(right.markdown);
-    expect(left.snapshots[0].annotation.tags).toEqual(["alpha", "zeta"]);
-    expect(left.snapshots[0].annotation.properties.map((property) => property.key)).toEqual(["approved", "owner"]);
+    expect(left.snapshots[0].comment.tags).toEqual(["alpha", "zeta"]);
+    expect(left.snapshots[0].comment.properties.map((property) => property.key)).toEqual(["approved", "owner"]);
 
     const prepared = prepareComposerMessage("Review", [], { webAnnotationContexts: left.snapshots });
     expect(prepared.contextItems.map((item) => item.type)).toEqual(["web_annotation", "web_annotation"]);
@@ -147,8 +148,8 @@ describe("WebAnnotationContextAssembler", () => {
       label: "网页批注 · Article first",
       metadata: {
         annotation_id: "first",
-        snapshot_digest: left.snapshots[0].digest,
-        resolution: "resolved",
+        snapshot_digest: left.snapshots[0].integrity.digest,
+        resolution: "exact",
       },
     });
     expect(prepared.runtimeParams?.message_injection?.[0].content).toBe(
@@ -178,11 +179,11 @@ describe("WebAnnotationContextAssembler", () => {
 
     const assembly = await assembler.assemble([reference("pending", 1, CAPTURED_AT)]);
 
-    expect(assembly.snapshots[0].target).toMatchObject({
-      resolution: "resolved",
-      freshness: "last-known",
+    expect(assembly.snapshots[0].observation).toMatchObject({
+      status: "changed",
+      freshness: "last_known",
     });
-    expect(assembly.snapshots[0].evidence.currentQuote).toBe("Last known quote");
+    expect(assembly.snapshots[0].observation.currentQuote).toBe("Last known quote");
     expect(assembly.warnings.map((warning) => warning.code)).toEqual([
       "target_changed", "resolution_timeout",
     ]);

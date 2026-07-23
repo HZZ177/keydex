@@ -80,6 +80,16 @@
         0 0 0 1px color-mix(in srgb, var(--keydex-overlay-surface) 82%, transparent) inset,
         0 0 0 3px color-mix(in srgb, var(--keydex-overlay-focus) 20%, transparent);
     }
+    .rect[data-kind="highlight"] {
+      pointer-events: auto;
+      cursor: pointer;
+    }
+    .rect[data-kind="highlight"]:hover,
+    .rect[data-kind="highlight"]:focus-visible {
+      outline: 2px solid color-mix(in srgb, var(--keydex-overlay-accent) 34%, transparent);
+      outline-offset: 2px;
+      background: color-mix(in srgb, var(--keydex-overlay-accent) 18%, transparent);
+    }
     .inspector-label {
       position: absolute;
       z-index: 2;
@@ -151,6 +161,116 @@
         0 10px 24px color-mix(in srgb, var(--keydex-overlay-text) 10%, transparent),
         0 2px 7px color-mix(in srgb, var(--keydex-overlay-text) 7%, transparent),
         0 0 0 2px color-mix(in srgb, var(--keydex-overlay-focus) 16%, transparent);
+    }
+    .highlight-popover {
+      position: absolute;
+      display: grid;
+      width: min(320px, calc(100vw - 24px));
+      gap: 9px;
+      pointer-events: auto;
+      border: 1px solid color-mix(in srgb, var(--keydex-overlay-accent) 30%, var(--keydex-overlay-border));
+      border-radius: max(10px, calc(var(--keydex-overlay-radius) + 5px));
+      padding: 11px;
+      background: color-mix(in srgb, var(--keydex-overlay-surface) 97%, white);
+      color: var(--keydex-overlay-text);
+      box-shadow:
+        0 12px 30px color-mix(in srgb, var(--keydex-overlay-text) 14%, transparent),
+        0 2px 8px color-mix(in srgb, var(--keydex-overlay-text) 8%, transparent);
+      font: 12px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+      backdrop-filter: blur(12px);
+    }
+    .highlight-popover::before {
+      content: "";
+      position: absolute;
+      left: var(--keydex-highlight-arrow-left, 24px);
+      width: 11px;
+      height: 11px;
+      border: solid color-mix(in srgb, var(--keydex-overlay-accent) 30%, var(--keydex-overlay-border));
+      background: color-mix(in srgb, var(--keydex-overlay-surface) 97%, white);
+      rotate: 45deg;
+    }
+    .highlight-popover[data-side="below"]::before {
+      top: -6px;
+      border-width: 1px 0 0 1px;
+    }
+    .highlight-popover[data-side="above"]::before {
+      bottom: -6px;
+      border-width: 0 1px 1px 0;
+    }
+    .highlight-popover-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--keydex-overlay-accent);
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .highlight-popover-close {
+      display: inline-grid;
+      width: 24px;
+      height: 24px;
+      place-items: center;
+      border: 0;
+      border-radius: 7px;
+      padding: 0;
+      background: transparent;
+      color: color-mix(in srgb, var(--keydex-overlay-text) 62%, transparent);
+      cursor: pointer;
+      font: inherit;
+      font-size: 18px;
+      line-height: 1;
+    }
+    .highlight-popover-close:hover,
+    .highlight-popover-close:focus-visible {
+      outline: none;
+      background: color-mix(in srgb, var(--keydex-overlay-text) 8%, transparent);
+      color: var(--keydex-overlay-text);
+    }
+    .highlight-popover-body {
+      max-height: min(180px, 28vh);
+      overflow: auto;
+      margin: 0;
+      color: var(--keydex-overlay-text);
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+    .highlight-popover-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+    .highlight-popover-action {
+      display: inline-flex;
+      height: 30px;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid color-mix(in srgb, var(--keydex-overlay-accent) 28%, var(--keydex-overlay-border));
+      border-radius: 15px;
+      padding: 0 12px;
+      background: color-mix(in srgb, var(--keydex-overlay-accent) 12%, var(--keydex-overlay-surface));
+      color: var(--keydex-overlay-accent);
+      cursor: pointer;
+      font: inherit;
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 1;
+    }
+    .highlight-popover-action:hover,
+    .highlight-popover-action:focus-visible {
+      outline: none;
+      background: color-mix(in srgb, var(--keydex-overlay-accent) 18%, var(--keydex-overlay-surface));
+    }
+    .highlight-popover-action[data-tone="danger"] {
+      border-color: color-mix(in srgb, var(--keydex-overlay-danger) 32%, var(--keydex-overlay-border));
+      background: color-mix(in srgb, var(--keydex-overlay-danger) 9%, var(--keydex-overlay-surface));
+      color: var(--keydex-overlay-danger);
+    }
+    .highlight-popover-action[data-tone="danger"]:hover,
+    .highlight-popover-action[data-tone="danger"]:focus-visible,
+    .highlight-popover-action[data-confirm="true"] {
+      background: color-mix(in srgb, var(--keydex-overlay-danger) 17%, var(--keydex-overlay-surface));
     }
     .annotation-editor::before {
       content: "";
@@ -305,7 +425,18 @@
     status.setAttribute("aria-atomic", "true");
     shadow.append(style, highlightLayer, selectionLayer, status);
     (document.documentElement ?? document.body).append(root);
-    overlay = { root, shadow, highlightLayer, selectionLayer, status, captureLayer: null, editor: null };
+    overlay = {
+      root,
+      shadow,
+      highlightLayer,
+      selectionLayer,
+      status,
+      captureLayer: null,
+      editor: null,
+      highlightPopover: null,
+      highlightPopoverAnnotationId: null,
+      highlightPopoverResumeSelection: false,
+    };
     applyConfiguration();
     updateCounters();
     return overlay;
@@ -341,6 +472,7 @@
     }
     if (envelope.kind === "selection.start") {
       closeEditor();
+      closeHighlightPopover(false);
       selectionId = envelope.payload?.selectionId ?? null;
       const current = ensureOverlay();
       clearLayer(current.selectionLayer);
@@ -353,12 +485,17 @@
       return;
     }
     if (envelope.kind === "highlight.render") {
+      const fallbackScroll = viewportScroll();
       highlights.set(envelope.payload.annotationId, {
         requestId: envelope.requestId,
         target: envelope.payload.target,
         state: envelope.payload.state,
+        bodyMarkdown: typeof envelope.payload.bodyMarkdown === "string"
+          ? envelope.payload.bodyMarkdown
+          : "",
         rects: [],
         flash: false,
+        fallbackScroll,
       });
       lastGeometryRequestId = envelope.requestId;
       renderHighlights(false);
@@ -366,6 +503,8 @@
     }
     if (envelope.kind === "highlight.clear") {
       for (const annotationId of envelope.payload.annotationIds) highlights.delete(annotationId);
+      if (overlay?.highlightPopoverAnnotationId
+        && !highlights.has(overlay.highlightPopoverAnnotationId)) closeHighlightPopover(false);
       renderHighlights(false);
       return;
     }
@@ -511,6 +650,7 @@
     }
     const current = ensureOverlay();
     closeEditor();
+    closeHighlightPopover();
     current.root.setAttribute("data-editor-open", "true");
     current.root.style.setProperty("pointer-events", "auto", "important");
     clearLayer(current.selectionLayer);
@@ -537,7 +677,6 @@
     const input = document.createElement("textarea");
     input.className = "editor-input";
     input.name = "annotation";
-    input.maxLength = 32 * 1024;
     input.placeholder = "添加批注";
     input.setAttribute("aria-label", "批注内容");
 
@@ -576,7 +715,7 @@
         requestId,
         selectionId: currentSelectionId,
         bodyLength: bodyMarkdown.length,
-        bodyBytes: utf8Size(bodyMarkdown),
+        bodyCharacters: Array.from(bodyMarkdown).length,
       });
       if (!bodyMarkdown) {
         trace("overlay.editor.save.rejected", { requestId, selectionId: currentSelectionId, reason: "empty" });
@@ -584,9 +723,9 @@
         input.focus({ preventScroll: true });
         return;
       }
-      if (utf8Size(bodyMarkdown) > 32 * 1024) {
+      if (Array.from(bodyMarkdown).length > 32 * 1024) {
         trace("overlay.editor.save.rejected", { requestId, selectionId: currentSelectionId, reason: "too_large" });
-        error.textContent = "批注内容不能超过 32 KiB";
+        error.textContent = "批注内容不能超过 32,768 字符";
         input.focus({ preventScroll: true });
         return;
       }
@@ -605,7 +744,14 @@
       }
     });
     input.addEventListener("input", () => {
-      if (error.textContent) error.textContent = "";
+      const characters = Array.from(input.value);
+      let truncated = false;
+      if (characters.length > 32 * 1024) {
+        input.value = characters.slice(0, 32 * 1024).join("");
+        error.textContent = "批注内容不能超过 32,768 字符";
+        truncated = true;
+      }
+      if (!truncated && error.textContent) error.textContent = "";
       input.style.height = "0px";
       input.style.height = `${Math.min(96, Math.max(32, input.scrollHeight))}px`;
       positionEditor();
@@ -655,6 +801,152 @@
     if (!overlay?.editor) return;
     overlay.editor.remove();
     overlay.editor = null;
+  };
+
+  const openHighlightPopover = (annotationId, entry, rect, resumeSelectionOnClose = false) => {
+    if (!validRect(rect)) return;
+    const current = ensureOverlay();
+    closeHighlightPopover(false);
+
+    const popover = document.createElement("section");
+    popover.className = "highlight-popover";
+    popover.setAttribute("part", "annotation-highlight-popover");
+    popover.setAttribute("role", "dialog");
+    popover.setAttribute("aria-label", "网页批注内容");
+    popover.dataset.annotationId = annotationId;
+
+    const header = document.createElement("header");
+    header.className = "highlight-popover-header";
+    const title = document.createElement("span");
+    title.textContent = "网页批注";
+    const close = document.createElement("button");
+    close.className = "highlight-popover-close";
+    close.type = "button";
+    close.setAttribute("aria-label", "关闭批注内容");
+    close.textContent = "×";
+    header.append(title, close);
+
+    const body = document.createElement("p");
+    body.className = "highlight-popover-body";
+    body.textContent = entry.bodyMarkdown || "这条批注暂无正文。";
+
+    const add = document.createElement("button");
+    add.className = "highlight-popover-action";
+    add.type = "button";
+    add.textContent = "发送给 Agent";
+    add.setAttribute("aria-label", "将网页批注发送给 Agent");
+    const remove = document.createElement("button");
+    remove.className = "highlight-popover-action";
+    remove.type = "button";
+    remove.dataset.tone = "danger";
+    remove.textContent = "删除";
+    remove.setAttribute("aria-label", "删除网页批注");
+    const actions = document.createElement("footer");
+    actions.className = "highlight-popover-actions";
+    actions.append(remove, add);
+    popover.append(header, body, actions);
+
+    const stopPageInteraction = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    popover.addEventListener("pointerdown", stopPageInteraction);
+    popover.addEventListener("click", (event) => event.stopPropagation());
+    close.addEventListener("click", (event) => {
+      stopPageInteraction(event);
+      closeHighlightPopover();
+    });
+    add.addEventListener("click", (event) => {
+      stopPageInteraction(event);
+      respond("highlight.action", entry.requestId, {
+        annotationId,
+        action: "add_to_composer",
+      });
+      closeHighlightPopover();
+    });
+    remove.addEventListener("click", (event) => {
+      stopPageInteraction(event);
+      if (remove.dataset.confirm !== "true") {
+        remove.dataset.confirm = "true";
+        remove.textContent = "确认删除";
+        remove.setAttribute("aria-label", "确认删除网页批注");
+        return;
+      }
+      respond("highlight.action", entry.requestId, {
+        annotationId,
+        action: "delete_annotation",
+      });
+      closeHighlightPopover(false);
+    });
+    popover.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeHighlightPopover();
+      }
+    });
+
+    current.shadow.append(popover);
+    current.highlightPopover = popover;
+    current.highlightPopoverAnnotationId = annotationId;
+    current.highlightPopoverResumeSelection = resumeSelectionOnClose;
+    positionHighlightPopover(rect);
+    close.focus({ preventScroll: true });
+  };
+
+  const closeHighlightPopover = (resumeSelection = true) => {
+    if (!overlay?.highlightPopover) return;
+    const annotationId = overlay.highlightPopoverAnnotationId;
+    const entry = annotationId ? highlights.get(annotationId) : null;
+    const shouldResume = resumeSelection && overlay.highlightPopoverResumeSelection;
+    overlay.highlightPopover.remove();
+    overlay.highlightPopover = null;
+    overlay.highlightPopoverAnnotationId = null;
+    overlay.highlightPopoverResumeSelection = false;
+    if (shouldResume && annotationId && entry) {
+      respond("highlight.action", entry.requestId, {
+        annotationId,
+        action: "resume_selection",
+      });
+    }
+  };
+
+  const openNativeHighlight = (annotationId) => {
+    if (typeof annotationId !== "string" || !annotationId) return false;
+    const entry = highlights.get(annotationId);
+    if (!entry) return false;
+    const rect = entry.rects.find(validRect) ?? targetRects(entry.target)[0];
+    if (!validRect(rect)) return false;
+    openHighlightPopover(annotationId, entry, rect, true);
+    return overlay?.highlightPopoverAnnotationId === annotationId;
+  };
+
+  const positionHighlightPopover = (preferredRect) => {
+    const popover = overlay?.highlightPopover;
+    if (!popover?.isConnected) return;
+    const annotationId = overlay.highlightPopoverAnnotationId;
+    const entry = annotationId ? highlights.get(annotationId) : null;
+    const rect = validRect(preferredRect) ? preferredRect : entry?.rects?.find(validRect);
+    if (!validRect(rect)) {
+      closeHighlightPopover();
+      return;
+    }
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 1;
+    const margin = 12;
+    const gap = 9;
+    const width = Math.min(320, Math.max(220, viewportWidth - margin * 2));
+    const measuredHeight = popover.getBoundingClientRect().height || 120;
+    const left = clamp(rect.x, margin, Math.max(margin, viewportWidth - width - margin));
+    const below = rect.y + rect.height + gap;
+    const fitsBelow = below + measuredHeight <= viewportHeight - margin;
+    const top = fitsBelow ? below : Math.max(margin, rect.y - gap - measuredHeight);
+    popover.dataset.side = fitsBelow ? "below" : "above";
+    popover.style.left = `${Math.round(left)}px`;
+    popover.style.top = `${Math.round(top)}px`;
+    popover.style.width = `${Math.round(width)}px`;
+    const arrowLeft = clamp(rect.x + rect.width / 2 - left - 5, 16, width - 26);
+    popover.style.setProperty("--keydex-highlight-arrow-left", `${Math.round(arrowLeft)}px`);
   };
 
   const positionEditor = () => {
@@ -726,6 +1018,7 @@
 
   const renderHighlights = (geometryEvent) => {
     if (highlights.size === 0) {
+      closeHighlightPopover(false);
       if (overlay) clearLayer(overlay.highlightLayer);
       updateCounters();
       removeIfEmpty();
@@ -735,7 +1028,7 @@
     clearLayer(current.highlightLayer);
     const changed = [];
     for (const [annotationId, entry] of highlights) {
-      const rects = targetRects(entry.target);
+      const rects = targetRects(entry.target, entry.fallbackScroll);
       if (!sameRects(rects, entry.rects)) changed.push(annotationId);
       entry.rects = rects;
       renderRects(current.highlightLayer, rects, {
@@ -743,10 +1036,12 @@
         state: entry.state,
         annotationId,
         flash: entry.flash,
+        entry,
       });
       entry.flash = false;
     }
     updateCounters();
+    positionHighlightPopover();
     if (geometryEvent && changed.length > 0 && lastGeometryRequestId) {
       respond("geometry.changed", lastGeometryRequestId, { annotationIds: changed.slice(0, 50) });
     }
@@ -766,6 +1061,25 @@
       marker.style.top = `${rect.y}px`;
       marker.style.width = `${rect.width}px`;
       marker.style.height = `${rect.height}px`;
+      if (metadata.kind === "highlight" && metadata.entry) {
+        marker.setAttribute("role", "button");
+        marker.setAttribute("tabindex", "0");
+        marker.setAttribute("aria-label", "查看网页批注");
+        const open = (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openHighlightPopover(metadata.annotationId, metadata.entry, rect);
+        };
+        marker.addEventListener("pointerdown", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        });
+        marker.addEventListener("click", open);
+        marker.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          open(event);
+        });
+      }
       targetLayer.append(marker);
     }
   };
@@ -784,20 +1098,39 @@
     targetLayer.append(label);
   };
 
-  const targetRects = (target) => {
+  const targetRects = (target, fallbackScroll = viewportScroll()) => {
     if (!target || typeof target !== "object") return [];
+    const currentScroll = viewportScroll();
+    const fallbackOffset = {
+      x: fallbackScroll.x - currentScroll.x,
+      y: fallbackScroll.y - currentScroll.y,
+    };
     if (target.type === "text") {
       const range = rangeFromTarget(target);
       if (range) {
         const rects = Array.from(range.getClientRects?.() ?? []).map(toRect).filter(Boolean);
         if (rects.length > 0) return rects;
       }
-      return Array.isArray(target.rects) ? target.rects.filter(validRect) : [];
+      return Array.isArray(target.rects)
+        ? target.rects.filter(validRect).map((rect) => ({
+            ...rect,
+            x: rect.x + fallbackOffset.x,
+            y: rect.y + fallbackOffset.y,
+          }))
+        : [];
     }
     if (target.type === "element") {
       const element = resolvePath(target.path);
       const rect = element instanceof Element ? toRect(element.getBoundingClientRect()) : null;
-      return rect ? [rect] : validRect(target.rect) ? [target.rect] : [];
+      return rect
+        ? [rect]
+        : validRect(target.rect)
+          ? [{
+              ...target.rect,
+              x: target.rect.x + fallbackOffset.x,
+              y: target.rect.y + fallbackOffset.y,
+            }]
+          : [];
     }
     if (target.type === "region") {
       if (target.relativeElement) {
@@ -818,6 +1151,18 @@
       }].filter(validRect);
     }
     return [];
+  };
+
+  const viewportScroll = () => {
+    const scrollingElement = document.scrollingElement;
+    return {
+      x: Number.isFinite(window.scrollX)
+        ? window.scrollX
+        : Number.isFinite(scrollingElement?.scrollLeft) ? scrollingElement.scrollLeft : 0,
+      y: Number.isFinite(window.scrollY)
+        ? window.scrollY
+        : Number.isFinite(scrollingElement?.scrollTop) ? scrollingElement.scrollTop : 0,
+    };
   };
 
   const rangeFromTarget = (target) => {
@@ -963,6 +1308,11 @@
     configurable: true,
     enumerable: false,
     writable: false,
-    value: Object.freeze({ beginRegion, openNativeEditor, cancelNativeEditor }),
+    value: Object.freeze({
+      beginRegion,
+      openNativeEditor,
+      cancelNativeEditor,
+      openNativeHighlight,
+    }),
   });
 })();

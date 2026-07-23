@@ -7,6 +7,7 @@ import { webAnnotationReferencePresentations } from "@/renderer/features/browser
 import type { AgentContextItem } from "@/types/protocol";
 
 export const APP_ADD_WEB_ANNOTATION_TO_COMPOSER_EVENT = "keydex:add-web-annotation-to-composer";
+export const APP_REMOVE_WEB_ANNOTATION_FROM_COMPOSERS_EVENT = "keydex:remove-web-annotation-from-composers";
 export const APP_NAVIGATE_TO_WEB_ANNOTATION_EVENT = "keydex:navigate-to-web-annotation";
 
 export type AddWebAnnotationToComposerResult = "added" | "duplicate" | "limit" | "unhandled";
@@ -21,6 +22,11 @@ export interface AddWebAnnotationToComposerDetail {
 
 export interface NavigateToWebAnnotationDetail {
   readonly snapshot: WebAnnotationContextSnapshot;
+}
+
+export interface RemoveWebAnnotationFromComposersDetail {
+  readonly annotationId: string;
+  removedCount: number;
 }
 
 export function emitAddWebAnnotationToComposer(
@@ -43,6 +49,31 @@ export function subscribeAddWebAnnotationToComposer(
   };
   document.addEventListener(APP_ADD_WEB_ANNOTATION_TO_COMPOSER_EVENT, handle);
   return () => document.removeEventListener(APP_ADD_WEB_ANNOTATION_TO_COMPOSER_EVENT, handle);
+}
+
+export function emitRemoveWebAnnotationFromComposers(annotationId: string): number {
+  const normalizedId = annotationId.trim();
+  if (!normalizedId) return 0;
+  webAnnotationReferencePresentations.remove(normalizedId);
+  const detail: RemoveWebAnnotationFromComposersDetail = {
+    annotationId: normalizedId,
+    removedCount: 0,
+  };
+  document.dispatchEvent(new CustomEvent<RemoveWebAnnotationFromComposersDetail>(
+    APP_REMOVE_WEB_ANNOTATION_FROM_COMPOSERS_EVENT,
+    { detail },
+  ));
+  return detail.removedCount;
+}
+
+export function subscribeRemoveWebAnnotationFromComposers(
+  listener: (detail: RemoveWebAnnotationFromComposersDetail) => void,
+): () => void {
+  const handle = (event: Event) => {
+    listener((event as CustomEvent<RemoveWebAnnotationFromComposersDetail>).detail);
+  };
+  document.addEventListener(APP_REMOVE_WEB_ANNOTATION_FROM_COMPOSERS_EVENT, handle);
+  return () => document.removeEventListener(APP_REMOVE_WEB_ANNOTATION_FROM_COMPOSERS_EVENT, handle);
 }
 
 export function emitNavigateToWebAnnotation(snapshot: WebAnnotationContextSnapshot): void {

@@ -33,7 +33,7 @@ export function RetargetFlow({
         <ArrowRight aria-hidden="true" size={15} />
         <TargetPreview label="新目标" summary={targetSummary(draft.target)} />
       </div>
-      <p className={styles.retargetPreserved}>仅更新定位目标；批注正文、标签和结构化属性保持不变。</p>
+      <p className={styles.retargetPreserved}>仅更新定位目标，批注内容保持不变。</p>
       {draft.evidence?.status === "capturing" ? (
         <p className={styles.retargetStatus} role="status">正在保存新区域的截图证据…</p>
       ) : null}
