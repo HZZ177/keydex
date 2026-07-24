@@ -668,6 +668,23 @@ class SessionService:
             "current_model": record.current_model,
             "context_window_usage": record.context_window_usage,
             "context_compression_epoch": record.context_compression_epoch,
+            "checkpoint_lineage": {
+                "epoch": record.checkpoint_lineage_epoch,
+                "history_floor_turn_index": (
+                    record.checkpoint_history_floor_turn_index
+                ),
+                "root_checkpoint_id": record.checkpoint_root_id,
+                "collapsed_at": record.checkpoint_collapsed_at,
+            },
+            "checkpoint_capabilities": {
+                "can_continue": True,
+                "can_fork_before_history_floor": (
+                    record.checkpoint_history_floor_turn_index == 0
+                ),
+                "can_reverse_before_history_floor": (
+                    record.checkpoint_history_floor_turn_index == 0
+                ),
+            },
             "pinned": record.pinned_at is not None,
             "pinned_at": record.pinned_at,
             "workspace": workspace,

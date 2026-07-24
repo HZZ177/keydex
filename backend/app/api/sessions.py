@@ -208,7 +208,7 @@ class SessionReverseStatusResponse(BaseModel):
     "/{session_id}/reverse/preview",
     response_model=SessionReversePreviewResponse,
 )
-def preview_session_reverse(
+async def preview_session_reverse(
     session_id: str,
     payload: SessionReversePreviewRequest,
     request: Request,
@@ -224,7 +224,7 @@ def preview_session_reverse(
         workspace = WorkspaceService(repositories.workspaces).runtime_context_for_session(session)
         history = _file_history_service(request, repositories, settings)
         history.assert_preview_available(session_id)
-        source = _fork_service(repositories).resolve_reverse_source(
+        source = await _fork_service(repositories, request).resolve_reverse_source(
             session_id=session_id,
             message_event_id=payload.message_event_id,
         )
@@ -444,14 +444,15 @@ def update_session(
 
 
 @router.post("/{session_id}/fork", response_model=SessionBranchResponse)
-def fork_session(
+async def fork_session(
     session_id: str,
     payload: SessionBranchRequest,
+    request: Request,
     repositories: StorageRepositories = RepositoriesDep,
     settings: AppSettings = SettingsDep,
 ) -> SessionBranchResponse:
     try:
-        result = _fork_service(repositories).fork_session(
+        result = await _fork_service(repositories, request).fork_session(
             session_id=session_id,
             user_id=payload.user_id or settings.default_user_id,
             title=payload.title,
@@ -480,7 +481,13 @@ async def reverse_session(
     settings: AppSettings = SettingsDep,
 ) -> SessionReverseResponse | SessionBranchResponse:
     if payload.operation_id is None:
-        return _legacy_reverse_session(session_id, payload, repositories, settings)
+        return await _legacy_reverse_session(
+            session_id,
+            payload,
+            request,
+            repositories,
+            settings,
+        )
     if not payload.message_event_id or not payload.preview_token:
         raise _bad_request(
             "invalid_reverse_request",
@@ -498,7 +505,9 @@ async def reverse_session(
         result = SessionReverseService(
             repositories,
             file_history=history,
-        ).execute(
+            checkpointer=getattr(request.app.state, "checkpointer", None),
+        )
+        result = await result.execute(
             session_id=session_id,
             workspace_root=workspace.cwd,
             request=SessionReverseExecution(
@@ -594,14 +603,15 @@ def get_session_reverse_status(
     )
 
 
-def _legacy_reverse_session(
+async def _legacy_reverse_session(
     session_id: str,
     payload: SessionReverseRequest,
+    request: Request,
     repositories: StorageRepositories,
     settings: AppSettings,
 ) -> SessionBranchResponse:
     try:
-        result = _fork_service(repositories).reverse_session(
+        result = await _fork_service(repositories, request).reverse_session(
             session_id=session_id,
             user_id=payload.user_id or settings.default_user_id,
             title=payload.title,
@@ -708,6 +718,7 @@ async def compress_session_context(
     service = ManualContextCompressionService(
         repositories,
         checkpointer=checkpointer,
+        checkpoint_state_graph=agent_runner.checkpoint_state_graph(),
         factory=agent_runner.factory,
         http_transport=http_transport,
         broadcaster=broadcast,
@@ -865,8 +876,14 @@ def _service(repositories: StorageRepositories) -> SessionService:
     )
 
 
-def _fork_service(repositories: StorageRepositories) -> SessionForkService:
-    return SessionForkService(repositories)
+def _fork_service(
+    repositories: StorageRepositories,
+    request: Request,
+) -> SessionForkService:
+    return SessionForkService(
+        repositories,
+        checkpointer=getattr(request.app.state, "checkpointer", None),
+    )
 
 
 def _session_access_error(exc: SessionNotFoundError | SessionArchivedError) -> HTTPException:

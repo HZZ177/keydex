@@ -1,17 +1,48 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Annotated, Any
 
 from langchain_core.messages import AnyMessage
+from langgraph.channels.delta import DeltaChannel
+from langgraph.graph import START, StateGraph
 from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
+
+from backend.app.core.config import get_settings
 
 PENDING_SKILL_ACTIVATIONS_RESET_MARKER = "__keydex_pending_skill_activations_reset__"
 PENDING_TOOL_CALL_PRESET_STATE_KEY = "pending_tool_call_preset"
 STRUCTURED_USER_MESSAGE_GROUPS_STATE_KEY = "structured_user_message_groups"
 STRUCTURED_USER_GROUP_REPLAY_MARKERS_STATE_KEY = "structured_user_group_replay_markers"
 CONTEXT_COMPRESSION_DIAGNOSTICS_STATE_KEY = "context_compression_diagnostics"
+CHECKPOINT_STATE_UPDATE_NODE = "keydex_checkpoint_state_update"
+
+
+def keydex_messages_delta_reducer(
+    state: Sequence[AnyMessage],
+    writes: Sequence[Any],
+) -> list[AnyMessage]:
+    """Apply message writes in their original order using LangGraph semantics."""
+    result = list(state)
+    for write in writes:
+        result = add_messages(result, write)
+    return result
+
+
+def create_messages_delta_channel(
+    snapshot_frequency: int | None = None,
+) -> DeltaChannel[list[AnyMessage]]:
+    frequency = (
+        get_settings().checkpoint_delta_snapshot_frequency
+        if snapshot_frequency is None
+        else snapshot_frequency
+    )
+    return DeltaChannel(
+        keydex_messages_delta_reducer,
+        list,
+        snapshot_frequency=frequency,
+    )
 
 
 def merge_pending_skill_activations(left: Any, right: Any) -> list[dict[str, Any]]:
@@ -127,7 +158,7 @@ def build_structured_user_group_replay_marker_update(
 
 
 class KeydexAgentState(TypedDict, total=False):
-    messages: Annotated[list[AnyMessage], add_messages]
+    messages: Annotated[list[AnyMessage], create_messages_delta_channel()]
     structured_user_message_groups: Annotated[
         list[dict[str, Any]],
         merge_structured_user_message_groups,
@@ -142,3 +173,11 @@ class KeydexAgentState(TypedDict, total=False):
         list[dict[str, Any]],
         merge_pending_skill_activations,
     ]
+
+
+def build_checkpoint_state_graph(checkpointer: Any) -> Any:
+    """Compile the minimal real-state graph used for graph-native successor updates."""
+    builder = StateGraph(KeydexAgentState)
+    builder.add_node(CHECKPOINT_STATE_UPDATE_NODE, lambda _state: {})
+    builder.add_edge(START, CHECKPOINT_STATE_UPDATE_NODE)
+    return builder.compile(checkpointer=checkpointer)

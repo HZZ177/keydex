@@ -17,6 +17,8 @@ class HealthResponse(BaseModel):
     agent_warmup_duration_ms: int | None = None
     capabilities: list[str] = Field(default_factory=list)
     file_history_enabled: bool = True
+    checkpoint_status: str = "unknown"
+    checkpoint_ready: bool = False
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -25,6 +27,12 @@ async def get_health(request: Request) -> HealthResponse:
     agent_status = _agent_status(request.app.state)
     runtime = getattr(request.app.state, "runtime", None)
     file_history = getattr(request.app.state, "file_history_service", None)
+    checkpoint_runtime = getattr(request.app.state, "checkpoint_runtime", None)
+    checkpoint_status = (
+        checkpoint_runtime.status_payload()
+        if checkpoint_runtime is not None
+        else {"state": "unknown", "ready": False}
+    )
     return HealthResponse(
         status="ok",
         version=settings.version,
@@ -34,6 +42,8 @@ async def get_health(request: Request) -> HealthResponse:
         agent_warmup_duration_ms=agent_status.get("duration_ms"),
         capabilities=list(getattr(runtime, "capabilities", ())),
         file_history_enabled=bool(getattr(file_history, "enabled", True)),
+        checkpoint_status=str(checkpoint_status["state"]),
+        checkpoint_ready=bool(checkpoint_status["ready"]),
     )
 
 

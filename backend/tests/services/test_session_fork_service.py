@@ -4,7 +4,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from backend.app.agent.checkpoint import SQLiteCheckpointSaver
+from backend.app.agent.checkpoint import KeydexAsyncCheckpointStore
+from backend.app.agent.checkpoint_runtime import CheckpointRuntime
 from backend.app.services.session_fork_service import SessionForkService, SessionForkServiceError
 from backend.app.storage import StorageRepositories, init_database
 from backend.app.subagents.models import SubagentRunSnapshot
@@ -25,7 +26,17 @@ def _checkpoint(checkpoint_id: str) -> dict:
     }
 
 
-def _prepare_source(tmp_path):
+_RUNTIMES: list[CheckpointRuntime] = []
+
+
+@pytest.fixture(autouse=True)
+async def _close_checkpoint_runtimes():
+    yield
+    while _RUNTIMES:
+        await _RUNTIMES.pop().close()
+
+
+async def _prepare_source(tmp_path):
     repositories = _repositories(tmp_path)
     source = repositories.sessions.create(
         session_id="ses_source",
@@ -35,14 +46,17 @@ def _prepare_source(tmp_path):
         current_model_provider_id="provider-source",
         current_model="qwen-coder",
     )
-    saver = SQLiteCheckpointSaver(repositories.db)
-    first_config = saver.put(
+    runtime = CheckpointRuntime(repositories.db.path)
+    assert await runtime.start() is True
+    _RUNTIMES.append(runtime)
+    saver = runtime.require_store()
+    first_config = await saver.aput(
         {"configurable": {"thread_id": source.id, "checkpoint_ns": ""}},
         _checkpoint("ckpt_1"),
         {"step": 1},
         {},
     )
-    saver.put(first_config, _checkpoint("ckpt_2"), {"step": 2}, {})
+    await saver.aput(first_config, _checkpoint("ckpt_2"), {"step": 2}, {})
     for turn_index, input_checkpoint_id, output_checkpoint_id in [
         (1, None, "ckpt_1"),
         (2, "ckpt_1", "ckpt_2"),
@@ -84,9 +98,9 @@ def _prepare_source(tmp_path):
     return repositories, saver
 
 
-def _create_subagent_instance(
+async def _create_subagent_instance(
     repositories: StorageRepositories,
-    saver: SQLiteCheckpointSaver,
+    saver: KeydexAsyncCheckpointStore,
     *,
     subagent_id: str,
     child_session_id: str,
@@ -106,7 +120,7 @@ def _create_subagent_instance(
         subagent_id=subagent_id,
         subagent_role="explorer",
     )
-    child_config = saver.put(
+    child_config = await saver.aput(
         {"configurable": {"thread_id": child_session_id, "checkpoint_ns": ""}},
         _checkpoint(f"ckpt_{subagent_id}"),
         {"step": 1},
@@ -162,8 +176,11 @@ def _create_subagent_instance(
         )
 
 
-def test_session_fork_service_clones_checkpoint_and_copies_history_until_source(tmp_path) -> None:
-    repositories, saver = _prepare_source(tmp_path)
+@pytest.mark.asyncio
+async def test_session_fork_service_clones_checkpoint_and_copies_history_until_source(
+    tmp_path,
+) -> None:
+    repositories, saver = await _prepare_source(tmp_path)
     repositories.message_events.append(
         event_id="evt_skill_system_1",
         session_id="ses_source",
@@ -182,7 +199,7 @@ def test_session_fork_service_clones_checkpoint_and_copies_history_until_source(
     )
     service = SessionForkService(repositories, checkpointer=saver)
 
-    result = service.fork_session(
+    result = await service.fork_session(
         session_id="ses_source",
         user_id="local-user",
         message_event_id="evt_ai_1",
@@ -224,27 +241,34 @@ def test_session_fork_service_clones_checkpoint_and_copies_history_until_source(
     assert skill_event.data["id"] == "skill:system:shared"
     assert skill_event.data["skill_source"] == "system"
     assert skill_event.data["locator"] == ".keydex/skills/shared/SKILL.md"
-    cloned_checkpoint = saver.get_tuple(
+    cloned_checkpoint = await saver.aget_tuple(
         {"configurable": {"thread_id": forked.id, "checkpoint_ns": ""}}
     )
     assert cloned_checkpoint.config["configurable"]["checkpoint_id"] == "ckpt_1"
 
 
-def test_session_fork_service_allows_multiple_forks_from_same_message(tmp_path) -> None:
-    repositories, saver = _prepare_source(tmp_path)
+@pytest.mark.asyncio
+async def test_session_fork_service_allows_multiple_forks_from_same_message(
+    tmp_path,
+) -> None:
+    repositories, saver = await _prepare_source(tmp_path)
     service = SessionForkService(repositories, checkpointer=saver)
 
-    first = service.fork_session(
+    first = (
+        await service.fork_session(
         session_id="ses_source",
         user_id="local-user",
         message_event_id="evt_ai_1",
         title="分支一",
+        )
     ).session
-    second = service.fork_session(
+    second = (
+        await service.fork_session(
         session_id="ses_source",
         user_id="local-user",
         message_event_id="evt_ai_1",
         title="分支二",
+        )
     ).session
 
     fork_records = repositories.session_forks.list_by_source("ses_source")
@@ -253,22 +277,31 @@ def test_session_fork_service_allows_multiple_forks_from_same_message(tmp_path) 
     assert len({record.target_message_event_id for record in fork_records}) == 2
     assert repositories.sessions.get("ses_source").child_session_id is None
     assert (
-        saver.get_tuple({"configurable": {"thread_id": first.id, "checkpoint_ns": ""}})
+        await saver.aget_tuple(
+            {"configurable": {"thread_id": first.id, "checkpoint_ns": ""}}
+        )
         is not None
     )
     assert (
-        saver.get_tuple({"configurable": {"thread_id": second.id, "checkpoint_ns": ""}})
+        await saver.aget_tuple(
+            {"configurable": {"thread_id": second.id, "checkpoint_ns": ""}}
+        )
         is not None
     )
 
 
-def test_session_reverse_rejects_copied_history_at_fork_boundary(tmp_path) -> None:
-    repositories, saver = _prepare_source(tmp_path)
+@pytest.mark.asyncio
+async def test_session_reverse_rejects_copied_history_at_fork_boundary(
+    tmp_path,
+) -> None:
+    repositories, saver = await _prepare_source(tmp_path)
     service = SessionForkService(repositories, checkpointer=saver)
-    forked = service.fork_session(
+    forked = (
+        await service.fork_session(
         session_id="ses_source",
         user_id="local-user",
         message_event_id="evt_ai_1",
+        )
     ).session
     copied_user_event = next(
         event
@@ -277,7 +310,7 @@ def test_session_reverse_rejects_copied_history_at_fork_boundary(tmp_path) -> No
     )
 
     with pytest.raises(SessionForkServiceError) as exc_info:
-        service.resolve_reverse_source(
+        await service.resolve_reverse_source(
             session_id=forked.id,
             message_event_id=copied_user_event.id,
         )
@@ -292,8 +325,11 @@ def test_session_reverse_rejects_copied_history_at_fork_boundary(tmp_path) -> No
     }
 
 
-def test_session_fork_copies_artifact_grants_without_copying_artifact(tmp_path) -> None:
-    repositories, saver = _prepare_source(tmp_path)
+@pytest.mark.asyncio
+async def test_session_fork_copies_artifact_grants_without_copying_artifact(
+    tmp_path,
+) -> None:
+    repositories, saver = await _prepare_source(tmp_path)
     artifact = repositories.tool_result_artifacts.create_or_get(
         artifact_id="tra_source",
         owner_user_id="local-user",
@@ -312,10 +348,15 @@ def test_session_fork_copies_artifact_grants_without_copying_artifact(tmp_path) 
         session_id="ses_source",
     )
 
-    forked = SessionForkService(repositories, checkpointer=saver).fork_session(
-        session_id="ses_source",
-        user_id="local-user",
-        message_event_id="evt_ai_1",
+    forked = (
+        await SessionForkService(
+            repositories,
+            checkpointer=saver,
+        ).fork_session(
+            session_id="ses_source",
+            user_id="local-user",
+            message_event_id="evt_ai_1",
+        )
     ).session
 
     assert repositories.tool_result_artifacts.has_grant(
@@ -325,11 +366,14 @@ def test_session_fork_copies_artifact_grants_without_copying_artifact(tmp_path) 
     assert repositories.tool_result_artifacts.get(artifact.id) == artifact
 
 
-def test_session_fork_rejects_cross_user_artifact_grant_inheritance(tmp_path) -> None:
-    repositories, saver = _prepare_source(tmp_path)
+@pytest.mark.asyncio
+async def test_session_fork_rejects_cross_user_artifact_grant_inheritance(
+    tmp_path,
+) -> None:
+    repositories, saver = await _prepare_source(tmp_path)
 
     with pytest.raises(SessionForkServiceError) as captured:
-        SessionForkService(repositories, checkpointer=saver).fork_session(
+        await SessionForkService(repositories, checkpointer=saver).fork_session(
             session_id="ses_source",
             user_id="different-user",
             message_event_id="evt_ai_1",
@@ -338,8 +382,11 @@ def test_session_fork_rejects_cross_user_artifact_grant_inheritance(tmp_path) ->
     assert captured.value.code == "session_fork_user_mismatch"
 
 
-def test_session_fork_service_uses_latest_completed_checkpoint_by_default(tmp_path) -> None:
-    repositories, saver = _prepare_source(tmp_path)
+@pytest.mark.asyncio
+async def test_session_fork_service_uses_latest_completed_checkpoint_by_default(
+    tmp_path,
+) -> None:
+    repositories, saver = await _prepare_source(tmp_path)
     with repositories.db.transaction() as conn:
         conn.execute("delete from message_events where id = ?", ("evt_ai_2",))
     repositories.message_events.append(
@@ -350,11 +397,11 @@ def test_session_fork_service_uses_latest_completed_checkpoint_by_default(tmp_pa
         action="stream_batch",
         data={"session_id": "ses_source", "content": "回答 2"},
     )
-    latest = saver.get_tuple(
+    latest = await saver.aget_tuple(
         {"configurable": {"thread_id": "ses_source", "checkpoint_ns": ""}}
     )
     assert latest is not None
-    saver.put(latest.config, _checkpoint("ckpt_running"), {"step": 3}, {})
+    await saver.aput(latest.config, _checkpoint("ckpt_running"), {"step": 3}, {})
     repositories.trace_records.create(
         trace_id="trace_running",
         session_id="ses_source",
@@ -373,7 +420,10 @@ def test_session_fork_service_uses_latest_completed_checkpoint_by_default(tmp_pa
         data={"session_id": "ses_source", "content": "运行中的问题"},
     )
 
-    result = SessionForkService(repositories, checkpointer=saver).fork_session(
+    result = await SessionForkService(
+        repositories,
+        checkpointer=saver,
+    ).fork_session(
         session_id="ses_source",
         user_id="local-user",
     )
@@ -384,23 +434,26 @@ def test_session_fork_service_uses_latest_completed_checkpoint_by_default(tmp_pa
     assert result.source.checkpoint_id == "ckpt_2"
     copied_events = repositories.message_events.list_by_session(result.session.id)
     assert {event.turn_index for event in copied_events} == {1, 2}
-    cloned = saver.get_tuple(
+    cloned = await saver.aget_tuple(
         {"configurable": {"thread_id": result.session.id, "checkpoint_ns": ""}}
     )
     assert cloned is not None
     assert cloned.config["configurable"]["checkpoint_id"] == "ckpt_2"
 
 
-def test_session_fork_service_creates_btw_from_latest_checkpoint_without_history(tmp_path) -> None:
-    repositories, saver = _prepare_source(tmp_path)
+@pytest.mark.asyncio
+async def test_session_fork_service_creates_btw_from_latest_checkpoint_without_history(
+    tmp_path,
+) -> None:
+    repositories, saver = await _prepare_source(tmp_path)
     service = SessionForkService(repositories, checkpointer=saver)
-    latest = saver.get_tuple(
+    latest = await saver.aget_tuple(
         {"configurable": {"thread_id": "ses_source", "checkpoint_ns": ""}}
     )
     assert latest is not None
-    saver.put(latest.config, _checkpoint("ckpt_running"), {"step": 3}, {})
+    await saver.aput(latest.config, _checkpoint("ckpt_running"), {"step": 3}, {})
 
-    result = service.fork_session(
+    result = await service.fork_session(
         session_id="ses_source",
         user_id="local-user",
         message_event_id="evt_ai_1",
@@ -416,7 +469,7 @@ def test_session_fork_service_creates_btw_from_latest_checkpoint_without_history
     assert result.source.turn_index is None
     assert repositories.message_events.list_by_session(forked.id) == []
     assert repositories.session_forks.get_by_target(forked.id) is None
-    cloned = saver.get_tuple(
+    cloned = await saver.aget_tuple(
         {"configurable": {"thread_id": forked.id, "checkpoint_ns": ""}}
     )
     assert cloned is not None
@@ -424,11 +477,81 @@ def test_session_fork_service_creates_btw_from_latest_checkpoint_without_history
     assert cloned.checkpoint["channel_values"]["messages"] == ["ckpt_running"]
 
 
-def test_session_reverse_rolls_back_same_session_to_user_turn_input_checkpoint(tmp_path) -> None:
-    repositories, saver = _prepare_source(tmp_path)
+@pytest.mark.asyncio
+async def test_migrated_current_root_forks_but_explicit_old_history_is_rejected(
+    tmp_path,
+) -> None:
+    repositories, saver = await _prepare_source(tmp_path)
+
+    async def collapse_to_current_root(connection) -> None:
+        await connection.execute(
+            """
+            update checkpoints set parent_checkpoint_id = null
+            where thread_id = 'ses_source' and checkpoint_id = 'ckpt_2'
+            """
+        )
+        await connection.execute(
+            """
+            delete from checkpoints
+            where thread_id = 'ses_source' and checkpoint_id <> 'ckpt_2'
+            """
+        )
+        await connection.execute(
+            """
+            update sessions
+            set checkpoint_lineage_epoch = 1,
+                checkpoint_history_floor_turn_index = 3,
+                checkpoint_root_id = 'ckpt_2',
+                checkpoint_migration_id = 'checkpoint-v2-collapse-to-official-v1'
+            where id = 'ses_source'
+            """
+        )
+
+    await saver.run_async_extension(collapse_to_current_root)
+    service = SessionForkService(repositories, checkpointer=saver)
+    current = await service.fork_session(
+        session_id="ses_source",
+        user_id="local-user",
+    )
+
+    assert current.source.checkpoint_id == "ckpt_2"
+    assert current.source.history_floor_turn_index == 3
+    assert await saver.aget_tuple(
+        {
+            "configurable": {
+                "thread_id": current.session.id,
+                "checkpoint_ns": "",
+                "checkpoint_id": "ckpt_2",
+            }
+        }
+    )
+
+    session_count = len(repositories.sessions.list(limit=100))
+    relation_count = len(repositories.session_forks.list_by_source("ses_source"))
+    for kwargs in (
+        {"message_event_id": "evt_ai_1"},
+        {"trace_id": "trace_2"},
+        {"turn_index": 1},
+    ):
+        with pytest.raises(SessionForkServiceError) as compacted:
+            await service.fork_session(
+                session_id="ses_source",
+                user_id="local-user",
+                **kwargs,
+            )
+        assert compacted.value.code == "checkpoint_history_compacted"
+    assert len(repositories.sessions.list(limit=100)) == session_count
+    assert len(repositories.session_forks.list_by_source("ses_source")) == relation_count
+
+
+@pytest.mark.asyncio
+async def test_session_reverse_rolls_back_same_session_to_user_turn_input_checkpoint(
+    tmp_path,
+) -> None:
+    repositories, saver = await _prepare_source(tmp_path)
     service = SessionForkService(repositories, checkpointer=saver)
 
-    result = service.reverse_session(
+    result = await service.reverse_session(
         session_id="ses_source",
         user_id="local-user",
         message_event_id="evt_user_2",
@@ -445,7 +568,7 @@ def test_session_reverse_rolls_back_same_session_to_user_turn_input_checkpoint(t
         trace.trace_id for trace in repositories.trace_records.list_by_session("ses_source")
     ]
     assert trace_ids == ["trace_1"]
-    rolled_back_checkpoint = saver.get_tuple(
+    rolled_back_checkpoint = await saver.aget_tuple(
         {"configurable": {"thread_id": "ses_source", "checkpoint_ns": ""}}
     )
     assert rolled_back_checkpoint.config["configurable"]["checkpoint_id"] == "ckpt_1"
@@ -461,11 +584,104 @@ def test_session_reverse_rolls_back_same_session_to_user_turn_input_checkpoint(t
     assert rewritten.seq == 3
 
 
-def test_session_reverse_destroys_subagent_instances_created_by_rewound_traces(
+@pytest.mark.asyncio
+async def test_migrated_reverse_rejects_old_turn_and_first_new_turn_uses_root(
     tmp_path,
 ) -> None:
-    repositories, saver = _prepare_source(tmp_path)
-    _create_subagent_instance(
+    repositories, saver = await _prepare_source(tmp_path)
+
+    async def collapse_to_root(connection) -> None:
+        await connection.execute(
+            """
+            update checkpoints set parent_checkpoint_id = null
+            where thread_id = 'ses_source' and checkpoint_id = 'ckpt_2'
+            """
+        )
+        await connection.execute(
+            """
+            delete from checkpoints
+            where thread_id = 'ses_source' and checkpoint_id <> 'ckpt_2'
+            """
+        )
+        await connection.execute(
+            """
+            update sessions
+            set checkpoint_lineage_epoch = 1,
+                checkpoint_history_floor_turn_index = 3,
+                checkpoint_root_id = 'ckpt_2',
+                checkpoint_migration_id = 'checkpoint-v2-collapse-to-official-v1'
+            where id = 'ses_source'
+            """
+        )
+
+    await saver.run_async_extension(collapse_to_root)
+    repositories.trace_records.create(
+        trace_id="trace_3",
+        session_id="ses_source",
+        active_session_id="ses_source",
+        scene_id="desktop-agent",
+        user_id="local-user",
+        turn_index=3,
+        root_node_id="root_3",
+        input_checkpoint_id="removed-input",
+        input_checkpoint_ns="",
+    )
+    repositories.trace_records.finish(
+        "trace_3",
+        status="completed",
+        output_checkpoint_id="ckpt_2",
+        output_checkpoint_ns="",
+    )
+    repositories.message_events.append(
+        event_id="evt_user_3",
+        session_id="ses_source",
+        trace_record_id="trace_3",
+        turn_index=3,
+        action="user_message",
+        data={"content": "迁移后第一轮"},
+    )
+    repositories.message_events.append(
+        event_id="evt_ai_3",
+        session_id="ses_source",
+        trace_record_id="trace_3",
+        turn_index=3,
+        action="ai_message",
+        data={"content": "回答"},
+    )
+    service = SessionForkService(repositories, checkpointer=saver)
+
+    before_events = repositories.message_events.count_by_session("ses_source")
+    with pytest.raises(SessionForkServiceError) as compacted:
+        await service.reverse_session(
+            session_id="ses_source",
+            user_id="local-user",
+            message_event_id="evt_user_1",
+        )
+    assert compacted.value.code == "checkpoint_history_compacted"
+    assert repositories.message_events.count_by_session("ses_source") == before_events
+
+    result = await service.reverse_session(
+        session_id="ses_source",
+        user_id="local-user",
+        message_event_id="evt_user_3",
+    )
+
+    assert result.source.checkpoint_id == "ckpt_2"
+    assert result.source.history_floor_turn_index == 3
+    assert repositories.message_events.count_by_session("ses_source") == 4
+    latest = await saver.aget_tuple(
+        {"configurable": {"thread_id": "ses_source", "checkpoint_ns": ""}}
+    )
+    assert latest is not None
+    assert latest.config["configurable"]["checkpoint_id"] == "ckpt_2"
+
+
+@pytest.mark.asyncio
+async def test_session_reverse_destroys_subagent_instances_created_by_rewound_traces(
+    tmp_path,
+) -> None:
+    repositories, saver = await _prepare_source(tmp_path)
+    await _create_subagent_instance(
         repositories,
         saver,
         subagent_id="kept",
@@ -473,7 +689,7 @@ def test_session_reverse_destroys_subagent_instances_created_by_rewound_traces(
         parent_trace_id="trace_1",
         sequence=0,
     )
-    _create_subagent_instance(
+    await _create_subagent_instance(
         repositories,
         saver,
         subagent_id="rewound",
@@ -484,7 +700,7 @@ def test_session_reverse_destroys_subagent_instances_created_by_rewound_traces(
     )
     service = SessionForkService(repositories, checkpointer=saver)
 
-    service.reverse_session(
+    await service.reverse_session(
         session_id="ses_source",
         user_id="local-user",
         message_event_id="evt_user_2",
@@ -495,27 +711,28 @@ def test_session_reverse_destroys_subagent_instances_created_by_rewound_traces(
     assert [
         run.run_id for run in repositories.subagent_runs.list_by_parent("ses_source")
     ] == ["run_kept_spawn"]
-    assert saver.get_tuple(
+    assert await saver.aget_tuple(
         {"configurable": {"thread_id": "child_kept", "checkpoint_ns": ""}}
     ) is not None
-    assert saver.get_tuple(
+    assert await saver.aget_tuple(
         {"configurable": {"thread_id": "child_rewound", "checkpoint_ns": ""}}
     ) is None
 
 
-def test_session_reverse_rolls_back_checkpoint_and_rows_as_one_transaction(
+@pytest.mark.asyncio
+async def test_session_reverse_rolls_back_checkpoint_and_rows_as_one_transaction(
     tmp_path,
     monkeypatch,
 ) -> None:
-    repositories, saver = _prepare_source(tmp_path)
+    repositories, saver = await _prepare_source(tmp_path)
     service = SessionForkService(repositories, checkpointer=saver)
 
-    def fail_after_checkpoint(*_args, **_kwargs):
+    async def fail_after_checkpoint(*_args, **_kwargs):
         raise RuntimeError("injected conversation transaction failure")
 
     monkeypatch.setattr(service, "_rewind_turn_artifacts", fail_after_checkpoint)
     with pytest.raises(SessionForkServiceError) as error:
-        service.reverse_session(
+        await service.reverse_session(
             session_id="ses_source",
             user_id="local-user",
             message_event_id="evt_user_2",
@@ -524,18 +741,21 @@ def test_session_reverse_rolls_back_checkpoint_and_rows_as_one_transaction(
     assert error.value.code == "session_reverse_failed"
     assert repositories.message_events.count_by_session("ses_source") == 4
     assert len(repositories.trace_records.list_by_session("ses_source")) == 2
-    latest = saver.get_tuple(
+    latest = await saver.aget_tuple(
         {"configurable": {"thread_id": "ses_source", "checkpoint_ns": ""}}
     )
     assert latest is not None
     assert latest.config["configurable"]["checkpoint_id"] == "ckpt_2"
 
 
-def test_session_reverse_first_turn_clears_history_and_checkpoints(tmp_path) -> None:
-    repositories, saver = _prepare_source(tmp_path)
+@pytest.mark.asyncio
+async def test_session_reverse_first_turn_clears_history_and_checkpoints(
+    tmp_path,
+) -> None:
+    repositories, saver = await _prepare_source(tmp_path)
     service = SessionForkService(repositories, checkpointer=saver)
 
-    result = service.reverse_session(
+    result = await service.reverse_session(
         session_id="ses_source",
         user_id="local-user",
         message_event_id="evt_user_1",
@@ -546,15 +766,18 @@ def test_session_reverse_first_turn_clears_history_and_checkpoints(tmp_path) -> 
     assert repositories.message_events.count_by_session("ses_source") == 0
     assert repositories.trace_records.list_by_session("ses_source") == []
     assert (
-        saver.get_tuple({"configurable": {"thread_id": "ses_source", "checkpoint_ns": ""}})
+        await saver.aget_tuple(
+            {"configurable": {"thread_id": "ses_source", "checkpoint_ns": ""}}
+        )
         is None
     )
 
 
-def test_session_reverse_first_turn_ignores_and_removes_legacy_subagent_turn_zero_events(
+@pytest.mark.asyncio
+async def test_session_reverse_first_turn_ignores_and_removes_legacy_subagent_turn_zero_events(
     tmp_path,
 ) -> None:
-    repositories, saver = _prepare_source(tmp_path)
+    repositories, saver = await _prepare_source(tmp_path)
     for index in range(2):
         repositories.message_events.append(
             event_id=f"subagent_run:legacy-{index}:1",
@@ -570,7 +793,7 @@ def test_session_reverse_first_turn_ignores_and_removes_legacy_subagent_turn_zer
         )
     service = SessionForkService(repositories, checkpointer=saver)
 
-    result = service.reverse_session(
+    result = await service.reverse_session(
         session_id="ses_source",
         user_id="local-user",
         message_event_id="evt_user_1",
@@ -581,12 +804,13 @@ def test_session_reverse_first_turn_ignores_and_removes_legacy_subagent_turn_zer
     assert repositories.trace_records.list_by_session("ses_source") == []
 
 
-def test_session_reverse_rejects_assistant_message_source(tmp_path) -> None:
-    repositories, saver = _prepare_source(tmp_path)
+@pytest.mark.asyncio
+async def test_session_reverse_rejects_assistant_message_source(tmp_path) -> None:
+    repositories, saver = await _prepare_source(tmp_path)
     service = SessionForkService(repositories, checkpointer=saver)
 
     with pytest.raises(SessionForkServiceError) as exc_info:
-        service.reverse_session(
+        await service.reverse_session(
             session_id="ses_source",
             user_id="local-user",
             message_event_id="evt_ai_2",
@@ -595,8 +819,11 @@ def test_session_reverse_rejects_assistant_message_source(tmp_path) -> None:
     assert exc_info.value.code == "reverse_source_must_be_user_message"
 
 
-def test_session_reverse_rejects_missing_input_checkpoint_when_history_exists(tmp_path) -> None:
-    repositories, saver = _prepare_source(tmp_path)
+@pytest.mark.asyncio
+async def test_session_reverse_rejects_missing_input_checkpoint_when_history_exists(
+    tmp_path,
+) -> None:
+    repositories, saver = await _prepare_source(tmp_path)
     repositories.trace_records.create(
         trace_id="trace_legacy",
         session_id="ses_source",
@@ -631,7 +858,7 @@ def test_session_reverse_rejects_missing_input_checkpoint_when_history_exists(tm
     service = SessionForkService(repositories, checkpointer=saver)
 
     with pytest.raises(SessionForkServiceError) as exc_info:
-        service.reverse_session(
+        await service.reverse_session(
             session_id="ses_source",
             user_id="local-user",
             message_event_id="evt_user_legacy",
@@ -639,20 +866,29 @@ def test_session_reverse_rejects_missing_input_checkpoint_when_history_exists(tm
 
     assert exc_info.value.code == "reverse_input_checkpoint_missing"
     assert repositories.message_events.count_by_session("ses_source") == 6
-    latest_checkpoint = saver.get_tuple(
+    latest_checkpoint = await saver.aget_tuple(
         {"configurable": {"thread_id": "ses_source", "checkpoint_ns": ""}}
     )
     assert latest_checkpoint.config["configurable"]["checkpoint_id"] == "ckpt_2"
 
 
-def test_session_fork_service_rolls_back_when_clone_fails(tmp_path) -> None:
-    repositories, _saver = _prepare_source(tmp_path)
-    service = SessionForkService(
-        repositories, checkpointer=FailingCloneCheckpointSaver(repositories.db)
-    )
+@pytest.mark.asyncio
+async def test_session_fork_service_rolls_back_when_clone_fails(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    repositories, saver = await _prepare_source(tmp_path)
+    service = SessionForkService(repositories, checkpointer=saver)
 
+    async def fail_clone(*_args, **_kwargs):
+        raise RuntimeError("clone failed")
+
+    monkeypatch.setattr(
+        "backend.app.services.session_fork_service.aclone_checkpoint_chain",
+        fail_clone,
+    )
     with pytest.raises(SessionForkServiceError) as exc_info:
-        service.fork_session(
+        await service.fork_session(
             session_id="ses_source",
             user_id="local-user",
             message_event_id="evt_ai_1",
@@ -663,8 +899,12 @@ def test_session_fork_service_rolls_back_when_clone_fails(tmp_path) -> None:
 
 
 @pytest.mark.parametrize("action", ["fork", "reverse"])
-def test_session_fork_and_reverse_reject_archived_source(tmp_path, action: str) -> None:
-    repositories, saver = _prepare_source(tmp_path)
+@pytest.mark.asyncio
+async def test_session_fork_and_reverse_reject_archived_source(
+    tmp_path,
+    action: str,
+) -> None:
+    repositories, saver = await _prepare_source(tmp_path)
     repositories.sessions.archive_manual(
         "ses_source",
         archived_at="2026-07-14T00:00:00Z",
@@ -673,13 +913,13 @@ def test_session_fork_and_reverse_reject_archived_source(tmp_path, action: str) 
 
     with pytest.raises(SessionForkServiceError) as archived:
         if action == "fork":
-            service.fork_session(
+            await service.fork_session(
                 session_id="ses_source",
                 user_id="local-user",
                 message_event_id="evt_ai_1",
             )
         else:
-            service.reverse_session(
+            await service.reverse_session(
                 session_id="ses_source",
                 user_id="local-user",
                 message_event_id="evt_user_1",
@@ -687,8 +927,3 @@ def test_session_fork_and_reverse_reject_archived_source(tmp_path, action: str) 
 
     assert archived.value.code == "entity_archived"
     assert repositories.sessions.get_archived("ses_source") is not None
-
-
-class FailingCloneCheckpointSaver(SQLiteCheckpointSaver):
-    def clone_checkpoint_to_thread(self, **_kwargs) -> None:
-        raise RuntimeError("clone failed")

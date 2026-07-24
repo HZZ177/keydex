@@ -8,8 +8,8 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage
 
 from backend.app.agent import AgentRunner
-from backend.app.agent.checkpoint import SQLiteCheckpointSaver
 from backend.app.agent.factory import AgentFactory
+from backend.app.agent.state import build_checkpoint_state_graph
 from backend.app.core.config import AppSettings
 from backend.app.core.time import to_iso_z, utc_now
 from backend.app.keydex import KeydexRuntimeCache
@@ -28,6 +28,7 @@ from backend.app.storage import (
     init_database,
 )
 from backend.app.tools import ToolRegistry
+from backend.tests.async_checkpoint import TestAsyncCheckpointStore
 
 
 class ToolFriendlyFakeModel(FakeMessagesListChatModel):
@@ -58,7 +59,12 @@ class FakeAgentFactory(AgentFactory):
 def _service(
     tmp_path: Path,
     model: ToolFriendlyFakeModel,
-) -> tuple[ChatService, StorageRepositories, SQLiteCheckpointSaver, FakeAgentFactory]:
+) -> tuple[
+    ChatService,
+    StorageRepositories,
+    TestAsyncCheckpointStore,
+    FakeAgentFactory,
+]:
     database = init_database(tmp_path / "app.db")
     repositories = StorageRepositories(database)
     now = to_iso_z(utc_now())
@@ -81,7 +87,7 @@ def _service(
         model="fake-default",
     )
     settings = AppSettings(data_dir=tmp_path / "data", workspace_root=tmp_path)
-    checkpointer = SQLiteCheckpointSaver(database)
+    checkpointer = TestAsyncCheckpointStore(database.path)
     factory = FakeAgentFactory(model)
     runner = AgentRunner(
         model_settings_provider=lambda: ModelSettings(
@@ -111,6 +117,13 @@ def _service(
 
 def _chat_messages(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [message for message in history if message.get("role") != "turn"]
+
+
+async def _checkpoint_messages(checkpointer: Any, thread_id: str) -> list[Any]:
+    snapshot = await build_checkpoint_state_graph(checkpointer).aget_state(
+        {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
+    )
+    return list(snapshot.values["messages"])
 
 
 @pytest.mark.asyncio
@@ -403,10 +416,7 @@ async def test_initial_thread_task_prompt_enters_first_goal_turn_without_transcr
     assert history[0]["content"] == "请整理目标方案"
     assert history[0]["contextItems"][0]["type"] == "goal"
 
-    checkpoint = await checkpointer.aget_tuple(
-        {"configurable": {"thread_id": session.id, "checkpoint_ns": ""}}
-    )
-    messages = checkpoint.checkpoint["channel_values"]["messages"]
+    messages = await _checkpoint_messages(checkpointer, session.id)
     assert "用户刚创建的长程目标任务" in messages[0].content
     assert "必须调用 update_thread_task 并设置 status=complete" in messages[0].content
     assert [message.content for message in messages[1:3]] == [
@@ -472,10 +482,7 @@ async def test_hidden_thread_task_injection_enters_model_without_transcript(
     assert [message["role"] for message in history] == ["assistant"]
     assert history[0]["content"] == "继续处理目标"
 
-    checkpoint = await checkpointer.aget_tuple(
-        {"configurable": {"thread_id": session.id, "checkpoint_ns": ""}}
-    )
-    messages = checkpoint.checkpoint["channel_values"]["messages"]
+    messages = await _checkpoint_messages(checkpointer, session.id)
     assert [message.content for message in messages[:2]] == [
         "hidden task context",
         "继续处理目标",
@@ -535,10 +542,7 @@ async def test_hidden_thread_task_seed_message_enters_model_without_transcript(
     history = _chat_messages(service.message_event_service.get_display_messages(session.id))
     assert [message["role"] for message in history] == ["assistant"]
 
-    checkpoint = await checkpointer.aget_tuple(
-        {"configurable": {"thread_id": session.id, "checkpoint_ns": ""}}
-    )
-    messages = checkpoint.checkpoint["channel_values"]["messages"]
+    messages = await _checkpoint_messages(checkpointer, session.id)
     assert [message.content for message in messages[:3]] == [
         "hidden task context",
         "用户开启目标时的原始输入",
@@ -636,10 +640,7 @@ async def test_visible_message_injection_still_restores_context_item(
     assert history[0]["contextItems"][0]["type"] == "file"
     assert history[0]["contextItems"][0]["path"] == "README.md"
 
-    checkpoint = await checkpointer.aget_tuple(
-        {"configurable": {"thread_id": result.session_id, "checkpoint_ns": ""}}
-    )
-    messages = checkpoint.checkpoint["channel_values"]["messages"]
+    messages = await _checkpoint_messages(checkpointer, result.session_id)
     assert [message.content for message in messages[:3]] == [
         "用户通过 @ 引用了工作区文件：README.md",
         "总结一下",
@@ -698,10 +699,7 @@ async def test_message_context_items_restore_history_without_entering_model(
         },
     }
 
-    checkpoint = await checkpointer.aget_tuple(
-        {"configurable": {"thread_id": result.session_id, "checkpoint_ns": ""}}
-    )
-    messages = checkpoint.checkpoint["channel_values"]["messages"]
+    messages = await _checkpoint_messages(checkpointer, result.session_id)
     assert [message.content for message in messages[:2]] == [
         "开启目标",
         "已记录目标",

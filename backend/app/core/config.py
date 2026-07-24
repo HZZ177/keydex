@@ -27,6 +27,7 @@ class AppSettings(BaseSettings):
     default_scene_id: str = "desktop-agent"
     default_scene_name: str = "Keydex"
     max_history_messages: int = Field(default=40, ge=1)
+    checkpoint_delta_snapshot_frequency: int = Field(default=64, ge=1)
     file_history_enabled: bool = True
     file_history_max_storage_bytes: int = Field(default=1_073_741_824, ge=1)
     file_history_max_versions_per_file: int = Field(default=1_000, ge=1)

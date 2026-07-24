@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import get_args, get_type_hints
 
-from langgraph.graph.message import add_messages
+from langgraph.channels.delta import DeltaChannel
 
 from backend.app.agent.state import (
     PENDING_SKILL_ACTIVATIONS_RESET_MARKER,
@@ -10,6 +10,7 @@ from backend.app.agent.state import (
     KeydexAgentState,
     build_pending_skill_activations_reset_update,
     build_pending_tool_call_preset_update,
+    keydex_messages_delta_reducer,
     merge_pending_skill_activations,
     merge_structured_user_group_replay_markers,
     merge_structured_user_message_groups,
@@ -62,7 +63,7 @@ def test_pending_tool_call_preset_update_and_reset_shape() -> None:
     }
 
 
-def test_keydex_agent_state_keeps_messages_reducer() -> None:
+def test_keydex_agent_state_uses_public_messages_delta_channel() -> None:
     hints = get_type_hints(KeydexAgentState, include_extras=True)
 
     assert "messages" in hints
@@ -70,7 +71,11 @@ def test_keydex_agent_state_keeps_messages_reducer() -> None:
     assert "pending_skill_activations" in hints
     assert "structured_user_message_groups" in hints
     assert "structured_user_group_replay_markers" in hints
-    assert add_messages in get_args(hints["messages"])
+    messages_channel = next(
+        item for item in get_args(hints["messages"]) if isinstance(item, DeltaChannel)
+    )
+    assert messages_channel.reducer is keydex_messages_delta_reducer
+    assert messages_channel.snapshot_frequency == 64
     assert merge_pending_skill_activations in get_args(hints["pending_skill_activations"])
     assert merge_structured_user_message_groups in get_args(
         hints["structured_user_message_groups"]

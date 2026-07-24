@@ -4,7 +4,6 @@ import pytest
 from langchain_core.messages import HumanMessage
 from langgraph.graph import END, START, StateGraph
 
-from backend.app.agent.checkpoint import SQLiteCheckpointSaver
 from backend.app.agent.state import (
     KeydexAgentState,
     build_structured_user_group_replay_marker_update,
@@ -18,6 +17,7 @@ from backend.app.services.structured_user_message_group import (
     build_structured_user_message_member,
 )
 from backend.app.storage import init_database
+from backend.tests.async_checkpoint import TestAsyncCheckpointStore
 
 
 def _group(group_id: str, content: str) -> dict[str, object]:
@@ -93,7 +93,9 @@ async def test_structured_user_groups_round_trip_through_langgraph_checkpoint(tm
     graph_builder.add_edge(START, "keep")
     graph_builder.add_edge("keep", END)
     graph = graph_builder.compile(
-        checkpointer=SQLiteCheckpointSaver(init_database(tmp_path / "checkpoint.db"))
+        checkpointer=TestAsyncCheckpointStore(
+            init_database(tmp_path / "checkpoint.db").path
+        )
     )
     config = {"configurable": {"thread_id": "thread-1", "checkpoint_ns": ""}}
     group = _group("group-1", "persist me")

@@ -12,7 +12,8 @@ from typing import Any
 
 import httpx
 import uvicorn
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, RemoveMessage
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -22,6 +23,10 @@ from backend.app.agent.compact_runtime_attachments import (
 )
 from backend.app.agent.context_compression_utils import (
     is_context_compression_summary_message,
+)
+from backend.app.agent.state import (
+    CHECKPOINT_STATE_UPDATE_NODE,
+    build_checkpoint_state_graph,
 )
 from backend.app.agent.tool_result_context_editing import (
     TOOL_RESULT_TOMBSTONE_METADATA_KEY,
@@ -731,19 +736,24 @@ def main() -> None:
     app.state.keydex_workspace_watcher._debounce_seconds = 0.02
     observations: list[dict[str, Any]] = []
     scenario_counts: dict[str, int] = {}
+    checkpoint_state_graph = None
+
+    def state_graph():
+        nonlocal checkpoint_state_graph
+        if checkpoint_state_graph is None:
+            checkpoint_state_graph = build_checkpoint_state_graph(
+                app.state.checkpoint_runtime.require_store()
+            )
+        return checkpoint_state_graph
 
     async def model_observations() -> dict[str, Any]:
         return {"observations": list(observations)}
 
     async def compression_state(session_id: str) -> dict[str, Any]:
-        checkpoint = app.state.checkpointer.get_tuple(
+        snapshot = await state_graph().aget_state(
             {"configurable": {"thread_id": session_id, "checkpoint_ns": ""}}
         )
-        values = (
-            checkpoint.checkpoint.get("channel_values", {})
-            if checkpoint is not None and isinstance(checkpoint.checkpoint, dict)
-            else {}
-        )
+        values = snapshot.values
         messages = list(values.get("messages") or []) if isinstance(values, dict) else []
         raw_groups = (
             list(values.get("structured_user_message_groups") or [])
@@ -823,8 +833,8 @@ def main() -> None:
         ]
         return {
             "checkpoint_id": (
-                checkpoint.config.get("configurable", {}).get("checkpoint_id")
-                if checkpoint is not None
+                snapshot.config.get("configurable", {}).get("checkpoint_id")
+                if snapshot.config
                 else None
             ),
             "message_count": len(messages),
@@ -853,12 +863,15 @@ def main() -> None:
         session_id: str,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
-        checkpoint = app.state.checkpointer.get_tuple(
-            {"configurable": {"thread_id": session_id, "checkpoint_ns": ""}}
-        )
-        if checkpoint is None:
+        config = {
+            "configurable": {"thread_id": session_id, "checkpoint_ns": ""}
+        }
+        snapshot = await state_graph().aget_state(config)
+        if not snapshot.config:
             raise ValueError("checkpoint not found")
-        values = checkpoint.checkpoint.get("channel_values", {})
+        values = snapshot.values
+        if not values:
+            raise ValueError("checkpoint not found")
         raw_groups = list(values.get("structured_user_message_groups") or [])
         index = int(payload.get("index", 0))
         extra_chars = max(int(payload.get("extra_chars", 0)), 0)
@@ -905,15 +918,16 @@ def main() -> None:
                 )
                 message_expanded = True
                 break
-        configurable = checkpoint.config.get("configurable", {})
-        app.state.checkpointer.replace_checkpoint_state(
-            thread_id=session_id,
-            checkpoint_id=str(configurable.get("checkpoint_id") or ""),
-            checkpoint_ns=str(configurable.get("checkpoint_ns") or ""),
-            channel_values={
-                "messages": messages,
+        await state_graph().aupdate_state(
+            snapshot.config,
+            {
+                "messages": [
+                    RemoveMessage(id=REMOVE_ALL_MESSAGES),
+                    *messages,
+                ],
                 "structured_user_message_groups": raw_groups,
             },
+            as_node=CHECKPOINT_STATE_UPDATE_NODE,
         )
         return {
             "group_id": expanded.group_id,

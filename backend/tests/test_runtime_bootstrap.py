@@ -6,6 +6,7 @@ import time
 
 from fastapi.testclient import TestClient
 
+from backend.app.agent.checkpoint_runtime import CheckpointRuntimeState
 from backend.app.core.config import AppSettings
 from backend.app.main import create_app
 from backend.app.mcp.manager import McpManager
@@ -53,6 +54,68 @@ def test_application_lifespan_closes_file_change_hub(tmp_path) -> None:
         assert client.get("/api/health").status_code == 200
 
     assert close_calls == 1
+
+
+def test_application_lifespan_owns_one_checkpoint_runtime_and_closes_it(tmp_path) -> None:
+    app = create_app(AppSettings(data_dir=tmp_path / "data"))
+
+    with TestClient(app) as client:
+        health = client.get("/api/health")
+        assert health.status_code == 200
+        assert health.json()["checkpoint_status"] == "ready"
+        assert health.json()["checkpoint_ready"] is True
+        assert app.state.checkpointer is app.state.checkpoint_runtime.require_store()
+        assert app.state.checkpoint_runtime.connection is not None
+
+    assert app.state.checkpoint_runtime.connection is None
+    assert app.state.checkpoint_runtime.status_payload()["state"] == "closing"
+
+
+def test_checkpoint_dependent_http_endpoint_is_gated_while_migrating(tmp_path) -> None:
+    app = create_app(AppSettings(data_dir=tmp_path / "data"))
+
+    with TestClient(app) as client:
+        app.state.checkpoint_runtime.transition(CheckpointRuntimeState.COPYING)
+        response = client.post("/api/sessions/session-1/fork", json={})
+        health = client.get("/api/health")
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "1"
+    assert response.json()["detail"] == {
+        "code": "checkpoint_runtime_unavailable",
+        "message": "会话存储正在准备中，请稍后重试",
+        "details": {
+            "checkpoint_state": "copying",
+            "retryable": True,
+        },
+        "status": 503,
+    }
+    assert health.status_code == 200
+    assert health.json()["checkpoint_status"] == "copying"
+
+
+def test_checkpoint_gate_rearms_stale_runtime_after_persisted_completion(
+    tmp_path,
+) -> None:
+    app = create_app(AppSettings(data_dir=tmp_path / "data"))
+
+    with TestClient(app) as client:
+        app.state.checkpoint_runtime.transition(
+            CheckpointRuntimeState.MIGRATION_REQUIRED
+        )
+        response = client.post("/api/sessions/missing/fork", json={})
+        app.state.checkpoint_runtime.transition(
+            CheckpointRuntimeState.MIGRATION_REQUIRED
+        )
+        with client.websocket_connect("/agent-base/ws/chat") as websocket:
+            websocket.send_json({"action": "ping"})
+            pong = websocket.receive_json()
+        health = client.get("/api/health")
+
+    assert response.status_code != 503
+    assert pong["action"] == "pong"
+    assert health.json()["checkpoint_status"] == "ready"
+    assert health.json()["checkpoint_ready"] is True
 
 
 def test_default_model_warmup_runs_inside_background_agent_warmup(

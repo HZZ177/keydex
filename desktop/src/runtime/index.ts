@@ -60,6 +60,7 @@ export { createMcpRuntime } from "./mcp";
 export { createKeydexRuntime, createSkillRuntime } from "./skills";
 export { createGitRuntime } from "./git";
 export { createRightSidebarRuntime, rightSidebarScopePath } from "./rightSidebar";
+export { createCheckpointMigrationRuntime } from "./checkpointMigration";
 export {
   canUseAppUpdater,
   checkForAppUpdate,
@@ -86,6 +87,12 @@ export type {
   RuntimeHttpErrorParams,
 } from "./errors";
 export type { RuntimeBridge, RuntimeBridgeOptions } from "./bridge";
+export type {
+  CheckpointMigrationError,
+  CheckpointMigrationRuntime,
+  CheckpointMigrationState,
+  CheckpointMigrationStatus,
+} from "./checkpointMigration";
 export type {
   RightSidebarPromotionRequest,
   RightSidebarPromotionResponse,

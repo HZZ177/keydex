@@ -1391,7 +1391,9 @@ create index if not exists idx_trace_event_log_trace_record_seq_created
   on trace_event_log(trace_record_id, sequence_no, created_at);
 create index if not exists idx_trace_event_log_trace_record_event_created
   on trace_event_log(trace_record_id, event_type, created_at);
+"""
 
+LEGACY_CHECKPOINT_SCHEMA_SQL = """
 create table if not exists checkpoints_v2 (
   thread_id text not null,
   checkpoint_ns text not null default '',
@@ -1423,6 +1425,93 @@ create table if not exists checkpoint_writes_v2 (
 
 create index if not exists idx_writes_thread_ns_ckpt
   on checkpoint_writes_v2(thread_id, checkpoint_ns, checkpoint_id);
+"""
+
+CHECKPOINT_DOWNGRADE_GUARD_MESSAGE = (
+    "Keydex 会话数据已升级，请使用当前版本或更高版本打开"
+)
+
+CHECKPOINT_DOWNGRADE_GUARD_SQL = f"""
+create table if not exists checkpoint_backend_guard (
+  id integer primary key check (id = 1),
+  required_backend text not null,
+  user_message text not null
+);
+
+insert or replace into checkpoint_backend_guard (
+  id, required_backend, user_message
+) values (
+  1,
+  'official_async_sqlite_delta_v1',
+  '{CHECKPOINT_DOWNGRADE_GUARD_MESSAGE}'
+);
+
+-- These are intentionally empty compatibility shells, not legacy storage.  An old
+-- binary can run its CREATE TABLE/INDEX IF NOT EXISTS startup DDL, then every
+-- attempted mutation is stopped by the triggers below with an actionable message.
+-- Views cannot be used here because SQLite rejects the old CREATE INDEX ... ON view
+-- statements before considering IF NOT EXISTS.
+create table if not exists checkpoints_v2 (
+  thread_id text not null,
+  checkpoint_ns text not null default '',
+  checkpoint_id text not null,
+  created_at text not null,
+  parent_checkpoint_id text,
+  type text not null,
+  checkpoint_blob blob not null,
+  metadata text,
+  primary key (thread_id, checkpoint_ns, checkpoint_id)
+);
+
+create table if not exists checkpoint_writes_v2 (
+  thread_id text not null,
+  checkpoint_ns text not null default '',
+  checkpoint_id text not null,
+  task_id text not null,
+  task_path text not null default '',
+  idx integer not null,
+  channel text not null,
+  type text not null,
+  value_blob blob not null,
+  created_at text not null,
+  primary key (thread_id, checkpoint_ns, checkpoint_id, task_id, task_path, idx)
+);
+
+create index if not exists idx_ckpt_thread_ns_created_id
+  on checkpoints_v2(thread_id, checkpoint_ns, created_at desc, checkpoint_id desc);
+create index if not exists idx_writes_thread_ns_ckpt
+  on checkpoint_writes_v2(thread_id, checkpoint_ns, checkpoint_id);
+
+create trigger if not exists trg_checkpoints_v2_downgrade_insert
+before insert on checkpoints_v2
+begin
+  select raise(abort, '{CHECKPOINT_DOWNGRADE_GUARD_MESSAGE}');
+end;
+create trigger if not exists trg_checkpoints_v2_downgrade_update
+before update on checkpoints_v2
+begin
+  select raise(abort, '{CHECKPOINT_DOWNGRADE_GUARD_MESSAGE}');
+end;
+create trigger if not exists trg_checkpoints_v2_downgrade_delete
+before delete on checkpoints_v2
+begin
+  select raise(abort, '{CHECKPOINT_DOWNGRADE_GUARD_MESSAGE}');
+end;
+create trigger if not exists trg_checkpoint_writes_v2_downgrade_insert
+before insert on checkpoint_writes_v2
+begin
+  select raise(abort, '{CHECKPOINT_DOWNGRADE_GUARD_MESSAGE}');
+end;
+create trigger if not exists trg_checkpoint_writes_v2_downgrade_update
+before update on checkpoint_writes_v2
+begin
+  select raise(abort, '{CHECKPOINT_DOWNGRADE_GUARD_MESSAGE}');
+end;
+create trigger if not exists trg_checkpoint_writes_v2_downgrade_delete
+before delete on checkpoint_writes_v2
+begin
+  select raise(abort, '{CHECKPOINT_DOWNGRADE_GUARD_MESSAGE}');
+end;
 """
 
 SCHEMA_UPGRADE_SQL = """
@@ -1501,6 +1590,91 @@ create index if not exists idx_tool_result_artifact_grants_session
   on tool_result_artifact_grants(session_id);
 """
 
+CHECKPOINT_MIGRATION_SCHEMA_SQL = """
+create table if not exists checkpoint_migration_state (
+  migration_id text primary key,
+  source_schema text not null,
+  target_schema text not null,
+  status text not null check (status in (
+    'pending', 'preflighting', 'copying_business_data',
+    'collapsing_checkpoints', 'verifying_target', 'ready_to_swap',
+    'swapping', 'smoke_checking', 'completed', 'failed'
+  )),
+  source_db_fingerprint text not null,
+  source_db_bytes integer not null default 0,
+  source_wal_bytes integer not null default 0,
+  source_page_count integer not null default 0,
+  source_freelist_count integer not null default 0,
+  estimated_target_bytes integer not null default 0,
+  free_disk_bytes integer not null default 0,
+  target_db_bytes integer not null default 0,
+  target_temp_path text,
+  backup_path text,
+  progress_basis_points integer not null default 0
+    check (progress_basis_points between 0 and 10000),
+  migrated_namespaces integer not null default 0,
+  created_roots integer not null default 0,
+  preserved_head_writes integer not null default 0,
+  discarded_checkpoints integer not null default 0,
+  discarded_writes integer not null default 0,
+  source_checkpoint_count integer,
+  source_write_count integer,
+  inventory_json text not null default '{}',
+  business_source_digest text,
+  business_target_digest text,
+  error_code text,
+  error_detail text,
+  started_at text,
+  completed_at text,
+  ui_acknowledged_at text,
+  progress_updated_at text,
+  updated_at text not null
+);
+
+create table if not exists checkpoint_migration_namespaces (
+  migration_id text not null,
+  thread_id text not null,
+  checkpoint_ns text not null default '',
+  status text not null check (status in ('pending', 'running', 'completed', 'failed')),
+  source_checkpoint_count integer not null default 0,
+  source_write_count integer not null default 0,
+  root_checkpoint_id text,
+  preserved_head_write_count integer not null default 0,
+  discarded_checkpoint_count integer not null default 0,
+  discarded_write_count integer not null default 0,
+  source_head_digest text,
+  target_root_digest text,
+  hydrate_digest text,
+  error_code text,
+  error_detail text,
+  started_at text,
+  completed_at text,
+  updated_at text not null,
+  primary key (migration_id, thread_id, checkpoint_ns),
+  foreign key (migration_id) references checkpoint_migration_state(migration_id)
+    on delete cascade
+);
+
+create index if not exists idx_checkpoint_migration_ns_status
+  on checkpoint_migration_namespaces(migration_id, status, thread_id, checkpoint_ns);
+"""
+
+
+class _ClosingConnection(sqlite3.Connection):
+    """SQLite connection whose context manager owns and closes the handle.
+
+    ``sqlite3.Connection.__exit__`` only commits or rolls back.  Most of the
+    repository deliberately uses ``with database.connect()`` as an ownership
+    boundary, so leaving the standard behavior in place leaks Windows file
+    handles and makes an atomic database replacement impossible.
+    """
+
+    def __exit__(self, exc_type, exc_value, traceback) -> bool:
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
 
 class Database:
     def __init__(self, path: Path | str) -> None:
@@ -1508,7 +1682,11 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path, timeout=30.0)
+        conn = sqlite3.connect(
+            self.path,
+            timeout=30.0,
+            factory=_ClosingConnection,
+        )
         conn.row_factory = sqlite3.Row
         conn.execute("pragma foreign_keys = on")
         conn.execute("pragma busy_timeout = 30000")
@@ -1526,6 +1704,7 @@ class Database:
             self._migrate_file_history_multiscope_schema(conn)
             self._migrate_web_annotation_resource_identity_schema(conn)
             conn.executescript(SCHEMA_SQL)
+            conn.executescript(CHECKPOINT_MIGRATION_SCHEMA_SQL)
             self._ensure_column(conn, "sessions", "workspace_id", "text")
             self._ensure_column(
                 conn,
@@ -1571,6 +1750,21 @@ class Database:
                 "context_compression_epoch",
                 "integer not null default 0",
             )
+            self._ensure_column(
+                conn,
+                "sessions",
+                "checkpoint_lineage_epoch",
+                "integer not null default 0",
+            )
+            self._ensure_column(
+                conn,
+                "sessions",
+                "checkpoint_history_floor_turn_index",
+                "integer not null default 0",
+            )
+            self._ensure_column(conn, "sessions", "checkpoint_root_id", "text")
+            self._ensure_column(conn, "sessions", "checkpoint_collapsed_at", "text")
+            self._ensure_column(conn, "sessions", "checkpoint_migration_id", "text")
             self._ensure_column(conn, "sessions", "pinned_at", "text")
             self._ensure_column(conn, "sessions", "title_source", "text not null default 'manual'")
             self._ensure_column(
@@ -1663,6 +1857,7 @@ class Database:
             self._remove_mcp_risk_schema(conn)
             self._migrate_mcp_refresh_interval_default(conn)
             self._normalize_legacy_mcp_refreshing_status(conn)
+            self._ensure_checkpoint_downgrade_guard(conn)
             if should_migrate_legacy_sessions:
                 self._migrate_legacy_sessions_to_default_workspace(
                     conn,
@@ -1681,6 +1876,33 @@ class Database:
         return {
             str(row["name"]) for row in conn.execute(f"pragma table_info({table_name})").fetchall()
         }
+
+    @staticmethod
+    def _ensure_checkpoint_downgrade_guard(conn: sqlite3.Connection) -> None:
+        has_guard = (
+            conn.execute(
+                """
+                select 1 from sqlite_master
+                where type = 'table' and name = 'checkpoint_backend_guard'
+                """
+            ).fetchone()
+            is not None
+        )
+        if has_guard:
+            conn.executescript(CHECKPOINT_DOWNGRADE_GUARD_SQL)
+            return
+        legacy_tables = int(
+            conn.execute(
+                """
+                select count(*) from sqlite_master
+                where type = 'table'
+                  and name in ('checkpoints_v2', 'checkpoint_writes_v2')
+                """
+            ).fetchone()[0]
+        )
+        if legacy_tables:
+            return
+        conn.executescript(CHECKPOINT_DOWNGRADE_GUARD_SQL)
 
     @staticmethod
     def _migration_column_expr(

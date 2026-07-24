@@ -14,6 +14,10 @@ import { createMcpRuntime, type McpRuntime } from "./mcp";
 import { createGitRuntime, type GitRuntime } from "./git";
 import { createRightSidebarRuntime, type RightSidebarRuntime } from "./rightSidebar";
 import {
+  createCheckpointMigrationRuntime,
+  type CheckpointMigrationRuntime,
+} from "./checkpointMigration";
+import {
   createKeydexRuntime,
   createSkillRuntime,
   type KeydexRuntime,
@@ -42,6 +46,7 @@ export interface RuntimeBridge {
   keydex: KeydexRuntime;
   git: GitRuntime;
   rightSidebar: RightSidebarRuntime;
+  checkpointMigration: CheckpointMigrationRuntime;
   getBaseUrl(): string;
   setBaseUrl(baseUrl: string): void;
   health(): Promise<HealthResponse>;
@@ -69,6 +74,7 @@ export function createRuntimeBridge(options: RuntimeBridgeOptions = {}): Runtime
     keydex: createKeydexRuntime(http),
     git: createGitRuntime(http),
     rightSidebar: createRightSidebarRuntime(http),
+    checkpointMigration: createCheckpointMigrationRuntime(http),
     getBaseUrl() {
       return http.getBaseUrl();
     },

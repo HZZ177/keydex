@@ -6,8 +6,7 @@ import sqlite3
 import pytest
 
 from backend.app.storage import init_database
-from backend.app.storage.db import SCHEMA_SQL
-
+from backend.app.storage.db import LEGACY_CHECKPOINT_SCHEMA_SQL, SCHEMA_SQL
 
 _LEGACY_RELATION_TABLES = (
     "session_forks",
@@ -35,9 +34,14 @@ def _create_unchanged_legacy_relation_tables(conn: sqlite3.Connection) -> None:
     """Create the pre-migration child tables around legacy lifecycle parents."""
 
     for table in _LEGACY_RELATION_TABLES:
+        schema = (
+            LEGACY_CHECKPOINT_SCHEMA_SQL
+            if table in {"checkpoints_v2", "checkpoint_writes_v2"}
+            else SCHEMA_SQL
+        )
         match = re.search(
             rf"create table if not exists {re.escape(table)}\s*\(.*?\n\);",
-            SCHEMA_SQL,
+            schema,
             flags=re.DOTALL,
         )
         assert match is not None, f"missing schema for {table}"

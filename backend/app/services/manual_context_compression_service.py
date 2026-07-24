@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, RemoveMessage
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from backend.app.agent.compact_runtime_attachments import (
     build_current_text_reader,
@@ -29,6 +30,10 @@ from backend.app.agent.context_compression_utils import (
 )
 from backend.app.agent.factory import AgentFactory, agent_factory
 from backend.app.agent.runtime_settings import load_agent_runtime_settings
+from backend.app.agent.state import (
+    CHECKPOINT_STATE_UPDATE_NODE,
+    build_checkpoint_state_graph,
+)
 from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
 from backend.app.services.context_compression_service import ContextCompressionService
@@ -79,6 +84,7 @@ class ManualContextCompressionService:
         repositories: StorageRepositories,
         *,
         checkpointer: Any,
+        checkpoint_state_graph: Any | None = None,
         compression_service: ContextCompressionService | None = None,
         factory: AgentFactory = agent_factory,
         http_transport: httpx.BaseTransport | httpx.AsyncBaseTransport | None = None,
@@ -86,6 +92,9 @@ class ManualContextCompressionService:
     ) -> None:
         self.repositories = repositories
         self.checkpointer = checkpointer
+        self.checkpoint_state_graph = (
+            checkpoint_state_graph or build_checkpoint_state_graph(checkpointer)
+        )
         self.compression_service = compression_service or ContextCompressionService(
             repositories,
             factory=factory,
@@ -137,7 +146,7 @@ class ManualContextCompressionService:
                 reason="context_compression_disabled",
             )
 
-        checkpoint = self._latest_checkpoint(active_session_id)
+        checkpoint = await self._latest_checkpoint(active_session_id)
         checkpoint_config = self._checkpoint_config(checkpoint)
         if checkpoint is None or checkpoint_config is None:
             await self._emit_progress(
@@ -316,7 +325,7 @@ class ManualContextCompressionService:
                 selection_report=replacement.report.to_safe_dict(),
             )
 
-        if not self._is_current_active_checkpoint(
+        if not await self._is_current_active_checkpoint(
             original_session_id=session.id,
             active_session_id=active_session_id,
             expected_checkpoint_id=checkpoint_config["checkpoint_id"],
@@ -342,7 +351,7 @@ class ManualContextCompressionService:
             )
 
         try:
-            self._replace_checkpoint_state(
+            await self._append_checkpoint_successor(
                 active_session_id=active_session_id,
                 checkpoint_config=checkpoint_config,
                 messages=list(replacement.messages),
@@ -398,12 +407,14 @@ class ManualContextCompressionService:
             selection_report=replacement.report.to_safe_dict(),
         )
 
-    def _latest_checkpoint(self, active_session_id: str) -> Any | None:
-        if self.checkpointer is None or not hasattr(self.checkpointer, "get_tuple"):
+    async def _latest_checkpoint(self, active_session_id: str) -> Any | None:
+        get_state = getattr(self.checkpoint_state_graph, "aget_state", None)
+        if not callable(get_state):
             return None
-        return self.checkpointer.get_tuple(
+        checkpoint = await get_state(
             {"configurable": {"thread_id": active_session_id, "checkpoint_ns": ""}}
         )
+        return checkpoint if self._checkpoint_config(checkpoint) is not None else None
 
     @staticmethod
     def _checkpoint_config(checkpoint: Any | None) -> dict[str, str] | None:
@@ -420,13 +431,17 @@ class ManualContextCompressionService:
 
     @staticmethod
     def _checkpoint_messages(checkpoint: Any) -> list[BaseMessage]:
-        values = getattr(checkpoint, "checkpoint", {}).get("channel_values", {})
+        values = getattr(checkpoint, "values", None)
+        if not isinstance(values, dict):
+            values = getattr(checkpoint, "checkpoint", {}).get("channel_values", {})
         messages = values.get("messages") if isinstance(values, dict) else None
         return [message for message in list(messages or []) if isinstance(message, BaseMessage)]
 
     @staticmethod
     def _checkpoint_structured_groups(checkpoint: Any) -> list[StructuredUserMessageGroup]:
-        values = getattr(checkpoint, "checkpoint", {}).get("channel_values", {})
+        values = getattr(checkpoint, "values", None)
+        if not isinstance(values, dict):
+            values = getattr(checkpoint, "checkpoint", {}).get("channel_values", {})
         raw_groups = (
             values.get("structured_user_message_groups")
             if isinstance(values, dict)
@@ -440,7 +455,7 @@ class ManualContextCompressionService:
                 continue
         return groups
 
-    def _is_current_active_checkpoint(
+    async def _is_current_active_checkpoint(
         self,
         *,
         original_session_id: str,
@@ -451,31 +466,41 @@ class ManualContextCompressionService:
         original = self.repositories.sessions.get(original_session_id)
         if original is None or (original.active_session_id or original.id) != active_session_id:
             return False
-        latest = self._latest_checkpoint(active_session_id)
+        latest = await self._latest_checkpoint(active_session_id)
         latest_config = self._checkpoint_config(latest)
         return latest_config == {
             "checkpoint_id": expected_checkpoint_id,
             "checkpoint_ns": expected_checkpoint_ns,
         }
 
-    def _replace_checkpoint_state(
+    async def _append_checkpoint_successor(
         self,
         *,
         active_session_id: str,
         checkpoint_config: dict[str, str],
         messages: list[BaseMessage],
         state_update: dict[str, Any],
-    ) -> None:
-        replace_checkpoint_state = getattr(self.checkpointer, "replace_checkpoint_state", None)
-        if not callable(replace_checkpoint_state):
-            raise RuntimeError("checkpointer does not support atomic checkpoint state replacement")
-        channel_values = {"messages": list(messages)}
-        channel_values.update(_checkpoint_channel_values_from_state_update(state_update))
-        replace_checkpoint_state(
-            thread_id=active_session_id,
-            checkpoint_id=checkpoint_config["checkpoint_id"],
-            checkpoint_ns=checkpoint_config["checkpoint_ns"],
-            channel_values=channel_values,
+    ) -> dict[str, Any]:
+        update_state = getattr(self.checkpoint_state_graph, "aupdate_state", None)
+        if not callable(update_state):
+            raise RuntimeError("checkpoint state graph does not support async updates")
+        update = {
+            "messages": [
+                RemoveMessage(id=REMOVE_ALL_MESSAGES),
+                *messages,
+            ],
+            **state_update,
+        }
+        return await update_state(
+            {
+                "configurable": {
+                    "thread_id": active_session_id,
+                    "checkpoint_ns": checkpoint_config["checkpoint_ns"],
+                    "checkpoint_id": checkpoint_config["checkpoint_id"],
+                }
+            },
+            update,
+            as_node=CHECKPOINT_STATE_UPDATE_NODE,
         )
 
     def _mark_context_compressed(self, session_id: str) -> int:
@@ -539,23 +564,3 @@ def _tool_call_ids(messages: tuple[BaseMessage, ...]) -> set[str]:
             if str(call.get("id") or "")
         )
     return result
-
-
-def _checkpoint_channel_values_from_state_update(
-    state_update: dict[str, Any],
-) -> dict[str, Any]:
-    channels: dict[str, Any] = {}
-    for key in (
-        "structured_user_message_groups",
-        "structured_user_group_replay_markers",
-        "pending_tool_call_preset",
-        "context_compression_diagnostics",
-    ):
-        if key not in state_update:
-            continue
-        value = state_update[key]
-        if key == "structured_user_message_groups" and isinstance(value, dict):
-            if value.get("mode") == "replace":
-                value = list(value.get("groups") or [])
-        channels[key] = value
-    return channels

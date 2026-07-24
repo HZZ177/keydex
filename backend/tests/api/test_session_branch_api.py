@@ -1,26 +1,19 @@
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
+import asyncio
 
-from backend.app.agent.checkpoint import SQLiteCheckpointSaver
+from fastapi.testclient import TestClient
+from langchain_core.messages import HumanMessage
+
+from backend.app.agent.checkpoint_runtime import CheckpointRuntime
+from backend.app.agent.state import build_checkpoint_state_graph
 from backend.app.api import sessions as sessions_api
 from backend.app.core.config import AppSettings
 from backend.app.main import create_app
 from backend.app.services.manual_context_compression_service import ManualContextCompressionResult
 
 
-def _checkpoint(checkpoint_id: str) -> dict:
-    return {
-        "v": 1,
-        "id": checkpoint_id,
-        "ts": f"2026-06-28T00:00:00+00:00:{checkpoint_id}",
-        "channel_values": {"messages": [checkpoint_id]},
-        "channel_versions": {},
-        "versions_seen": {},
-    }
-
-
-def _prepare_source(app) -> None:
+async def _prepare_source(app) -> str:
     repositories = app.state.repositories
     repositories.sessions.create(
         session_id="ses_source",
@@ -28,13 +21,22 @@ def _prepare_source(app) -> None:
         scene_id="desktop-agent",
         title="源会话",
     )
-    saver = SQLiteCheckpointSaver(app.state.database)
-    saver.put(
-        {"configurable": {"thread_id": "ses_source", "checkpoint_ns": ""}},
-        _checkpoint("ckpt_1"),
-        {"step": 1},
-        {},
+    runtime = CheckpointRuntime(app.state.database.path)
+    assert await runtime.start() is True
+    graph = build_checkpoint_state_graph(runtime.require_store())
+    config = {
+        "configurable": {
+            "thread_id": "ses_source",
+            "checkpoint_ns": "",
+        }
+    }
+    await graph.ainvoke(
+        {"messages": [HumanMessage(content="问题")]},
+        config=config,
     )
+    snapshot = await graph.aget_state(config)
+    checkpoint_id = str(snapshot.config["configurable"]["checkpoint_id"])
+    await runtime.close()
     repositories.trace_records.create(
         trace_id="trace_1",
         session_id="ses_source",
@@ -47,7 +49,7 @@ def _prepare_source(app) -> None:
     repositories.trace_records.finish(
         "trace_1",
         status="completed",
-        output_checkpoint_id="ckpt_1",
+        output_checkpoint_id=checkpoint_id,
         output_checkpoint_ns="",
     )
     repositories.message_events.append(
@@ -66,11 +68,12 @@ def _prepare_source(app) -> None:
         action="ai_message",
         data={"session_id": "ses_source", "content": "回答"},
     )
+    return checkpoint_id
 
 
 def test_session_fork_api_returns_new_session_and_source_metadata(tmp_path) -> None:
     app = create_app(AppSettings(data_dir=tmp_path / "data"))
-    _prepare_source(app)
+    checkpoint_id = asyncio.run(_prepare_source(app))
 
     with TestClient(app) as client:
         response = client.post(
@@ -92,8 +95,8 @@ def test_session_fork_api_returns_new_session_and_source_metadata(tmp_path) -> N
     assert body["session"]["fork_source"]["source_session_id"] == "ses_source"
     assert body["session"]["fork_source"]["source_message_event_id"] == "evt_ai_1"
     assert body["session"]["fork_source"]["target_message_event_id"] != "evt_ai_1"
-    assert body["session"]["fork_source"]["source_checkpoint_id"] == "ckpt_1"
-    assert body["source"]["checkpoint_id"] == "ckpt_1"
+    assert body["session"]["fork_source"]["source_checkpoint_id"] == checkpoint_id
+    assert body["source"]["checkpoint_id"] == checkpoint_id
     assert body["source"]["source_type"] == "latest_completed"
     source_messages = source_history_response.json()["list"]
     assert all("forkSource" not in item for item in source_messages)
@@ -148,7 +151,7 @@ def test_session_context_compression_api_returns_manual_result(tmp_path, monkeyp
 
 def test_session_fork_api_can_create_tagged_branch_outside_default_list(tmp_path) -> None:
     app = create_app(AppSettings(data_dir=tmp_path / "data"))
-    _prepare_source(app)
+    asyncio.run(_prepare_source(app))
 
     with TestClient(app) as client:
         response = client.post(
@@ -175,7 +178,7 @@ def test_session_fork_api_can_create_tagged_branch_outside_default_list(tmp_path
 
 def test_session_reverse_api_rolls_back_same_session(tmp_path) -> None:
     app = create_app(AppSettings(data_dir=tmp_path / "data"))
-    _prepare_source(app)
+    asyncio.run(_prepare_source(app))
 
     with TestClient(app) as client:
         response = client.post(
@@ -196,7 +199,7 @@ def test_session_reverse_api_rolls_back_same_session(tmp_path) -> None:
 
 def test_session_fork_api_rejects_failed_trace(tmp_path) -> None:
     app = create_app(AppSettings(data_dir=tmp_path / "data"))
-    _prepare_source(app)
+    asyncio.run(_prepare_source(app))
     repositories = app.state.repositories
     repositories.trace_records.create(
         trace_id="trace_failed",

@@ -1278,6 +1278,17 @@ export interface AgentSession {
   current_model: string | null;
   context_window_usage?: AgentMiddlewareProgressData | null;
   context_compression_epoch?: number;
+  checkpoint_lineage?: {
+    epoch: number;
+    history_floor_turn_index: number;
+    root_checkpoint_id: string | null;
+    collapsed_at: string | null;
+  };
+  checkpoint_capabilities?: {
+    can_continue: boolean;
+    can_fork_before_history_floor: boolean;
+    can_reverse_before_history_floor: boolean;
+  };
   pinned?: boolean;
   pinned_at?: string | null;
   active_session_id: string | null;

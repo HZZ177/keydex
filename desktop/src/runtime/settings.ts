@@ -26,6 +26,8 @@ export interface HealthResponse {
   agent_warmup_duration_ms?: number | null;
   capabilities?: string[];
   file_history_enabled?: boolean;
+  checkpoint_status?: string;
+  checkpoint_ready?: boolean;
 }
 
 export type WebCapability = "search" | "fetch";

@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import sqlite3
 import warnings
-from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from contextlib import contextmanager
 from inspect import signature
-from typing import Any
+from typing import Any, TypeVar
 
+import aiosqlite
 from langchain_core._api.deprecation import LangChainPendingDeprecationWarning
 from langchain_core.runnables import RunnableConfig
 
@@ -30,9 +39,243 @@ with warnings.catch_warnings():
         get_checkpoint_metadata,
     )
     from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from backend.app.core.time import to_iso_z, utc_now
-from backend.app.storage.db import Database
+from backend.app.storage.db import LEGACY_CHECKPOINT_SCHEMA_SQL, Database
+
+T = TypeVar("T")
+
+
+class CheckpointStorageBusy(RuntimeError):
+    code = "checkpoint_storage_busy"
+
+    def __init__(self) -> None:
+        super().__init__("会话存储暂时繁忙，请稍后重试")
+
+
+class CheckpointStoreClosing(RuntimeError):
+    code = "checkpoint_runtime_closing"
+
+    def __init__(self) -> None:
+        super().__init__("会话存储正在关闭")
+
+
+class KeydexAsyncCheckpointStore(BaseCheckpointSaver[str]):
+    """Public async checkpoint boundary around the official SQLite saver."""
+
+    _SYNC_ERROR = (
+        "Keydex checkpoint storage is async-only; use the corresponding async method"
+    )
+
+    def __init__(
+        self,
+        official_saver: AsyncSqliteSaver,
+        *,
+        operation_lock: asyncio.Lock | None = None,
+    ) -> None:
+        super().__init__(serde=official_saver.serde)
+        self._official_saver = official_saver
+        self._operation_lock = operation_lock or asyncio.Lock()
+        self._accepting_operations = True
+
+    @property
+    def config_specs(self) -> list:
+        return self._official_saver.config_specs
+
+    def begin_closing(self) -> None:
+        self._accepting_operations = False
+
+    def _require_open(self) -> None:
+        if not self._accepting_operations:
+            raise CheckpointStoreClosing
+
+    @staticmethod
+    async def _classify_busy(operation: Callable[[], Awaitable[T]]) -> T:
+        try:
+            return await operation()
+        except sqlite3.OperationalError as exc:
+            sqlite_error_code = getattr(exc, "sqlite_errorcode", None)
+            message = str(exc).lower()
+            if sqlite_error_code in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED} or any(
+                marker in message for marker in ("database is locked", "database is busy")
+            ):
+                raise CheckpointStorageBusy from exc
+            raise
+
+    async def aget_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
+        self._require_open()
+        async with self._operation_lock:
+            self._require_open()
+            return await self._classify_busy(
+                lambda: self._official_saver.aget_tuple(config)
+            )
+
+    async def alist(
+        self,
+        config: RunnableConfig | None,
+        *,
+        filter: dict[str, Any] | None = None,
+        before: RunnableConfig | None = None,
+        limit: int | None = None,
+    ) -> AsyncIterator[CheckpointTuple]:
+        self._require_open()
+        async with self._operation_lock:
+            self._require_open()
+
+            async def load_items() -> list[CheckpointTuple]:
+                return [
+                    item
+                    async for item in self._official_saver.alist(
+                        config,
+                        filter=filter,
+                        before=before,
+                        limit=limit,
+                    )
+                ]
+
+            items = await self._classify_busy(load_items)
+        for item in items:
+            yield item
+
+    async def aput(
+        self,
+        config: RunnableConfig,
+        checkpoint: Checkpoint,
+        metadata: CheckpointMetadata,
+        new_versions: ChannelVersions,
+    ) -> RunnableConfig:
+        self._require_open()
+        async with self._operation_lock:
+            self._require_open()
+            return await self._classify_busy(
+                lambda: self._official_saver.aput(
+                    config,
+                    checkpoint,
+                    metadata,
+                    new_versions,
+                )
+            )
+
+    async def aput_writes(
+        self,
+        config: RunnableConfig,
+        writes: Sequence[tuple[str, Any]],
+        task_id: str,
+        task_path: str = "",
+    ) -> None:
+        self._require_open()
+        async with self._operation_lock:
+            self._require_open()
+            await self._classify_busy(
+                lambda: self._official_saver.aput_writes(
+                    config,
+                    writes,
+                    task_id,
+                    task_path,
+                )
+            )
+
+    async def adelete_thread(self, thread_id: str) -> None:
+        self._require_open()
+        async with self._operation_lock:
+            self._require_open()
+            await self._classify_busy(
+                lambda: self._official_saver.adelete_thread(thread_id)
+            )
+
+    async def aget_delta_channel_history(
+        self,
+        *,
+        config: RunnableConfig,
+        channels: Sequence[str],
+    ) -> Mapping[str, Any]:
+        self._require_open()
+        async with self._operation_lock:
+            self._require_open()
+            return await self._classify_busy(
+                lambda: self._official_saver.aget_delta_channel_history(
+                    config=config,
+                    channels=channels,
+                )
+            )
+
+    def get_next_version(self, current: str | None, channel: None) -> str:
+        return self._official_saver.get_next_version(current, channel)
+
+    async def run_extension(
+        self,
+        operation: Callable[..., T],
+        /,
+        *args: Any,
+        **kwargs: Any,
+    ) -> T:
+        """Run project SQLite work under the same outer mutation lock."""
+        self._require_open()
+        async with self._operation_lock:
+            self._require_open()
+
+            async def run_in_thread() -> T:
+                return await asyncio.to_thread(operation, *args, **kwargs)
+
+            return await self._classify_busy(run_in_thread)
+
+    async def run_async_extension(
+        self,
+        operation: Callable[[aiosqlite.Connection], Awaitable[T]],
+        /,
+    ) -> T:
+        """Run one Keydex extension transaction on the saver-owned connection."""
+        self._require_open()
+        async with self._operation_lock:
+            self._require_open()
+
+            async def run_transaction() -> T:
+                connection = self._official_saver.conn
+                await connection.execute("begin immediate")
+                try:
+                    result = await operation(connection)
+                    await connection.commit()
+                    return result
+                except BaseException:
+                    await connection.rollback()
+                    raise
+
+            return await self._classify_busy(run_transaction)
+
+    def get_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
+        raise NotImplementedError(self._SYNC_ERROR)
+
+    def list(
+        self,
+        config: RunnableConfig | None,
+        *,
+        filter: dict[str, Any] | None = None,
+        before: RunnableConfig | None = None,
+        limit: int | None = None,
+    ) -> Iterator[CheckpointTuple]:
+        raise NotImplementedError(self._SYNC_ERROR)
+
+    def put(
+        self,
+        config: RunnableConfig,
+        checkpoint: Checkpoint,
+        metadata: CheckpointMetadata,
+        new_versions: ChannelVersions,
+    ) -> RunnableConfig:
+        raise NotImplementedError(self._SYNC_ERROR)
+
+    def put_writes(
+        self,
+        config: RunnableConfig,
+        writes: Sequence[tuple[str, Any]],
+        task_id: str,
+        task_path: str = "",
+    ) -> None:
+        raise NotImplementedError(self._SYNC_ERROR)
+
+    def delete_thread(self, thread_id: str) -> None:
+        raise NotImplementedError(self._SYNC_ERROR)
 
 
 def _metadata_dump(type_name: str, payload: bytes) -> str:
@@ -52,7 +295,8 @@ def _metadata_load(raw: str | None) -> tuple[str, bytes]:
     return str(payload["type"]), base64.b64decode(str(payload["data"]).encode("ascii"))
 
 
-def _default_checkpoint_serde() -> Any:
+def create_legacy_checkpoint_serializer() -> Any:
+    """Legacy v2 decoder/encoder; never use this for the official target tables."""
     parameters = signature(JsonPlusSerializer).parameters
     kwargs: dict[str, Any] = {}
     if "allowed_objects" in parameters:
@@ -62,17 +306,47 @@ def _default_checkpoint_serde() -> Any:
     return JsonPlusSerializer(**kwargs)
 
 
-class SQLiteCheckpointSaver(BaseCheckpointSaver):
-    """LangGraph checkpointer backed by the project's SQLite database.
+def decode_legacy_checkpoint_metadata(raw: str | None, serde: Any) -> dict[str, Any]:
+    value = serde.loads_typed(_metadata_load(raw))
+    if not isinstance(value, dict):
+        raise ValueError("legacy checkpoint metadata must be a mapping")
+    return value
 
-    This mirrors the kt-agent-framework v2 table names while staying small enough for
-    the desktop runtime. Checkpoints are stored as complete serialized snapshots, and
-    pending writes are stored separately using LangGraph's write-index semantics.
+
+def _default_checkpoint_serde() -> Any:
+    return create_legacy_checkpoint_serializer()
+
+
+class LegacySQLiteCheckpointSaver(BaseCheckpointSaver):
+    """Migration/test-only reader-writer for the retired v2 checkpoint schema.
+
+    The application runtime must use ``KeydexAsyncCheckpointStore``. This synchronous
+    implementation exists only to build/read pre-migration fixtures and must never be
+    injected into AgentRunner or runtime services.
     """
 
     def __init__(self, db: Database, serde: Any | None = None) -> None:
         super().__init__(serde=serde or _default_checkpoint_serde())
         self.db = db
+        with self.db.connect() as connection:
+            guarded = (
+                connection.execute(
+                    """
+                    select 1 from sqlite_master
+                    where type = 'table' and name = 'checkpoint_backend_guard'
+                    """
+                ).fetchone()
+                is not None
+            )
+            if guarded:
+                connection.executescript(
+                    """
+                    drop table if exists checkpoint_writes_v2;
+                    drop table if exists checkpoints_v2;
+                    drop table checkpoint_backend_guard;
+                    """
+                )
+            connection.executescript(LEGACY_CHECKPOINT_SCHEMA_SQL)
 
     def get_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
         configurable = config.get("configurable", {})

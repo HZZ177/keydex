@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.app.agent.checkpoint import SQLiteCheckpointSaver
 from backend.app.core.config import AppSettings
 from backend.app.main import create_app
 from backend.app.services.file_history_service import (
@@ -12,7 +13,7 @@ from backend.app.services.file_history_service import (
     FileRestoreDecision,
     FileRestoreMode,
 )
-from backend.app.services.session_fork_service import SessionForkService
+from backend.app.services.session_fork_service import SessionReverseSource
 from backend.app.services.session_reverse_service import (
     SessionReverseExecution,
     SessionReverseService,
@@ -21,16 +22,23 @@ from backend.app.services.session_reverse_service import (
 
 class _CompensationConflictConversation:
     def __init__(self, repositories, project) -> None:
-        self.delegate = SessionForkService(repositories)
+        self.repositories = repositories
         self.project = project
 
-    def resolve_reverse_source(self, *, session_id: str, message_event_id: str):
-        return self.delegate.resolve_reverse_source(
+    async def resolve_reverse_source(self, *, session_id: str, message_event_id: str):
+        event = self.repositories.message_events.get(message_event_id)
+        trace = self.repositories.trace_records.get(event.trace_record_id)
+        return SessionReverseSource(
             session_id=session_id,
+            active_session_id=trace.active_session_id or session_id,
+            checkpoint_id=trace.input_checkpoint_id,
+            checkpoint_ns=trace.input_checkpoint_ns or "",
+            trace_id=trace.trace_id,
+            turn_index=trace.turn_index,
             message_event_id=message_event_id,
         )
 
-    def rewind_conversation(self, *, source_session, source):
+    async def rewind_conversation(self, *, source_session, source):
         _ = source_session, source
         (self.project / "created.txt").write_text(
             "external during compensation\n",
@@ -270,19 +278,30 @@ def test_rewind_then_new_edit_then_rewind_does_not_drift_cursor_or_disk(tmp_path
 
     repositories = client.app.state.repositories
     history = client.app.state.file_history_service
-    SQLiteCheckpointSaver(repositories.db).put(
-        {"configurable": {"thread_id": session["id"], "checkpoint_ns": ""}},
-        {
-            "v": 1,
-            "id": "checkpoint-before-turn-2",
-            "ts": "2026-07-14T00:00:00+00:00",
-            "channel_values": {"messages": []},
-            "channel_versions": {},
-            "versions_seen": {},
-        },
-        {"step": 1},
-        {},
-    )
+    checkpoint = {
+        "v": 1,
+        "id": "checkpoint-before-turn-2",
+        "ts": "2026-07-14T00:00:00+00:00",
+        "channel_values": {"messages": []},
+        "channel_versions": {},
+        "versions_seen": {},
+    }
+    type_name, payload = client.app.state.checkpointer.serde.dumps_typed(checkpoint)
+    with repositories.db.transaction() as connection:
+        connection.execute(
+            """
+            insert into checkpoints (
+              thread_id, checkpoint_ns, checkpoint_id, parent_checkpoint_id,
+              type, checkpoint, metadata
+            ) values (?, '', 'checkpoint-before-turn-2', null, ?, ?, ?)
+            """,
+            (
+                session["id"],
+                type_name,
+                payload,
+                json.dumps({"step": 1}).encode(),
+            ),
+        )
     repositories.trace_records.create(
         trace_id="trace-2",
         session_id=session["id"],
@@ -512,7 +531,10 @@ def test_conversation_rewind_then_new_write_code_rewind_anchors_kept_disk(tmp_pa
     assert client.app.state.repositories.message_events.get(second_message) is not None
 
 
-def test_blocked_operation_status_exposes_resource_ids_and_operation_id(tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_blocked_operation_status_exposes_resource_ids_and_operation_id(
+    tmp_path,
+) -> None:
     client, project, session = _case(tmp_path)
     preview = _preview(client, session["id"])
     repositories = client.app.state.repositories
@@ -523,7 +545,7 @@ def test_blocked_operation_status_exposes_resource_ids_and_operation_id(tmp_path
     )
 
     with pytest.raises(FileHistoryError) as failure:
-        service.execute(
+        await service.execute(
             session_id=session["id"],
             workspace_root=project,
             request=SessionReverseExecution(

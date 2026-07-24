@@ -19,6 +19,7 @@ import { PierreWorkerPoolHost } from "@/renderer/components/diff/engine/PierreWo
 import { TerminalSessionScopeProvider } from "./TerminalSessionScopeProvider";
 import { TerminalProvider } from "@/renderer/features/terminal";
 import { BrowserOcclusionProvider } from "@/renderer/features/browser/runtime";
+import { MandatoryCheckpointMigrationGate } from "./MandatoryCheckpointMigrationGate";
 
 export interface AppProvidersProps extends PropsWithChildren {
   runtime?: RuntimeBridge;
@@ -42,21 +43,23 @@ export function AppProviders({
               <RuntimeConnectionProvider runtime={runtime} {...runtimeConnection}>
                 <WindowClosePreferenceController runtime={runtime} />
                 <AppTooltipLayer scopeSelector="body" targetMode="native-interactive-title" />
-                <TerminalSessionScopeProvider>
-                  <TerminalProvider>
-                    <FontProvider>
-                      <ComposerDraftProvider>
-                        <AgentSessionProvider runtime={runtime}>
-                          <FileChangeProvider>
-                            <PreviewProvider>
-                              <HashRouter>{children}</HashRouter>
-                            </PreviewProvider>
-                          </FileChangeProvider>
-                        </AgentSessionProvider>
-                      </ComposerDraftProvider>
-                    </FontProvider>
-                  </TerminalProvider>
-                </TerminalSessionScopeProvider>
+                <MandatoryCheckpointMigrationGate runtime={runtime}>
+                  <TerminalSessionScopeProvider>
+                    <TerminalProvider>
+                      <FontProvider>
+                        <ComposerDraftProvider>
+                          <AgentSessionProvider runtime={runtime}>
+                            <FileChangeProvider>
+                              <PreviewProvider>
+                                <HashRouter>{children}</HashRouter>
+                              </PreviewProvider>
+                            </FileChangeProvider>
+                          </AgentSessionProvider>
+                        </ComposerDraftProvider>
+                      </FontProvider>
+                    </TerminalProvider>
+                  </TerminalSessionScopeProvider>
+                </MandatoryCheckpointMigrationGate>
               </RuntimeConnectionProvider>
             </AppContextMenuProvider>
           </AppUpdateController>

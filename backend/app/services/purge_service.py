@@ -37,6 +37,209 @@ class PurgePlan:
     artifact_ids: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class CheckpointGcEntry:
+    thread_id: str
+    checkpoint_ns: str
+    checkpoint_id: str
+    estimated_bytes: int
+    reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CheckpointGcDryRun:
+    execution_enabled: bool
+    protected: tuple[CheckpointGcEntry, ...]
+    candidates: tuple[CheckpointGcEntry, ...]
+
+    @property
+    def estimated_reclaim_bytes(self) -> int:
+        return sum(item.estimated_bytes for item in self.candidates)
+
+
+class CheckpointGcDryRunPlanner:
+    """Conservative post-migration checkpoint dependency inventory.
+
+    The first release is deliberately read-only and disabled for execution.
+    Unknown lineage and every checkpoint carrying writes are protected.
+    """
+
+    def __init__(
+        self,
+        repositories: StorageRepositories,
+        *,
+        execution_enabled: bool = False,
+    ) -> None:
+        self._repositories = repositories
+        self.execution_enabled = execution_enabled
+
+    def plan_threads(self, thread_ids: tuple[str, ...]) -> CheckpointGcDryRun:
+        normalized = tuple(dict.fromkeys(value for value in thread_ids if value))
+        if not normalized:
+            return CheckpointGcDryRun(self.execution_enabled, (), ())
+        with self._repositories.db.connect() as conn:
+            if not PurgePlanner._table_exists(conn, "checkpoints"):
+                return CheckpointGcDryRun(self.execution_enabled, (), ())
+            placeholders = ", ".join("?" for _ in normalized)
+            rows = conn.execute(
+                f"""
+                select c.thread_id, c.checkpoint_ns, c.checkpoint_id,
+                       c.parent_checkpoint_id,
+                       length(coalesce(c.checkpoint, x'')) +
+                       length(coalesce(c.metadata, x'')) +
+                       coalesce((
+                         select sum(length(coalesce(w.value, x'')))
+                           from writes w
+                          where w.thread_id = c.thread_id
+                            and w.checkpoint_ns = c.checkpoint_ns
+                            and w.checkpoint_id = c.checkpoint_id
+                       ), 0) as estimated_bytes
+                  from checkpoints c
+                 where c.thread_id in ({placeholders})
+                 order by c.thread_id, c.checkpoint_ns, c.checkpoint_id
+                """,
+                normalized,
+            ).fetchall()
+            nodes = {
+                (
+                    str(row["thread_id"]),
+                    str(row["checkpoint_ns"]),
+                    str(row["checkpoint_id"]),
+                ): row
+                for row in rows
+            }
+            reasons: dict[tuple[str, str, str], set[str]] = {
+                key: set() for key in nodes
+            }
+
+            for row in conn.execute(
+                f"""
+                select thread_id, checkpoint_ns, max(checkpoint_id) as checkpoint_id
+                  from checkpoints
+                 where thread_id in ({placeholders})
+                 group by thread_id, checkpoint_ns
+                """,
+                normalized,
+            ).fetchall():
+                self._protect(reasons, row, "head")
+
+            root_rows = conn.execute(
+                f"""
+                select coalesce(active_session_id, id) as thread_id,
+                       '' as checkpoint_ns,
+                       checkpoint_root_id as checkpoint_id,
+                       agent_kind
+                  from sessions
+                 where coalesce(active_session_id, id) in ({placeholders})
+                """,
+                normalized,
+            ).fetchall()
+            threads_with_roots: set[str] = set()
+            for row in root_rows:
+                if row["checkpoint_id"]:
+                    threads_with_roots.add(str(row["thread_id"]))
+                    self._protect(reasons, row, "migration_root")
+                if str(row["agent_kind"] or "") == "subagent":
+                    self._protect(reasons, row, "subagent_runtime")
+
+            trace_rows = conn.execute(
+                f"""
+                select active_session_id as thread_id,
+                       input_checkpoint_ns as checkpoint_ns,
+                       input_checkpoint_id as checkpoint_id
+                  from trace_record
+                 where active_session_id in ({placeholders})
+                   and input_checkpoint_id is not null
+                union all
+                select active_session_id,
+                       output_checkpoint_ns,
+                       output_checkpoint_id
+                  from trace_record
+                 where active_session_id in ({placeholders})
+                   and output_checkpoint_id is not null
+                """,
+                (*normalized, *normalized),
+            ).fetchall()
+            for row in trace_rows:
+                self._protect(reasons, row, "trace_anchor")
+
+            fork_rows = conn.execute(
+                f"""
+                select source_active_session_id as thread_id,
+                       source_checkpoint_ns as checkpoint_ns,
+                       source_checkpoint_id as checkpoint_id
+                  from session_forks
+                 where source_active_session_id in ({placeholders})
+                   and source_checkpoint_id is not null
+                   and is_deleted = 0
+                """,
+                normalized,
+            ).fetchall()
+            for row in fork_rows:
+                self._protect(reasons, row, "fork_anchor")
+
+            if PurgePlanner._table_exists(conn, "writes"):
+                write_rows = conn.execute(
+                    f"""
+                    select distinct thread_id, checkpoint_ns, checkpoint_id
+                      from writes
+                     where thread_id in ({placeholders})
+                    """,
+                    normalized,
+                ).fetchall()
+                for row in write_rows:
+                    self._protect(reasons, row, "pending_or_delta_write")
+
+            for key in nodes:
+                if key[0] not in threads_with_roots:
+                    reasons[key].add("pre_migration_or_unknown_lineage")
+
+            protected_anchors = [key for key, value in reasons.items() if value]
+            for anchor in protected_anchors:
+                parent_id = nodes[anchor]["parent_checkpoint_id"]
+                while parent_id:
+                    parent = (anchor[0], anchor[1], str(parent_id))
+                    if parent not in nodes:
+                        reasons[anchor].add("uncertain_missing_ancestor")
+                        break
+                    reasons[parent].add("ancestor")
+                    parent_id = nodes[parent]["parent_checkpoint_id"]
+
+        protected: list[CheckpointGcEntry] = []
+        candidates: list[CheckpointGcEntry] = []
+        for key, row in nodes.items():
+            entry = CheckpointGcEntry(
+                thread_id=key[0],
+                checkpoint_ns=key[1],
+                checkpoint_id=key[2],
+                estimated_bytes=int(row["estimated_bytes"] or 0),
+                reasons=tuple(sorted(reasons[key])),
+            )
+            (protected if entry.reasons else candidates).append(entry)
+        return CheckpointGcDryRun(
+            execution_enabled=self.execution_enabled,
+            protected=tuple(protected),
+            candidates=tuple(candidates),
+        )
+
+    @staticmethod
+    def _protect(
+        reasons: dict[tuple[str, str, str], set[str]],
+        row,
+        reason: str,
+    ) -> None:
+        checkpoint_id = row["checkpoint_id"]
+        if not checkpoint_id:
+            return
+        key = (
+            str(row["thread_id"]),
+            str(row["checkpoint_ns"] or ""),
+            str(checkpoint_id),
+        )
+        if key in reasons:
+            reasons[key].add(reason)
+
+
 class PurgePlanner:
     """Read-only inventory for lifecycle purge."""
 
@@ -128,8 +331,11 @@ class PurgePlanner:
     SESSION_TRANSITIVE_RELATIONS: tuple[str, ...] = ("web_annotation_target_history",)
 
     SESSION_THREAD_RELATIONS: tuple[str, ...] = (
-        "checkpoints_v2",
-        "checkpoint_writes_v2",
+        "writes",
+        "checkpoints",
+    )
+    SESSION_MIGRATION_THREAD_RELATIONS: tuple[str, ...] = (
+        "checkpoint_migration_namespaces",
     )
 
     def __init__(self, repositories: StorageRepositories, *, data_dir: str | Path) -> None:
@@ -454,6 +660,7 @@ class PurgePlanner:
                     *(relation[0] for relation in cls.SESSION_INDIRECT_RELATIONS),
                     *cls.SESSION_TRANSITIVE_RELATIONS,
                     *cls.SESSION_THREAD_RELATIONS,
+                    *cls.SESSION_MIGRATION_THREAD_RELATIONS,
                 )
             }
         counts: dict[str, int] = {}
@@ -524,13 +731,29 @@ class PurgePlanner:
         ).fetchone()
         counts["web_annotation_target_history"] = int(history_row["total"])
         thread_placeholders = ", ".join("?" for _ in session_ids)
-        for table in cls.SESSION_THREAD_RELATIONS:
+        for table in (
+            *cls.SESSION_THREAD_RELATIONS,
+            *cls.SESSION_MIGRATION_THREAD_RELATIONS,
+        ):
+            if not cls._table_exists(conn, table):
+                counts[table] = 0
+                continue
             row = conn.execute(
                 f"select count(*) as total from {table} where thread_id in ({thread_placeholders})",
                 session_ids,
             ).fetchone()
             counts[table] = int(row["total"])
         return counts
+
+    @staticmethod
+    def _table_exists(conn, table: str) -> bool:
+        return (
+            conn.execute(
+                "select 1 from sqlite_master where type = 'table' and name = ?",
+                (table,),
+            ).fetchone()
+            is not None
+        )
 
     @staticmethod
     def _session_signatures(conn, session_ids: tuple[str, ...]) -> list[tuple[str, str, str, str]]:
@@ -999,14 +1222,24 @@ class PurgeDatabaseExecutor:
         ).rowcount
 
         thread_predicate, thread_params = self._session_predicate(plan, "thread_id")
-        counts["checkpoint_writes_v2"] = conn.execute(
-            f"delete from checkpoint_writes_v2 where {thread_predicate}",
-            thread_params,
-        ).rowcount
-        counts["checkpoints_v2"] = conn.execute(
-            f"delete from checkpoints_v2 where {thread_predicate}",
-            thread_params,
-        ).rowcount
+        for table in PurgePlanner.SESSION_MIGRATION_THREAD_RELATIONS:
+            counts[table] = (
+                conn.execute(
+                    f"delete from {table} where {thread_predicate}",
+                    thread_params,
+                ).rowcount
+                if PurgePlanner._table_exists(conn, table)
+                else 0
+            )
+        for table in PurgePlanner.SESSION_THREAD_RELATIONS:
+            counts[table] = (
+                conn.execute(
+                    f"delete from {table} where {thread_predicate}",
+                    thread_params,
+                ).rowcount
+                if PurgePlanner._table_exists(conn, table)
+                else 0
+            )
 
         source_active_predicate, source_active_params = self._session_predicate(
             plan,

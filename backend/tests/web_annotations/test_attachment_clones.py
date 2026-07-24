@@ -10,7 +10,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from backend.app.agent.checkpoint import SQLiteCheckpointSaver
+from backend.app.agent.state import build_checkpoint_state_graph
 from backend.app.core.config import AppSettings
 from backend.app.core.data_path import resolve_data_path
 from backend.app.core.time import to_iso_z, utc_now
@@ -357,20 +357,21 @@ def test_annotation_delete_keeps_history_attachment_and_idempotent_retry(tmp_pat
         )
         attachment_id = cloned.json()["attachment"]["id"]
         repositories = app.state.repositories
-        saver = SQLiteCheckpointSaver(repositories.db)
-        saver.put(
-            {"configurable": {"thread_id": session["id"], "checkpoint_ns": ""}},
-            {
-                "v": 1,
-                "id": "ckpt-web-annotation",
-                "ts": "2026-07-22T08:00:00+00:00",
-                "channel_values": {"messages": []},
-                "channel_versions": {},
-                "versions_seen": {},
-            },
-            {"step": 1},
-            {},
-        )
+        saver = app.state.checkpoint_runtime.require_store()
+        graph = build_checkpoint_state_graph(saver)
+        checkpoint_config = {
+            "configurable": {
+                "thread_id": session["id"],
+                "checkpoint_ns": "",
+            }
+        }
+
+        async def seed_checkpoint() -> str:
+            await graph.ainvoke({"messages": []}, config=checkpoint_config)
+            snapshot = await graph.aget_state(checkpoint_config)
+            return str(snapshot.config["configurable"]["checkpoint_id"])
+
+        checkpoint_id = client.portal.call(seed_checkpoint)
         repositories.trace_records.create(
             trace_id="trace-web-annotation",
             session_id=session["id"],
@@ -383,7 +384,7 @@ def test_annotation_delete_keeps_history_attachment_and_idempotent_retry(tmp_pat
         repositories.trace_records.finish(
             "trace-web-annotation",
             status="completed",
-            output_checkpoint_id="ckpt-web-annotation",
+            output_checkpoint_id=checkpoint_id,
             output_checkpoint_ns="",
         )
         context_snapshot = {
@@ -445,12 +446,18 @@ def test_annotation_delete_keeps_history_attachment_and_idempotent_retry(tmp_pat
             action="ai_message",
             data={"session_id": session["id"], "content": "Reviewed"},
         )
-        forked = SessionForkService(repositories, checkpointer=saver).fork_session(
-            session_id=session["id"],
-            user_id=session["user_id"],
-            message_event_id="evt-web-annotation-ai",
-            title="Forked evidence",
-        )
+        async def fork_session():
+            return await SessionForkService(
+                repositories,
+                checkpointer=saver,
+            ).fork_session(
+                session_id=session["id"],
+                user_id=session["user_id"],
+                message_event_id="evt-web-annotation-ai",
+                title="Forked evidence",
+            )
+
+        forked = client.portal.call(fork_session)
         forked_user_event = next(
             event
             for event in repositories.message_events.list_by_session(forked.session.id)

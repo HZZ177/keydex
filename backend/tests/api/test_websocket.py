@@ -10,19 +10,21 @@ from langchain_core.language_models.fake_chat_models import (
 )
 from langchain_core.messages import AIMessage
 
-from backend.app.agent import AgentRunner
-from backend.app.agent.checkpoint import SQLiteCheckpointSaver
 from backend.app.agent.factory import AgentFactory
 from backend.app.core.config import AppSettings
 from backend.app.core.time import to_iso_z, utc_now
 from backend.app.main import create_app
 from backend.app.model import ModelSettings
-from backend.app.services import ChatService, ChatStreamManager
 from backend.app.storage import MODEL_DEFAULT_CHAT, ModelProviderRecord, StorageRepositories
 from backend.app.tools import FunctionTool, ToolRegistry
 
 
 class ToolFriendlyFakeModel(FakeMessagesListChatModel):
+    def bind_tools(self, tools: list[Any], *, tool_choice: Any = None, **kwargs: Any) -> Any:
+        return self
+
+
+class ToolFriendlyFakeListChatModel(FakeListChatModel):
     def bind_tools(self, tools: list[Any], *, tool_choice: Any = None, **kwargs: Any) -> Any:
         return self
 
@@ -113,26 +115,8 @@ def _client(
     )
     if model is not None:
         _configure_model_default(app.state.repositories)
-        runner = AgentRunner(
-            model_settings_provider=lambda: ModelSettings(
-                base_url="http://model.test/v1",
-                api_key="test-key",
-                model="fake-default",
-            ),
-            checkpointer=SQLiteCheckpointSaver(app.state.database),
-            tool_registry=registry or ToolRegistry(),
-            default_system_prompt="系统提示",
-            factory=FakeAgentFactory(model),
-        )
-        chat_service = ChatService(
-            settings=app.state.settings,
-            repositories=app.state.repositories,
-            agent_runner=runner,
-        )
-        app.state.chat_service = chat_service
-        app.state.runtime.chat_service = chat_service
-        app.state.chat_stream_manager = ChatStreamManager(chat_service)
-        app.state.runtime.chat_stream_manager = app.state.chat_stream_manager
+        app.state.agent_factory = FakeAgentFactory(model)
+        app.state.tool_registry = registry or ToolRegistry()
     return TestClient(app)
 
 
@@ -473,7 +457,7 @@ def test_websocket_rejects_invalid_workspace_session_contract(tmp_path) -> None:
 
 
 def test_websocket_chat_streams_projection_actions(tmp_path) -> None:
-    client = _client(tmp_path, FakeListChatModel(responses=["你好"]))
+    client = _client(tmp_path, ToolFriendlyFakeListChatModel(responses=["你好"]))
 
     with client.websocket_connect("/agent-base/ws/chat") as ws:
         ws.send_json({"action": "create_session"})

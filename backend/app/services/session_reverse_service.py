@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from backend.app.services.file_resources import FileResourceIdentity
+from backend.app.agent.checkpoint import KeydexAsyncCheckpointStore
 from backend.app.services.file_history_service import (
     FileClassification,
     FileHistoryError,
@@ -16,9 +16,11 @@ from backend.app.services.file_history_service import (
     FileRestoreMode,
     FileRestoreResult,
 )
+from backend.app.services.file_resources import FileResourceIdentity
 from backend.app.services.session_fork_service import (
     SessionForkService,
     SessionForkServiceError,
+    SessionReverseSource,
 )
 from backend.app.storage import (
     FileHistoryOperationFileRecord,
@@ -45,11 +47,23 @@ class SessionReverseService:
         repositories: StorageRepositories,
         *,
         file_history: FileHistoryService,
+        checkpointer: KeydexAsyncCheckpointStore | None = None,
         conversation: SessionForkService | None = None,
     ) -> None:
         self.repositories = repositories
         self.file_history = file_history
-        self.conversation = conversation or SessionForkService(repositories)
+        self.conversation = (
+            conversation
+            if conversation is not None
+            else (
+                SessionForkService(
+                    repositories,
+                    checkpointer=checkpointer,
+                )
+                if checkpointer is not None
+                else None
+            )
+        )
 
     def get_result(self, *, session_id: str, operation_id: str) -> FileRestoreResult:
         operation = self.repositories.file_history.get_operation(operation_id)
@@ -61,7 +75,7 @@ class SessionReverseService:
             )
         return self._result_from_operation(operation)
 
-    def execute(
+    async def execute(
         self,
         *,
         session_id: str,
@@ -88,10 +102,23 @@ class SessionReverseService:
                 "session 不存在",
                 http_status=404,
             )
-        source = self.conversation.resolve_reverse_source(
-            session_id=session_id,
-            message_event_id=request.message_event_id,
-        )
+        if self.conversation is not None:
+            source = await self.conversation.resolve_reverse_source(
+                session_id=session_id,
+                message_event_id=request.message_event_id,
+            )
+        else:
+            if request.mode in {FileRestoreMode.BOTH, FileRestoreMode.CONVERSATION} or (
+                request.decision == FileRestoreDecision.CONVERSATION_ONLY
+            ):
+                raise FileHistoryError(
+                    FileHistoryErrorCode.CONVERSATION_FAILED,
+                    "checkpoint runtime 未就绪，不能回溯对话",
+                )
+            source = self._resolve_file_only_source(
+                session_id=session_id,
+                message_event_id=request.message_event_id,
+            )
         with self.file_history.restore_lease(
             session_id=session_id,
             workspace_root=workspace_root,
@@ -209,8 +236,10 @@ class SessionReverseService:
                 FileRestoreMode.CONVERSATION,
             } or request.decision == FileRestoreDecision.CONVERSATION_ONLY
             if should_rewind_conversation:
+                if self.conversation is None:
+                    raise AssertionError("conversation service must be available")
                 try:
-                    conversation_result, _, _ = self.conversation.rewind_conversation(
+                    conversation_result, _, _ = await self.conversation.rewind_conversation(
                         source_session=session,
                         source=source,
                     )
@@ -272,6 +301,35 @@ class SessionReverseService:
                 ),
                 source=source.to_dict(),
             )
+
+    def _resolve_file_only_source(
+        self,
+        *,
+        session_id: str,
+        message_event_id: str,
+    ) -> SessionReverseSource:
+        event = self.repositories.message_events.get(message_event_id)
+        if event is None or event.session_id != session_id or not event.trace_record_id:
+            raise FileHistoryError(
+                FileHistoryErrorCode.SNAPSHOT_MISSING,
+                "消息事件没有可用 trace",
+            )
+        trace = self.repositories.trace_records.get(event.trace_record_id)
+        if trace is None:
+            raise FileHistoryError(
+                FileHistoryErrorCode.SNAPSHOT_MISSING,
+                "消息事件没有可用 trace",
+            )
+        return SessionReverseSource(
+            session_id=session_id,
+            active_session_id=trace.active_session_id or session_id,
+            checkpoint_id=trace.input_checkpoint_id,
+            checkpoint_ns=trace.input_checkpoint_ns or "",
+            trace_id=trace.trace_id,
+            turn_index=trace.turn_index,
+            message_event_id=event.id,
+            source_type="message_event",
+        )
 
     def _require_operation(
         self,
@@ -410,11 +468,12 @@ class SessionReverseService:
         if source is None and isinstance(detail.get("source"), dict):
             source = dict(detail["source"])
         files = self.repositories.file_history.list_operation_files(operation.id)
-        resource_id = lambda item: FileResourceIdentity(
-            item.scope_kind,
-            item.scope_identity,
-            item.canonical_path,
-        ).resource_id
+        def resource_id(item: FileHistoryOperationFileRecord) -> str:
+            return FileResourceIdentity(
+                item.scope_kind,
+                item.scope_identity,
+                item.canonical_path,
+            ).resource_id
         restored = tuple(
             resource_id(item)
             for item in files

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import time
 from dataclasses import dataclass
 from typing import Any
 
-from backend.app.agent.checkpoint import SQLiteCheckpointSaver
+from backend.app.agent.checkpoint import KeydexAsyncCheckpointStore
+from backend.app.agent.checkpoint_extensions import (
+    aclone_checkpoint_chain,
+    adelete_checkpoint_thread,
+    rollback_checkpoint_chain,
+)
 from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
 from backend.app.core.time import to_iso_z, utc_now
@@ -47,6 +51,8 @@ class SessionReverseSource:
     turn_index: int
     message_event_id: str | None = None
     source_type: str = "message_event"
+    lineage_epoch: int = 0
+    history_floor_turn_index: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -58,6 +64,8 @@ class SessionReverseSource:
             "turn_index": self.turn_index,
             "message_event_id": self.message_event_id,
             "source_type": self.source_type,
+            "lineage_epoch": self.lineage_epoch,
+            "history_floor_turn_index": self.history_floor_turn_index,
         }
 
 
@@ -74,17 +82,22 @@ class SessionForkService:
         self,
         repositories: StorageRepositories,
         *,
-        checkpointer: SQLiteCheckpointSaver | None = None,
+        checkpointer: KeydexAsyncCheckpointStore | None = None,
         checkpoint_service: CheckpointService | None = None,
     ) -> None:
         self.repositories = repositories
-        self.checkpointer = checkpointer or SQLiteCheckpointSaver(repositories.db)
+        if checkpointer is None:
+            raise SessionForkServiceError(
+                "checkpoint_runtime_unavailable",
+                "checkpoint runtime 未就绪",
+            )
+        self.checkpointer = checkpointer
         self.checkpoint_service = checkpoint_service or CheckpointService(
             repositories,
             checkpointer=self.checkpointer,
         )
 
-    def fork_session(
+    async def fork_session(
         self,
         *,
         session_id: str,
@@ -110,9 +123,11 @@ class SessionForkService:
         resolve_started = time.perf_counter()
         try:
             source = (
-                self.checkpoint_service.resolve_latest_checkpoint(session_id=session_id)
+                await self.checkpoint_service.resolve_latest_checkpoint(
+                    session_id=session_id
+                )
                 if checkpoint_only
-                else self.checkpoint_service.resolve_source(
+                else await self.checkpoint_service.resolve_source(
                     session_id=session_id,
                     checkpoint_id=checkpoint_id,
                     checkpoint_ns=checkpoint_ns,
@@ -130,11 +145,12 @@ class SessionForkService:
         target_session_id = new_id()
         try:
             checkpoint_clone_started = time.perf_counter()
-            self.checkpointer.clone_checkpoint_to_thread(
+            await aclone_checkpoint_chain(
+                self.checkpointer,
                 source_thread_id=source.active_session_id,
                 target_thread_id=target_session_id,
                 checkpoint_id=source.checkpoint_id,
-                checkpoint_ns=source.checkpoint_ns,
+                source_checkpoint_ns=source.checkpoint_ns,
             )
             checkpoint_clone_ms = self._elapsed_ms(checkpoint_clone_started)
             session_create_started = time.perf_counter()
@@ -214,7 +230,10 @@ class SessionForkService:
             )
             return SessionForkResult(session=target, source=source)
         except Exception as exc:
-            self.checkpointer.delete_thread(target_session_id)
+            await adelete_checkpoint_thread(
+                self.checkpointer,
+                thread_id=target_session_id,
+            )
             self.repositories.session_forks.soft_delete_by_target(target_session_id)
             if self.repositories.sessions.get(target_session_id) is not None:
                 self.repositories.sessions.hard_delete_internal(target_session_id)
@@ -226,7 +245,7 @@ class SessionForkService:
                 {"session_id": session_id, "target_session_id": target_session_id},
             ) from exc
 
-    def reverse_session(
+    async def reverse_session(
         self,
         *,
         session_id: str,
@@ -240,7 +259,7 @@ class SessionForkService:
     ) -> SessionReverseResult:
         _ = user_id, title, checkpoint_ns
         source_session = self._require_session(session_id)
-        source = self._resolve_reverse_source(
+        source = await self._resolve_reverse_source(
             source_session=source_session,
             checkpoint_id=checkpoint_id,
             trace_id=trace_id,
@@ -248,7 +267,7 @@ class SessionForkService:
             turn_index=turn_index,
         )
         try:
-            result, deleted_events, deleted_traces = self.rewind_conversation(
+            result, deleted_events, deleted_traces = await self.rewind_conversation(
                 source_session=source_session,
                 source=source,
             )
@@ -272,7 +291,7 @@ class SessionForkService:
                 },
             ) from exc
 
-    def rewind_conversation(
+    async def rewind_conversation(
         self,
         *,
         source_session: SessionRecord,
@@ -292,19 +311,19 @@ class SessionForkService:
                 restored_attachments = tuple(
                     item for item in raw_attachments if isinstance(item, dict)
                 )
-        with self.repositories.db.transaction(immediate=True) as conn:
-            self.checkpointer.rollback_thread_to_checkpoint(
+        async def rewind_transaction(conn):
+            await rollback_checkpoint_chain(
+                conn,
                 thread_id=source.active_session_id,
                 checkpoint_id=source.checkpoint_id,
                 checkpoint_ns=source.checkpoint_ns,
-                conn=conn,
             )
-            deleted_events, deleted_traces = self._rewind_turn_artifacts(
+            deleted_events, deleted_traces = await self._rewind_turn_artifacts(
                 conn,
                 session_id=source_session.id,
                 turn_index=source.turn_index,
             )
-            conn.execute(
+            await conn.execute(
                 """
                 update sessions
                    set active_session_id = ?, status = 'active', updated_at = ?
@@ -312,6 +331,11 @@ class SessionForkService:
                 """,
                 (source.active_session_id, to_iso_z(utc_now()), source_session.id),
             )
+            return deleted_events, deleted_traces
+
+        deleted_events, deleted_traces = await self.checkpointer.run_async_extension(
+            rewind_transaction
+        )
         updated = self._require_session(source_session.id)
         return (
             SessionReverseResult(
@@ -324,38 +348,40 @@ class SessionForkService:
             deleted_traces,
         )
 
-    def _rewind_turn_artifacts(
+    async def _rewind_turn_artifacts(
         self,
-        conn: sqlite3.Connection,
+        conn,
         *,
         session_id: str,
         turn_index: int,
     ) -> tuple[int, int]:
         now = to_iso_z(utc_now())
-        event_rows = conn.execute(
+        event_cursor = await conn.execute(
             """
             select data_json from message_events
              where session_id = ? and turn_index > ? and is_deleted = 0
             """,
             (session_id, turn_index),
-        ).fetchall()
+        )
+        event_rows = await event_cursor.fetchall()
         attachment_ids = self._attachment_ids(event_rows)
-        trace_rows = conn.execute(
+        trace_cursor = await conn.execute(
             """
             select trace_id from trace_record
              where session_id = ? and turn_index >= ? and is_deleted = 0
             """,
             (session_id, turn_index),
-        ).fetchall()
+        )
+        trace_rows = await trace_cursor.fetchall()
         trace_ids = tuple(str(row[0]) for row in trace_rows)
-        deleted_subagents = self._rewind_subagent_instances(
+        deleted_subagents = await self._rewind_subagent_instances(
             conn,
             parent_session_id=session_id,
             parent_trace_ids=trace_ids,
         )
         if trace_ids:
             placeholders = ",".join("?" for _ in trace_ids)
-            deleted_events = conn.execute(
+            deleted_events_cursor = await conn.execute(
                 f"""
                 delete from message_events
                  where session_id = ?
@@ -365,41 +391,42 @@ class SessionForkService:
                    )
                 """,
                 (session_id, turn_index, *trace_ids),
-            ).rowcount
+            )
         else:
-            deleted_events = conn.execute(
+            deleted_events_cursor = await conn.execute(
                 "delete from message_events where session_id = ? and turn_index >= ?",
                 (session_id, turn_index),
-            ).rowcount
+            )
+        deleted_events = deleted_events_cursor.rowcount
         if trace_ids:
             placeholders = ",".join("?" for _ in trace_ids)
-            conn.execute(
+            await conn.execute(
                 f"delete from trace_event_log where trace_record_id in ({placeholders})",
                 trace_ids,
             )
-        conn.execute(
+        await conn.execute(
             "delete from llm_request_logs where session_id = ? and turn_index >= ?",
             (session_id, turn_index),
         )
-        conn.execute(
+        await conn.execute(
             """
             update a2ui_interactions set is_deleted = 1, updated_at = ?
              where session_id = ? and turn_index >= ? and is_deleted = 0
             """,
             (now, session_id, turn_index),
         )
-        conn.execute(
+        await conn.execute(
             """
             update command_approval_requests set is_deleted = 1, updated_at = ?
              where session_id = ? and turn_index >= ? and is_deleted = 0
             """,
             (now, session_id, turn_index),
         )
-        conn.execute(
+        await conn.execute(
             "delete from thread_task_runs where session_id = ? and turn_index >= ?",
             (session_id, turn_index),
         )
-        conn.execute(
+        await conn.execute(
             """
             update session_pending_inputs
                set is_deleted = 1, status = 'cancelled', cancelled_at = ?, updated_at = ?
@@ -409,18 +436,19 @@ class SessionForkService:
         )
         if attachment_ids:
             placeholders = ",".join("?" for _ in attachment_ids)
-            conn.execute(
+            await conn.execute(
                 f"update attachments set is_deleted = 1, updated_at = ? "
                 f"where id in ({placeholders})",
                 (now, *attachment_ids),
             )
-        deleted_traces = conn.execute(
+        deleted_traces_cursor = await conn.execute(
             """
             update trace_record set is_deleted = 1, updated_at = ?
              where session_id = ? and turn_index >= ? and is_deleted = 0
             """,
             (now, session_id, turn_index),
-        ).rowcount
+        )
+        deleted_traces = deleted_traces_cursor.rowcount
         if deleted_subagents:
             logger.info(
                 "[SessionForkService] 回退派生 Sub-Agent 实例 | "
@@ -428,9 +456,9 @@ class SessionForkService:
             )
         return int(deleted_events), int(deleted_traces)
 
-    def _rewind_subagent_instances(
+    async def _rewind_subagent_instances(
         self,
-        conn: sqlite3.Connection,
+        conn,
         *,
         parent_session_id: str,
         parent_trace_ids: tuple[str, ...],
@@ -438,7 +466,7 @@ class SessionForkService:
         if not parent_trace_ids:
             return 0
         placeholders = ",".join("?" for _ in parent_trace_ids)
-        rows = conn.execute(
+        rows_cursor = await conn.execute(
             f"""
             select distinct s.id
               from sessions s
@@ -451,15 +479,23 @@ class SessionForkService:
                and s.agent_kind = 'subagent'
             """,
             (parent_session_id, *parent_trace_ids, parent_session_id),
-        ).fetchall()
+        )
+        rows = await rows_cursor.fetchall()
         child_session_ids = tuple(str(row[0]) for row in rows)
         if not child_session_ids:
             return 0
 
         for child_session_id in child_session_ids:
-            self.checkpointer.delete_thread(child_session_id, conn=conn)
+            await conn.execute(
+                "delete from writes where thread_id = ?",
+                (child_session_id,),
+            )
+            await conn.execute(
+                "delete from checkpoints where thread_id = ?",
+                (child_session_id,),
+            )
         child_placeholders = ",".join("?" for _ in child_session_ids)
-        conn.execute(
+        await conn.execute(
             f"""
             delete from session_forks
              where source_session_id in ({child_placeholders})
@@ -467,7 +503,7 @@ class SessionForkService:
             """,
             (*child_session_ids, *child_session_ids),
         )
-        deleted = conn.execute(
+        deleted_cursor = await conn.execute(
             f"""
             delete from sessions
              where id in ({child_placeholders})
@@ -476,11 +512,12 @@ class SessionForkService:
                and agent_kind = 'subagent'
             """,
             (*child_session_ids, parent_session_id),
-        ).rowcount
+        )
+        deleted = deleted_cursor.rowcount
         return int(deleted)
 
     @staticmethod
-    def _attachment_ids(rows: list[sqlite3.Row]) -> tuple[str, ...]:
+    def _attachment_ids(rows: list[Any]) -> tuple[str, ...]:
         values: set[str] = set()
         for row in rows:
             try:
@@ -497,14 +534,14 @@ class SessionForkService:
                         values.add(attachment_id)
         return tuple(sorted(values))
 
-    def resolve_reverse_source(
+    async def resolve_reverse_source(
         self,
         *,
         session_id: str,
         message_event_id: str,
     ) -> SessionReverseSource:
         source_session = self._require_session(session_id)
-        return self._resolve_reverse_source(
+        return await self._resolve_reverse_source(
             source_session=source_session,
             checkpoint_id=None,
             trace_id=None,
@@ -623,7 +660,7 @@ class SessionForkService:
             source_checkpoint_ns=source.checkpoint_ns,
         )
 
-    def _resolve_reverse_source(
+    async def _resolve_reverse_source(
         self,
         *,
         source_session: SessionRecord,
@@ -654,7 +691,7 @@ class SessionForkService:
                 },
             )
         if message_event_id:
-            return self._resolve_reverse_message_event(
+            return await self._resolve_reverse_message_event(
                 source_session=source_session,
                 message_event_id=message_event_id,
             )
@@ -674,16 +711,19 @@ class SessionForkService:
                         "trace_session_id": trace.session_id,
                     },
                 )
-            return self._reverse_source_from_trace(
+            return await self._reverse_source_from_trace(
                 source_session=source_session,
                 trace=trace,
                 source_type="trace",
             )
         if turn_index is None:
             raise AssertionError("unreachable reverse source state")
-        return self._resolve_reverse_turn(source_session=source_session, turn_index=turn_index)
+        return await self._resolve_reverse_turn(
+            source_session=source_session,
+            turn_index=turn_index,
+        )
 
-    def _resolve_reverse_message_event(
+    async def _resolve_reverse_message_event(
         self,
         *,
         source_session: SessionRecord,
@@ -718,14 +758,14 @@ class SessionForkService:
                 {"message_event_id": event.id, "turn_index": event.turn_index},
             )
         trace = self._require_trace(event.trace_record_id)
-        return self._reverse_source_from_trace(
+        return await self._reverse_source_from_trace(
             source_session=source_session,
             trace=trace,
             message_event_id=event.id,
             source_type="message_event",
         )
 
-    def _resolve_reverse_turn(
+    async def _resolve_reverse_turn(
         self,
         *,
         source_session: SessionRecord,
@@ -739,7 +779,7 @@ class SessionForkService:
         for event in events:
             if self._event_action(event) == "user_message" and event.trace_record_id:
                 trace = self._require_trace(event.trace_record_id)
-                return self._reverse_source_from_trace(
+                return await self._reverse_source_from_trace(
                     source_session=source_session,
                     trace=trace,
                     message_event_id=event.id,
@@ -751,7 +791,7 @@ class SessionForkService:
             {"session_id": source_session.id, "turn_index": turn_index},
         )
 
-    def _reverse_source_from_trace(
+    async def _reverse_source_from_trace(
         self,
         *,
         source_session: SessionRecord,
@@ -782,6 +822,34 @@ class SessionForkService:
         )
         checkpoint_id = (trace.input_checkpoint_id or "").strip() or None
         checkpoint_ns = trace.input_checkpoint_ns or ""
+        floor = source_session.checkpoint_history_floor_turn_index
+        if floor > 0 and trace.turn_index < floor:
+            raise SessionForkServiceError(
+                "checkpoint_history_compacted",
+                "该历史位置早于 checkpoint 迁移边界，不能回溯",
+                {
+                    "session_id": source_session.id,
+                    "requested_turn_index": trace.turn_index,
+                    "history_floor_turn_index": floor,
+                    "lineage_epoch": source_session.checkpoint_lineage_epoch,
+                    "checkpoint_root_id": source_session.checkpoint_root_id,
+                },
+            )
+        if (
+            floor > 0
+            and trace.turn_index == floor
+            and source_session.checkpoint_root_id
+            and (
+                checkpoint_id is None
+                or not await self._checkpoint_exists(
+                    active_session_id,
+                    checkpoint_ns,
+                    checkpoint_id,
+                )
+            )
+        ):
+            checkpoint_id = source_session.checkpoint_root_id
+            checkpoint_ns = ""
         if checkpoint_id is None and self._has_visible_history_before_turn(
             source_session.id,
             trace.turn_index,
@@ -795,7 +863,7 @@ class SessionForkService:
                     "turn_index": trace.turn_index,
                 },
             )
-        if checkpoint_id and not self._checkpoint_exists(
+        if checkpoint_id and not await self._checkpoint_exists(
             active_session_id,
             checkpoint_ns,
             checkpoint_id,
@@ -819,6 +887,8 @@ class SessionForkService:
             turn_index=trace.turn_index,
             message_event_id=message_event_id,
             source_type=source_type,
+            lineage_epoch=source_session.checkpoint_lineage_epoch,
+            history_floor_turn_index=floor,
         )
 
     def _require_trace(self, trace_id: str):
@@ -869,18 +939,22 @@ class SessionForkService:
             ).fetchone()
         return row is not None
 
-    def _checkpoint_exists(self, thread_id: str, checkpoint_ns: str, checkpoint_id: str) -> bool:
-        with self.repositories.db.connect() as conn:
-            row = conn.execute(
-                """
-                select 1
-                from checkpoints_v2
-                where thread_id = ? and checkpoint_ns = ? and checkpoint_id = ?
-                limit 1
-                """,
-                (thread_id, checkpoint_ns, checkpoint_id),
-            ).fetchone()
-        return row is not None
+    async def _checkpoint_exists(
+        self,
+        thread_id: str,
+        checkpoint_ns: str,
+        checkpoint_id: str,
+    ) -> bool:
+        item = await self.checkpointer.aget_tuple(
+            {
+                "configurable": {
+                    "thread_id": thread_id,
+                    "checkpoint_ns": checkpoint_ns,
+                    "checkpoint_id": checkpoint_id,
+                }
+            }
+        )
+        return item is not None
 
     @staticmethod
     def _event_action(event: MessageEventRecord) -> str:

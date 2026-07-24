@@ -6,11 +6,11 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
-from backend.app.agent.checkpoint import SQLiteCheckpointSaver
 from backend.app.agent.context_compression_segments import build_protocol_safe_units
 from backend.app.agent.middleware.tool_result_context_editing import (
     ToolResultContextEditingMiddleware,
 )
+from backend.app.agent.state import build_checkpoint_state_graph
 from backend.app.agent.tool_result_context_editing import (
     CONTEXT_EDITING_RECLAIM_THRESHOLD_TOKENS,
     TOOL_RESULT_TOMBSTONE_METADATA_KEY,
@@ -22,6 +22,7 @@ from backend.app.agent.tool_results.artifact_repository import ToolResultArtifac
 from backend.app.core.request_context import reset_request_context, set_request_context
 from backend.app.storage import StorageRepositories, init_database
 from backend.app.tools.base import ToolExecutionContext
+from backend.tests.async_checkpoint import TestAsyncCheckpointStore
 
 
 def _exchange(
@@ -318,25 +319,17 @@ async def test_tombstone_survives_checkpoint_restart_and_structured_replay_valid
     assert result is not None
     updated = result["messages"][1:]
 
-    checkpoint = {
-        "v": 1,
-        "id": "checkpoint-context-editing",
-        "ts": "2026-07-21T00:00:00+00:00",
-        "channel_values": {"messages": updated},
-        "channel_versions": {},
-        "versions_seen": {},
+    checkpointer = TestAsyncCheckpointStore(repositories.db.path)
+    graph = build_checkpoint_state_graph(checkpointer)
+    config = {
+        "configurable": {"thread_id": "session-1", "checkpoint_ns": ""}
     }
-    SQLiteCheckpointSaver(repositories.db).put(
-        {"configurable": {"thread_id": "session-1", "checkpoint_ns": ""}},
-        checkpoint,
-        {},
-        {},
+    await graph.ainvoke(
+        {"messages": updated},
+        config=config,
     )
-    restored = SQLiteCheckpointSaver(repositories.db).get_tuple(
-        {"configurable": {"thread_id": "session-1", "checkpoint_ns": ""}}
-    )
-    assert restored is not None
-    restored_messages = restored.checkpoint["channel_values"]["messages"]
+    restored = await graph.aget_state(config)
+    restored_messages = restored.values["messages"]
     restored_tombstones = [
         message
         for message in restored_messages

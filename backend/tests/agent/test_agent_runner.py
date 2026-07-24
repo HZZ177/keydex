@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 from backend.app.agent import AgentRunner
-from backend.app.agent.checkpoint import SQLiteCheckpointSaver
 from backend.app.agent.factory import AgentFactory
 from backend.app.agent.middleware.duplicate_tool_call_guard import DuplicateToolCallGuardMiddleware
 from backend.app.agent.runtime_settings import AgentRuntimeSettings
@@ -15,6 +15,7 @@ from backend.app.model import ModelSettings
 from backend.app.storage import init_database
 from backend.app.tools import FunctionTool, ToolExecutionContext, ToolRegistry
 from backend.app.tools.factory import create_default_tool_registry
+from backend.tests.async_checkpoint import TestAsyncCheckpointStore
 
 
 class RecordingAgentFactory(AgentFactory):
@@ -120,12 +121,59 @@ def _runner(
             model="fake-default",
         ),
         runtime_settings_provider=runtime_settings_provider,
-        checkpointer=SQLiteCheckpointSaver(init_database(tmp_path / "app.db")),
+        checkpointer=TestAsyncCheckpointStore(
+            init_database(tmp_path / "app.db").path
+        ),
         tool_registry=registry or ToolRegistry(),
         default_system_prompt="系统提示",
         factory=factory,
     )
     return runner, factory
+
+
+class AsyncOnlyCheckpointStore:
+    async def aget_tuple(self, config: dict[str, Any]) -> Any:
+        return SimpleNamespace(
+            config={
+                "configurable": {
+                    **config["configurable"],
+                    "checkpoint_id": "checkpoint-async-only",
+                }
+            }
+        )
+
+    def get_tuple(self, _config: dict[str, Any]) -> None:
+        raise AssertionError("sync checkpoint access is forbidden")
+
+
+@pytest.mark.asyncio
+async def test_agent_runner_latest_checkpoint_uses_async_store_only() -> None:
+    runner = AgentRunner(
+        model_settings_provider=lambda: ModelSettings(
+            base_url="http://model.test/v1",
+            api_key="test-key",
+            model="fake-default",
+        ),
+        checkpointer=AsyncOnlyCheckpointStore(),
+        tool_registry=ToolRegistry(),
+    )
+
+    config = await runner.get_latest_checkpoint_config(thread_id="session-async")
+
+    assert config == {
+        "checkpoint_id": "checkpoint-async-only",
+        "checkpoint_ns": "",
+    }
+
+
+def test_agent_runner_caches_checkpoint_state_graph_on_shared_store(tmp_path) -> None:
+    runner, _factory = _runner(tmp_path)
+
+    first = runner.checkpoint_state_graph()
+    second = runner.checkpoint_state_graph()
+
+    assert first is second
+    assert first.checkpointer is runner.checkpointer
 
 
 def test_agent_runner_requests_runtime_model(tmp_path) -> None:
@@ -226,10 +274,10 @@ async def test_agent_runner_checkpoint_records_messages(tmp_path) -> None:
         config={"configurable": {"thread_id": "ses_1", "checkpoint_ns": ""}},
     )
 
-    checkpoint = await runner.checkpointer.aget_tuple(
+    checkpoint = await agent.aget_state(
         {"configurable": {"thread_id": "ses_1", "checkpoint_ns": ""}}
     )
-    messages = checkpoint.checkpoint["channel_values"]["messages"]
+    messages = checkpoint.values["messages"]
     assert [message.type for message in messages] == ["human", "ai"]
     assert [message.content for message in messages] == ["你好", "ok"]
 

@@ -7,13 +7,13 @@ from typing import Any
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 from backend.app.agent import AgentRunner
-from backend.app.agent.checkpoint import SQLiteCheckpointSaver
 from backend.app.agent.factory import AgentFactory
 from backend.app.agent.runtime_settings import AgentRuntimeSettings
 from backend.app.events import EventDispatcher
 from backend.app.model import ModelSettings
 from backend.app.storage import StorageRepositories, init_database
 from backend.app.tools import ToolExecutionContext, ToolRegistry
+from backend.tests.async_checkpoint import TestAsyncCheckpointStore
 
 
 class RecordingFactory(AgentFactory):
@@ -92,7 +92,7 @@ def _runner(
             model="fake-default",
         ),
         runtime_settings_provider=runtime_settings_provider,
-        checkpointer=SQLiteCheckpointSaver(repositories.db),
+        checkpointer=TestAsyncCheckpointStore(repositories.db.path),
         tool_registry=ToolRegistry(),
         default_system_prompt="系统提示",
         factory=factory,

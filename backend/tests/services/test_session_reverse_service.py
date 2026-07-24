@@ -11,7 +11,11 @@ from backend.app.services.file_history_service import (
     FileRestoreDecision,
     FileRestoreMode,
 )
-from backend.app.services.session_fork_service import SessionReverseSource
+from backend.app.services.session_fork_service import (
+    SessionForkServiceError,
+    SessionReverseResult,
+    SessionReverseSource,
+)
 from backend.app.services.session_reverse_service import (
     SessionReverseExecution,
     SessionReverseService,
@@ -26,7 +30,7 @@ class FailingConversation:
         self.workspace = workspace
         self.create_conflict = create_conflict
 
-    def resolve_reverse_source(self, *, session_id: str, message_event_id: str):
+    async def resolve_reverse_source(self, *, session_id: str, message_event_id: str):
         return SessionReverseSource(
             session_id=session_id,
             active_session_id=session_id,
@@ -37,7 +41,7 @@ class FailingConversation:
             message_event_id=message_event_id,
         )
 
-    def rewind_conversation(self, *, source_session, source):
+    async def rewind_conversation(self, *, source_session, source):
         _ = source_session, source
         if self.create_conflict:
             (self.workspace / "created.txt").write_text(
@@ -45,6 +49,32 @@ class FailingConversation:
                 encoding="utf-8",
             )
         raise RuntimeError("injected conversation transaction failure")
+
+
+class SuccessfulConversation(FailingConversation):
+    async def rewind_conversation(self, *, source_session, source):
+        return (
+            SessionReverseResult(
+                session=source_session,
+                source=source,
+                restored_input="restore me",
+            ),
+            0,
+            0,
+        )
+
+
+class CompactedBoundaryConversation(FailingConversation):
+    async def resolve_reverse_source(self, *, session_id: str, message_event_id: str):
+        raise SessionForkServiceError(
+            "checkpoint_history_compacted",
+            "该历史位置早于 checkpoint 迁移边界，不能回溯",
+            {
+                "session_id": session_id,
+                "message_event_id": message_event_id,
+                "history_floor_turn_index": 2,
+            },
+        )
 
 
 def _case(tmp_path):
@@ -122,7 +152,8 @@ def _request(preview) -> SessionReverseExecution:
     )
 
 
-def test_conversation_failure_compensates_files_and_cursor(tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_conversation_failure_compensates_files_and_cursor(tmp_path) -> None:
     repositories, history, preview = _case(tmp_path)
     before = repositories.file_history.get_session_state("session-1")
     service = SessionReverseService(
@@ -132,7 +163,7 @@ def test_conversation_failure_compensates_files_and_cursor(tmp_path) -> None:
     )
 
     with pytest.raises(FileHistoryError) as error:
-        service.execute(
+        await service.execute(
             session_id="session-1",
             workspace_root=tmp_path,
             request=_request(preview),
@@ -156,7 +187,7 @@ def test_conversation_failure_compensates_files_and_cursor(tmp_path) -> None:
         workspace_root=tmp_path,
         source={"message_event_id": "message-1"},
     )
-    retry = SessionReverseService(repositories, file_history=history).execute(
+    retry = await SessionReverseService(repositories, file_history=history).execute(
         session_id="session-1",
         workspace_root=tmp_path,
         request=SessionReverseExecution(
@@ -172,7 +203,38 @@ def test_conversation_failure_compensates_files_and_cursor(tmp_path) -> None:
     assert not (tmp_path / "created.txt").exists()
 
 
-def test_compensation_conflict_blocks_session_and_preserves_external_change(tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_compacted_boundary_rejects_before_any_file_or_operation_side_effect(
+    tmp_path,
+) -> None:
+    repositories, history, preview = _case(tmp_path)
+    before_operation = repositories.file_history.get_operation(preview.operation_id)
+    before_cursor = repositories.file_history.get_session_state("session-1")
+    service = SessionReverseService(
+        repositories,
+        file_history=history,
+        conversation=CompactedBoundaryConversation(tmp_path),
+    )
+
+    with pytest.raises(SessionForkServiceError) as compacted:
+        await service.execute(
+            session_id="session-1",
+            workspace_root=tmp_path,
+            request=_request(preview),
+        )
+
+    after_operation = repositories.file_history.get_operation(preview.operation_id)
+    after_cursor = repositories.file_history.get_session_state("session-1")
+    assert compacted.value.code == "checkpoint_history_compacted"
+    assert (tmp_path / "created.txt").read_text(encoding="utf-8") == "created\n"
+    assert before_operation == after_operation
+    assert before_cursor == after_cursor
+
+
+@pytest.mark.asyncio
+async def test_compensation_conflict_blocks_session_and_preserves_external_change(
+    tmp_path,
+) -> None:
     repositories, history, preview = _case(tmp_path)
     service = SessionReverseService(
         repositories,
@@ -181,7 +243,7 @@ def test_compensation_conflict_blocks_session_and_preserves_external_change(tmp_
     )
 
     with pytest.raises(FileHistoryError) as error:
-        service.execute(
+        await service.execute(
             session_id="session-1",
             workspace_root=tmp_path,
             request=_request(preview),
@@ -196,7 +258,10 @@ def test_compensation_conflict_blocks_session_and_preserves_external_change(tmp_
     assert state.blocked_reason == preview.operation_id
 
 
-def test_full_rejects_conflict_and_force_is_explicitly_audited(tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_full_rejects_conflict_and_force_is_explicitly_audited(
+    tmp_path,
+) -> None:
     repositories, history, preview = _case(tmp_path)
     (tmp_path / "created.txt").write_text("external before preview\n", encoding="utf-8")
     preview = history.create_preview(
@@ -218,7 +283,11 @@ def test_full_rejects_conflict_and_force_is_explicitly_audited(tmp_path) -> None
     )
 
     with pytest.raises(FileHistoryError) as error:
-        service.execute(session_id="session-1", workspace_root=tmp_path, request=full)
+        await service.execute(
+            session_id="session-1",
+            workspace_root=tmp_path,
+            request=full,
+        )
     assert error.value.code == "file_restore_conflict"
     assert (tmp_path / "created.txt").exists()
 
@@ -237,7 +306,11 @@ def test_full_rejects_conflict_and_force_is_explicitly_audited(tmp_path) -> None
         mode=FileRestoreMode.CODE,
         decision=FileRestoreDecision.FORCE_CONFLICTS,
     )
-    result = service.execute(session_id="session-1", workspace_root=tmp_path, request=force)
+    result = await service.execute(
+        session_id="session-1",
+        workspace_root=tmp_path,
+        request=force,
+    )
 
     assert result.status == "full"
     assert result.forced_files == (force_preview.files[0].resource_id,)
@@ -246,7 +319,8 @@ def test_full_rejects_conflict_and_force_is_explicitly_audited(tmp_path) -> None
     assert file_result.user_authorized is True
 
 
-def test_safe_partial_restores_ready_file_and_skips_conflict(tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_safe_partial_restores_ready_file_and_skips_conflict(tmp_path) -> None:
     repositories, history, _preview = _case(tmp_path)
     snapshot = repositories.file_history.get_snapshot_by_message("session-1", "message-1")
     assert snapshot is not None
@@ -280,7 +354,7 @@ def test_safe_partial_restores_ready_file_and_skips_conflict(tmp_path) -> None:
         decision=FileRestoreDecision.SAFE_PARTIAL,
     )
 
-    result = SessionReverseService(repositories, file_history=history).execute(
+    result = await SessionReverseService(repositories, file_history=history).execute(
         session_id="session-1",
         workspace_root=tmp_path,
         request=request,
@@ -294,7 +368,8 @@ def test_safe_partial_restores_ready_file_and_skips_conflict(tmp_path) -> None:
     assert (tmp_path / "created.txt").read_text(encoding="utf-8") == "external\n"
 
 
-def test_cancel_has_zero_side_effect(tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_cancel_has_zero_side_effect(tmp_path) -> None:
     repositories, history, preview = _case(tmp_path)
     before = repositories.file_history.get_session_state("session-1")
     request = SessionReverseExecution(
@@ -306,7 +381,7 @@ def test_cancel_has_zero_side_effect(tmp_path) -> None:
         decision=FileRestoreDecision.CANCEL,
     )
 
-    result = SessionReverseService(repositories, file_history=history).execute(
+    result = await SessionReverseService(repositories, file_history=history).execute(
         session_id="session-1",
         workspace_root=tmp_path,
         request=request,
@@ -320,7 +395,8 @@ def test_cancel_has_zero_side_effect(tmp_path) -> None:
     assert after.active_snapshot_id == before.active_snapshot_id
 
 
-def test_both_second_decision_can_choose_conversation_only(tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_both_second_decision_can_choose_conversation_only(tmp_path) -> None:
     repositories, history, preview = _case(tmp_path)
     before = repositories.file_history.get_session_state("session-1")
     request = SessionReverseExecution(
@@ -332,7 +408,11 @@ def test_both_second_decision_can_choose_conversation_only(tmp_path) -> None:
         decision=FileRestoreDecision.CONVERSATION_ONLY,
     )
 
-    result = SessionReverseService(repositories, file_history=history).execute(
+    result = await SessionReverseService(
+        repositories,
+        file_history=history,
+        conversation=SuccessfulConversation(tmp_path),
+    ).execute(
         session_id="session-1",
         workspace_root=tmp_path,
         request=request,

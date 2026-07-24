@@ -23,8 +23,8 @@ from langchain_openai.chat_models._client_utils import StreamChunkTimeoutError
 from pydantic import Field
 
 from backend.app.agent import AgentRunner
-from backend.app.agent.checkpoint import SQLiteCheckpointSaver
 from backend.app.agent.factory import AgentFactory
+from backend.app.agent.state import build_checkpoint_state_graph
 from backend.app.command_approval import CommandSettings, save_command_settings
 from backend.app.core.config import AppSettings
 from backend.app.core.time import to_iso_z, utc_now
@@ -52,6 +52,7 @@ from backend.app.storage import (
 from backend.app.subagents.models import SubagentRunSnapshot
 from backend.app.tools import FunctionTool, ToolExecutionContext, ToolRegistry
 from backend.app.tools.factory import create_default_tool_registry
+from backend.tests.async_checkpoint import TestAsyncCheckpointStore
 
 
 class RecordingChatAdapter:
@@ -415,7 +416,12 @@ def _service(
     configure_provider: bool = True,
     settings: AppSettings | None = None,
     mcp_manager: Any | None = None,
-) -> tuple[ChatService, StorageRepositories, SQLiteCheckpointSaver, FakeAgentFactory]:
+) -> tuple[
+    ChatService,
+    StorageRepositories,
+    TestAsyncCheckpointStore,
+    FakeAgentFactory,
+]:
     database = init_database(tmp_path / "app.db")
     repositories = StorageRepositories(database)
     if configure_provider:
@@ -439,7 +445,7 @@ def _service(
             model="fake-default",
         )
     settings = settings or AppSettings(data_dir=tmp_path / "data", workspace_root=tmp_path)
-    checkpointer = SQLiteCheckpointSaver(database)
+    checkpointer = TestAsyncCheckpointStore(database.path)
     factory = FakeAgentFactory(model)
     runner = AgentRunner(
         model_settings_provider=lambda: ModelSettings(
@@ -835,7 +841,7 @@ async def test_ki10_forked_session_resolves_fresh_keydex_snapshot_for_new_turn(
         )
         if message.get("role") == "assistant"
     )
-    forked = SessionForkService(
+    forked = await SessionForkService(
         repositories,
         checkpointer=checkpointer,
     ).fork_session(
@@ -977,10 +983,10 @@ async def test_chat_service_uses_checkpoint_as_model_context(tmp_path) -> None:
 
     assert first.turn_index == 1
     assert second.turn_index == 2
-    checkpoint = await checkpointer.aget_tuple(
+    checkpoint = await build_checkpoint_state_graph(checkpointer).aget_state(
         {"configurable": {"thread_id": first.session_id, "checkpoint_ns": ""}}
     )
-    messages = checkpoint.checkpoint["channel_values"]["messages"]
+    messages = checkpoint.values["messages"]
     assert [message.type for message in messages] == ["human", "ai", "human", "ai"]
     assert [message.content for message in messages] == [
         "第一轮",
@@ -1060,16 +1066,16 @@ async def test_chat_service_injects_follow_messages_and_restores_context_items(t
     assert visible_history[0]["contextItems"][1]["type"] == "quote"
     assert "关键片段" in visible_history[0]["contextItems"][1]["content"]
 
-    checkpoint = await checkpointer.aget_tuple(
+    checkpoint = await build_checkpoint_state_graph(checkpointer).aget_state(
         {"configurable": {"thread_id": result.session_id, "checkpoint_ns": ""}}
     )
-    messages = checkpoint.checkpoint["channel_values"]["messages"]
+    messages = checkpoint.values["messages"]
     assert [message.content for message in messages[:3]] == [
         "用户通过 @ 引用了工作区文件：README.md",
         "用户添加了以下引用片段作为上下文：\n关键片段",
         "总结一下",
     ]
-    groups = checkpoint.checkpoint["channel_values"]["structured_user_message_groups"]
+    groups = checkpoint.values["structured_user_message_groups"]
     assert messages[2].id == groups[0]["root_user_message"]["source_id"]
 
 
@@ -1872,10 +1878,10 @@ async def test_chat_service_runs_skill_activation_chain_with_message_injection(
     assert tool_result["loaded"] is True
     assert tool_result["injected"] is True
 
-    checkpoint = await checkpointer.aget_tuple(
+    checkpoint = await build_checkpoint_state_graph(checkpointer).aget_state(
         {"configurable": {"thread_id": session.id, "checkpoint_ns": ""}}
     )
-    messages = checkpoint.checkpoint["channel_values"]["messages"]
+    messages = checkpoint.values["messages"]
     assert any(
         message.type == "system" and "Use the project planning workflow." in message.content
         for message in messages
@@ -2192,7 +2198,7 @@ async def test_chat_service_patches_cancelled_partial_output_into_checkpoint(tmp
             cancellation=cancellation,
         )
     )
-    await asyncio.wait_for(agent.stream_started.wait(), timeout=1)
+    await asyncio.wait_for(agent.stream_started.wait(), timeout=3)
     for _ in range(50):
         if any(item["action"] == "stream" for item in chat_adapter.sent):
             break
@@ -2200,7 +2206,7 @@ async def test_chat_service_patches_cancelled_partial_output_into_checkpoint(tmp
 
     cancellation.cancel()
     task.cancel()
-    result = await asyncio.wait_for(task, timeout=1)
+    result = await asyncio.wait_for(task, timeout=3)
 
     assert result.status == "cancelled"
     visible_events = [
@@ -2253,7 +2259,7 @@ async def test_chat_service_closes_pending_tool_call_when_cancelled(tmp_path) ->
             cancellation=cancellation,
         )
     )
-    await asyncio.wait_for(agent.stream_started.wait(), timeout=1)
+    await asyncio.wait_for(agent.stream_started.wait(), timeout=3)
     for _ in range(50):
         if any(item["action"] == "stream" for item in chat_adapter.sent):
             break
@@ -2261,7 +2267,7 @@ async def test_chat_service_closes_pending_tool_call_when_cancelled(tmp_path) ->
 
     cancellation.cancel()
     task.cancel()
-    result = await asyncio.wait_for(task, timeout=1)
+    result = await asyncio.wait_for(task, timeout=3)
 
     assert result.status == "cancelled"
     assert [message.type for message in agent.updated_messages] == ["human", "ai", "tool", "ai"]

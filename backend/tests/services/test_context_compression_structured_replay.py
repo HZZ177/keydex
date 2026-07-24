@@ -4,9 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 from langchain.agents.middleware.types import ExtendedModelResponse, ModelRequest
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, RemoveMessage
+from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
 
-from backend.app.agent.checkpoint import SQLiteCheckpointSaver
+from backend.app.agent.checkpoint_runtime import CheckpointRuntime
 from backend.app.agent.context_compression_utils import (
     is_context_compression_summary_message,
 )
@@ -15,6 +15,10 @@ from backend.app.agent.runtime_settings import (
     AgentRuntimeSettings,
     ContextCompressionRuntimeSettings,
     save_agent_runtime_settings,
+)
+from backend.app.agent.state import (
+    CHECKPOINT_STATE_UPDATE_NODE,
+    build_checkpoint_state_graph,
 )
 from backend.app.agent.tool_call_preset_middleware import ToolCallPresetMiddleware
 from backend.app.core.request_context import reset_request_context, set_request_context
@@ -70,20 +74,6 @@ def _skill_group() -> StructuredUserMessageGroup:
             ),
         ],
     )
-
-
-def _checkpoint(checkpoint_id: str, messages: list[BaseMessage], group) -> dict:
-    return {
-        "v": 1,
-        "id": checkpoint_id,
-        "ts": f"2026-07-17T00:00:00+00:00:{checkpoint_id}",
-        "channel_values": {
-            "messages": messages,
-            "structured_user_message_groups": [group.to_dict()],
-        },
-        "channel_versions": {},
-        "versions_seen": {},
-    }
 
 
 class FakeCompressionService:
@@ -228,47 +218,51 @@ async def test_manual_compression_atomically_persists_authorized_replay_state(tm
         scene_id="desktop-agent",
         title="manual",
     )
-    saver = SQLiteCheckpointSaver(repositories.db)
+    runtime = CheckpointRuntime(repositories.db.path)
+    assert await runtime.start() is True
+    saver = runtime.require_store()
+    graph = build_checkpoint_state_graph(saver)
     group = _skill_group()
-    saver.put(
+    await graph.aupdate_state(
         {"configurable": {"thread_id": session.id, "checkpoint_ns": ""}},
-        _checkpoint(
-            "checkpoint-manual",
-            [
+        {
+            "messages": [
                 HumanMessage(id="old-user", content="最初任务"),
                 AIMessage(id="old-ai", content="已完成一部分"),
                 HumanMessage(id="current-user", content="继续完成压缩实现"),
             ],
-            group,
-        ),
-        {},
-        {},
+            "structured_user_message_groups": [group.to_dict()],
+        },
+        as_node=CHECKPOINT_STATE_UPDATE_NODE,
     )
 
-    result = await ManualContextCompressionService(
-        repositories,
-        checkpointer=saver,
-        compression_service=FakeCompressionService(),
-    ).compress(session_id=session.id)
+    try:
+        result = await ManualContextCompressionService(
+            repositories,
+            checkpointer=saver,
+            checkpoint_state_graph=graph,
+            compression_service=FakeCompressionService(),
+        ).compress(session_id=session.id)
 
-    assert result.success is True
-    checkpoint = saver.get_tuple(
-        {"configurable": {"thread_id": session.id, "checkpoint_ns": ""}}
-    )
-    assert checkpoint is not None
-    values = checkpoint.checkpoint["channel_values"]
-    assert sum(
-        is_context_compression_summary_message(item) for item in values["messages"]
-    ) == 1
-    assert [item["group_id"] for item in values["structured_user_message_groups"]] == [
-        "group-current"
-    ]
-    boundary_id = values["pending_tool_call_preset"]["metadata"]["boundary_id"]
-    assert values["structured_user_group_replay_markers"][
-        f"{boundary_id}:group-current"
-    ]["status"] == "pending"
-    assert values["context_compression_diagnostics"]["boundary_id"] == boundary_id
-    assert values["context_compression_diagnostics"]["replacement_actual_tokens"] > 0
+        assert result.success is True
+        checkpoint = await graph.aget_state(
+            {"configurable": {"thread_id": session.id, "checkpoint_ns": ""}}
+        )
+        values = checkpoint.values
+        assert sum(
+            is_context_compression_summary_message(item) for item in values["messages"]
+        ) == 1
+        assert [
+            item["group_id"] for item in values["structured_user_message_groups"]
+        ] == ["group-current"]
+        boundary_id = values["pending_tool_call_preset"]["metadata"]["boundary_id"]
+        assert values["structured_user_group_replay_markers"][
+            f"{boundary_id}:group-current"
+        ]["status"] == "pending"
+        assert values["context_compression_diagnostics"]["boundary_id"] == boundary_id
+        assert values["context_compression_diagnostics"]["replacement_actual_tokens"] > 0
+    finally:
+        await runtime.close()
 
 
 @pytest.mark.asyncio

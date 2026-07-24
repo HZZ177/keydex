@@ -23,6 +23,34 @@ def _repositories(tmp_path) -> StorageRepositories:
     return StorageRepositories(init_database(tmp_path / "app.db"))
 
 
+def _ensure_official_checkpoint_tables(conn) -> None:
+    conn.executescript(
+        """
+        create table if not exists checkpoints (
+          thread_id text not null,
+          checkpoint_ns text not null default '',
+          checkpoint_id text not null,
+          parent_checkpoint_id text,
+          type text,
+          checkpoint blob,
+          metadata blob,
+          primary key (thread_id, checkpoint_ns, checkpoint_id)
+        );
+        create table if not exists writes (
+          thread_id text not null,
+          checkpoint_ns text not null default '',
+          checkpoint_id text not null,
+          task_id text not null,
+          idx integer not null,
+          channel text not null,
+          type text,
+          value blob,
+          primary key (thread_id, checkpoint_ns, checkpoint_id, task_id, idx)
+        );
+        """
+    )
+
+
 def _session(repositories, session_id: str, workspace_id: str | None = None):
     return repositories.sessions.create(
         session_id=session_id,
@@ -673,23 +701,41 @@ def _insert_all_session_relation_rows(conn, *, session_id: str, prefix: str) -> 
         """,
         (f"file-lock-{prefix}", operation_id, now),
     )
+    _ensure_official_checkpoint_tables(conn)
     conn.execute(
         """
-        insert into checkpoints_v2 (
-          thread_id, checkpoint_ns, checkpoint_id, created_at,
-          checkpoint_blob, metadata
-        ) values (?, '', ?, ?, x'00', '{}')
+        insert into checkpoints (
+          thread_id, checkpoint_ns, checkpoint_id, type, checkpoint, metadata
+        ) values (?, '', ?, 'msgpack', x'00', x'00')
         """,
-        (session_id, f"checkpoint-{prefix}", now),
+        (session_id, f"checkpoint-{prefix}"),
     )
     conn.execute(
         """
-        insert into checkpoint_writes_v2 (
+        insert into writes (
           thread_id, checkpoint_ns, checkpoint_id, task_id, idx, channel,
-          created_at
-        ) values (?, '', ?, ?, 0, 'messages', ?)
+          type, value
+        ) values (?, '', ?, ?, 0, 'messages', 'msgpack', x'00')
         """,
-        (session_id, f"checkpoint-{prefix}", f"checkpoint-task-{prefix}", now),
+        (session_id, f"checkpoint-{prefix}", f"checkpoint-task-{prefix}"),
+    )
+    conn.execute(
+        """
+        insert into checkpoint_migration_state (
+          migration_id, source_schema, target_schema, status,
+          source_db_fingerprint, updated_at
+        ) values (?, 'keydex_checkpoint_v2', 'langgraph_sqlite_official_v1',
+                  'failed', ?, ?)
+        """,
+        (f"migration-{prefix}", f"fingerprint-{prefix}", now),
+    )
+    conn.execute(
+        """
+        insert into checkpoint_migration_namespaces (
+          migration_id, thread_id, checkpoint_ns, status, updated_at
+        ) values (?, ?, '', 'failed', ?)
+        """,
+        (f"migration-{prefix}", session_id, now),
     )
 
 
@@ -700,7 +746,11 @@ def _schema_session_owned_tables(conn) -> set[str]:
             "select name from sqlite_master where type = 'table' and name not like 'sqlite_%'"
         )
     }
-    owned = {"sessions", *PurgePlanner.SESSION_THREAD_RELATIONS}
+    owned = {
+        "sessions",
+        *PurgePlanner.SESSION_THREAD_RELATIONS,
+        *PurgePlanner.SESSION_MIGRATION_THREAD_RELATIONS,
+    }
     for table in tables:
         columns = {str(row["name"]) for row in conn.execute(f'pragma table_info("{table}")')}
         if any(column == "session_id" or column.endswith("_session_id") for column in columns):
@@ -728,9 +778,11 @@ def test_purge_inventory_matches_every_current_session_owned_table(tmp_path) -> 
         *(relation[0] for relation in PurgePlanner.SESSION_INDIRECT_RELATIONS),
         *PurgePlanner.SESSION_TRANSITIVE_RELATIONS,
         *PurgePlanner.SESSION_THREAD_RELATIONS,
+        *PurgePlanner.SESSION_MIGRATION_THREAD_RELATIONS,
     }
 
     with repositories.db.connect() as conn:
+        _ensure_official_checkpoint_tables(conn)
         discovered = _schema_session_owned_tables(conn)
 
     assert discovered == handled
@@ -956,12 +1008,12 @@ def test_purge_planner_counts_dependencies_and_classifies_asset_ownership(tmp_pa
             """,
             (session.id,),
         )
+        _ensure_official_checkpoint_tables(conn)
         conn.execute(
             """
-            insert into checkpoints_v2 (
-              thread_id, checkpoint_ns, checkpoint_id, created_at,
-              checkpoint_blob, metadata
-            ) values (?, '', 'checkpoint-plan', 'now', x'00', '{}')
+            insert into checkpoints (
+              thread_id, checkpoint_ns, checkpoint_id, type, checkpoint, metadata
+            ) values (?, '', 'checkpoint-plan', 'msgpack', x'00', x'00')
             """,
             (session.id,),
         )
@@ -971,7 +1023,7 @@ def test_purge_planner_counts_dependencies_and_classifies_asset_ownership(tmp_pa
     assert plan.database_counts["sessions"] == 1
     assert plan.database_counts["attachments"] == 2
     assert plan.database_counts["message_events"] == 1
-    assert plan.database_counts["checkpoints_v2"] == 1
+    assert plan.database_counts["checkpoints"] == 1
     classifications = {asset.path: asset.classification for asset in plan.assets}
     assert classifications[managed] == "managed_delete"
     assert classifications[external] == "external_reference_only"

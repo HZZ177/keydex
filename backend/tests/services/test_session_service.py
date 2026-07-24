@@ -170,6 +170,44 @@ def test_session_service_serializes_context_window_usage(tmp_path) -> None:
     assert result["list"][0]["context_window_usage"] == snapshot
 
 
+def test_session_service_serializes_checkpoint_lineage_capabilities(tmp_path) -> None:
+    repositories = _repositories(tmp_path)
+    session = repositories.sessions.create(
+        session_id="ses_migrated_lineage",
+        user_id="local-user",
+        scene_id="desktop-agent",
+        title="迁移会话",
+    )
+    with repositories.db.transaction() as connection:
+        connection.execute(
+            """
+            update sessions
+            set checkpoint_lineage_epoch = 2,
+                checkpoint_history_floor_turn_index = 14,
+                checkpoint_root_id = 'checkpoint-root',
+                checkpoint_collapsed_at = '2026-07-24T18:47:57Z'
+            where id = ?
+            """,
+            (session.id,),
+        )
+
+    result = _service(repositories).list_sessions(
+        ListSessionsRequest(user_id="local-user")
+    )
+
+    assert result["list"][0]["checkpoint_lineage"] == {
+        "epoch": 2,
+        "history_floor_turn_index": 14,
+        "root_checkpoint_id": "checkpoint-root",
+        "collapsed_at": "2026-07-24T18:47:57Z",
+    }
+    assert result["list"][0]["checkpoint_capabilities"] == {
+        "can_continue": True,
+        "can_fork_before_history_floor": False,
+        "can_reverse_before_history_floor": False,
+    }
+
+
 def test_session_service_sets_pinned_state(tmp_path) -> None:
     repositories = _repositories(tmp_path)
     repositories.sessions.create(

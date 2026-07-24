@@ -22,7 +22,7 @@ from backend.app.agent.runtime_settings import (
     AgentRuntimeSettings,
     default_agent_runtime_settings,
 )
-from backend.app.agent.state import KeydexAgentState
+from backend.app.agent.state import KeydexAgentState, build_checkpoint_state_graph
 from backend.app.agent.system_prompt import (
     DEFAULT_SYSTEM_PROMPT,
     KEYDEX_MARKDOWN_SYSTEM_PROMPT,
@@ -95,6 +95,7 @@ class AgentRunner:
         self.tool_registry = tool_registry
         self.default_system_prompt = default_system_prompt
         self.factory = factory
+        self._checkpoint_state_graph: Any | None = None
 
     @property
     def model_settings(self) -> ModelSettings:
@@ -102,6 +103,14 @@ class AgentRunner:
 
     def model_http_transport(self) -> httpx.BaseTransport | httpx.AsyncBaseTransport | None:
         return self._model_http_transport_provider()
+
+    def checkpoint_state_graph(self) -> Any:
+        """Return the shared lightweight graph used for out-of-turn state updates."""
+        if self.checkpointer is None:
+            raise AgentAssemblyError("checkpointer 未配置")
+        if self._checkpoint_state_graph is None:
+            self._checkpoint_state_graph = build_checkpoint_state_graph(self.checkpointer)
+        return self._checkpoint_state_graph
 
     def create_agent(
         self,

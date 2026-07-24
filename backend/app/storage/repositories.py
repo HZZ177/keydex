@@ -323,6 +323,11 @@ class SessionRecord:
     current_model: str | None = None
     context_window_usage: dict[str, Any] | None = None
     context_compression_epoch: int = 0
+    checkpoint_lineage_epoch: int = 0
+    checkpoint_history_floor_turn_index: int = 0
+    checkpoint_root_id: str | None = None
+    checkpoint_collapsed_at: str | None = None
+    checkpoint_migration_id: str | None = None
     pinned_at: str | None = None
     archived_at: str | None = None
     archive_origin: str | None = None
@@ -4803,6 +4808,13 @@ class SessionsRepository:
             current_model=row["current_model"],
             context_window_usage=_json_loads(row["context_window_usage_json"], None),
             context_compression_epoch=int(row["context_compression_epoch"] or 0),
+            checkpoint_lineage_epoch=int(row["checkpoint_lineage_epoch"] or 0),
+            checkpoint_history_floor_turn_index=int(
+                row["checkpoint_history_floor_turn_index"] or 0
+            ),
+            checkpoint_root_id=row["checkpoint_root_id"],
+            checkpoint_collapsed_at=row["checkpoint_collapsed_at"],
+            checkpoint_migration_id=row["checkpoint_migration_id"],
             pinned_at=row["pinned_at"],
             title=row["title"],
             title_source=row["title_source"],

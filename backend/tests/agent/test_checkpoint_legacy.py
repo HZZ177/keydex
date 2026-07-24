@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from backend.app.agent.checkpoint import SQLiteCheckpointSaver
+from backend.app.agent.checkpoint import LegacySQLiteCheckpointSaver
 from backend.app.storage import init_database
 
 
@@ -17,8 +17,8 @@ def _checkpoint(checkpoint_id: str) -> dict:
     }
 
 
-def test_sqlite_checkpoint_saver_clones_checkpoint_chain_and_writes(tmp_path) -> None:
-    saver = SQLiteCheckpointSaver(init_database(tmp_path / "app.db"))
+def test_legacy_checkpoint_saver_clones_checkpoint_chain_and_writes(tmp_path) -> None:
+    saver = LegacySQLiteCheckpointSaver(init_database(tmp_path / "app.db"))
     first_config = saver.put(
         {"configurable": {"thread_id": "source", "checkpoint_ns": ""}},
         _checkpoint("ckpt_1"),
@@ -44,8 +44,10 @@ def test_sqlite_checkpoint_saver_clones_checkpoint_chain_and_writes(tmp_path) ->
     assert cloned.pending_writes == [("task_1", "messages", {"content": "pending"})]
 
 
-def test_sqlite_checkpoint_saver_clone_missing_source_does_not_touch_target(tmp_path) -> None:
-    saver = SQLiteCheckpointSaver(init_database(tmp_path / "app.db"))
+def test_legacy_checkpoint_saver_clone_missing_source_does_not_touch_target(
+    tmp_path,
+) -> None:
+    saver = LegacySQLiteCheckpointSaver(init_database(tmp_path / "app.db"))
     saver.put(
         {"configurable": {"thread_id": "target", "checkpoint_ns": ""}},
         _checkpoint("stale"),
@@ -65,8 +67,8 @@ def test_sqlite_checkpoint_saver_clone_missing_source_does_not_touch_target(tmp_
     assert stale.config["configurable"]["checkpoint_id"] == "stale"
 
 
-def test_sqlite_checkpoint_saver_replaces_target_checkpoint_messages(tmp_path) -> None:
-    saver = SQLiteCheckpointSaver(init_database(tmp_path / "app.db"))
+def test_legacy_checkpoint_saver_replaces_target_checkpoint_messages(tmp_path) -> None:
+    saver = LegacySQLiteCheckpointSaver(init_database(tmp_path / "app.db"))
     saver.put(
         {"configurable": {"thread_id": "source", "checkpoint_ns": ""}},
         _checkpoint("ckpt_1"),

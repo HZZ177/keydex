@@ -15,11 +15,22 @@ if __package__ in {None, ""}:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.app.agent.checkpoint_migration_swap import AtomicCheckpointDatabaseSwap
+from backend.app.agent.checkpoint_runtime import (
+    CheckpointReadinessMiddleware,
+    CheckpointRuntime,
+)
 from backend.app.agent.factory import AgentFactory
 from backend.app.annotations.api import router as annotations_router
 from backend.app.api.approvals import router as approvals_router
 from backend.app.api.archive import router as archive_router
 from backend.app.api.attachments import router as attachments_router
+from backend.app.api.checkpoint_migration import (
+    CheckpointMigrationController,
+)
+from backend.app.api.checkpoint_migration import (
+    router as checkpoint_migration_router,
+)
 from backend.app.api.git import (
     get_or_create_git_query_service,
 )
@@ -74,6 +85,7 @@ from backend.app.services.thread_task_events import ThreadTaskEventPublisher
 from backend.app.services.thread_task_runtime import ThreadTaskRuntime, ThreadTaskStateLocks
 from backend.app.services.thread_task_service import ThreadTaskService
 from backend.app.storage import StorageRepositories, init_database
+from backend.app.storage.db import Database
 from backend.app.subagents.runtime import SessionBackedSubagentRuntime
 from backend.app.tools import create_default_tool_registry
 from backend.app.tools.command_runtime import command_process_manager
@@ -117,39 +129,68 @@ def create_app(
                         f"failed={result['failed']}"
                     )
 
-        await app.state.chat_stream_manager.recover_interrupted_sessions()
-        await app.state.subagent_runtime.reconcile_interrupted_runs()
-        await app.state.mcp_manager.start()
-        asset_cleanup = await asyncio.to_thread(
-            app.state.web_annotation_asset_service.cleanup_expired
+        checkpoint_services_lock = asyncio.Lock()
+        checkpoint_services_started = False
+
+        async def start_checkpoint_dependent_services() -> None:
+            nonlocal checkpoint_services_started
+            async with checkpoint_services_lock:
+                if checkpoint_services_started:
+                    return
+                await app.state.chat_stream_manager.recover_interrupted_sessions()
+                await app.state.subagent_runtime.reconcile_interrupted_runs()
+                await app.state.mcp_manager.start()
+                asset_cleanup = await asyncio.to_thread(
+                    app.state.web_annotation_asset_service.cleanup_expired
+                )
+                if asset_cleanup["scanned"] or asset_cleanup["failed"]:
+                    logger.info(
+                        "[WebAnnotations] expired staged asset cleanup complete | "
+                        f"scanned={asset_cleanup['scanned']} | "
+                        f"deleted={asset_cleanup['deleted']} | "
+                        f"failed={asset_cleanup['failed']}"
+                    )
+                if app.state.file_history_service.enabled:
+                    recovered = await asyncio.to_thread(
+                        app.state.file_history_service.recover_incomplete_operations
+                    )
+                    cleanup = await asyncio.to_thread(
+                        app.state.file_history_service.cleanup_history,
+                        orphan_grace_seconds=(
+                            resolved_settings.file_history_orphan_grace_seconds
+                        ),
+                    )
+                    logger.info(
+                        "[FileHistory] 启动恢复与清理完成 | "
+                        f"recovered_operations={len(recovered)} | "
+                        f"deleted_artifacts={len(cleanup['deleted_artifacts'])} | "
+                        f"expired_locks={cleanup['expired_locks']} | "
+                        f"usage_bytes={cleanup['usage_bytes']}"
+                    )
+                app.state.thread_task_elapsed_ticker.start()
+                checkpoint_services_started = True
+
+        app.state.start_checkpoint_dependent_services = (
+            start_checkpoint_dependent_services
         )
-        if asset_cleanup["scanned"] or asset_cleanup["failed"]:
-            logger.info(
-                "[WebAnnotations] expired staged asset cleanup complete | "
-                f"scanned={asset_cleanup['scanned']} | "
-                f"deleted={asset_cleanup['deleted']} | failed={asset_cleanup['failed']}"
-            )
-        if app.state.file_history_service.enabled:
-            recovered = await asyncio.to_thread(
-                app.state.file_history_service.recover_incomplete_operations
-            )
-            cleanup = await asyncio.to_thread(
-                app.state.file_history_service.cleanup_history,
-                orphan_grace_seconds=resolved_settings.file_history_orphan_grace_seconds,
-            )
-            logger.info(
-                "[FileHistory] 启动恢复与清理完成 | "
-                f"recovered_operations={len(recovered)} | "
-                f"deleted_artifacts={len(cleanup['deleted_artifacts'])} | "
-                f"expired_locks={cleanup['expired_locks']} | "
-                f"usage_bytes={cleanup['usage_bytes']}"
-            )
-        warmup_task = asyncio.create_task(run_warmup())
+        await AtomicCheckpointDatabaseSwap(app.state.database).recover()
+        checkpoint_ready = await app.state.checkpoint_runtime.start()
+        if checkpoint_ready:
+            app.state.checkpointer = app.state.checkpoint_runtime.require_store()
+            await start_checkpoint_dependent_services()
+        else:
+            await app.state.checkpoint_migration_controller.resume_interrupted()
+
+        warmup_task = (
+            asyncio.create_task(run_warmup())
+            if checkpoint_ready
+            else asyncio.create_task(asyncio.sleep(0))
+        )
         web_annotation_asset_cleanup_task = asyncio.create_task(run_web_annotation_asset_cleanup())
-        app.state.thread_task_elapsed_ticker.start()
         try:
             yield
         finally:
+            await app.state.checkpoint_migration_controller.close()
             try:
                 await app.state.keydex_workspace_watcher.close()
             except Exception as exc:
@@ -180,6 +221,7 @@ def create_app(
             killed = command_process_manager.shutdown()
             if killed:
                 logger.info(f"[App] 已清理运行中 command 进程 | count={killed}")
+            await app.state.checkpoint_runtime.close()
 
     app = FastAPI(
         title=resolved_settings.app_name,
@@ -187,6 +229,7 @@ def create_app(
         lifespan=lifespan,
     )
     register_exception_handlers(app)
+    app.add_middleware(CheckpointReadinessMiddleware)
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(
         CORSMiddleware,
@@ -204,9 +247,18 @@ def create_app(
     app.state.settings = resolved_settings
     app.state.mcp_enabled = resolved_settings.mcp_enabled
     app.state.mcp_runtime_status = "enabled" if resolved_settings.mcp_enabled else "disabled"
+    database_path = resolved_settings.data_dir / "app.db"
+    AtomicCheckpointDatabaseSwap(
+        Database(database_path)
+    ).prepare_active_path_for_startup()
     app.state.database = init_database(
-        resolved_settings.data_dir / "app.db",
+        database_path,
         default_workspace_root=resolved_settings.workspace_root,
+    )
+    app.state.checkpoint_runtime = CheckpointRuntime(app.state.database.path)
+    app.state.checkpoint_migration_controller = CheckpointMigrationController(
+        app.state.checkpoint_runtime,
+        app.state.database,
     )
     app.state.repositories = StorageRepositories(app.state.database)
     app.state.web_annotation_asset_service = WebAnnotationAssetService(
@@ -296,12 +348,11 @@ def create_app(
 
     def build_chat_service():
         from backend.app.agent import AgentRunner
-        from backend.app.agent.checkpoint import SQLiteCheckpointSaver
         from backend.app.agent.runtime_settings import load_agent_runtime_settings
         from backend.app.services.chat_service import ChatService
         from backend.app.services.default_model_warmup import warmup_default_models
 
-        checkpointer = SQLiteCheckpointSaver(app.state.database)
+        checkpointer = app.state.checkpoint_runtime.require_store()
         agent_runner = AgentRunner(
             model_settings_provider=lambda: load_model_settings(app.state.repositories),
             runtime_settings_provider=lambda: load_agent_runtime_settings(app.state.repositories),
@@ -411,6 +462,7 @@ def create_app(
         f"duration_ms={int((time.perf_counter() - create_started) * 1000)}"
     )
     app.include_router(health_router)
+    app.include_router(checkpoint_migration_router)
     app.include_router(git_router)
     app.include_router(annotations_router)
     app.include_router(right_sidebar_router)
