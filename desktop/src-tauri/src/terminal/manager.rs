@@ -1131,6 +1131,62 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn real_powershell_recalls_current_session_command_with_up_arrow() {
+        let manager = TerminalManager::default();
+        let session_id = "real-powershell-history-session";
+        let snapshot = manager
+            .create(
+                session_id.into(),
+                std::env::current_dir()
+                    .ok()
+                    .map(|path| path.to_string_lossy().into_owned()),
+                "powershell".into(),
+                TerminalSize {
+                    cols: 100,
+                    rows: 30,
+                    pixel_width: None,
+                    pixel_height: None,
+                },
+            )
+            .unwrap();
+        wait_for_replay(
+            &manager,
+            &snapshot.terminal_id,
+            "\x1b[6n",
+            Duration::from_secs(5),
+        );
+        manager
+            .write(&snapshot.terminal_id, &STANDARD.encode(b"\x1b[1;1R"))
+            .unwrap();
+        let marker = "KEYDEX_POWERSHELL_HISTORY_RECALL";
+        let command =
+            "$marker = [string]::Concat('KEYDEX_POWERSHELL_','HISTORY_RECALL'); Write-Output $marker\r";
+        manager
+            .write(&snapshot.terminal_id, &STANDARD.encode(command.as_bytes()))
+            .unwrap();
+        wait_for_replay_count(
+            &manager,
+            &snapshot.terminal_id,
+            marker,
+            1,
+            Duration::from_secs(10),
+        );
+
+        manager
+            .write(&snapshot.terminal_id, &STANDARD.encode(b"\x1b[A\r"))
+            .unwrap();
+        wait_for_replay_count(
+            &manager,
+            &snapshot.terminal_id,
+            marker,
+            2,
+            Duration::from_secs(10),
+        );
+        manager.close(&snapshot.terminal_id).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn real_python_node_repl_and_git_vim_tui_flow_through_conpty() {
         let repl_output = run_real_profile(
             "powershell",
@@ -1238,6 +1294,28 @@ mod tests {
             assert!(
                 Instant::now() < deadline,
                 "terminal output did not contain {marker:?}; output={output:?}"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[cfg(windows)]
+    fn wait_for_replay_count(
+        manager: &TerminalManager,
+        terminal_id: &str,
+        marker: &str,
+        expected: usize,
+        timeout: Duration,
+    ) {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let output = replay_text(manager, terminal_id);
+            if output.matches(marker).count() >= expected {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "terminal output did not contain {expected} occurrences of {marker:?}; output={output:?}"
             );
             thread::sleep(Duration::from_millis(20));
         }

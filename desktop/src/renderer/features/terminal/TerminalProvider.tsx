@@ -79,6 +79,7 @@ export function TerminalProvider({
   const notifications = useNotifications();
   const refreshGenerationRef = useRef(0);
   const errorCooldownRef = useRef(new Map<string, number>());
+  const inputWriteQueueRef = useRef(new Map<string, Promise<void>>());
 
   const reportError = useCallback(
     (reason: unknown, terminalId = "global") => {
@@ -279,12 +280,23 @@ export function TerminalProvider({
   const writeTerminal = useCallback(
     async (terminalId: string, data: string | Uint8Array) => {
       if (!available) return false;
+      // xterm can emit text, Enter and escape sequences in separate callbacks.
+      // Preserve that order across asynchronous Tauri invocations for each PTY.
+      const previousWrite = inputWriteQueueRef.current.get(terminalId) ?? Promise.resolve();
+      const currentWrite = previousWrite
+        .catch(() => undefined)
+        .then(() => runtime.write(terminalId, data));
+      inputWriteQueueRef.current.set(terminalId, currentWrite);
       try {
-        await runtime.write(terminalId, data);
+        await currentWrite;
         return true;
       } catch (error) {
         reportError(error, terminalId);
         return false;
+      } finally {
+        if (inputWriteQueueRef.current.get(terminalId) === currentWrite) {
+          inputWriteQueueRef.current.delete(terminalId);
+        }
       }
     },
     [available, reportError, runtime],

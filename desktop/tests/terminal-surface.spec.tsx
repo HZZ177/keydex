@@ -151,6 +151,56 @@ describe("TerminalSurface and TerminalXtermRegistry", () => {
     await waitFor(() => expect(write).toHaveBeenCalledWith(snapshot.terminalId, "\x03\x1b[A\t"));
   });
 
+  it("serializes terminal input so commands, Enter and history navigation preserve user order", async () => {
+    const snapshot = fakeSnapshot();
+    const store = createTerminalStore({ storage: null });
+    store.getState().upsertSnapshot(snapshot, { activate: true });
+    const handle = fakeHandle(snapshot.terminalId);
+    let onData: ((data: string) => void) | null = null;
+    vi.mocked(handle.terminal.onData).mockImplementation((listener) => {
+      onData = listener;
+      return { dispose: vi.fn() };
+    });
+    let releaseFirstWrite: (() => void) | null = null;
+    const runtime = fakeRuntime(snapshot, vi.fn());
+    let writeCallCount = 0;
+    const write = vi.fn(() => {
+      writeCallCount += 1;
+      return writeCallCount === 1
+        ? new Promise<void>((resolve) => {
+            releaseFirstWrite = resolve;
+          })
+        : Promise.resolve();
+    });
+    runtime.write = write;
+    render(
+      <NotificationProvider>
+        <TerminalSessionScopeProvider>
+          <TerminalProvider runtime={runtime} store={store}>
+            <TerminalSurface snapshot={snapshot} active visible registry={new TerminalXtermRegistry(() => handle)} />
+          </TerminalProvider>
+        </TerminalSessionScopeProvider>
+      </NotificationProvider>,
+    );
+    await waitFor(() => expect(onData).not.toBeNull());
+
+    (onData as unknown as (data: string) => void)("Get-Date");
+    (onData as unknown as (data: string) => void)("\r");
+    (onData as unknown as (data: string) => void)("\x1b[A");
+    (onData as unknown as (data: string) => void)("\x1b[B");
+    await waitFor(() => expect(write).toHaveBeenCalledTimes(1));
+    expect(write).toHaveBeenNthCalledWith(1, snapshot.terminalId, "Get-Date");
+
+    (releaseFirstWrite as unknown as () => void)();
+    await waitFor(() => expect(write).toHaveBeenCalledTimes(4));
+    expect(write.mock.calls).toEqual([
+      [snapshot.terminalId, "Get-Date"],
+      [snapshot.terminalId, "\r"],
+      [snapshot.terminalId, "\x1b[A"],
+      [snapshot.terminalId, "\x1b[B"],
+    ]);
+  });
+
   it("supports search, copy, paste and rejects unsafe links through the top notification layer", async () => {
     const snapshot = { ...fakeSnapshot(), title: "<img src=x onerror=alert(1)>" };
     const store = createTerminalStore({ storage: null });
