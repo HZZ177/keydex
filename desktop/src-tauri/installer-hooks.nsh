@@ -1,6 +1,10 @@
 !macro KEYDEX_CLOSE_RUNNING_PROCESSES
   DetailPrint "Closing running Keydex processes..."
-  nsExec::ExecToLog `"$SYSDIR\cmd.exe" /D /C ""$SYSDIR\taskkill.exe" /IM keydex-desktop.exe /T /F 2>NUL || exit /B 0"`
+  ; Do not use /T here. During an in-app update the NSIS installer is a
+  ; descendant of keydex-desktop.exe and must survive while the old supervised
+  ; process tree is closed. The supervisor Job Object still owns and cleans up
+  ; the GUI, browser, terminal, and sidecar processes.
+  nsExec::ExecToLog `"$SYSDIR\cmd.exe" /D /C ""$SYSDIR\taskkill.exe" /IM keydex-desktop.exe /F 2>NUL || exit /B 0"`
   Pop $0
   nsExec::ExecToLog `"$SYSDIR\cmd.exe" /D /C ""$SYSDIR\taskkill.exe" /IM agent-server.exe /T /F 2>NUL || exit /B 0"`
   Pop $0

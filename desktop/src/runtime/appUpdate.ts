@@ -60,7 +60,7 @@ export async function downloadAndInstallAppUpdate(
 ): Promise<void> {
   let downloadedBytes = 0;
   let totalBytes: number | null = null;
-  await update.update.downloadAndInstall((event: DownloadEvent) => {
+  await update.update.download((event: DownloadEvent) => {
     if (event.event === "Started") {
       downloadedBytes = 0;
       totalBytes = event.data.contentLength ?? null;
@@ -79,5 +79,17 @@ export async function downloadAndInstallAppUpdate(
     });
   });
   const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("prepare_app_update_install");
+  try {
+    await update.update.install();
+  } catch (error) {
+    try {
+      await invoke("cancel_app_update_install");
+    } catch {
+      // Keep the updater error as the actionable failure. The native preparation
+      // also has a bounded lease that restores normal Job Object behavior.
+    }
+    throw error;
+  }
   await invoke("relaunch_after_app_update");
 }

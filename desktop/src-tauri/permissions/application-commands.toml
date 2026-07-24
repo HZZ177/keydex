@@ -15,6 +15,8 @@ commands.allow = [
   "write_text_file",
   "copy_file_to_clipboard",
   "take_associated_file_open_paths",
+  "prepare_app_update_install",
+  "cancel_app_update_install",
   "relaunch_after_app_update",
   "reload_main_webview",
   "browser_create_surface",

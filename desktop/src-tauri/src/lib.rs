@@ -520,29 +520,46 @@ fn take_associated_file_open_paths(
 }
 
 #[tauri::command]
-async fn relaunch_after_app_update(
-    app: tauri::AppHandle,
-    terminals: State<'_, TerminalManager>,
-) -> Result<(), String> {
+async fn prepare_app_update_install(terminals: State<'_, TerminalManager>) -> Result<(), String> {
     let manager = terminals.inner().clone();
     let cleanup =
         tauri::async_runtime::spawn_blocking(move || close_terminals_with_deadline(manager))
             .await
             .map_err(|error| error.to_string())?;
     if let Err(error) = cleanup {
-        eprintln!("failed to close embedded terminals before update relaunch: {error}");
+        eprintln!("failed to close embedded terminals before update install: {error}");
     }
+
+    #[cfg(windows)]
+    supervisor::allow_update_installer_breakaway()?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn cancel_app_update_install() -> Result<(), String> {
+    #[cfg(windows)]
+    supervisor::restore_managed_child_inheritance()?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn relaunch_after_app_update(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(windows)]
     {
+        supervisor::restore_managed_child_inheritance()?;
         supervisor::notify_restart_requested()?;
         app.exit(0);
+        Ok(())
     }
+
     #[cfg(not(windows))]
     {
         std::env::set_var(UPDATE_RELAUNCH_ENV, "1");
         app.request_restart();
+        Ok(())
     }
-    Ok(())
 }
 
 #[cfg(windows)]
@@ -993,6 +1010,8 @@ pub fn run() {
             write_text_file,
             copy_file_to_clipboard,
             take_associated_file_open_paths,
+            prepare_app_update_install,
+            cancel_app_update_install,
             relaunch_after_app_update,
             reload_main_webview,
             browser_create_surface,
