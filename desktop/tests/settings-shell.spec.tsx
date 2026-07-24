@@ -40,6 +40,7 @@ describe("SettingsShell", () => {
     expect(screen.getByRole("button", { name: "MCP服务器" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "策略配置" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "用量统计" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "存储管理" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "项目管理" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "归档管理" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "切换主题" })).not.toBeNull();
@@ -68,6 +69,7 @@ describe("SettingsShell", () => {
     renderShell("usage");
 
     expect(screen.getByRole("button", { name: "用量统计" }).getAttribute("data-active")).toBe("true");
+    expect(screen.getByRole("button", { name: "存储管理" }).getAttribute("data-active")).toBe("false");
     expect(screen.getByRole("button", { name: "常规" }).getAttribute("data-active")).toBe("false");
     expect(screen.getByRole("button", { name: "外观" }).getAttribute("data-active")).toBe("false");
     expect(screen.getByRole("button", { name: "供应商配置" }).getAttribute("data-active")).toBe("false");
@@ -179,6 +181,7 @@ describe("SettingsShell", () => {
       "MCP服务器",
       "策略配置",
       "用量统计",
+      "存储管理",
       "项目管理",
       "归档管理",
       "关于",

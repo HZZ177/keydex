@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from backend.app.core.data_path import managed_data_reference
 from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
 from backend.app.core.time import to_iso_z, utc_now
@@ -381,8 +382,9 @@ class WebAnnotationAttachmentCloneService:
     def __init__(self, repositories: StorageRepositories, *, data_dir: Path) -> None:
         self._repositories = repositories
         self._web = repositories.web_annotations
-        self._assets = WebAnnotationAssetService(repositories, data_dir=data_dir)
-        self._attachments_root = (data_dir.resolve() / "attachments").resolve()
+        self._data_dir = data_dir.resolve()
+        self._assets = WebAnnotationAssetService(repositories, data_dir=self._data_dir)
+        self._attachments_root = (self._data_dir / "attachments").resolve()
 
     def clone(
         self,
@@ -504,7 +506,7 @@ class WebAnnotationAttachmentCloneService:
                     type="image",
                     source="web_annotation",
                     name=name,
-                    path=str(target_path),
+                    path=managed_data_reference(self._data_dir, target_path),
                     mime_type=asset.mime_type,
                     size=asset.size_bytes,
                     connection=conn,

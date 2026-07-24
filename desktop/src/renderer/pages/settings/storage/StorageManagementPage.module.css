@@ -1,0 +1,270 @@
+.page {
+  width: min(900px, calc(100% - 72px));
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 68px 0 112px;
+  color: var(--color-text-primary);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+.header h1,
+.sectionHeading h2 {
+  margin: 0;
+  color: var(--color-text-primary);
+}
+
+.header h1 {
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.header p,
+.sectionHeading p,
+.locationHint {
+  margin: 8px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.refreshButton,
+.pathRow button {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 78%, transparent);
+  border-radius: 9px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  padding: 0 12px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast) var(--motion-ease-out),
+    background-color var(--motion-fast) var(--motion-ease-out),
+    color var(--motion-fast) var(--motion-ease-out);
+}
+
+.refreshButton:hover:not(:disabled),
+.pathRow button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--color-border-3) 64%, var(--color-border-default));
+  background: var(--surface-hover);
+  color: var(--color-text-primary);
+}
+
+.refreshButton:focus-visible,
+.pathRow button:focus-visible {
+  outline: 0;
+  box-shadow: var(--settings-focus-ring);
+}
+
+.refreshButton:disabled,
+.pathRow button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 30px;
+}
+
+.summaryCard {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 78%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 76%, transparent);
+  padding: 17px;
+}
+
+.cardIcon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg-elevated));
+  color: var(--color-accent);
+}
+
+.summaryCard div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.summaryCard div span {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.summaryCard strong {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 15px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.section {
+  margin-top: 28px;
+}
+
+.sectionHeading {
+  margin-bottom: 11px;
+}
+
+.sectionHeading h2 {
+  font-size: 14px;
+  font-weight: 620;
+}
+
+.sectionHeading p {
+  margin-top: 5px;
+}
+
+.pathPanel,
+.usagePanel {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 78%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 72%, transparent);
+}
+
+.pathRow {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  padding: 14px 16px;
+}
+
+.pathRow + .pathRow {
+  border-top: 1px solid color-mix(in srgb, var(--color-border-default) 62%, transparent);
+}
+
+.pathRow > div {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.pathRow span {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.pathRow code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usagePanel {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+}
+
+.usageRow {
+  display: grid;
+  gap: 7px;
+}
+
+.usageLabel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.usageLabel strong {
+  color: var(--color-text-primary);
+  font-size: 11px;
+  font-weight: 580;
+}
+
+.usageTrack {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-border-default) 58%, transparent);
+}
+
+.usageTrack span {
+  height: 100%;
+  display: block;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--color-accent) 76%, var(--color-text-secondary));
+}
+
+.empty,
+.warning,
+.error {
+  margin: 14px 0 0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.empty {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+.warning {
+  border: 1px solid color-mix(in srgb, var(--color-warning) 38%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 9%, transparent);
+  color: var(--color-text-secondary);
+}
+
+.error {
+  border: 1px solid color-mix(in srgb, var(--color-danger) 35%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  color: var(--color-danger);
+}
+
+@media (max-width: 720px) {
+  .page {
+    width: min(100% - 36px, 900px);
+  }
+
+  .summaryGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .refreshButton,
+  .pathRow button {
+    transition-duration: 0.01ms !important;
+  }
+}

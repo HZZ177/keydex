@@ -6,6 +6,7 @@ commands.allow = [
   "allocate_port",
   "start_sidecar",
   "stop_sidecar",
+  "get_storage_status",
   "wait_for_health",
   "hide_main_window",
   "request_app_exit",

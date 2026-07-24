@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from backend.app.api.dependencies import get_app_settings, get_repositories
 from backend.app.core.config import AppSettings
+from backend.app.core.data_path import managed_data_reference, resolve_data_path
 from backend.app.core.ids import new_id
 from backend.app.core.logger import logger
 from backend.app.storage import AttachmentRecord, StorageRepositories
@@ -119,7 +120,7 @@ async def upload_attachment(
         type="image",
         source=source or "pasted",
         name=stored_name,
-        path=str(target),
+        path=managed_data_reference(settings.data_dir, target),
         mime_type=mime_type,
         size=len(body),
     )
@@ -233,7 +234,7 @@ async def import_attachment_url(
         type="image",
         source=payload.source or "url",
         name=stored_name,
-        path=str(target),
+        path=managed_data_reference(settings.data_dir, target),
         mime_type=mime_type,
         size=len(body),
     )
@@ -248,6 +249,7 @@ async def import_attachment_url(
 def read_attachment_media(
     attachment_id: str,
     repositories: StorageRepositories = RepositoriesDep,
+    settings: AppSettings = SettingsDep,
 ) -> AttachmentMediaResponse:
     record = repositories.attachments.get(attachment_id)
     if record is None or record.type != "image":
@@ -256,7 +258,7 @@ def read_attachment_media(
             "attachment_not_found",
             "附件不存在",
         )
-    target = Path(record.path)
+    target = resolve_data_path(settings.data_dir, record.path)
     if not target.exists() or not target.is_file():
         raise _attachment_error(
             status.HTTP_404_NOT_FOUND,
@@ -442,7 +444,7 @@ def _stored_local_file_path(settings: AppSettings, local_file_id: str, name: str
 def _managed_attachment_directory(settings: AppSettings, record: AttachmentRecord) -> Path:
     root = (settings.data_dir / "attachments").resolve()
     directory = (root / record.id).resolve()
-    target = Path(record.path).resolve()
+    target = resolve_data_path(settings.data_dir, record.path)
     expected_target = (directory / record.name).resolve()
     if directory.parent != root or target != expected_target:
         raise _attachment_error(

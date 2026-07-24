@@ -174,10 +174,10 @@ pub(crate) async fn browser_create_surface(
         let _ = surface.destroy();
     }
 
-    let profile_directory = match caller.path().app_data_dir() {
+    let profile_directory = match crate::storage_layout::data_root() {
         Ok(app_data_dir) => match state.profiles.reserve_surface(
             &debug_managed_root("KEYDEX_BROWSER_PROFILE_ROOT", &app_data_dir),
-            &std::env::temp_dir(),
+            &app_data_dir.join("temp"),
             identity.reference.clone(),
             payload.profile_mode,
         ) {
@@ -563,7 +563,7 @@ impl BrowserHostState {
                 let _ = actor.shutdown();
             }
         }
-        self.captures.shutdown(&std::env::temp_dir());
+        self.captures.shutdown(&browser_temporary_root());
     }
 
     fn close_all_surfaces(&self) -> usize {
@@ -598,7 +598,7 @@ impl BrowserHostState {
             self.navigation_policy.remove(&surface);
             self.lifecycle.remove(&surface);
             self.profiles
-                .release_surface(&std::env::temp_dir(), &surface);
+                .release_surface(&browser_temporary_root(), &surface);
         }
     }
 }
@@ -659,7 +659,7 @@ pub(crate) async fn browser_destroy_surface(
     let close_error = handle.and_then(|webview| webview.destroy().err());
     state
         .profiles
-        .release_surface(&std::env::temp_dir(), &payload);
+        .release_surface(&browser_temporary_root(), &payload);
     emit_browser_event(
         &caller,
         &state,
@@ -1779,7 +1779,7 @@ pub(crate) async fn browser_capture_region(
             return invalid_request(request_id, "Browser capture geometry is invalid");
         }
     };
-    let app_data_dir = match caller.path().app_data_dir() {
+    let app_data_dir = match crate::storage_layout::data_root() {
         Ok(path) => path,
         Err(_) => {
             emit_capture_failed(
@@ -1794,7 +1794,7 @@ pub(crate) async fn browser_capture_region(
     };
     let asset = match state.captures.store_capture(
         &app_data_dir,
-        &std::env::temp_dir(),
+        &app_data_dir.join("temp"),
         &payload.surface,
         profile_mode,
         &payload.capture_request_id,
@@ -1874,10 +1874,16 @@ fn abort_surface(state: &BrowserHostState, identity: &super::surface::SurfaceIde
     state.navigation_policy.remove(&identity.reference);
     state
         .profiles
-        .release_surface(&std::env::temp_dir(), &identity.reference);
+        .release_surface(&browser_temporary_root(), &identity.reference);
     if let Ok(mut surfaces) = state.surfaces.lock() {
         surfaces.abort_create(identity);
     }
+}
+
+fn browser_temporary_root() -> PathBuf {
+    crate::storage_layout::data_root()
+        .map(|root| root.join("temp"))
+        .unwrap_or_else(|_| std::env::temp_dir().join("keydex"))
 }
 
 #[cfg(windows)]

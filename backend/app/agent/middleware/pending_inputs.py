@@ -199,7 +199,11 @@ class PendingUserInputInjectionMiddleware(AgentMiddleware):
             "keydex_delivery_mode": record.mode,
         }
         messages = _pending_runtime_injection_messages(record, metadata=metadata)
-        user_message = build_user_runtime_message(record.message, image_records)
+        user_message = build_user_runtime_message(
+            record.message,
+            image_records,
+            data_dir=self._repositories.db.path.parent,
+        )
         if user_message is not None:
             messages.append(
                 HumanMessage(

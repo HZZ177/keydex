@@ -127,6 +127,11 @@ const McpConsolePage = lazy(() =>
     default: module.McpConsolePage,
   })),
 );
+const StorageManagementPage = lazy(() =>
+  import("@/renderer/pages/settings/storage/StorageManagementPage").then((module) => ({
+    default: module.StorageManagementPage,
+  })),
+);
 const ProjectManagementPage = lazy(() =>
   import("@/renderer/pages/settings/projects/ProjectManagementPage").then((module) => ({
     default: module.ProjectManagementPage,
@@ -224,6 +229,7 @@ function AppRoutes({
             <Route path="/settings/extensions" element={<ExtensionSettingsRoute runtime={runtime} />} />
             <Route path="/settings/policy-config" element={<ConfigSettingsRoute runtime={runtime} />} />
             <Route path="/settings/usage" element={<UsageSettingsRoute runtime={runtime} />} />
+            <Route path="/settings/storage" element={<StorageSettingsRoute />} />
             <Route path="/settings/mcp" element={<McpSettingsRoute runtime={runtime} />} />
             <Route path="/settings/general" element={<GeneralSettingsRoute runtime={runtime} />} />
             <Route path="/settings/appearance" element={<AppearanceSettingsRoute />} />
@@ -1027,6 +1033,14 @@ function AppearanceSettingsRoute() {
   return (
     <SettingsShell activeSection="appearance">
       <AppearanceSettingsPage />
+    </SettingsShell>
+  );
+}
+
+function StorageSettingsRoute() {
+  return (
+    <SettingsShell activeSection="storage">
+      <StorageManagementPage />
     </SettingsShell>
   );
 }

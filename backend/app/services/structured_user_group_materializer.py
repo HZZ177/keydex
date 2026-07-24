@@ -239,6 +239,7 @@ def build_current_attachment_resolver(
     )
 
     def resolve(descriptor: dict[str, Any]) -> list[dict[str, Any]]:
+        data_dir = repositories.db.path.parent
         records, _payloads = resolve_image_attachments(
             repositories,
             [descriptor],
@@ -248,7 +249,7 @@ def build_current_attachment_resolver(
         return [
             {
                 "type": "image_url",
-                "image_url": {"url": attachment_data_url(record)},
+                "image_url": {"url": attachment_data_url(record, data_dir=data_dir)},
             }
             for record in records
         ]

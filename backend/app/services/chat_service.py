@@ -1802,6 +1802,7 @@ class ChatService:
             user_message = _build_user_runtime_message(
                 request.message,
                 image_attachments or [],
+                data_dir=self.settings.data_dir,
             )
             root_user_message_id = str(
                 structured_user_message_group.root_user_message.source_id

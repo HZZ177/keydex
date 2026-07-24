@@ -5,6 +5,7 @@ import mimetypes
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from backend.app.core.data_path import resolve_data_path
 from backend.app.storage import AttachmentRecord
 
 if TYPE_CHECKING:
@@ -40,8 +41,8 @@ def attachment_payload(record: AttachmentRecord) -> dict[str, Any]:
     }
 
 
-def validate_image_attachment_record(record: AttachmentRecord) -> None:
-    target = Path(record.path)
+def validate_image_attachment_record(record: AttachmentRecord, *, data_dir: Path) -> None:
+    target = resolve_data_path(data_dir, record.path)
     if not target.exists() or not target.is_file():
         raise ValueError(f"图片附件文件不存在: {record.name}")
     size = target.stat().st_size
@@ -66,6 +67,8 @@ def image_mime_from_record(record: AttachmentRecord, target: Path) -> str:
 def build_user_runtime_message(
     text: str,
     image_attachments: list[AttachmentRecord],
+    *,
+    data_dir: Path,
 ) -> dict[str, Any] | None:
     stripped = text.strip()
     if not image_attachments:
@@ -80,15 +83,15 @@ def build_user_runtime_message(
         content.append(
             {
                 "type": "image_url",
-                "image_url": {"url": attachment_data_url(record)},
+                "image_url": {"url": attachment_data_url(record, data_dir=data_dir)},
             }
         )
     return {"role": "user", "content": content, CURRENT_TURN_MESSAGE_MARKER: True}
 
 
-def attachment_data_url(record: AttachmentRecord) -> str:
-    target = Path(record.path)
-    validate_image_attachment_record(record)
+def attachment_data_url(record: AttachmentRecord, *, data_dir: Path) -> str:
+    target = resolve_data_path(data_dir, record.path)
+    validate_image_attachment_record(record, data_dir=data_dir)
     mime_type = image_mime_from_record(record, target)
     encoded = base64.b64encode(target.read_bytes()).decode("ascii")
     return f"data:{mime_type};base64,{encoded}"
@@ -101,6 +104,7 @@ def resolve_image_attachments(
     session_id: str,
     user_id: str,
 ) -> tuple[list[AttachmentRecord], list[dict[str, Any]]]:
+    data_dir = repositories.db.path.parent
     if not raw_attachments:
         return [], []
     attachment_ids = attachment_ids_from_request(raw_attachments)
@@ -126,6 +130,6 @@ def resolve_image_attachments(
             raise ValueError("图片附件不属于当前会话")
         if record.type != "image":
             raise ValueError("仅支持图片附件发送给模型")
-        validate_image_attachment_record(record)
+        validate_image_attachment_record(record, data_dir=data_dir)
         ordered_records.append(record)
     return ordered_records, [attachment_payload(record) for record in ordered_records]

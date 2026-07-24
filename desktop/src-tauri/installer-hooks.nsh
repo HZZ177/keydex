@@ -18,3 +18,16 @@
 !macro NSIS_HOOK_PREUNINSTALL
   !insertmacro KEYDEX_CLOSE_RUNNING_PROCESSES
 !macroend
+
+; Tauri's generated uninstaller intentionally leaves unknown files under
+; $INSTDIR in place. Keydex keeps all persistent state in $INSTDIR\data, so
+; normal upgrades and the default uninstall path preserve it. Only remove the
+; directory when the user explicitly selects "Delete app data", and never
+; during an updater-driven uninstall.
+!macro NSIS_HOOK_POSTUNINSTALL
+  ${If} $DeleteAppDataCheckboxState = 1
+  ${AndIf} $UpdateMode <> 1
+    RMDir /r "$INSTDIR\data"
+    RMDir "$INSTDIR"
+  ${EndIf}
+!macroend

@@ -6,6 +6,7 @@ import {
   Bot,
   Download,
   FolderKanban,
+  HardDrive,
   Landmark,
   Moon,
   Palette,
@@ -41,6 +42,7 @@ export type SettingsSection =
   | "extensions"
   | "config"
   | "usage"
+  | "storage"
   | "mcp"
   | "projects"
   | "archive"
@@ -55,6 +57,7 @@ const settingsItems = [
   { id: "mcp", label: "MCP服务器", path: "/settings/mcp", icon: PlugZap, iconName: "plug-zap" },
   { id: "config", label: "策略配置", path: "/settings/policy-config", icon: SquareTerminal, iconName: "square-terminal" },
   { id: "usage", label: "用量统计", path: "/settings/usage", icon: BarChart3, iconName: "bar-chart-3" },
+  { id: "storage", label: "存储管理", path: "/settings/storage", icon: HardDrive, iconName: "hard-drive" },
   { id: "projects", label: "项目管理", path: "/settings/projects", icon: FolderKanban, iconName: "folder-kanban" },
   { id: "archive", label: "归档管理", path: "/settings/archive", icon: Archive, iconName: "archive" },
   { id: "about", label: "关于", path: "/settings/about", icon: AppWindow, iconName: "app-window" },

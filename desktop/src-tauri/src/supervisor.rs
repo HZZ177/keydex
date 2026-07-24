@@ -168,6 +168,8 @@ fn prepare_supervised_child() -> Result<(), String> {
 }
 
 fn run_supervisor() -> Result<i32, String> {
+    crate::storage_layout::prepare_install_storage_layout()?;
+
     let token = Uuid::new_v4();
     let job_name = format!("Local\\KeydexSupervisorJob-{token}");
     let ready_event_name = format!("Local\\KeydexSupervisorReady-{token}");
@@ -603,6 +605,16 @@ Wait-Process -Id $child.Id
 
         assert!(desktop_taskkill.contains(" /F "));
         assert!(!desktop_taskkill.contains(" /T "));
+    }
+
+    #[test]
+    fn installer_hook_preserves_install_owned_data_unless_user_requests_deletion() {
+        let hooks = include_str!("../installer-hooks.nsh");
+
+        assert!(hooks.contains("!macro NSIS_HOOK_POSTUNINSTALL"));
+        assert!(hooks.contains("$DeleteAppDataCheckboxState = 1"));
+        assert!(hooks.contains("$UpdateMode <> 1"));
+        assert!(hooks.contains("RMDir /r \"$INSTDIR\\data\""));
     }
 
     #[test]

@@ -13,11 +13,13 @@ use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
     webview::PageLoadEvent,
-    Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, State,
+    Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl,
+    WebviewWindowBuilder,
 };
 use url::Url;
 
 mod browser;
+mod storage_layout;
 #[cfg(windows)]
 mod supervisor;
 mod terminal;
@@ -338,12 +340,7 @@ fn start_sidecar(
     if let Some(mut child) = state.child.lock().map_err(|err| err.to_string())?.take() {
         kill_child(&mut child)?;
     }
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|err| err.to_string())?
-        .to_string_lossy()
-        .to_string();
+    let data_dir = storage_layout::data_root()?.to_string_lossy().to_string();
     let binary = resolve_sidecar_binary(&app)?;
     let binary_dir = binary.parent().map(PathBuf::from);
     let mut command = Command::new(&binary);
@@ -370,6 +367,13 @@ fn start_sidecar(
         base_url: format!("http://127.0.0.1:{port}"),
         data_dir,
     })
+}
+
+#[tauri::command]
+async fn get_storage_status() -> Result<storage_layout::StorageStatus, String> {
+    tauri::async_runtime::spawn_blocking(storage_layout::storage_status)
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -885,6 +889,24 @@ fn initialize_main_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let webview_data_dir = storage_layout::data_root()
+        .map_err(std::io::Error::other)?
+        .join("webview")
+        .join("main");
+    std::fs::create_dir_all(&webview_data_dir)?;
+    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+        .title("Keydex")
+        .inner_size(1445.0, 900.0)
+        .min_inner_size(880.0, 620.0)
+        .center()
+        .visible(false)
+        .decorations(false)
+        .data_directory(webview_data_dir)
+        .build()?;
+    Ok(())
+}
+
 fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let show_item = MenuItem::with_id(app, TRAY_SHOW_ID, "显示主界面", true, None::<&str>)?;
     let exit_item = MenuItem::with_id(app, TRAY_EXIT_ID, "退出程序", true, None::<&str>)?;
@@ -937,6 +959,7 @@ pub fn run_entrypoint() -> i32 {
             Ok(supervisor::BootstrapOutcome::SupervisorExited(exit_code)) => exit_code,
             Err(error) => {
                 eprintln!("failed to start the Keydex process supervisor: {error}");
+                show_windows_startup_error(&error);
                 1
             }
         }
@@ -949,7 +972,39 @@ pub fn run_entrypoint() -> i32 {
     }
 }
 
+#[cfg(windows)]
+fn show_windows_startup_error(error: &str) {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+
+    let title = OsStr::new("Keydex 启动失败")
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let message = OsStr::new(&format!(
+        "Keydex 无法完成数据目录准备。\r\n\r\n{error}\r\n\r\n原数据未删除，请检查磁盘空间和目录权限后重试。"
+    ))
+    .encode_wide()
+    .chain(Some(0))
+    .collect::<Vec<_>>();
+    unsafe {
+        let _ = MessageBoxW(
+            None,
+            PCWSTR(message.as_ptr()),
+            PCWSTR(title.as_ptr()),
+            MB_OK | MB_ICONERROR,
+        );
+    }
+}
+
 pub fn run() {
+    #[cfg(not(windows))]
+    if let Err(error) = storage_layout::prepare_install_storage_layout() {
+        panic!("failed to prepare the Keydex storage layout: {error}");
+    }
+
     let startup_associated_paths = collect_startup_associated_markdown_paths(
         std::env::args_os()
             .skip(1)
@@ -990,6 +1045,7 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            create_main_window(app.handle())?;
             initialize_main_window(app.handle())?;
             #[cfg(dev)]
             recover_blank_dev_window(app.handle())?;
@@ -1001,6 +1057,7 @@ pub fn run() {
             allocate_port,
             start_sidecar,
             stop_sidecar,
+            get_storage_status,
             wait_for_health,
             hide_main_window,
             request_app_exit,

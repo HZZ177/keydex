@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.agent.checkpoint import SQLiteCheckpointSaver
 from backend.app.core.config import AppSettings
+from backend.app.core.data_path import resolve_data_path
 from backend.app.core.time import to_iso_z, utc_now
 from backend.app.main import create_app
 from backend.app.services.session_fork_service import SessionForkService
@@ -190,7 +191,7 @@ def test_clone_is_idempotent_and_concurrent_with_independent_attachment_file(tmp
         attachment = first.json()["attachment"]
         assert attachment["source"] == "web_annotation"
         assert attachment["session_id"] == session["id"]
-        cloned_path = Path(attachment["path"])
+        cloned_path = resolve_data_path(data_dir, attachment["path"])
         assert cloned_path.read_bytes() == source_body
         assert cloned_path.is_relative_to(data_dir / "attachments")
 
@@ -250,7 +251,7 @@ def test_local_file_region_evidence_clones_with_identical_digest_and_dimensions(
     assert detail.json()["assets"][0]["sha256"] == hashlib.sha256(source_body).hexdigest()
     assert cloned.status_code == 200
     attachment = cloned.json()["attachment"]
-    cloned_path = Path(attachment["path"])
+    cloned_path = resolve_data_path(data_dir, attachment["path"])
     assert cloned_path.read_bytes() == source_body
     assert source_directory.exists()
 

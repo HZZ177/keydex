@@ -54,6 +54,7 @@ export { createWorkspacesRuntime } from "./workspaces";
 export { createArchiveRuntime, createLifecycleRequestId, decodeLifecycleRuntimeError } from "./archive";
 export { createDesktopPickerRuntime } from "./desktopPicker";
 export { createAttachmentsRuntime } from "./attachments";
+export { createStorageRuntime, storageRuntime } from "./storage";
 export { createAnnotationsRuntime } from "./annotations";
 export { createMcpRuntime } from "./mcp";
 export { createKeydexRuntime, createSkillRuntime } from "./skills";
@@ -250,6 +251,12 @@ export type {
   UploadImageOptions,
   UploadLocalFileOptions,
 } from "./attachments";
+export type {
+  StorageCategoryUsage,
+  StorageInvoke,
+  StorageRuntime,
+  StorageStatus,
+} from "./storage";
 export type {
   AnnotationBodyUpdate,
   AnnotationCreateInput,

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from backend.app.core.data_path import resolve_data_path
 from backend.app.services.archive_lifecycle_service import ArchiveLifecycleError
 from backend.app.storage import LifecycleOperationRecord, StorageRepositories
 
@@ -277,7 +278,7 @@ class PurgePlanner:
                 candidate = self.data_dir / relative
                 assets.append(self._classify(candidate, registered_root=candidate))
         for row in attachments:
-            candidate = Path(str(row["path"])).expanduser()
+            candidate = resolve_data_path(self.data_dir, str(row["path"]))
             registered_root = self.data_dir / "attachments" / str(row["id"])
             assets.append(self._classify(candidate, registered_root=registered_root))
         for row in web_asset_rows:

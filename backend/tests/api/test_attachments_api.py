@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from backend.app.core.config import AppSettings
+from backend.app.core.data_path import resolve_data_path
 from backend.app.main import create_app
 
 
@@ -31,7 +32,7 @@ def test_discard_unreferenced_web_annotation_deletes_managed_file_and_record(tmp
     app = create_app(AppSettings(data_dir=tmp_path / "data"))
     with TestClient(app) as client:
         uploaded = _upload_image(client, source="web_annotation")
-        stored_path = Path(uploaded["path"])
+        stored_path = resolve_data_path(app.state.settings.data_dir, uploaded["path"])
 
         response = client.delete(
             f"/api/attachments/{uploaded['attachment_id']}/unreferenced-web-annotation"
@@ -106,7 +107,7 @@ def test_discard_web_annotation_refuses_message_history_reference(tmp_path) -> N
 
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "attachment_discard_referenced"
-    assert Path(uploaded["path"]).exists()
+    assert resolve_data_path(settings.data_dir, uploaded["path"]).exists()
     assert repositories.attachments.get(uploaded["attachment_id"]) is not None
 
 

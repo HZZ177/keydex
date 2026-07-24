@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from backend.app.command_approval import FileAccessMode, load_command_settings
+from backend.app.core.data_path import resolve_data_path
 from backend.app.security.workspace import (
     WorkspacePathError,
     is_relative_to,
@@ -101,7 +102,24 @@ def _ensure_operation_allowed(mode: FileAccessMode, operation: FileAccessOperati
 
 
 def _resolve_any_path(raw_path: str, context: ToolExecutionContext) -> Path:
-    path = Path(raw_path).expanduser()
+    data_dir = context.metadata.get("data_dir")
+    raw_candidate = Path(raw_path).expanduser()
+    is_managed_reference = raw_path.strip().startswith("keydex-data://")
+    if (
+        isinstance(data_dir, (str, Path))
+        and str(data_dir).strip()
+        and (is_managed_reference or raw_candidate.is_absolute())
+    ):
+        try:
+            path = resolve_data_path(Path(data_dir), raw_path)
+        except (OSError, ValueError) as exc:
+            raise ToolExecutionError(
+                str(exc) or "Keydex 数据路径解析失败",
+                code="path_resolve_failed",
+                details={"path": raw_path},
+            ) from exc
+    else:
+        path = raw_candidate
     if not path.is_absolute():
         path = context.workspace_root / path
     try:
