@@ -19,30 +19,14 @@ describe("browser webview security configuration", () => {
     expect(capability).not.toHaveProperty("remote");
   });
 
-  it("keeps production CSP strict and dev HMR allowances isolated", () => {
+  it("keeps CSP disabled for the self-hosted desktop runtime", () => {
     const config = JSON.parse(
       readFileSync(resolve(tauriRoot, "tauri.conf.json"), "utf8"),
-    ) as { app: { security: { csp: string; devCsp: string } } };
+    ) as { app: { security: { csp: null; devCsp: null } } };
     const { csp, devCsp } = config.app.security;
 
-    expect(csp).toContain("default-src 'self'");
-    expect(csp).toContain("connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* ws://127.0.0.1:*");
-    expect(csp).toContain("object-src 'none'");
-    expect(csp).toContain(
-      "frame-src 'self' http://127.0.0.1:* http://localhost:* https://127.0.0.1:* https://localhost:*",
-    );
-    expect(csp).not.toContain("frame-src *");
-    expect(csp).not.toContain("frame-src https:");
-    expect(csp).not.toContain("unsafe-eval");
-    expect(csp).not.toContain("127.0.0.1:5173");
-
-    expect(devCsp).toContain("http://127.0.0.1:5173");
-    expect(devCsp).toContain("ws://127.0.0.1:*");
-    expect(devCsp).toContain("'unsafe-eval'");
-    expect(devCsp).toContain(
-      "frame-src 'self' http://127.0.0.1:* http://localhost:* https://127.0.0.1:* https://localhost:*",
-    );
-    expect(devCsp).not.toContain("frame-src *");
+    expect(csp).toBeNull();
+    expect(devCsp).toBeNull();
   });
 
   it("enables devtools explicitly for both development and release builds", () => {
