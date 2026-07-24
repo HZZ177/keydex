@@ -1,8 +1,8 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "commands": [
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "requestId": "req-create-1",
       "command": "browser_create_surface",
       "payload": {
@@ -10,12 +10,16 @@
         "generation": 1,
         "profileMode": "persistent",
         "initialUrl": "https://example.com/",
+        "initialNavigationIntent": {
+          "source": "restore",
+          "userGesture": false
+        },
         "theme": "dark",
         "backgroundColor": { "red": 40, "green": 42, "blue": 54, "alpha": 255 }
       }
     },
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "requestId": "req-nav-1",
       "command": "browser_navigate",
       "payload": {
@@ -23,11 +27,15 @@
         "surfaceId": "surface-1",
         "generation": 1,
         "navigationId": "navigation-1",
-        "url": "https://example.com/docs"
+        "url": "https://example.com/docs",
+        "intent": {
+          "source": "address_bar",
+          "userGesture": true
+        }
       }
     },
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "requestId": "req-permission-1",
       "command": "browser_respond_permission",
       "payload": {
@@ -40,7 +48,7 @@
       }
     },
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "requestId": "req-download-1",
       "command": "browser_respond_download",
       "payload": {
@@ -52,7 +60,7 @@
       }
     },
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "requestId": "req-selection-1",
       "command": "browser_start_selection",
       "payload": {
@@ -64,7 +72,7 @@
       }
     },
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "requestId": "req-appearance-theme-1",
       "command": "browser_configure_appearance",
       "payload": {
@@ -88,7 +96,7 @@
       }
     },
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "requestId": "req-resolve-1",
       "command": "browser_resolve_annotations",
       "payload": {
@@ -116,7 +124,7 @@
       }
     },
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "requestId": "req-render-highlight-1",
       "command": "browser_render_highlights",
       "payload": {
@@ -144,7 +152,7 @@
       }
     },
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "requestId": "req-clear-highlight-1",
       "command": "browser_clear_highlights",
       "payload": {
@@ -155,7 +163,7 @@
       }
     },
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "requestId": "req-navigate-annotation-1",
       "command": "browser_navigate_to_annotation_target",
       "payload": {
@@ -178,7 +186,7 @@
       }
     },
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "requestId": "req-capture-1",
       "command": "browser_capture_region",
       "payload": {
@@ -191,7 +199,7 @@
       }
     },
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "requestId": "req-discard-capture-1",
       "command": "browser_discard_capture",
       "payload": {
@@ -216,7 +224,7 @@
   ],
   "events": [
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "kind": "surface.ready",
       "panelId": "browser-panel-1",
       "surfaceId": "surface-1",
@@ -226,7 +234,7 @@
       "payload": { "profileMode": "persistent", "capabilities": ["navigation", "selection"] }
     },
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "kind": "navigation.started",
       "panelId": "browser-panel-1",
       "surfaceId": "surface-1",
@@ -237,7 +245,7 @@
       "payload": { "url": "https://example.com/docs", "isMainFrame": true }
     },
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "kind": "permission.requested",
       "panelId": "browser-panel-1",
       "surfaceId": "surface-1",
@@ -253,7 +261,7 @@
       }
     },
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "kind": "download.requested",
       "panelId": "browser-panel-1",
       "surfaceId": "surface-1",
@@ -269,7 +277,7 @@
       }
     },
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "kind": "bridge.message",
       "panelId": "browser-panel-1",
       "surfaceId": "surface-1",
@@ -277,10 +285,10 @@
       "sequence": 5,
       "navigationId": "navigation-1",
       "occurredAt": "2026-07-21T12:00:04.000Z",
-      "payload": { "bridgeEnvelope": { "schemaVersion": 1, "kind": "selection.result" } }
+      "payload": { "bridgeEnvelope": { "schemaVersion": 2, "kind": "selection.result" } }
     },
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "kind": "resource.state_changed",
       "panelId": "browser-panel-1",
       "surfaceId": "surface-1",
@@ -290,7 +298,7 @@
       "payload": { "prior": "visible", "next": "warm", "reason": "inactive_tab" }
     },
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "kind": "capture.completed",
       "panelId": "browser-panel-1",
       "surfaceId": "surface-1",

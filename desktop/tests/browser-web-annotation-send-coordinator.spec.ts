@@ -75,20 +75,43 @@ describe("WebAnnotationSendCoordinator", () => {
     expect(get).toHaveBeenCalledTimes(1);
   });
 
-  it("sends region annotations as structure-only envelopes without screenshot attachments", async () => {
+  it("reuses the prewarmed snapshot and clones the current region evidence into the target session", async () => {
     const get = vi.fn().mockResolvedValue(regionDetail());
+    const cloneEvidence = vi.fn().mockResolvedValue({
+      schemaVersion: 1,
+      annotationId: "annotation-1",
+      assetId: "web-capture-00000000000000000000000000000002",
+      contextDigest: `sha256:${"c".repeat(64)}`,
+      reused: false,
+      attachment: {
+        id: "attachment-1",
+        attachmentId: "attachment-1",
+        sessionId: "ses-1",
+        userId: "user-1",
+        type: "image",
+        source: "web_annotation",
+        name: "web-annotation-current.png",
+        path: "D:/keydex/attachments/attachment-1/web-annotation-current.png",
+        mimeType: "image/png",
+        size: 128,
+        createdAt: "2026-07-22T08:01:00Z",
+        updatedAt: "2026-07-22T08:01:00Z",
+      },
+    });
     const coordinator = new WebAnnotationSendCoordinator({
-      client: { get },
+      client: { get, cloneEvidence },
       panelRegistry: new WebAnnotationPanelRegistry(),
       resolutionTimeoutMs: 0,
       now: () => "2026-07-22T08:01:00Z",
     });
     const references = [reference()];
 
+    const prewarmed = await coordinator.prewarm(references);
     const prepared = await coordinator.prepare(references, { sessionId: "ses-1" });
     const retry = await coordinator.prepare(references, { sessionId: "ses-1" });
 
     expect(retry).toBe(prepared);
+    expect(prepared.snapshots).toBe(prewarmed.snapshots);
     expect(prepared.snapshots[0].anchor).toMatchObject({
       kind: "region",
       geometry: {
@@ -98,8 +121,30 @@ describe("WebAnnotationSendCoordinator", () => {
     });
     expect(prepared.snapshots[0].anchor.structure.locators.map((locator) => locator.kind))
       .toContain("coordinate_region");
-    expect(prepared.markdown).not.toContain("截图");
-    expect(prepared.attachments).toEqual([]);
+    expect(prepared.snapshots[0].evidence?.regionCapture).toMatchObject({
+      assetId: "web-capture-00000000000000000000000000000002",
+      sha256: "b".repeat(64),
+    });
+    expect(prepared.markdown).toContain("截图（作为消息附件发送）");
+    expect(cloneEvidence).toHaveBeenCalledTimes(1);
+    expect(cloneEvidence).toHaveBeenCalledWith(
+      "annotation-1",
+      "web-capture-00000000000000000000000000000002",
+      expect.objectContaining({
+        sessionId: "ses-1",
+        contextDigest: prepared.snapshots[0].integrity.digest,
+      }),
+    );
+    expect(prepared.attachments).toEqual([{
+      id: "attachment-1",
+      attachment_id: "attachment-1",
+      type: "image",
+      source: "web_annotation",
+      name: "web-annotation-current.png",
+      path: "D:/keydex/attachments/attachment-1/web-annotation-current.png",
+      mime_type: "image/png",
+      size: 128,
+    }]);
     expect(Object.isFrozen(prepared)).toBe(true);
     expect(Object.isFrozen(prepared.attachments)).toBe(true);
   });

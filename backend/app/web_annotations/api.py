@@ -25,6 +25,7 @@ from backend.app.web_annotations.models import (
     WebAnnotationRetargetRequest,
     WebAnnotationScope,
     WebAnnotationScopeKind,
+    WebAnnotationSourceKind,
 )
 from backend.app.web_annotations.service import WebAnnotationService, WebAnnotationServiceError
 
@@ -38,6 +39,7 @@ PayloadT = TypeVar("PayloadT", bound=BaseModel)
 async def list_web_annotations(
     scope_kind: WebAnnotationScopeKind,
     scope_id: str | None = None,
+    source_kind: WebAnnotationSourceKind = "web",
     url: str | None = None,
     document_url: str | None = None,
     cursor: str | None = None,
@@ -49,6 +51,7 @@ async def list_web_annotations(
     return _call(
         _service(repositories, settings).list,
         scope=scope,
+        source_kind=source_kind,
         url=url,
         document_url=document_url,
         cursor=cursor,

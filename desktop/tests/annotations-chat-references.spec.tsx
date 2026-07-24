@@ -60,6 +60,41 @@ describe("annotation chat references", () => {
     registration.dispose();
   });
 
+  it("marks HTML document annotations as source annotations in composer payload and history", () => {
+    annotationDocumentRegistry.clear();
+    const model = createPlainTextModel("<main>alpha</main>", "sha256:html-current");
+    const record = textRecord("html-source", "alpha", 6, "index.html");
+    const registration = annotationDocumentRegistry.register({
+      workspaceId: "ws",
+      path: "index.html",
+      model,
+      index: resolveDocumentAnnotations(model, [record]),
+    });
+    const file = annotationFile("html-source", "index.html");
+
+    const contexts = assembleSelectedAnnotationContexts([file]);
+    const prepared = prepareComposerMessage("Compare", [file], {
+      annotationContexts: contexts,
+    });
+
+    expect(contexts[0]).toMatchObject({
+      annotationId: "html-source",
+      sourceKind: "html_source",
+      path: "index.html",
+    });
+    expect(prepared.contextItems[0]).toMatchObject({
+      type: "annotation",
+      label: "HTML 源码批注 · 选区",
+      metadata: {
+        annotation_id: "html-source",
+        annotation_source_kind: "html_source",
+        path: "index.html",
+      },
+    });
+    expect(prepared.runtimeParams?.message_injection?.[0].content).toContain("当前内容：\nalpha");
+    registration.dispose();
+  });
+
   it("blocks atomically when any reference is missing or unresolved", () => {
     annotationDocumentRegistry.clear();
     const model = createPlainTextModel("alpha", "sha256:current");
@@ -72,20 +107,20 @@ describe("annotation chat references", () => {
   });
 });
 
-function annotationFile(annotationId: string): SelectedFile {
+function annotationFile(annotationId: string, path = "doc.txt"): SelectedFile {
   return {
     id: `annotation:ws:${annotationId}`,
-    path: "doc.txt",
-    name: "doc.txt",
+    path,
+    name: path,
     type: "file",
     source: "workspace",
-    annotationReference: { annotationId, workspaceId: "ws", path: "doc.txt" },
+    annotationReference: { annotationId, workspaceId: "ws", path },
   };
 }
 
-function textRecord(id: string, exact: string, start: number): AnnotationRecord {
+function textRecord(id: string, exact: string, start: number, path = "doc.txt"): AnnotationRecord {
   return {
-    id, workspace_id: "ws", document_path: "doc.txt", body: `Body ${id}`,
+    id, workspace_id: "ws", document_path: path, body: `Body ${id}`,
     created_at: "2026-01-01", updated_at: "2026-01-01",
     target: { type: "text", selector: {
       position: { start, end: start + exact.length }, quote: { exact, prefix: "", suffix: "" },

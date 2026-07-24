@@ -145,9 +145,18 @@ pub(crate) struct NativeNavigationSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum NativeNavigationEvent {
     Snapshot(NativeNavigationSnapshot),
-    NewWindowRequested { url: String, user_initiated: bool },
-    ExternalProtocolRequested { url: String, user_initiated: bool },
-    CertificateError { url: String },
+    NewWindowRequested {
+        url: String,
+        source_url: String,
+        user_initiated: bool,
+    },
+    ExternalProtocolRequested {
+        url: String,
+        user_initiated: bool,
+    },
+    CertificateError {
+        url: String,
+    },
 }
 
 #[cfg(windows)]
@@ -227,14 +236,18 @@ pub(crate) fn attach_windows_navigation_observers(
         let popup_handler = handler.clone();
         let mut popup_token = 0_i64;
         core.add_NewWindowRequested(
-            &NewWindowRequestedEventHandler::create(Box::new(move |_, args| {
-                if let Some(args) = args {
+            &NewWindowRequestedEventHandler::create(Box::new(move |sender, args| {
+                if let (Some(sender), Some(args)) = (sender, args) {
                     let _ = args.SetHandled(true);
                     let mut user_initiated = windows_061::core::BOOL::default();
                     let _ = args.IsUserInitiated(&mut user_initiated);
-                    if let Some(url) = read_allocated_string(|value| args.Uri(value)) {
+                    if let (Some(url), Some(source_url)) = (
+                        read_allocated_string(|value| args.Uri(value)),
+                        read_allocated_string(|value| sender.Source(value)),
+                    ) {
                         popup_handler(NativeNavigationEvent::NewWindowRequested {
                             url,
+                            source_url,
                             user_initiated: user_initiated.as_bool(),
                         });
                     }

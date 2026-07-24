@@ -48,8 +48,6 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
-  scrollbar-color: var(--diff-scrollbar-thumb) var(--diff-scrollbar-track);
 }
 
 .patchViewport > * {
@@ -58,8 +56,8 @@
 }
 
 .patchViewport::-webkit-scrollbar {
-  width: 9px;
-  height: 9px;
+  width: 12px;
+  height: 12px;
 }
 
 .patchViewport::-webkit-scrollbar-track {

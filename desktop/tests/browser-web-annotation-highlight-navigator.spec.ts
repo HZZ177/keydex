@@ -133,6 +133,46 @@ describe("web annotation highlight synchronization", () => {
       }],
     });
   });
+
+  it("renders, retargets, and clears a local-file highlight on the same native surface", async () => {
+    const renderHighlights = vi.fn<WebAnnotationHighlightPort["renderHighlights"]>().mockResolvedValue(undefined);
+    const clearHighlights = vi.fn<WebAnnotationHighlightPort["clearHighlights"]>().mockResolvedValue(undefined);
+    const synchronizer = new WebAnnotationHighlightSynchronizer({
+      surface,
+      port: { renderHighlights, clearHighlights, navigateToTarget: vi.fn() },
+    });
+    const localUrl = "file:///D:/e2e-wbf/annotations/article.html";
+
+    await synchronizer.sync({
+      local: resolution("resolved", elementTarget("local-before", localUrl)),
+    });
+    await synchronizer.sync({
+      local: resolution("changed", elementTarget("local-after", localUrl)),
+    });
+    await synchronizer.sync({
+      local: resolution("orphaned", null),
+    });
+
+    expect(renderHighlights).toHaveBeenNthCalledWith(1, {
+      surface,
+      resolutions: [expect.objectContaining({
+        annotationId: "local",
+        state: "resolved",
+        target: expect.objectContaining({
+          frame: { url: localUrl, indexPath: [] },
+        }),
+      })],
+    });
+    expect(renderHighlights).toHaveBeenNthCalledWith(2, {
+      surface,
+      resolutions: [expect.objectContaining({
+        annotationId: "local",
+        state: "changed",
+        target: expect.objectContaining({ accessibleName: "local-after" }),
+      })],
+    });
+    expect(clearHighlights).toHaveBeenCalledWith({ surface, annotationIds: ["local"] });
+  });
 });
 
 describe("WebAnnotationNavigator", () => {
@@ -193,6 +233,39 @@ describe("WebAnnotationNavigator", () => {
     expect(result).toEqual({ status: "revealed", panelId: "panel-created" });
   });
 
+  it("prefers the requested host and keeps equal panel ids isolated across hosts", async () => {
+    const registry = new WebAnnotationPanelRegistry();
+    const agent = new FakePanel(
+      registry,
+      { ...panelSnapshot("shared-panel", true, true, "url-a"), hostKind: "agent" },
+    );
+    const workbench = new FakePanel(
+      registry,
+      { ...panelSnapshot("shared-panel", false, true, "url-a"), hostKind: "workbench" },
+    );
+    agent.resolutions.set("annotation-a", resolution("resolved", elementTarget("agent"), "resource-a"));
+    workbench.resolutions.set("annotation-a", resolution("resolved", elementTarget("workbench"), "resource-a"));
+    const unregisterAgent = registry.register(agent);
+    registry.register(workbench);
+
+    expect(registry.list("session:one")).toHaveLength(2);
+    await expect(new WebAnnotationNavigator(registry, { timeoutMs: 100 }).navigate({
+      scopeKey: "session:one",
+      preferredHostKind: "workbench",
+      target: navigationTarget("a"),
+      createPanel: vi.fn(),
+    })).resolves.toEqual({ status: "revealed", panelId: "shared-panel" });
+    expect(workbench.reveal).toHaveBeenCalledWith(
+      "annotation-a",
+      elementTarget("workbench"),
+    );
+    expect(agent.reveal).not.toHaveBeenCalled();
+
+    unregisterAgent();
+    expect(registry.list("session:one")).toHaveLength(1);
+    expect(registry.list("session:one")[0]?.getSnapshot().hostKind).toBe("workbench");
+  });
+
   it("cancels an older rapid-click request and never reveals ambiguous or orphaned candidates", async () => {
     const registry = new WebAnnotationPanelRegistry();
     const first = new FakePanel(registry, panelSnapshot("panel-a", true, true, "url-a"));
@@ -233,6 +306,45 @@ describe("WebAnnotationNavigator", () => {
     })).resolves.toMatchObject({ status: "evidence_only", resolution: "orphaned" });
     expect(second.reveal).not.toHaveBeenCalled();
   });
+
+  it("matches canonical-equivalent Windows file URLs and reveals in the existing Workbench panel", async () => {
+    const registry = new WebAnnotationPanelRegistry();
+    const panel = new FakePanel(registry, {
+      hostKind: "workbench",
+      scopeKey: "workspace:local",
+      panelId: "workbench-file-panel",
+      active: true,
+      ready: true,
+      urlKey: null,
+      documentUrl: "file:///d:/E2E-WBF/Annotations/ARTICLE.html#old-fragment",
+    });
+    const target: WebAnnotationNavigationTarget = {
+      annotationId: "annotation-local",
+      resourceId: "resource-local",
+      urlKey: "local-file-v2-key",
+      documentUrl: "file:///D:/e2e-wbf/annotations/article.html",
+    };
+    panel.resolutions.set(
+      target.annotationId,
+      resolution("resolved", elementTarget("local", target.documentUrl), target.resourceId),
+    );
+    registry.register(panel);
+    const createPanel = vi.fn();
+
+    const result = await new WebAnnotationNavigator(registry, { timeoutMs: 100 }).navigate({
+      scopeKey: "workspace:local",
+      preferredHostKind: "workbench",
+      target,
+      createPanel,
+    });
+
+    expect(result).toEqual({ status: "revealed", panelId: "workbench-file-panel" });
+    expect(createPanel).not.toHaveBeenCalled();
+    expect(panel.reveal).toHaveBeenCalledWith(
+      "annotation-local",
+      elementTarget("local", target.documentUrl),
+    );
+  });
 });
 
 class FakePanel implements WebAnnotationNavigationPanel {
@@ -265,6 +377,7 @@ function panelSnapshot(
   urlKey: string,
 ): WebAnnotationNavigationPanelSnapshot {
   return {
+    hostKind: "agent",
     scopeKey: "session:one",
     panelId,
     active,
@@ -319,7 +432,10 @@ function resolution(
   };
 }
 
-function elementTarget(id: string): WebElementTarget {
+function elementTarget(
+  id: string,
+  url = "https://example.test/article",
+): WebElementTarget {
   return {
     type: "element",
     tag: "button",
@@ -330,6 +446,6 @@ function elementTarget(id: string): WebElementTarget {
     path: [{ childIndex: 1, shadowRoot: false }],
     context: { headingPath: [] },
     rect: { x: 10, y: 20, width: 120, height: 32 },
-    frame: { url: "https://example.test/article", indexPath: [] },
+    frame: { url, indexPath: [] },
   };
 }

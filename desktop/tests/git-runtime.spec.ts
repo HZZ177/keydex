@@ -101,6 +101,38 @@ describe("Git runtime", () => {
     );
   });
 
+  it("starts an explicit system credential login without sending a password", async () => {
+    const fetcher = vi.fn().mockResolvedValue(jsonResponse({
+      repository_id: repositoryId,
+      remote: "origin",
+      host: "git.example.test",
+      authenticated: true,
+    }));
+    const runtime = createGitRuntime(new HttpClient({ baseUrl: "http://127.0.0.1:8765", fetcher }));
+
+    await expect(runtime.loginCredentials({
+      ...scope,
+      remote: "origin",
+      provider: "generic",
+    })).resolves.toEqual({
+      repositoryId,
+      remote: "origin",
+      host: "git.example.test",
+      authenticated: true,
+    });
+
+    const [url, init] = fetcher.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://127.0.0.1:8765/api/git/repositories/git-test/credentials/login");
+    expect(JSON.parse(String(init.body))).toEqual({
+      workspace_id: "workspace-a",
+      project_root: "C:/project",
+      repository_id: repositoryId,
+      remote: "origin",
+      provider: "generic",
+    });
+    expect(String(init.body)).not.toMatch(/password|token|secret/i);
+  });
+
   it("loads a complete revision tree and maps branch-update fetch refspecs", async () => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce(jsonResponse({

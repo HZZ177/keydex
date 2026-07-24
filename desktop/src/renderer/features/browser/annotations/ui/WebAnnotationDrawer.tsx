@@ -69,6 +69,7 @@ export function WebAnnotationDrawer({
   const entry = state.activePage ? state.pages[state.activePage.pageKey] : null;
   const incognito = profileMode === "incognito";
   const pending = state.mutation !== null || temporaryPending;
+  const annotationGroups = groupAnnotationsByResolution(entry?.items ?? [], resolutions);
 
   useEffect(() => {
     const message = entry?.error ?? state.mutationError;
@@ -232,48 +233,61 @@ export function WebAnnotationDrawer({
                 : "点击顶部批注按钮，然后在页面中选择元素。"}
             />
           ) : null}
-          {entry?.items.map((item) => (
-            <WebAnnotationCard
-              item={item}
-              key={item.annotation.id}
-              pending={pending}
-              resolution={resolutionDetails[item.annotation.id]}
-              status={resolutions[item.annotation.id]}
-              onDelete={setDeleteTarget}
-              onAddToComposer={onAddToComposer ? (current) => {
-                const result = onAddToComposer(current);
-                if (result === "added") notifications.success("网页批注已添加到输入框");
-                else if (result === "duplicate") notifications.info("该网页批注已在输入框中");
-                else if (result === "limit") notifications.warning("一次最多添加 20 条网页批注");
-                else notifications.error("当前没有可接收网页批注的输入框");
-              } : undefined}
-              onRetarget={beginRetarget}
-              onNavigate={onNavigate ? (current) => {
-                void onNavigate(current).then((result) => {
-                  if (result.status === "revealed") {
-                    notifications.success("已定位到网页批注");
-                  } else if (result.status === "evidence_only") {
-                    notifications.warning(result.resolution === "ambiguous"
-                      ? "当前目标存在歧义，已打开来源页面但未自动定位"
-                      : "当前目标已失联，已打开来源页面但未自动定位");
-                  } else if (result.status === "unavailable") {
-                    notifications.error(result.reason, { title: "无法定位网页批注" });
-                  }
-                });
-              } : undefined}
-              onPatch={async (current, value) => {
-                const result = await store.getState().patchAnnotation(current.annotation.id, {
-                  expectedRevision: current.annotation.revision,
-                  ...value,
-                });
-                if (result.status === "conflict") {
-                  notifications.warning("批注已更新，已载入服务端最新版本");
-                } else {
-                  notifications.success("网页批注已保存");
-                }
-                return result;
-              }}
-            />
+          {annotationGroups.map((group) => (
+            <section
+              aria-label={`${group.label}批注`}
+              className={styles.statusGroup}
+              data-resolution-group={group.kind}
+              key={group.kind}
+            >
+              <header className={styles.statusGroupHeading}>
+                <strong>{group.label}</strong>
+                <span>{group.items.length}</span>
+              </header>
+              {group.items.map((item) => (
+                <WebAnnotationCard
+                  item={item}
+                  key={item.annotation.id}
+                  pending={pending}
+                  resolution={resolutionDetails[item.annotation.id]}
+                  status={resolutions[item.annotation.id]}
+                  onDelete={setDeleteTarget}
+                  onAddToComposer={onAddToComposer ? (current) => {
+                    const result = onAddToComposer(current);
+                    if (result === "added") notifications.success("网页批注已添加到输入框");
+                    else if (result === "duplicate") notifications.info("该网页批注已在输入框中");
+                    else if (result === "limit") notifications.warning("一次最多添加 20 条网页批注");
+                    else notifications.error("当前没有可接收网页批注的输入框");
+                  } : undefined}
+                  onRetarget={beginRetarget}
+                  onNavigate={onNavigate ? (current) => {
+                    void onNavigate(current).then((result) => {
+                      if (result.status === "revealed") {
+                        notifications.success("已定位到网页批注");
+                      } else if (result.status === "evidence_only") {
+                        notifications.warning(result.resolution === "ambiguous"
+                          ? "当前目标存在歧义，已打开来源页面但未自动定位"
+                          : "当前目标已失联，已打开来源页面但未自动定位");
+                      } else if (result.status === "unavailable") {
+                        notifications.error(result.reason, { title: "无法定位网页批注" });
+                      }
+                    });
+                  } : undefined}
+                  onPatch={async (current, value) => {
+                    const result = await store.getState().patchAnnotation(current.annotation.id, {
+                      expectedRevision: current.annotation.revision,
+                      ...value,
+                    });
+                    if (result.status === "conflict") {
+                      notifications.warning("批注已更新，已载入服务端最新版本");
+                    } else {
+                      notifications.success("网页批注已保存");
+                    }
+                    return result;
+                  }}
+                />
+              ))}
+            </section>
           ))}
         </section> : null}
         </div>
@@ -375,4 +389,29 @@ function targetSummary(target: WebAnnotationItem["annotation"]["target"]): strin
   if (target.type === "text") return target.quote.exact;
   if (target.type === "element") return target.accessibleName || target.textSummary || `<${target.tag}>`;
   return `页面区域 ${Math.round(target.rect.width)} × ${Math.round(target.rect.height)}`;
+}
+
+function groupAnnotationsByResolution(
+  items: readonly WebAnnotationItem[],
+  resolutions: Readonly<Record<string, WebAnnotationVisibleStatus | undefined>>,
+): readonly {
+  readonly kind: "attention" | "resolving" | "located";
+  readonly label: string;
+  readonly items: readonly WebAnnotationItem[];
+}[] {
+  const groups = [
+    { kind: "attention" as const, label: "需要处理", items: [] as WebAnnotationItem[] },
+    { kind: "resolving" as const, label: "正在解析", items: [] as WebAnnotationItem[] },
+    { kind: "located" as const, label: "已定位", items: [] as WebAnnotationItem[] },
+  ];
+  for (const item of items) {
+    const status = resolutions[item.annotation.id] ?? "pending";
+    const group = status === "ambiguous" || status === "orphaned"
+      ? groups[0]
+      : status === "resolved" || status === "changed"
+        ? groups[2]
+        : groups[1];
+    group.items.push(item);
+  }
+  return groups.filter((group) => group.items.length > 0);
 }

@@ -47,6 +47,7 @@ export interface WorkspaceFileBrowserProps {
   initialState?: WorkspaceFileBrowserState | null;
   onQuoteSelection?: (request: PreviewQuoteSelectionRequest) => void;
   onStartChatFromAnnotation?: (request: PreviewAnnotationChatRequest | PreviewAnnotationChatRequest[]) => void;
+  onOpenHtmlBrowserPreview?: (absolutePath: string) => void;
   onPreviewPathChange?: (path: string | null, refreshExisting?: boolean) => void;
   onPreviewOutlineReveal?: (item: MarkdownOutlineItem) => void;
   onStateChange?: (state: WorkspaceFileBrowserState) => void;
@@ -99,6 +100,7 @@ export function WorkspaceFileBrowser({
   initialState = null,
   onQuoteSelection,
   onStartChatFromAnnotation,
+  onOpenHtmlBrowserPreview,
   onPreviewPathChange,
   onPreviewOutlineReveal,
   onStateChange,
@@ -525,6 +527,7 @@ export function WorkspaceFileBrowser({
                 onMarkdownOutlineChange={handleMarkdownOutlineChange}
                 onQuoteSelection={onQuoteSelection}
                 onStartChatFromAnnotation={onStartChatFromAnnotation}
+                onOpenHtmlBrowserPreview={onOpenHtmlBrowserPreview}
                 onClose={closePreview}
               />
             </div>

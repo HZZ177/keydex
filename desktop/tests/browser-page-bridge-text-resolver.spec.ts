@@ -60,7 +60,7 @@ describe("page bridge text resolver", () => {
     });
   });
 
-  it("falls through stale DOM/position anchors to a unique exact quote and reports context drift", () => {
+  it("falls through stale DOM/position anchors and keeps context-only drift resolved", () => {
     const run = createRun("<h1>Guide</h1><p>prefix target suffix</p>");
     const original = run.selectText("target");
     run.document.body.innerHTML = "<h1>Guide</h1><div><span>Intro </span><p>prefix target suffix</p></div>";
@@ -68,9 +68,13 @@ describe("page bridge text resolver", () => {
     const result = run.resolve(original);
 
     expect(result.payload).toMatchObject({
-      status: "changed",
+      status: "resolved",
       target: { quote: { exact: "target" } },
-      evidence: { strategy: "exact_quote", currentQuote: "target" },
+      evidence: {
+        strategy: "exact_quote",
+        currentQuote: "target",
+        changedSignals: expect.arrayContaining(["prefix_changed"]),
+      },
     });
   });
 
@@ -138,11 +142,66 @@ describe("page bridge text resolver", () => {
     expect(result.payload.status).toBe("orphaned");
     expect(JSON.stringify(result.payload)).not.toContain("password");
   });
+
+  it("restores the selected local-file instance after a full page reload", () => {
+    const url = "file:///D:/Keydex%20Fixtures/nested/annotation.html?mode=preview#section";
+    const beforeReload = createRun(
+      "<h1>本地指南</h1><p>重复文本</p><h2>详情</h2><p>重复文本 😀</p>",
+      url,
+    );
+    const original = beforeReload.selectText("文本 😀");
+    expect(original.frame).toEqual({ url, indexPath: [] });
+
+    const afterReload = createRun(
+      "<h1>本地指南</h1><p>重复文本</p><h2>详情</h2><p>重复文本 😀</p>",
+      url,
+    );
+    const result = afterReload.resolve(original);
+
+    expect(result.payload).toMatchObject({
+      status: "resolved",
+      target: {
+        type: "text",
+        quote: { exact: "文本 😀" },
+        position: {
+          start: original.position?.start,
+          end: original.position?.end,
+          textModelVersion: 1,
+        },
+        context: {
+          headingPath: ["本地指南", "详情"],
+          containerRole: "paragraph",
+        },
+        rects: [{ x: 10, y: 20, width: 120, height: 24 }],
+        frame: { url, indexPath: [] },
+      },
+      evidence: {
+        strategy: "dom_range",
+        currentQuote: "文本 😀",
+        candidateCount: 1,
+        truncated: false,
+      },
+    });
+  });
+
+  it("fails closed when a persisted file target is resolved by an HTTP page", () => {
+    const local = createRun("<p>target</p>", "file:///D:/Keydex%20Fixtures/annotation.html");
+    const original = local.selectText("target");
+    const remote = createRun("<p>target</p>");
+
+    expect(remote.resolve(original).payload).toMatchObject({
+      status: "orphaned",
+      evidence: {
+        strategy: "frame_unavailable",
+        candidateCount: 0,
+      },
+    });
+  });
 });
 
-function createRun(html: string) {
+function createRun(html: string, url = "https://example.test/article") {
   const dom = new JSDOM(`<!doctype html><body>${html}</body>`, {
-    url: "https://example.test/article",
+    url,
     pretendToBeVisual: true,
     runScripts: "outside-only",
   });
@@ -186,7 +245,7 @@ function installRun(window: DOMWindow) {
     generation: 2,
     scoringPolicy,
   }));
-  window.eval(rendered);
+  window.eval(`let __KEYDEX_BRIDGE_DIAGNOSTICS_POST__ = null;\n${rendered}`);
   window.eval(textSource);
   const metadata = (window as unknown as {
     KeydexAnnotationBridge: { navigationId: string; frameKey: string };

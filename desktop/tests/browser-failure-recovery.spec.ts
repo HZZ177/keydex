@@ -27,7 +27,7 @@ function panel(id: string, profileMode: "persistent" | "incognito" = "persistent
 
 function ready(panelId: string, surfaceId: string, generation: number): BrowserEventEnvelope<"surface.ready"> {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "surface.ready",
     panelId,
     surfaceId,
@@ -47,7 +47,7 @@ function failed(
   sequence = 2,
 ): BrowserEventEnvelope<"process.failed"> {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "process.failed",
     panelId,
     surfaceId,
@@ -151,7 +151,7 @@ describe("browser failure recovery", () => {
 
   it("binds the browser panel to the recovered runtime generation", () => {
     const source = readFileSync(
-      resolve(process.cwd(), "src/renderer/components/layout/rightSidebar/panels/browser.tsx"),
+      resolve(process.cwd(), "src/renderer/features/browser/ui/BrowserTabSurface.tsx"),
       "utf8",
     );
     expect(source).toContain("const generation = runtime?.generation ?? activatedGeneration");

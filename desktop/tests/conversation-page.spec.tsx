@@ -7,6 +7,7 @@ import type { WorkspaceEntry, WorkspaceTreeResponse } from "@/runtime";
 import { Layout, resetLayoutUiStateCacheForTests } from "@/renderer/components/layout/Layout";
 import { LayoutStateProvider } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { ConversationPage } from "@/renderer/pages/conversation";
+import { ConversationSessionSurface } from "@/renderer/pages/conversation/ConversationSessionSurface";
 import { clearQuickChatSendQueue, queueQuickChatSend } from "@/renderer/pages/conversation/quickSend";
 import { AgentSessionProvider, useAgentSessionRuntime } from "@/renderer/providers/AgentSessionProvider";
 import { ActiveProjectCoordinatorProvider } from "@/renderer/providers/ActiveProjectCoordinatorProvider";
@@ -25,6 +26,9 @@ import type {
   CommandApprovalRequest,
   Workspace,
 } from "@/types/protocol";
+import { normalizeSubagentRunSnapshot } from "@/types/subagents";
+
+import subagentSnapshotFixture from "./fixtures/subagent-run-snapshot.json";
 
 describe("ConversationPage", () => {
   beforeEach(() => {
@@ -47,6 +51,65 @@ describe("ConversationPage", () => {
       pageSize: undefined,
     });
     expect(runtime.conversation.openChatChannel).toHaveBeenCalled();
+  });
+
+  it("shows the standard loading skeleton before an empty Sub-Agent history settles", async () => {
+    const run = normalizeSubagentRunSnapshot(subagentSnapshotFixture);
+    const childSession = agentSession({
+      id: run.child_session_id,
+      title: "子智能体",
+      visibility: "internal",
+      agent_kind: "subagent",
+      subagent_id: run.subagent_id,
+      subagent_role: run.role,
+    });
+    let resolveSubagentSession:
+      | ((response: {
+          session: AgentSession;
+          history: AgentHistoryResponse;
+        }) => void)
+      | null = null;
+    const loadSubagentSession = vi.fn(
+      () =>
+        new Promise<{
+          session: AgentSession;
+          history: AgentHistoryResponse;
+        }>((resolve) => {
+          resolveSubagentSession = resolve;
+        }),
+    );
+    const { runtime } = fakeRuntime({ session: childSession });
+    runtime.conversation.loadSubagentSession = loadSubagentSession;
+
+    renderConversation(
+      <ConversationSessionSurface
+        threadId={run.child_session_id}
+        runtime={runtime}
+        mode="sidecar"
+        subagentRun={run}
+      />,
+    );
+
+    expect(await screen.findByTestId("message-skeleton")).not.toBeNull();
+    expect(screen.queryByText("旁路对话暂无消息")).toBeNull();
+    expect(screen.queryByTestId("subagent-conversation-empty")).toBeNull();
+    expect(loadSubagentSession).toHaveBeenCalledWith(
+      run.parent_session_id,
+      run.run_id,
+      { allTurns: true, direction: "older", pageSize: undefined },
+    );
+
+    await act(async () => {
+      resolveSubagentSession?.({
+        session: childSession,
+        history: historyResponse(childSession, []),
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("message-skeleton")).toBeNull();
+      expect(screen.getByTestId("subagent-conversation-empty").textContent).toBe("Sub-Agent 暂无消息");
+    });
   });
 
   it("restores persisted context window usage when opening a session", async () => {

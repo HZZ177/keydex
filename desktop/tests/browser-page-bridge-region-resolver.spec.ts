@@ -34,7 +34,7 @@ describe("page bridge semantic region resolver", () => {
     const evidence = result.payload.evidence as WebAnnotationPageResolutionEvidence;
 
     expect(result.payload).toMatchObject({
-      status: "changed",
+      status: "resolved",
       target: { rect: { x: 200, y: 220, width: 400, height: 240 } },
       evidence: { strategy: "relative_region" },
     });
@@ -133,18 +133,61 @@ describe("page bridge semantic region resolver", () => {
     const result = run.resolve(original);
 
     expect(result.payload).toMatchObject({
-      status: "changed",
+      status: "resolved",
       target: {
         rect: { x: 150, y: 165, width: 300, height: 180 },
         viewport: { width: 1_200, height: 900 },
       },
     });
   });
+
+  it("restores a persisted local-file region after a full page reload", async () => {
+    const url = "file:///D:/Keydex%20Fixtures/nested/annotation.html";
+    const beforeReload = createRun(
+      "<article id='local-card' aria-label='Local release card'>Release notes</article>",
+      url,
+    );
+    const originalElement = beforeReload.document.querySelector("article")!;
+    beforeReload.rect(originalElement, 80, 90, 260, 180);
+    const original = await beforeReload.select(
+      originalElement,
+      { x: 100, y: 110 },
+      { x: 300, y: 230 },
+    );
+    expect(original.frame).toEqual({ url, indexPath: [] });
+
+    const afterReload = createRun(
+      "<main><article id='local-card' aria-label='Local release card'>Release notes</article></main>",
+      url,
+    );
+    const currentElement = afterReload.document.querySelector("article")!;
+    afterReload.rect(currentElement, 160, 180, 520, 360);
+    const result = afterReload.resolve(original);
+
+    expect(result.payload).toMatchObject({
+      status: "resolved",
+      target: {
+        rect: { x: 200, y: 220, width: 400, height: 240 },
+        viewport: { width: 800, height: 600 },
+        relativeElement: {
+          tag: "article",
+          role: "article",
+          accessibleName: "Local release card",
+        },
+        frame: { url, indexPath: [] },
+      },
+      evidence: {
+        strategy: "region_semantic_search",
+        candidateCount: 1,
+        truncated: false,
+      },
+    });
+  });
 });
 
-function createRun(html: string) {
+function createRun(html: string, url = "https://example.test/article") {
   const dom = new JSDOM(`<!doctype html><body>${html}</body>`, {
-    url: "https://example.test/article",
+    url,
     pretendToBeVisual: true,
     runScripts: "outside-only",
   });
@@ -182,12 +225,12 @@ function installRun(window: DOMWindow) {
       },
     },
   });
-  window.eval(bridgeSource.replace("__KEYDEX_BRIDGE_BOOTSTRAP__", JSON.stringify({
+  window.eval(`let __KEYDEX_BRIDGE_DIAGNOSTICS_POST__ = null;\n${bridgeSource.replace("__KEYDEX_BRIDGE_BOOTSTRAP__", JSON.stringify({
     panelId: "panel-1",
     surfaceId: "surface-1",
     generation: 2,
     scoringPolicy,
-  })));
+  }))}`);
   window.eval(overlaySource);
   window.eval(regionSource);
   const metadata = (window as unknown as {

@@ -110,7 +110,6 @@ import {
 } from "@/renderer/utils/fileLinks";
 import {
   HTML_PREVIEW_VIEWPORT_MESSAGE_TYPE,
-  ISOLATED_HTML_PREVIEW_SANDBOX,
   resolveHtmlPreviewFrameSource,
 } from "@/renderer/utils/htmlPreviewFrame";
 import { openSkillResourcePreview, skillResourcePreviewError } from "@/renderer/utils/skillResourcePreview";
@@ -237,7 +236,14 @@ export interface FilePreviewProps {
   onQuoteSelection?: (request: PreviewQuoteSelectionRequest) => void;
   onStartChatFromAnnotation?: (request: PreviewAnnotationChatRequest | PreviewAnnotationChatRequest[]) => void;
   onMarkdownOutlineChange?: (outline: MarkdownOutlineItem[]) => void;
-  onViewportNearBottomChange?: (nearBottom: boolean) => void;
+  /** `null` means the active viewport exists, but its content geometry is not authoritative yet. */
+  onViewportNearBottomChange?: (nearBottom: boolean | null) => void;
+  onOpenHtmlBrowserPreview?: (absolutePath: string) => void;
+  onPersistedHtmlRevision?: (
+    absolutePath: string,
+    cause: "save" | "external_change",
+    revision: string | null,
+  ) => void;
   outlineRevealRequest?: MarkdownOutlineRevealRequest | null;
   sourceRevealRequest?: FilePreviewRevealRequest | null;
   onClose?: () => void;
@@ -265,6 +271,8 @@ export function FilePreview({
   onStartChatFromAnnotation,
   onMarkdownOutlineChange,
   onViewportNearBottomChange,
+  onOpenHtmlBrowserPreview,
+  onPersistedHtmlRevision,
   outlineRevealRequest,
   sourceRevealRequest,
   onClose,
@@ -317,6 +325,9 @@ export function FilePreview({
   const [conflictRevision, setConflictRevision] = useState<string | null>(null);
   const [conflictDialogOpen, setConflictDialogOpen] = useState(false);
   const [saveQueueVersion, setSaveQueueVersion] = useState(0);
+  const pendingExternalHtmlRefreshRef = useRef(false);
+  const onPersistedHtmlRevisionRef = useRef(onPersistedHtmlRevision);
+  onPersistedHtmlRevisionRef.current = onPersistedHtmlRevision;
   const [documentRevision, setDocumentRevision] = useState<string | null>(null);
   const [media, setMedia] = useState<WorkspaceMediaResponse | null>(null);
   const [loading, setLoading] = useState(isPathPreviewRequest(request));
@@ -330,85 +341,18 @@ export function FilePreview({
   const [fileOpenSettling, setFileOpenSettling] = useState(usesFileOpenDelay);
   const previewContent = immediateContent ?? content;
   const previewLoading = immediateContent === null ? loading : false;
+  const fileHtmlSourceOnly = isHtmlDocumentFileRequest(request);
+  const htmlBrowserPreviewPath = useMemo(() => {
+    if (!fileHtmlSourceOnly) return null;
+    if (request.type === "local-file") {
+      return workspaceAbsoluteFilePath(request.path, "");
+    }
+    if (request.type === "file" && workspaceRootPath) {
+      return workspaceAbsoluteFilePath(request.path, workspaceRootPath);
+    }
+    return null;
+  }, [fileHtmlSourceOnly, request, workspaceRootPath]);
   const [error, setError] = useState<string | null>(null);
-  const directHtmlPreviewPath = useMemo(() => {
-    if (
-      kind !== "html"
-      || previewLoading
-      || (request.type !== "file" && request.type !== "local-file")
-    ) {
-      return null;
-    }
-    const detectedFrameSource = resolveHtmlPreviewFrameSource(
-      previewContent || "<p>文件为空</p>",
-      { sourcePath: request.path },
-    );
-    if (detectedFrameSource.kind === "url") {
-      return null;
-    }
-    if (request.type === "file" && !workspaceRootPath) {
-      return null;
-    }
-    return workspaceAbsoluteFilePath(request.path, workspaceRootPath ?? "");
-  }, [kind, previewContent, previewLoading, request, workspaceRootPath]);
-  const prepareHtmlFile = runtime?.localPreview?.prepareHtmlFile;
-  const directHtmlPreviewScopePath = request.type === "file" ? workspaceRootPath : undefined;
-  const [directHtmlPreview, setDirectHtmlPreview] = useState<{
-    error: string | null;
-    path: string;
-    status: "loading" | "ready" | "error";
-    url: string | null;
-  } | null>(null);
-  useEffect(() => {
-    if (!directHtmlPreviewPath || !prepareHtmlFile) {
-      setDirectHtmlPreview(null);
-      return;
-    }
-    let active = true;
-    setDirectHtmlPreview({
-      error: null,
-      path: directHtmlPreviewPath,
-      status: "loading",
-      url: null,
-    });
-    void prepareHtmlFile(directHtmlPreviewPath, directHtmlPreviewScopePath)
-      .then((result) => {
-        if (!active) return;
-        setDirectHtmlPreview({
-          error: null,
-          path: directHtmlPreviewPath,
-          status: "ready",
-          url: result.url,
-        });
-      })
-      .catch((reason) => {
-        if (!active) return;
-        const message = reason instanceof Error ? reason.message : String(reason);
-        setDirectHtmlPreview({
-          error: `HTML 直接预览初始化失败：${message || "未知错误"}。请重启 Keydex 本地服务后重试。`,
-          path: directHtmlPreviewPath,
-          status: "error",
-          url: null,
-        });
-      });
-    return () => {
-      active = false;
-    };
-  }, [directHtmlPreviewPath, directHtmlPreviewScopePath, prepareHtmlFile]);
-  const directHtmlPreviewMatches = directHtmlPreview?.path === directHtmlPreviewPath;
-  const directHtmlPreviewPreparing = Boolean(
-    directHtmlPreviewPath
-      && prepareHtmlFile
-      && (!directHtmlPreviewMatches || directHtmlPreview?.status === "loading"),
-  );
-  const directHtmlPreviewUrl = directHtmlPreviewMatches && directHtmlPreview?.status === "ready"
-    ? directHtmlPreview.url
-    : null;
-  const directHtmlPreviewError = directHtmlPreviewMatches && directHtmlPreview?.status === "error"
-    ? directHtmlPreview.error
-    : directHtmlPreviewPath && !prepareHtmlFile
-      ? "HTML 直接预览运行时尚未更新，请刷新 Keydex 页面后重新打开文件。"
-      : null;
   const [markdownRuntimeSnapshot, setMarkdownRuntimeSnapshot] = useState<MarkdownSnapshot | null>(null);
   const [markdownRuntimeSource, setMarkdownRuntimeSource] = useState<string | null>(null);
   const [markdownRuntimePublishVersion, setMarkdownRuntimePublishVersion] = useState(0);
@@ -431,8 +375,8 @@ export function FilePreview({
       pendingScrollRestoreRef.current = null;
     });
   }, []);
-  const previewBusy = previewLoading || fileOpenSettling || directHtmlPreviewPreparing;
-  const [viewMode, setViewMode] = useState<"preview" | "source">("preview");
+  const previewBusy = previewLoading || fileOpenSettling;
+  const [viewMode, setViewMode] = useState<"preview" | "source">(() => defaultViewMode(request));
   const [splitMode, setSplitMode] = useState(false);
   const { copyState, showCopyFeedback, resetCopyFeedback } = useCopyFeedback();
   const [theme, setTheme] = useState<"light" | "dark">(() => getTheme());
@@ -626,6 +570,9 @@ export function FilePreview({
         setConflictDialogOpen(false);
         setAutoSaveState(latest && latest.content !== draft.content ? "dirty" : "saved");
       }
+      if (fileHtmlSourceOnly && htmlBrowserPreviewPath) {
+        onPersistedHtmlRevisionRef.current?.(htmlBrowserPreviewPath, "save", result.revision);
+      }
     } catch (reason) {
       const activeIdentity = activeRequestIdentityRef.current === identity;
       if (isRuntimeHttpError(reason) && reason.code === "revision_conflict") {
@@ -657,6 +604,8 @@ export function FilePreview({
     fileChanges,
     fileLoadScope,
     fileUnavailable,
+    fileHtmlSourceOnly,
+    htmlBrowserPreviewPath,
     notifyAutoSaveError,
     reloadCurrentFile,
     request,
@@ -736,13 +685,24 @@ export function FilePreview({
           return;
         }
         setFileUnavailable(false);
+        if (fileHtmlSourceOnly && htmlBrowserPreviewPath) {
+          pendingExternalHtmlRefreshRef.current = true;
+        }
         reloadCurrentFile();
         return;
       }
       setFileUnavailable(true);
       setReloadError("文件已删除，仍显示上次内容；同路径重建后将自动恢复。");
     });
-  }, [fileChanges, notifyAutoSaveError, reloadCurrentFile, requestIdentity, workspaceId]);
+  }, [
+    fileChanges,
+    fileHtmlSourceOnly,
+    htmlBrowserPreviewPath,
+    notifyAutoSaveError,
+    reloadCurrentFile,
+    requestIdentity,
+    workspaceId,
+  ]);
 
   useEffect(() => {
     if (!fileChanges || request.type !== "local-file") {
@@ -770,13 +730,23 @@ export function FilePreview({
           return;
         }
         setFileUnavailable(false);
+        if (fileHtmlSourceOnly && htmlBrowserPreviewPath) {
+          pendingExternalHtmlRefreshRef.current = true;
+        }
         reloadCurrentFile();
         return;
       }
       setFileUnavailable(true);
       setReloadError("文件已删除，仍显示上次内容；同路径重建后将自动恢复。");
     });
-  }, [fileChanges, notifyAutoSaveError, reloadCurrentFile, requestIdentity]);
+  }, [
+    fileChanges,
+    fileHtmlSourceOnly,
+    htmlBrowserPreviewPath,
+    notifyAutoSaveError,
+    reloadCurrentFile,
+    requestIdentity,
+  ]);
 
   useEffect(() => {
     const themeObserver = new MutationObserver(() => setTheme(getTheme()));
@@ -896,6 +866,10 @@ export function FilePreview({
       }
       hasLoadedRef.current = true;
       setFileUnavailable(false);
+      if (pendingExternalHtmlRefreshRef.current && fileHtmlSourceOnly && htmlBrowserPreviewPath) {
+        pendingExternalHtmlRefreshRef.current = false;
+        onPersistedHtmlRevisionRef.current?.(htmlBrowserPreviewPath, "external_change", revision);
+      }
     };
     const loader =
       request.type === "local-file"
@@ -938,6 +912,7 @@ export function FilePreview({
           } else {
             setError(message);
           }
+          pendingExternalHtmlRefreshRef.current = false;
           markdownRuntimeDiagnostics.record({
             stage: "ingress",
             severity: "fatal",
@@ -1008,17 +983,25 @@ export function FilePreview({
   }, [requestIdentity, usesFileOpenDelay]);
 
   const title = previewTitle(request);
-  const canPreview = kind === "markdown" || kind === "html" || kind === "mermaid" || kind === "diff";
+  const canPreview = kind === "markdown"
+    || (kind === "html" && !fileHtmlSourceOnly)
+    || kind === "mermaid"
+    || kind === "diff";
   const canRenderPreview = canPreview;
-  const canSplit = kind === "markdown" || kind === "html";
+  const canSplit = kind === "markdown" || (kind === "html" && !fileHtmlSourceOnly);
   const sourceLabel = previewSourceLabel(request);
   const formattedSource = previewContent;
   const markdownRuntimeWorkspaceId = workspaceId ?? (sessionId ? `session:${sessionId}` : "local");
   const markdownRuntimePath = revealPath ?? sourceLabel;
   const markdownRuntimeRevision = renderedPreviewRevision;
   const splitViewActive = splitMode && canSplit;
-  const primaryHtmlFrameOwnsScroll = kind === "html" && viewMode === "preview" && !splitViewActive;
-  const htmlFrameOwnsScroll = kind === "html" && (viewMode === "preview" || splitViewActive);
+  const primaryHtmlFrameOwnsScroll = canRenderPreview
+    && kind === "html"
+    && viewMode === "preview"
+    && !splitViewActive;
+  const htmlFrameOwnsScroll = canRenderPreview
+    && kind === "html"
+    && (viewMode === "preview" || splitViewActive);
   const sourcePaneScrollElement = splitViewActive ? splitSourceViewport : documentViewport;
   const previewPaneScrollElement = splitViewActive ? splitPreviewViewport : documentViewport;
   const switchViewMode = useCallback((targetMode: "preview" | "source") => {
@@ -1047,11 +1030,22 @@ export function FilePreview({
 
   useEffect(() => {
     lastViewportNearBottomRef.current = null;
-    onViewportNearBottomChange?.(false);
+    onViewportNearBottomChange?.(null);
   }, [onViewportNearBottomChange, requestIdentity, splitViewActive, viewMode]);
 
   useEffect(() => {
-    if (!onViewportNearBottomChange || !documentViewport || htmlFrameOwnsScroll) {
+    const markdownViewportGeometryReady = kind !== "markdown"
+      || (viewMode === "source" && !splitViewActive)
+      || (
+        markdownRuntimeSnapshot?.revision === markdownRuntimeRevision
+        && markdownRuntimeSource === renderedPreviewContent
+      );
+    if (
+      !onViewportNearBottomChange
+      || !documentViewport
+      || htmlFrameOwnsScroll
+      || !markdownViewportGeometryReady
+    ) {
       return;
     }
     let frame: number | null = null;
@@ -1082,6 +1076,12 @@ export function FilePreview({
     if (annotationLayoutRef.current) {
       resizeObserver?.observe(annotationLayoutRef.current);
     }
+    const markdownDocumentCanvas = documentViewport.querySelector<HTMLElement>(
+      "[data-markdown-document-canvas='true']",
+    );
+    if (markdownDocumentCanvas) {
+      resizeObserver?.observe(markdownDocumentCanvas);
+    }
     schedule();
     return () => {
       documentViewport.removeEventListener("scroll", schedule);
@@ -1090,7 +1090,20 @@ export function FilePreview({
         window.cancelAnimationFrame(frame);
       }
     };
-  }, [documentViewport, htmlFrameOwnsScroll, onViewportNearBottomChange, publishViewportNearBottom]);
+  }, [
+    documentViewport,
+    htmlFrameOwnsScroll,
+    kind,
+    markdownRuntimePublishVersion,
+    markdownRuntimeRevision,
+    markdownRuntimeSnapshot,
+    markdownRuntimeSource,
+    onViewportNearBottomChange,
+    publishViewportNearBottom,
+    renderedPreviewContent,
+    splitViewActive,
+    viewMode,
+  ]);
 
   useEffect(() => {
     if (!onViewportNearBottomChange || !htmlFrameOwnsScroll || !htmlFrameElement) {
@@ -2090,31 +2103,6 @@ export function FilePreview({
 
     if (kind === "html") {
       const htmlDocument = renderedPreviewContent || "<p>文件为空</p>";
-      if (directHtmlPreviewUrl) {
-        return (
-          <PreviewScrollPane
-            className={styles.htmlPane}
-            data-html-frame-scroll-owner="true"
-            data-file-preview-selectable-content="preview"
-            data-resource-annotation-active={wholeResourceAnnotationState.active ? "true" : undefined}
-            data-resource-annotation-highlight={wholeResourceAnnotationState.highlighted ? "true" : undefined}
-            data-resource-annotation-hovered={wholeResourceAnnotationState.hovered ? "true" : undefined}
-            scrollElement={previewPaneScrollElement}
-          >
-            {annotationAvailable ? (
-              <ResourceAnnotationButton label="批注整个 HTML 预览" onClick={startWholeResourceAnnotation} />
-            ) : null}
-            <iframe
-              key={`${directHtmlPreviewUrl}:${hashText(htmlDocument)}`}
-              className={styles.htmlFrame}
-              ref={setHtmlFrameElement}
-              title="HTML 文件预览"
-              sandbox={ISOLATED_HTML_PREVIEW_SANDBOX}
-              src={directHtmlPreviewUrl}
-            />
-          </PreviewScrollPane>
-        );
-      }
       const htmlFrameSource = resolveHtmlPreviewFrameSource(htmlDocument, {
         sourcePath: request.type === "file" || request.type === "local-file"
           ? request.path
@@ -2222,6 +2210,20 @@ export function FilePreview({
 
   const renderActions = () => (
     <div className={styles.actions}>
+      {htmlBrowserPreviewPath && onOpenHtmlBrowserPreview ? (
+        <div className={styles.segmented}>
+          <button
+            type="button"
+            data-testid="html-browser-preview-action"
+            aria-label="在浏览器标签页中预览 HTML"
+            title="在浏览器标签页中预览 HTML"
+            onClick={() => onOpenHtmlBrowserPreview(htmlBrowserPreviewPath)}
+          >
+            <Eye size={13} />
+            <span>预览</span>
+          </button>
+        </div>
+      ) : null}
       {canPreview ? (
         <div className={styles.segmented} aria-label="预览模式">
           <button
@@ -2391,8 +2393,8 @@ export function FilePreview({
       </header>
 
       {previewBusy ? <FilePreviewLoading label="正在读取文件" /> : null}
-      {error || directHtmlPreviewError ? (
-        <div className={styles.error} role="alert">{error ?? directHtmlPreviewError}</div>
+      {error ? (
+        <div className={styles.error} role="alert">{error}</div>
       ) : null}
       {conflictDialogOpen ? (
         <AppDialog
@@ -2420,7 +2422,7 @@ export function FilePreview({
           <p className={styles.saveConflictMessage}>{FILE_SAVE_CONFLICT_MESSAGE}</p>
         </AppDialog>
       ) : null}
-      {!previewBusy && !error && !directHtmlPreviewError ? (
+      {!previewBusy && !error ? (
         <div className={styles.documentViewportShell}>
           {findOpen ? (
             <FilePreviewFindBar
@@ -5687,7 +5689,14 @@ function isPathPreviewRequest(
 
 function defaultViewMode(request: FilePreviewRequest): "preview" | "source" {
   const kind = detectPreviewKind(request);
+  if (isHtmlDocumentFileRequest(request)) return "source";
   return kind === "markdown" || kind === "html" || kind === "diff" || kind === "mermaid" ? "preview" : "source";
+}
+
+function isHtmlDocumentFileRequest(request: FilePreviewRequest): boolean {
+  if (!isPathPreviewRequest(request)) return false;
+  const extension = request.path.split(".").pop()?.toLowerCase() ?? "";
+  return extension === "html" || extension === "htm";
 }
 
 function detectPreviewKind(request: FilePreviewRequest): PreviewKind {

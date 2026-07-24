@@ -9,10 +9,11 @@ from backend.app.web_annotations.models import (
     MAX_ANNOTATION_BODY_CHARACTERS,
     WebAnnotationCreateRequest,
     WebAnnotationPatchRequest,
+    WebAnnotationResourceRecord,
     WebAnnotationRetargetRequest,
     WebAnnotationSource,
 )
-from backend.app.web_annotations.url_identity import REDACTED_QUERY_VALUE
+from backend.app.web_annotations.url_identity import REDACTED_QUERY_VALUE, normalize_local_file_url
 
 
 def _frame() -> dict[str, object]:
@@ -150,6 +151,161 @@ def test_canonical_url_never_changes_actual_page_identity() -> None:
 
     assert first.identity() == second.identity()
     assert first.canonical_url != second.canonical_url
+
+
+def test_accepts_local_file_source_with_explicit_versioned_identity() -> None:
+    source = WebAnnotationSource.model_validate(
+        {
+            "source_kind": "local_file",
+            "url": "file:///D:/workspace/%E4%B8%AD%E6%96%87%20%E9%A1%B5.html#details",
+            "title": "本地页面",
+            "canonical_url": "file:///D:/workspace/%E4%B8%AD%E6%96%87%20%E9%A1%B5.html",
+            "profile_mode": "persistent",
+        }
+    )
+    identity = source.identity()
+
+    assert source.source_kind == "local_file"
+    assert identity.normalization_version == 2
+    assert identity.document_url == (
+        "file:///D:/workspace/%E4%B8%AD%E6%96%87%20%E9%A1%B5.html"
+    )
+    assert identity.origin == "file://"
+
+
+def test_accepts_local_file_frame_stable_attributes_and_url_property() -> None:
+    target = _element_target()
+    target["frame"]["url"] = "file:///D:/workspace/index.html#details"  # type: ignore[index]
+    target["stable_attributes"] = [
+        {"name": "href", "value": "../nested/page.html#section"},
+        {"name": "src", "value": "file:///D:/workspace/assets/diagram.png"},
+    ]
+    payload = _create_payload(target)
+    payload["source"] = {
+        "source_kind": "local_file",
+        "url": "file:///D:/workspace/index.html#details",
+        "title": "Local page",
+        "canonical_url": "file:///D:/workspace/index.html",
+        "profile_mode": "persistent",
+    }
+    payload["properties"] = [
+        {
+            "key": "reference",
+            "type": "url",
+            "value": "file:///D:/workspace/nested/page.html#section",
+        }
+    ]
+
+    request = WebAnnotationCreateRequest.model_validate(payload)
+
+    assert request.target.frame.url == "file:///D:/workspace/index.html#details"
+    assert request.target.stable_attributes[0].value == "../nested/page.html#section"
+    assert request.target.stable_attributes[1].value == (
+        "file:///D:/workspace/assets/diagram.png"
+    )
+    assert request.properties[0].value == (
+        "file:///D:/workspace/nested/page.html#section"
+    )
+
+
+@pytest.mark.parametrize("source_kind", ["web", "local_file"])
+def test_accepts_about_blank_frame_for_inherited_source(source_kind: str) -> None:
+    payload = _create_payload()
+    payload["target"]["frame"]["url"] = "about:blank"  # type: ignore[index]
+    if source_kind == "local_file":
+        payload["source"] = {
+            "source_kind": "local_file",
+            "url": "file:///D:/workspace/index.html",
+            "title": "Local",
+            "profile_mode": "persistent",
+        }
+        payload["properties"] = [
+            {"key": "priority", "type": "text", "value": "high"}
+        ]
+
+    request = WebAnnotationCreateRequest.model_validate(payload)
+
+    assert request.target.frame.url == "about:blank"
+
+
+@pytest.mark.parametrize(
+    ("source_kind", "field", "value"),
+    [
+        ("web", "frame", "file:///D:/workspace/index.html"),
+        ("local_file", "frame", "https://example.com/index.html"),
+        ("web", "attribute", "file:///D:/workspace/nested.html"),
+        ("local_file", "attribute", "https://example.com/nested.html"),
+        ("web", "property", "file:///D:/workspace/nested.html"),
+        ("local_file", "property", "https://example.com/nested.html"),
+    ],
+)
+def test_rejects_cross_scheme_target_and_property_references(
+    source_kind: str,
+    field: str,
+    value: str,
+) -> None:
+    target = _element_target()
+    payload = _create_payload(target)
+    if source_kind == "local_file":
+        payload["source"] = {
+            "source_kind": "local_file",
+            "url": "file:///D:/workspace/index.html",
+            "title": "Local",
+            "profile_mode": "persistent",
+        }
+        target["frame"]["url"] = "file:///D:/workspace/index.html"  # type: ignore[index]
+    if field == "frame":
+        target["frame"]["url"] = value  # type: ignore[index]
+    elif field == "attribute":
+        target["stable_attributes"] = [{"name": "href", "value": value}]
+    else:
+        payload["properties"] = [{"key": "reference", "type": "url", "value": value}]
+
+    with pytest.raises(ValidationError, match="scheme does not match"):
+        WebAnnotationCreateRequest.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("source_kind", "url"),
+    [
+        ("web", "file:///D:/workspace/index.html"),
+        ("local_file", "https://example.com/docs"),
+        ("local_file", "file:///tmp/index.html"),
+    ],
+)
+def test_rejects_source_kind_and_scheme_mismatches(source_kind: str, url: str) -> None:
+    with pytest.raises(ValidationError):
+        WebAnnotationSource.model_validate(
+            {
+                "source_kind": source_kind,
+                "url": url,
+                "title": "Mismatch",
+                "profile_mode": "persistent",
+            }
+        )
+
+
+def test_validates_local_file_resource_response_identity_fields() -> None:
+    identity = normalize_local_file_url("file:///D:/workspace/index.html#details")
+    resource = WebAnnotationResourceRecord.model_validate(
+        {
+            "id": "resource-local",
+            "scope": {"kind": "workspace", "id": "ws-1"},
+            "source_kind": "local_file",
+            "normalization_version": identity.normalization_version,
+            "url_key": identity.url_key,
+            "url_normalized": identity.url_normalized,
+            "document_url": identity.document_url,
+            "canonical_url": identity.document_url,
+            "origin": identity.origin,
+            "title": "Local",
+            "created_at": "2026-07-23T00:00:00Z",
+            "updated_at": "2026-07-23T00:00:00Z",
+        }
+    )
+
+    assert resource.source_kind == "local_file"
+    assert resource.normalization_version == 2
 
 
 @pytest.mark.parametrize(

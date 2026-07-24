@@ -47,6 +47,27 @@ pub(crate) enum BrowserProfileMode {
     Incognito,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum BrowserNavigationIntentSource {
+    AddressBar,
+    AppPreview,
+    PageLink,
+    Redirect,
+    Popup,
+    Restore,
+    History,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct BrowserNavigationIntent {
+    pub(crate) source: BrowserNavigationIntentSource,
+    #[serde(default)]
+    pub(crate) initiator_url: Option<String>,
+    pub(crate) user_gesture: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct CreateSurfaceInput {
@@ -54,6 +75,7 @@ pub(crate) struct CreateSurfaceInput {
     pub(crate) generation: u64,
     pub(crate) profile_mode: BrowserProfileMode,
     pub(crate) initial_url: String,
+    pub(crate) initial_navigation_intent: BrowserNavigationIntent,
     pub(crate) theme: BrowserAppearanceTheme,
     pub(crate) background_color: BrowserRgbaColor,
 }
@@ -76,7 +98,8 @@ surface_input!(SetVisibilityInput {
 });
 surface_input!(NavigateInput {
     navigation_id: String,
-    url: String
+    url: String,
+    intent: BrowserNavigationIntent
 });
 surface_input!(ReloadInput {
     mode: BrowserReloadMode
@@ -531,7 +554,9 @@ pub(crate) enum BrowserNewWindowDisposition {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct NewWindowPayload {
     pub(crate) url: String,
+    pub(crate) source_url: String,
     pub(crate) user_gesture: bool,
+    pub(crate) policy_allowed: bool,
     pub(crate) disposition: BrowserNewWindowDisposition,
 }
 
@@ -920,6 +945,7 @@ fn validate_command_payload_keys(kind: &str, payload: &Value) -> Result<(), Brow
                 "generation",
                 "profileMode",
                 "initialUrl",
+                "initialNavigationIntent",
                 "theme",
                 "backgroundColor",
             ],
@@ -938,7 +964,14 @@ fn validate_command_payload_keys(kind: &str, payload: &Value) -> Result<(), Brow
         ),
         "browser_navigate" => exact_payload(
             payload,
-            &["panelId", "surfaceId", "generation", "navigationId", "url"],
+            &[
+                "panelId",
+                "surfaceId",
+                "generation",
+                "navigationId",
+                "url",
+                "intent",
+            ],
             &[],
         ),
         "browser_reload" => exact_payload(
@@ -1095,9 +1128,17 @@ fn validate_event_payload_keys(kind: &str, payload: &Value) -> Result<(), Browse
         "page.history" => exact_payload(payload, &["canGoBack", "canGoForward"], &[]),
         "page.loading" => exact_payload(payload, &["loading"], &[]),
         "shortcut.requested" => exact_payload(payload, &["shortcut"], &[]),
-        "new_window.requested" => {
-            exact_payload(payload, &["url", "userGesture", "disposition"], &[])
-        }
+        "new_window.requested" => exact_payload(
+            payload,
+            &[
+                "url",
+                "sourceUrl",
+                "userGesture",
+                "policyAllowed",
+                "disposition",
+            ],
+            &[],
+        ),
         "external_protocol.requested" => exact_payload(payload, &["scheme", "target"], &[]),
         "permission.requested" => exact_payload(
             payload,
@@ -1151,6 +1192,20 @@ fn validate_surface(surface: &BrowserSurfaceRef) -> Result<(), BrowserContractEr
     Ok(())
 }
 
+fn validate_navigation_intent(
+    intent: &BrowserNavigationIntent,
+) -> Result<(), BrowserContractError> {
+    if let Some(initiator_url) = intent.initiator_url.as_deref() {
+        if initiator_url.is_empty()
+            || initiator_url.len() > 8_192
+            || initiator_url.chars().any(char::is_control)
+        {
+            return Err(BrowserContractError::InvalidValue("initiatorUrl"));
+        }
+    }
+    Ok(())
+}
+
 fn validate_command(command: &BrowserCommand) -> Result<(), BrowserContractError> {
     match command {
         BrowserCommand::CreateSurface(input) => {
@@ -1158,6 +1213,7 @@ fn validate_command(command: &BrowserCommand) -> Result<(), BrowserContractError
             if input.generation == 0 || input.initial_url.is_empty() {
                 return Err(BrowserContractError::InvalidValue("create surface"));
             }
+            validate_navigation_intent(&input.initial_navigation_intent)?;
         }
         BrowserCommand::DestroySurface(surface)
         | BrowserCommand::GoBack(surface)
@@ -1172,6 +1228,7 @@ fn validate_command(command: &BrowserCommand) -> Result<(), BrowserContractError
             if input.url.is_empty() {
                 return Err(BrowserContractError::InvalidValue("url"));
             }
+            validate_navigation_intent(&input.intent)?;
         }
         BrowserCommand::Reload(input) => validate_surface(&input.surface)?,
         BrowserCommand::SetZoom(input) => {
@@ -1449,12 +1506,12 @@ mod tests {
     fn rejects_unknown_versions_kinds_extra_fields_and_oversize() {
         let fixture = fixture();
         let mut command = fixture["commands"][0].clone();
-        command["schemaVersion"] = json!(2);
+        command["schemaVersion"] = json!(BROWSER_HOST_SCHEMA_VERSION + 1);
         assert_eq!(
             parse_browser_command_envelope(&command.to_string()),
             Err(BrowserContractError::UnsupportedVersion)
         );
-        command["schemaVersion"] = json!(1);
+        command["schemaVersion"] = json!(BROWSER_HOST_SCHEMA_VERSION);
         command["command"] = json!("browser_evaluate_javascript");
         assert_eq!(
             parse_browser_command_envelope(&command.to_string()),
@@ -1502,6 +1559,38 @@ mod tests {
         assert_eq!(
             parse_browser_command_envelope(&highlight.to_string()),
             Err(BrowserContractError::InvalidValue("target"))
+        );
+    }
+
+    #[test]
+    fn popup_event_requires_native_source_gesture_and_host_policy_decision() {
+        let event = json!({
+            "schemaVersion": BROWSER_HOST_SCHEMA_VERSION,
+            "kind": "new_window.requested",
+            "panelId": "panel-1",
+            "surfaceId": "surface-1",
+            "generation": 1,
+            "sequence": 1,
+            "navigationId": "navigation-1",
+            "occurredAt": "2026-07-23T00:00:00Z",
+            "payload": {
+                "url": "file:///D:/workspace/popup.html",
+                "sourceUrl": "file:///D:/workspace/index.html",
+                "userGesture": true,
+                "policyAllowed": true,
+                "disposition": "tab"
+            }
+        });
+        assert!(parse_browser_event_envelope(&event.to_string()).is_ok());
+
+        let mut missing_source = event.clone();
+        missing_source["payload"]
+            .as_object_mut()
+            .unwrap()
+            .remove("sourceUrl");
+        assert_eq!(
+            parse_browser_event_envelope(&missing_source.to_string()),
+            Err(BrowserContractError::InvalidFields)
         );
     }
 

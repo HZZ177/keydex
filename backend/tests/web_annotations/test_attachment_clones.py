@@ -94,32 +94,51 @@ def _create_region_annotation(
     data_dir: Path,
     session_id: str,
     suffix: str,
+    local_file: bool = False,
+    scope: dict | None = None,
 ) -> tuple[str, str, Path, bytes]:
     asset_id, descriptor, source_directory, body = _write_capture(data_dir, suffix)
-    scope = {"kind": "session", "id": session_id}
-    source = {
-        "url": f"https://example.com/docs#{suffix}",
-        "title": "Example Docs",
-        "canonical_url": "https://example.com/docs",
-        "profile_mode": "persistent",
-    }
+    annotation_scope = scope or {"kind": "session", "id": session_id}
+    if local_file:
+        page_url = f"file:///D:/wbf-missing-file/index.html#{suffix}"
+        source = {
+            "source_kind": "local_file",
+            "url": page_url,
+            "title": "Local fixture",
+            "canonical_url": "file:///D:/wbf-missing-file/index.html",
+            "profile_mode": "persistent",
+        }
+        frame_url = page_url
+    else:
+        source = {
+            "url": f"https://example.com/docs#{suffix}",
+            "title": "Example Docs",
+            "canonical_url": "https://example.com/docs",
+            "profile_mode": "persistent",
+        }
+        frame_url = "https://example.com/docs"
     registered = client.post(
         "/api/web-annotations/assets",
-        json={"schema_version": 1, "scope": scope, "source": source, "asset": descriptor},
+        json={
+            "schema_version": 1,
+            "scope": annotation_scope,
+            "source": source,
+            "asset": descriptor,
+        },
     )
     assert registered.status_code == 201
     created = client.post(
         "/api/web-annotations",
         json={
             "schema_version": 1,
-            "scope": scope,
+            "scope": annotation_scope,
             "source": source,
             "target": {
                 "type": "region",
                 "rect": {"x": 10.0, "y": 20.0, "width": 120.0, "height": 80.0},
                 "viewport": {"width": 1280.0, "height": 720.0},
                 "scroll": {"x": 0.0, "y": 240.0},
-                "frame": {"url": "https://example.com/docs", "index_path": []},
+                "frame": {"url": frame_url, "index_path": []},
             },
             "body_markdown": "Region evidence",
             "tags": ["evidence"],
@@ -200,6 +219,98 @@ def test_clone_is_idempotent_and_concurrent_with_independent_attachment_file(tmp
             ).fetchone()[0]
         assert attachment_count == 2
         assert clone_count == 2
+
+
+def test_local_file_region_evidence_clones_with_identical_digest_and_dimensions(
+    tmp_path,
+) -> None:
+    data_dir = tmp_path / "data"
+    app = create_app(AppSettings(data_dir=data_dir))
+    with TestClient(app) as client:
+        session = _create_session(client, "Local region clone")
+        annotation_id, asset_id, source_directory, source_body = (
+            _create_region_annotation(
+                client,
+                data_dir=data_dir,
+                session_id=session["id"],
+                suffix="10a",
+                local_file=True,
+            )
+        )
+        detail = client.get(f"/api/web-annotations/{annotation_id}")
+        cloned = client.post(
+            _clone_path(annotation_id, asset_id),
+            json=_clone_payload(session["id"], "c"),
+        )
+
+    assert detail.status_code == 200
+    assert detail.json()["resource"]["source_kind"] == "local_file"
+    assert detail.json()["assets"][0]["width"] == 12
+    assert detail.json()["assets"][0]["height"] == 8
+    assert detail.json()["assets"][0]["sha256"] == hashlib.sha256(source_body).hexdigest()
+    assert cloned.status_code == 200
+    attachment = cloned.json()["attachment"]
+    cloned_path = Path(attachment["path"])
+    assert cloned_path.read_bytes() == source_body
+    assert source_directory.exists()
+
+
+def test_workspace_region_evidence_clones_only_to_a_session_in_the_same_workspace(
+    tmp_path,
+) -> None:
+    data_dir = tmp_path / "data"
+    app = create_app(AppSettings(data_dir=data_dir))
+    first_root = tmp_path / "first-workspace"
+    second_root = tmp_path / "second-workspace"
+    first_root.mkdir()
+    second_root.mkdir()
+    with TestClient(app) as client:
+        first_workspace = client.post(
+            "/api/workspaces",
+            json={"root_path": str(first_root), "name": "First"},
+        ).json()["workspace"]
+        second_workspace = client.post(
+            "/api/workspaces",
+            json={"root_path": str(second_root), "name": "Second"},
+        ).json()["workspace"]
+        first_session = client.post(
+            "/api/sessions",
+            json={
+                "session_type": "workspace",
+                "workspace_id": first_workspace["id"],
+                "title": "First session",
+            },
+        ).json()["session"]
+        second_session = client.post(
+            "/api/sessions",
+            json={
+                "session_type": "workspace",
+                "workspace_id": second_workspace["id"],
+                "title": "Second session",
+            },
+        ).json()["session"]
+        annotation_id, asset_id, _source_directory, _source_body = _create_region_annotation(
+            client,
+            data_dir=data_dir,
+            session_id=first_session["id"],
+            suffix="10b",
+            local_file=True,
+            scope={"kind": "workspace", "id": first_workspace["id"]},
+        )
+
+        same_workspace = client.post(
+            _clone_path(annotation_id, asset_id),
+            json=_clone_payload(first_session["id"], "d"),
+        )
+        other_workspace = client.post(
+            _clone_path(annotation_id, asset_id),
+            json=_clone_payload(second_session["id"], "e"),
+        )
+
+    assert same_workspace.status_code == 200
+    assert same_workspace.json()["attachment"]["session_id"] == first_session["id"]
+    assert other_workspace.status_code == 403
+    assert other_workspace.json()["detail"]["code"] == "web_annotation_scope_forbidden"
 
 
 def test_clone_rejects_wrong_scope_and_missing_asset(tmp_path) -> None:

@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { BrowserPanelState } from "@/renderer/components/layout/rightSidebar/types";
 import type { BrowserEventEnvelope } from "@/renderer/features/browser/domain";
-import { BrowserPanelRuntimeController } from "@/renderer/features/browser/runtime/BrowserPanelRuntime";
+import {
+  BrowserPanelRuntimeController,
+  type BrowserRuntimePanelState,
+} from "@/renderer/features/browser/runtime/BrowserPanelRuntime";
 import { createBrowserRuntimeStore } from "@/renderer/features/browser/state";
 
 const NOW = "2026-07-22T00:00:00.000Z";
@@ -68,27 +70,54 @@ describe("browser resource runtime", () => {
     await vi.waitFor(() => expect(commandCalls(run.send, "browser_destroy_surface")).toHaveLength(100));
     expect(Object.keys(run.runtime.store.getState().surfaces)).toHaveLength(0);
   });
+
+  it("keeps an inactive annotation-protected surface live until protection is released", async () => {
+    const run = harness();
+    const protectedPanel = panel(1);
+    const protectedGeneration = run.runtime.activate(protectedPanel);
+    await settleMicrotasks();
+    run.emit(ready(protectedPanel.id, protectedGeneration));
+    run.runtime.setProtection(protectedPanel.id, "annotation", true);
+    run.runtime.deactivate(protectedPanel.id, protectedGeneration);
+
+    for (let index = 2; index <= 12; index += 1) {
+      const state = panel(index);
+      const generation = run.runtime.activate(state);
+      await settleMicrotasks();
+      run.emit(ready(state.id, generation));
+      if (index < 12) run.runtime.deactivate(state.id, generation);
+    }
+
+    await vi.waitFor(() => {
+      expect(run.runtime.store.getState().surfaces[protectedPanel.id]?.resourceState)
+        .not.toBe("discarded");
+    });
+    expect(commandCalls(run.send, "browser_destroy_surface")).not.toContainEqual([
+      "browser_destroy_surface",
+      expect.objectContaining({ panelId: protectedPanel.id }),
+    ]);
+
+    run.runtime.setProtection(protectedPanel.id, "annotation", false);
+
+    await vi.waitFor(() => {
+      expect(run.runtime.store.getState().surfaces[protectedPanel.id]?.resourceState)
+        .toBe("discarded");
+    });
+  });
 });
 
-function panel(index: number): BrowserPanelState {
+function panel(index: number): BrowserRuntimePanelState {
   const id = `panel-${index}`;
   return {
     id,
-    kind: "browser",
-    schemaVersion: 1,
-    title: id,
     restoreUrl: `https://example.test/${index}`,
-    restoreUrlSanitized: false,
     profileMode: "persistent",
-    zoomFactor: 1,
-    createdAt: NOW,
-    lastActivatedAt: NOW,
   };
 }
 
 function ready(panelId: string, generation: number): BrowserEventEnvelope<"surface.ready"> {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "surface.ready",
     panelId,
     surfaceId: `surface-${panelId}`,

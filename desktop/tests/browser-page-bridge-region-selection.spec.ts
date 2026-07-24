@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { JSDOM } from "jsdom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   parseBrowserBridgeEnvelope,
@@ -61,21 +61,24 @@ describe("page bridge region selection", () => {
   });
 
   it("normalizes reverse drags and keeps the capture layer isolated from page actions", async () => {
-    const run = createRun("<button>Dangerous page action</button>");
-    const pagePointerDown = vi.fn();
-    run.document.querySelector("button")!.addEventListener("pointerdown", pagePointerDown);
+    const run = createRun("<div id='page-action'>Dangerous page action</div>");
+    let pagePointerDownCount = 0;
+    run.document.querySelector("#page-action")!.addEventListener("pointerdown", () => {
+      pagePointerDownCount += 1;
+    });
 
     run.start("selection-reverse");
     await run.drag({ x: 300, y: 260 }, { x: 120, y: 100 });
 
-    expect(pagePointerDown).not.toHaveBeenCalled();
-    expect(run.result("selection-reverse").rect).toEqual({
-      x: 120,
-      y: 100,
-      width: 180,
-      height: 160,
-    });
-    expect(run.document.querySelector("[data-keydex-annotation-overlay-root='true']")).toBeNull();
+    expect(pagePointerDownCount).toBe(0);
+    const rect = run.result("selection-reverse").rect;
+    expect(rect.x).toBe(120);
+    expect(rect.y).toBe(100);
+    expect(rect.width).toBe(180);
+    expect(rect.height).toBe(160);
+    const overlayRoot = run.document.querySelector("[data-keydex-annotation-overlay-root='true']");
+    expect(overlayRoot?.shadowRoot?.querySelector("[part='capture-layer']")).toBeNull();
+    expect(overlayRoot?.shadowRoot?.querySelector("[part='annotation-editor']")).not.toBeNull();
   });
 
   it("rejects tiny and pointer-cancelled regions without producing capture targets", async () => {
@@ -133,11 +136,49 @@ describe("page bridge region selection", () => {
     }));
     expect(navigation.message("selection.result", "selection-navigation")).toBeNull();
   });
+
+  it("captures a scrolled local-file region with a persisted semantic anchor", async () => {
+    const run = createRun(
+      "<main><article id='local-card' aria-label='Local release card'>Release notes</article></main>",
+      "file:///D:/Keydex%20Fixtures/nested/annotation.html",
+    );
+    const article = run.document.querySelector("article")!;
+    run.rect(article, { x: 80, y: 90, width: 260, height: 180 });
+    run.hitTest(article);
+    Object.defineProperties(run.window, {
+      scrollX: { configurable: true, value: 32 },
+      scrollY: { configurable: true, value: 640 },
+    });
+
+    run.start("selection-local-region");
+    await run.drag({ x: 100, y: 110 }, { x: 300, y: 230 });
+
+    expect(run.result("selection-local-region")).toMatchObject({
+      type: "region",
+      rect: { x: 100, y: 110, width: 200, height: 120 },
+      viewport: { width: 800, height: 600 },
+      scroll: { x: 32, y: 640 },
+      relativeElement: {
+        tag: "article",
+        role: "article",
+        accessibleName: "Local release card",
+        stableAttributes: expect.arrayContaining([{ name: "id", value: "local-card" }]),
+      },
+      visual: {
+        fingerprintVersion: 1,
+        localDigest: expect.stringMatching(/^fnv1a32:[0-9a-f]{8}$/u),
+      },
+      frame: {
+        url: "file:///D:/Keydex%20Fixtures/nested/annotation.html",
+        indexPath: [],
+      },
+    });
+  });
 });
 
-function createRun(html: string) {
+function createRun(html: string, url = "https://example.test/article") {
   const dom = new JSDOM(`<!doctype html><body>${html}</body>`, {
-    url: "https://example.test/article",
+    url,
     pretendToBeVisual: true,
     runScripts: "outside-only",
   });
@@ -169,11 +210,11 @@ function installRun(window: DOMWindow) {
       },
     },
   });
-  window.eval(bridgeSource.replace("__KEYDEX_BRIDGE_BOOTSTRAP__", JSON.stringify({
+  window.eval(`let __KEYDEX_BRIDGE_DIAGNOSTICS_POST__ = null;\n${bridgeSource.replace("__KEYDEX_BRIDGE_BOOTSTRAP__", JSON.stringify({
     panelId: "panel-1",
     surfaceId: "surface-1",
     generation: 2,
-  })));
+  }))}`);
   window.eval(overlaySource);
   window.eval(regionSource);
   const metadata = (window as unknown as {

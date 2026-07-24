@@ -12,6 +12,7 @@ import type { GitRuntime } from "@/runtime/git";
 import type {
   GitCommitDetail,
   GitCommitSummary,
+  GitCommandResult,
   GitFileDiff,
   GitRepositoryId,
   GitRepositoryVersion,
@@ -211,6 +212,173 @@ describe("ProjectGitMenu", () => {
     await waitFor(() => expect(runtime.push).toHaveBeenCalledTimes(1));
     fireEvent.keyDown(screen.getByRole("textbox", { name: "commit editor" }), { key: "t", ctrlKey: true });
     expect(runtime.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates a local tracking branch when checking out a remote branch even with local changes", async () => {
+    const runtime = readyRuntime();
+    vi.mocked(runtime.refs).mockResolvedValue({
+      repositoryId: "repo-1" as GitRepositoryId,
+      repositoryVersion: "version-1" as GitRepositoryVersion,
+      refs: [
+        { fullName: "refs/heads/main", shortName: "main", kind: "local", objectId: "a".repeat(40) as never, peeledObjectId: null, upstream: "origin/main", ahead: 0, behind: 0, current: true },
+        { fullName: "refs/remotes/origin/main", shortName: "origin/main", kind: "remote", objectId: "a".repeat(40) as never, peeledObjectId: null, upstream: null, ahead: null, behind: null, current: false },
+        { fullName: "refs/remotes/origin/release/next", shortName: "origin/release/next", kind: "remote", objectId: "d".repeat(40) as never, peeledObjectId: null, upstream: null, ahead: null, behind: null, current: false },
+      ],
+    });
+    render(
+      <ActiveProjectProvider
+        discovery={{
+          project: { workspaceId: "workspace-1", projectPath: "D:/repo", name: "repo" },
+          repoRoots: [{ id: "repo-1", rootPath: "D:/repo", displayPath: ".", kind: "workspace" }],
+        }}
+      >
+        <GitProvider runtime={runtime}><ProjectGitMenu onOpenToolWindow={vi.fn()} /></GitProvider>
+      </ActiveProjectProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Git：main" }));
+    fireEvent.click(screen.getByRole("treeitem", { name: "origin/release/next（远程）" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "签出" }));
+
+    await waitFor(() => expect(runtime.createBranch).toHaveBeenCalledWith(expect.objectContaining({
+      branchName: "release/next",
+      startPoint: "origin/release/next",
+      track: true,
+    })));
+    expect(runtime.checkout).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "本地改动会被覆盖" })).toBeNull();
+  });
+
+  it("logs in through the system credential manager from a failed update dialog", async () => {
+    const runtime = readyRuntime();
+    const repositoryId = "repo-1" as GitRepositoryId;
+    const repositoryVersion = "version-1" as GitRepositoryVersion;
+    vi.mocked(runtime.update)
+      .mockResolvedValueOnce({
+        ...commandSucceeded(repositoryId, repositoryVersion, "Credential failure"),
+        state: "failed",
+        command: "update",
+        result: {
+          error: "Git credentials are unavailable.",
+          error_code: "git_credentials_missing",
+          remote: "origin",
+        },
+        retryable: true,
+        error: {
+          code: "git_credentials_missing",
+          message: "Git credentials are unavailable.",
+          retryable: true,
+          details: { remote: "origin" },
+        },
+      })
+      .mockResolvedValueOnce(commandSucceeded(repositoryId, repositoryVersion, "Updated"));
+    vi.mocked(runtime.loginCredentials).mockResolvedValue({
+      repositoryId,
+      remote: "origin",
+      host: "git.example.test",
+      authenticated: true,
+    });
+
+    render(
+      <ActiveProjectProvider
+        discovery={{
+          project: { workspaceId: "workspace-1", projectPath: "D:/repo", name: "repo" },
+          repoRoots: [{ id: "repo-1", rootPath: "D:/repo", displayPath: ".", kind: "workspace" }],
+        }}
+      >
+        <GitProvider runtime={runtime}>
+          <ProjectGitMenu onOpenToolWindow={vi.fn()} />
+        </GitProvider>
+      </ActiveProjectProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Git：main" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /更新项目/ }));
+    fireEvent.click(screen.getByRole("button", { name: "更新" }));
+    const login = await screen.findByRole("button", { name: "登录远程仓库" });
+    expect(screen.getByRole("dialog", { name: "更新项目" }).textContent).toContain(
+      "origin 需要登录",
+    );
+
+    fireEvent.click(login);
+    await waitFor(() => expect(runtime.loginCredentials).toHaveBeenCalledWith(
+      expect.objectContaining({ remote: "origin", provider: "auto" }),
+    ));
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "登录远程仓库" })).toBeNull();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "更新" }));
+    await waitFor(() => expect(runtime.update).toHaveBeenCalledTimes(2));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "更新项目" })).toBeNull();
+    });
+  });
+
+  it("offers Smart Checkout only after Git reports an overwrite conflict and restores the exact stash", async () => {
+    const runtime = readyRuntime();
+    const conflict = {
+      ...commandSucceeded("repo-1" as GitRepositoryId, "version-1" as GitRepositoryVersion, "Blocked checkout"),
+      state: "failed" as const,
+      command: "create_branch",
+      error: {
+        code: "git_checkout_conflict",
+        message: "Local changes would be overwritten",
+        retryable: false,
+        details: {},
+      },
+    };
+    vi.mocked(runtime.createBranch)
+      .mockResolvedValueOnce(conflict)
+      .mockResolvedValue(commandSucceeded("repo-1" as GitRepositoryId, "version-2" as GitRepositoryVersion, "Created branch"));
+    runtime.createStash = vi.fn().mockResolvedValue(commandSucceeded("repo-1" as GitRepositoryId, "version-2" as GitRepositoryVersion, "Created stash"));
+    runtime.stashList = vi.fn().mockImplementation(async () => ({
+      repositoryId: "repo-1" as GitRepositoryId,
+      repositoryVersion: "version-2" as GitRepositoryVersion,
+      entries: [{
+        selector: "stash@{0}",
+        objectId: "e".repeat(40) as never,
+        baseObjectId: null,
+        authorName: "Alice",
+        createdAt: "2026-07-24T00:00:00Z",
+        message: String(vi.mocked(runtime.createStash).mock.calls[0]?.[0].message ?? ""),
+      }],
+      nextCursor: null,
+    }));
+    runtime.popStash = vi.fn().mockResolvedValue(commandSucceeded("repo-1" as GitRepositoryId, "version-3" as GitRepositoryVersion, "Restored stash"));
+    vi.mocked(runtime.refs).mockResolvedValue({
+      repositoryId: "repo-1" as GitRepositoryId,
+      repositoryVersion: "version-1" as GitRepositoryVersion,
+      refs: [
+        { fullName: "refs/heads/main", shortName: "main", kind: "local", objectId: "a".repeat(40) as never, peeledObjectId: null, upstream: "origin/main", ahead: 0, behind: 0, current: true },
+        { fullName: "refs/remotes/origin/release/next", shortName: "origin/release/next", kind: "remote", objectId: "d".repeat(40) as never, peeledObjectId: null, upstream: null, ahead: null, behind: null, current: false },
+      ],
+    });
+    render(
+      <ActiveProjectProvider
+        discovery={{
+          project: { workspaceId: "workspace-1", projectPath: "D:/repo", name: "repo" },
+          repoRoots: [{ id: "repo-1", rootPath: "D:/repo", displayPath: ".", kind: "workspace" }],
+        }}
+      >
+        <GitProvider runtime={runtime}><ProjectGitMenu onOpenToolWindow={vi.fn()} /></GitProvider>
+      </ActiveProjectProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Git：main" }));
+    fireEvent.click(screen.getByRole("treeitem", { name: "origin/release/next（远程）" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "签出" }));
+
+    expect(await screen.findByRole("dialog", { name: "本地改动会被覆盖" })).not.toBeNull();
+    expect(runtime.createStash).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Smart Checkout" }));
+
+    await waitFor(() => expect(runtime.popStash).toHaveBeenCalledWith(expect.objectContaining({
+      selector: "stash@{0}",
+      objectId: "e".repeat(40),
+      reinstateIndex: true,
+    })));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "本地改动会被覆盖" })).toBeNull());
   });
 
   it("routes ref and worktree comparison actions into real Git comparison requests", async () => {
@@ -572,6 +740,7 @@ function readyRuntime(): GitRuntime {
       files: [fileDiff("desktop/src/app.ts")],
     })),
     remotes: vi.fn().mockResolvedValue([{ name: "origin", fetchUrl: "D:/origin.git", pushUrl: "D:/origin.git", trackingBranches: ["main"] }]),
+    loginCredentials: vi.fn(),
     commit: vi.fn().mockImplementation((_, revision) => Promise.resolve(
       commitDetail(commitSummary("Ready to push", String(revision).slice(0, 1)), [fileDiff("desktop/src/app.ts")]),
     )),
@@ -683,13 +852,25 @@ function fileDiff(path: string): GitFileDiff {
   };
 }
 
-function commandSucceeded(repositoryId: GitRepositoryId, repositoryVersion: GitRepositoryVersion, summary: string) {
+function commandSucceeded(
+  repositoryId: GitRepositoryId,
+  repositoryVersion: GitRepositoryVersion,
+  summary: string,
+): GitCommandResult {
   return {
     operationId: `operation-${summary}`,
     repositoryId,
     repositoryVersion,
-    state: "succeeded" as const,
+    state: "succeeded",
     summary,
     result: { refresh_domains: ["status", "refs"] },
+    command: "test",
+    risk: "write",
+    createdAt: null,
+    startedAt: null,
+    finishedAt: null,
+    durationMs: null,
+    retryable: false,
+    error: null,
   };
 }

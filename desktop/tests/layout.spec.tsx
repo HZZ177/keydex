@@ -532,6 +532,40 @@ describe("Layout", () => {
     }
   });
 
+  it("opens an Agent HTML file preview in a new top browser tab instead of the file preview pane", async () => {
+    renderLayoutWithPreview(<ScopedConversationLayout />);
+
+    fireEvent.click(screen.getByLabelText("展开右侧栏"));
+    fireEvent.click(screen.getByRole("button", { name: "文件" }));
+    fireEvent.click(await screen.findByRole("button", { name: "选择文件 index.html" }));
+
+    const previewAction = await screen.findByTestId("html-browser-preview-action");
+    expect(screen.getByTestId("workspace-file-browser-preview").querySelector("[data-browser-adapter]")).toBeNull();
+
+    fireEvent.click(previewAction);
+
+    const firstBrowserTab = await waitFor(() => {
+      const tab = document.querySelector<HTMLElement>("[data-panel-kind='browser'] [role='tab']");
+      expect(tab).not.toBeNull();
+      return tab!;
+    });
+    expect(firstBrowserTab.getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: "文件" }).getAttribute("aria-selected")).toBe("false");
+    expect(document.querySelector("[data-browser-adapter='agent']")).not.toBeNull();
+    expect((screen.getByRole("textbox", { name: "地址或搜索" }) as HTMLInputElement).value).toBe(
+      "file:///D:/repo/index.html",
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "文件" }));
+    expect((await screen.findByTestId("html-browser-preview-action")).closest("[data-file-preview-root]")).not.toBeNull();
+    expect(screen.getByTestId("workspace-file-browser-preview").querySelector("[data-browser-adapter]")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("html-browser-preview-action"));
+    await waitFor(() => {
+      expect(document.querySelectorAll("[data-panel-kind='browser']")).toHaveLength(2);
+    });
+  });
+
   it("collapses the right sidebar when navigating to the new conversation page", () => {
     const onNavigate = vi.fn();
     renderLayout(
@@ -1250,6 +1284,7 @@ const filePanelRuntime = {
           ? [{ name: "index.ts", path: "src/index.ts", type: "file", size: 24, modified_at: null }]
           : [
               { name: "README.md", path: "README.md", type: "file", size: 12, modified_at: null },
+              { name: "index.html", path: "index.html", type: "file", size: 42, modified_at: null },
               { name: "src", path: "src", type: "directory", size: null, modified_at: null },
             ],
       }),
@@ -1263,6 +1298,7 @@ function sessionPreviewContext() {
   return {
     runtime: filePanelRuntime,
     sessionId: "session-1",
+    workspaceRootPath: "D:/repo",
     workspaceAvailable: true,
     workspaceLabel: "repo",
   };

@@ -3,6 +3,7 @@ import {
   type WebAnnotationChangeSummary,
   type WebAnnotationVisibleStatus,
 } from "../domain";
+import type { WebAnnotationSourceKind } from "../api";
 
 export interface WebAnnotationReferencePresentation {
   readonly annotationId: string;
@@ -10,6 +11,8 @@ export interface WebAnnotationReferencePresentation {
   readonly summary: string;
   readonly bodyMarkdown: string;
   readonly origin: string;
+  readonly sourceKind?: WebAnnotationSourceKind;
+  readonly displayAddress?: string;
   readonly status?: WebAnnotationVisibleStatus;
   readonly change?: WebAnnotationChangeSummary;
   readonly updatedAt: string;
@@ -68,6 +71,8 @@ function normalizePresentation(
     summary: value.summary.trim().replace(/\s+/gu, " ").slice(0, 512),
     bodyMarkdown: value.bodyMarkdown.slice(0, 8_192),
     origin: value.origin.trim().slice(0, 2_048),
+    ...(value.sourceKind ? { sourceKind: value.sourceKind } : {}),
+    ...(value.displayAddress ? { displayAddress: value.displayAddress.trim().slice(0, 4_096) } : {}),
     ...(value.status ? { status: value.status } : {}),
     ...(change?.signals.length ? { change } : {}),
     updatedAt: value.updatedAt,
@@ -83,6 +88,8 @@ function samePresentation(
     && left.summary === right.summary
     && left.bodyMarkdown === right.bodyMarkdown
     && left.origin === right.origin
+    && left.sourceKind === right.sourceKind
+    && left.displayAddress === right.displayAddress
     && left.status === right.status
     && left.change?.material === right.change?.material
     && left.change?.kinds.join("\u0000") === right.change?.kinds.join("\u0000")

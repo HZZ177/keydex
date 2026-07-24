@@ -8,6 +8,7 @@
  * Keydex modifications:
  * - use Keydex-owned commit/object-id vocabulary;
  * - remove LiveAgent ref-marker and UI-specific color semantics;
+ * - retain stable lane identities when multiple edges target the same commit;
  * - expose unresolved lanes so cursor-truncated history pages can continue the
  *   graph without pretending their parent commits were loaded;
  * - keep the result as a renderer-neutral SVG/canvas model (no copied UI/CSS).
@@ -23,6 +24,8 @@ export interface GitGraphCommitInput {
 }
 
 export interface GitGraphLane {
+  /** Stable identity for one active edge, even when multiple lanes target the same commit. */
+  laneId: number;
   objectId: string;
   colorIndex: number;
 }
@@ -34,6 +37,8 @@ export interface GitGraphRow {
   commitColorIndex: number;
   inputLanes: readonly GitGraphLane[];
   outputLanes: readonly GitGraphLane[];
+  /** Output lane identity for each entry in parentIds. */
+  parentLaneIds: readonly number[];
   isMerge: boolean;
 }
 
@@ -73,8 +78,14 @@ export function computeGitGraph(commits: readonly GitGraphCommitInput[]): GitGra
   const rows: GitGraphRow[] = [];
   const loadedObjectIds = new Set(commits.map((commit) => commit.objectId));
   let previousOutputLanes: GitGraphLane[] = [];
+  let nextLaneId = -1;
   let nextColorIndex = -1;
   let columnCount = 1;
+
+  function allocateLaneId(): number {
+    nextLaneId += 1;
+    return nextLaneId;
+  }
 
   function allocateColor(): number {
     nextColorIndex = (nextColorIndex + 1) % GIT_GRAPH_COLOR_COUNT;
@@ -88,27 +99,41 @@ export function computeGitGraph(commits: readonly GitGraphCommitInput[]): GitGra
     const inputIndex = inputLanes.findIndex((lane) => lane.objectId === objectId);
     const commitColumn = inputIndex >= 0 ? inputIndex : inputLanes.length;
     const commitColorIndex = inputIndex >= 0 ? inputLanes[inputIndex].colorIndex : allocateColor();
+    const commitLaneId = inputIndex >= 0 ? inputLanes[inputIndex].laneId : allocateLaneId();
     const outputLanes: GitGraphLane[] = [];
+    const parentLaneIds: number[] = [];
+    let firstParentAdded = false;
+
+    for (const lane of inputLanes) {
+      if (lane.objectId === objectId) {
+        if (parentIds.length > 0 && !firstParentAdded) {
+          outputLanes.push({
+            laneId: commitLaneId,
+            objectId: parentIds[0],
+            colorIndex: commitColorIndex,
+          });
+          firstParentAdded = true;
+        }
+        continue;
+      }
+      outputLanes.push(cloneLane(lane));
+    }
 
     if (parentIds.length > 0) {
-      let firstParentAdded = false;
-      for (const lane of inputLanes) {
-        if (lane.objectId === objectId) {
-          if (!firstParentAdded) {
-            outputLanes.push({ objectId: parentIds[0], colorIndex: commitColorIndex });
-            firstParentAdded = true;
-          }
-          continue;
-        }
-        outputLanes.push(cloneLane(lane));
-      }
+      parentLaneIds.push(commitLaneId);
 
       if (!firstParentAdded) {
-        outputLanes.push({ objectId: parentIds[0], colorIndex: commitColorIndex });
+        outputLanes.push({
+          laneId: commitLaneId,
+          objectId: parentIds[0],
+          colorIndex: commitColorIndex,
+        });
       }
 
       for (const parentId of parentIds.slice(1)) {
-        outputLanes.push({ objectId: parentId, colorIndex: allocateColor() });
+        const laneId = allocateLaneId();
+        parentLaneIds.push(laneId);
+        outputLanes.push({ laneId, objectId: parentId, colorIndex: allocateColor() });
       }
     }
 
@@ -125,6 +150,7 @@ export function computeGitGraph(commits: readonly GitGraphCommitInput[]): GitGra
       commitColorIndex,
       inputLanes,
       outputLanes,
+      parentLaneIds,
       isMerge: parentIds.length > 1,
     });
     previousOutputLanes = outputLanes;

@@ -876,8 +876,12 @@ def _prepare_apply_patch(request: GitPatchCommandRequest) -> GitPreparedCommand:
 def _prepare_create_branch(request: GitBranchCommandRequest) -> GitPreparedCommand:
     branch = validate_ref_name(request.branch_name)
     start_point = validate_revision(request.start_point)
+    argv = ["switch", "-c", branch]
+    if request.track:
+        argv.append("--track")
+    argv.append(start_point)
     return GitPreparedCommand(
-        argv=("switch", "-c", branch, start_point),
+        argv=tuple(argv),
         summary=f"Created and switched to {branch}",
     )
 
@@ -949,7 +953,10 @@ def _prepare_fetch(request: GitFetchCommandRequest) -> GitPreparedCommand:
             raise GitApiError("git_validation_failed", "A fetch refspec requires one remote")
         source, separator, target_ref = request.refspec.partition(":")
         if not separator:
-            raise GitApiError("git_validation_failed", "Fetch refspec must include a source and target")
+            raise GitApiError(
+                "git_validation_failed",
+                "Fetch refspec must include a source and target",
+            )
         normalized_refspec = f"{validate_ref_name(source)}:{validate_ref_name(target_ref)}"
     # Keep the API contract deterministic even when the user has configured
     # fetch.prune globally or for this repository.  The UI's unchecked state
@@ -960,7 +967,15 @@ def _prepare_fetch(request: GitFetchCommandRequest) -> GitPreparedCommand:
     argv.append("--progress")
     if normalized_refspec:
         argv.append(normalized_refspec)
-    return GitPreparedCommand(argv=tuple(argv), summary=f"Fetched {target}", timeout_seconds=300)
+    return GitPreparedCommand(
+        argv=tuple(argv),
+        summary=f"Fetched {target}",
+        timeout_seconds=300,
+        result_data={
+            "remote": None if request.all_remotes else target,
+            "all_remotes": request.all_remotes,
+        },
+    )
 
 
 def _parse_fetch_result(result: GitCommandResult) -> dict[str, object]:
@@ -1036,6 +1051,7 @@ def _prepare_push(request: GitPushCommandRequest) -> GitPreparedCommand:
             argv=("push", remote, f"refs/tags/{tag_name}:refs/tags/{tag_name}"),
             summary=f"Pushed tag {tag_name} to {remote}",
             timeout_seconds=300,
+            result_data={"remote": remote},
         )
     argv = ["push"]
     if request.force_with_lease:
@@ -1050,7 +1066,12 @@ def _prepare_push(request: GitPushCommandRequest) -> GitPreparedCommand:
     source = validate_ref_name(request.source)
     target = validate_ref_name(request.target)
     argv.append(f"{source}:refs/heads/{target}")
-    return GitPreparedCommand(argv=tuple(argv), summary=f"Pushed to {remote}", timeout_seconds=300)
+    return GitPreparedCommand(
+        argv=tuple(argv),
+        summary=f"Pushed to {remote}",
+        timeout_seconds=300,
+        result_data={"remote": remote},
+    )
 
 
 def _preflight_push(request: GitPushCommandRequest) -> None:
@@ -1127,6 +1148,7 @@ def _prepare_update(request: GitUpdateCommandRequest) -> GitPreparedCommand:
         argv=tuple(argv),
         summary=f"Updated from {remote} with {request.strategy}",
         timeout_seconds=300,
+        result_data={"remote": remote},
     )
 
 

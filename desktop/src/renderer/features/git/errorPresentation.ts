@@ -40,7 +40,7 @@ export const GIT_ERROR_PRESENTATIONS = {
   git_unavailable: entry("系统 Git 不可用", "Keydex 没有找到可用的系统 Git。", "after_fix", "none", "安装或修复系统 Git，并确认它可从当前用户环境访问。"),
   git_timeout: entry("Git 操作超时", "Git 命令未在安全时限内完成。", "immediate", "none", "检查仓库、网络或远程响应后重试。"),
   git_failed: entry("Git 操作失败", "Git 返回了未分类的失败。", "never", "none", "查看已清洗的操作日志，再判断是否应修改配置或重试。"),
-  git_credentials_missing: entry("Git 凭据不可用", "远程拒绝了当前凭据，或非交互环境没有可用凭据。", "after_fix", "none", "在系统凭据管理器或外部 Git 客户端中配置凭据后重试。"),
+  git_credentials_missing: entry("Git 凭据不可用", "远程拒绝了当前凭据，或非交互环境没有可用凭据。", "after_fix", "none", "点击“登录远程仓库”，完成系统凭据提示后重试。"),
   git_credential_helper_failed: entry("凭据助手失败", "系统配置的 Git Credential Helper 执行失败。", "after_fix", "none", "在 Keydex 外修复或登录凭据助手后重试。"),
   git_host_key_failed: entry("SSH 主机密钥校验失败", "远程主机指纹尚未被信任或已经变化。", "after_fix", "none", "在 Keydex 外核对真实指纹并更新 known_hosts；不要跳过校验。"),
   git_network_unavailable: entry("Git 远程不可达", "无法连接 Git 远程。", "immediate", "none", "检查远程地址、代理、VPN 和网络连接后重试。"),

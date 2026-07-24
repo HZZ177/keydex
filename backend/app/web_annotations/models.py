@@ -12,8 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from backend.app.web_annotations.url_identity import (
     MAX_WEB_ANNOTATION_URL_BYTES,
     WebUrlIdentity,
+    normalize_annotation_url,
     normalize_page_reference_url,
-    normalize_web_url,
     sanitize_url_reference,
 )
 
@@ -26,6 +26,7 @@ MAX_STAGED_ASSET_IDS = 20
 MAX_CSS_COORDINATE = 1_000_000
 
 WebAnnotationScopeKind = Literal["session", "workspace", "global"]
+WebAnnotationSourceKind = Literal["web", "local_file"]
 WebAnnotationTargetType = Literal["text", "element", "region"]
 StableAttributeName = Literal[
     "id",
@@ -63,6 +64,7 @@ class WebAnnotationScope(StrictWebAnnotationModel):
 
 
 class WebAnnotationSource(StrictWebAnnotationModel):
+    source_kind: WebAnnotationSourceKind = "web"
     url: str
     title: str = Field(default="", max_length=512)
     canonical_url: str | None = None
@@ -70,15 +72,21 @@ class WebAnnotationSource(StrictWebAnnotationModel):
 
     @field_validator("url")
     @classmethod
-    def normalize_url(cls, value: str) -> str:
-        return normalize_web_url(value).url_normalized
+    def normalize_url(cls, value: str, info) -> str:
+        return normalize_annotation_url(
+            value,
+            source_kind=info.data.get("source_kind", "web"),
+        ).url_normalized
 
     @field_validator("canonical_url")
     @classmethod
-    def normalize_canonical_url(cls, value: str | None) -> str | None:
+    def normalize_canonical_url(cls, value: str | None, info) -> str | None:
         if value is None:
             return None
-        return normalize_page_reference_url(value)
+        return normalize_page_reference_url(
+            value,
+            source_kind=info.data.get("source_kind", "web"),
+        )
 
     @field_validator("title")
     @classmethod
@@ -89,7 +97,7 @@ class WebAnnotationSource(StrictWebAnnotationModel):
         return normalized
 
     def identity(self) -> WebUrlIdentity:
-        return normalize_web_url(self.url)
+        return normalize_annotation_url(self.url, source_kind=self.source_kind)
 
 
 class CssRect(StrictWebAnnotationModel):
@@ -129,7 +137,11 @@ class PersistedFrameLocator(StrictWebAnnotationModel):
     @field_validator("url")
     @classmethod
     def normalize_frame_url(cls, value: str) -> str:
-        return normalize_page_reference_url(value, allow_about_blank=True)
+        return normalize_page_reference_url(
+            value,
+            allow_about_blank=True,
+            source_kind=None,
+        )
 
     @field_validator("name")
     @classmethod
@@ -440,7 +452,7 @@ class UrlTypedProperty(StrictWebAnnotationModel):
     @field_validator("value")
     @classmethod
     def normalize_value(cls, value: str) -> str:
-        return normalize_web_url(value).url_normalized
+        return normalize_page_reference_url(value, source_kind=None)
 
 
 TypedProperty = Annotated[
@@ -486,6 +498,8 @@ class WebAnnotationCreateRequest(StrictWebAnnotationModel):
     def validate_request(self) -> WebAnnotationCreateRequest:
         _validate_properties(self.properties)
         _validate_target_size(self.target)
+        validate_target_source_kind(self.target, self.source.source_kind)
+        validate_properties_source_kind(self.properties, self.source.source_kind)
         return self
 
 
@@ -543,7 +557,8 @@ class WebAnnotationRetargetRequest(StrictWebAnnotationModel):
 class WebAnnotationResourceRecord(StrictWebAnnotationModel):
     id: str = Field(min_length=1, max_length=128)
     scope: WebAnnotationScope
-    normalization_version: Literal[1]
+    source_kind: WebAnnotationSourceKind = "web"
+    normalization_version: Literal[1, 2]
     url_key: str = Field(pattern=r"^[0-9a-f]{64}$")
     url_normalized: str
     document_url: str
@@ -563,13 +578,25 @@ class WebAnnotationResourceRecord(StrictWebAnnotationModel):
 
     @field_validator("canonical_url")
     @classmethod
-    def normalize_canonical_url(cls, value: str | None) -> str | None:
-        return normalize_page_reference_url(value) if value is not None else None
+    def normalize_canonical_url(cls, value: str | None, info) -> str | None:
+        return (
+            normalize_page_reference_url(
+                value,
+                source_kind=info.data.get("source_kind", "web"),
+            )
+            if value is not None
+            else None
+        )
 
     @model_validator(mode="after")
     def validate_identity(self) -> WebAnnotationResourceRecord:
-        identity = normalize_web_url(self.url_normalized)
+        identity = normalize_annotation_url(
+            self.url_normalized,
+            source_kind=self.source_kind,
+        )
         if (
+            self.source_kind != identity.source_kind
+            or
             self.normalization_version != identity.normalization_version
             or self.url_key != identity.url_key
             or self.document_url != identity.document_url
@@ -733,6 +760,71 @@ def _validate_properties(properties: list[TypedProperty]) -> None:
         )
 
 
+def validate_target_source_kind(
+    target: WebAnnotationTarget,
+    source_kind: WebAnnotationSourceKind,
+) -> None:
+    """Require absolute target references to belong to the active page source.
+
+    Nested target models intentionally accept both safe persisted schemes so
+    stored web and local-file rows can share one schema. This source-aware
+    check is applied by create and by service-level retarget operations.
+    """
+
+    _validate_absolute_reference_source(
+        target.frame.url,
+        source_kind=source_kind,
+        field_name="target.frame.url",
+        allow_about_blank=True,
+    )
+    attributes: list[StableElementAttribute] = []
+    if target.type == "element":
+        attributes.extend(target.stable_attributes)
+    elif target.type == "region" and target.relative_element is not None:
+        attributes.extend(target.relative_element.stable_attributes)
+    for attribute in attributes:
+        if attribute.name in {"href", "src"}:
+            _validate_absolute_reference_source(
+                attribute.value,
+                source_kind=source_kind,
+                field_name=f"target.stable_attributes.{attribute.name}",
+            )
+
+
+def validate_properties_source_kind(
+    properties: list[TypedProperty],
+    source_kind: WebAnnotationSourceKind,
+) -> None:
+    for item in properties:
+        if item.type == "url":
+            _validate_absolute_reference_source(
+                item.value,
+                source_kind=source_kind,
+                field_name=f"properties.{item.key}",
+            )
+
+
+def _validate_absolute_reference_source(
+    value: str,
+    *,
+    source_kind: WebAnnotationSourceKind,
+    field_name: str,
+    allow_about_blank: bool = False,
+) -> None:
+    if allow_about_blank and value == "about:blank":
+        return
+    lowered = value.casefold()
+    if lowered.startswith(("http://", "https://")):
+        reference_kind: WebAnnotationSourceKind = "web"
+    elif lowered.startswith("file:"):
+        reference_kind = "local_file"
+    else:
+        # Relative href/src values retain document-relative semantics.
+        return
+    if reference_kind != source_kind:
+        raise ValueError(f"{field_name} scheme does not match source_kind")
+
+
 def _normalize_tags(value: list[str]) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
@@ -863,4 +955,6 @@ __all__ = [
     "WebTextPosition",
     "WebTextQuote",
     "WebTextTarget",
+    "validate_properties_source_kind",
+    "validate_target_source_kind",
 ]

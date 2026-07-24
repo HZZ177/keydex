@@ -33,6 +33,10 @@ import {
 import { GoalModeAccessory } from "@/renderer/components/chat/GoalModeAccessory";
 import type { SelectedWebAnnotationReference } from "@/renderer/features/browser/annotations";
 import {
+  useBrowserOcclusionToken,
+  useBrowserSpatialOcclusion,
+} from "@/renderer/features/browser/runtime";
+import {
   isContextCompressionSlashCommand,
   type SlashCommand,
 } from "@/renderer/components/chat/SlashCommandMenu";
@@ -180,7 +184,8 @@ export interface WorkbenchAssistantSurfaceProps {
   workspaceId: string;
   workspace?: Workspace | null;
   controller: AgentSessionController;
-  contentNearBottom?: boolean;
+  /** `null` preserves the capsule position until the new content viewport can be measured. */
+  contentNearBottom?: boolean | null;
   contentViewportKey?: string;
   creatingSession?: boolean;
   drawerWidth?: number;
@@ -229,6 +234,8 @@ export function WorkbenchAssistantSurface({
   const backendReady = runtimeConnection?.ready ?? true;
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const assistantChromeRef = useRef<HTMLDivElement | null>(null);
+  const expandedPanelFrameRef = useRef<HTMLDivElement | null>(null);
+  const stablePanelRef = useRef<HTMLElement | null>(null);
   const dockTransitionTimerRef = useRef<number | null>(null);
   const dockTransitionRunIdRef = useRef(0);
   const composeCollapseTimerRef = useRef<number | null>(null);
@@ -238,7 +245,7 @@ export function WorkbenchAssistantSurface({
   const panelMessageCountRef = useRef(0);
   const previousSurfaceModeRef = useRef<AssistantSurfaceMode>("capsule");
   const previousCapsuleYieldEligibleRef = useRef(true);
-  const previousContentNearBottomRef = useRef(false);
+  const previousContentNearBottomRef = useRef<boolean | null>(null);
   const previousRuntimeStateRef = useRef<ConversationRuntimeState | null>(null);
   const handledFileChipRequestIdRef = useRef(controller.fileChipRequest?.requestId ?? 0);
   const handledQuoteChipRequestIdRef = useRef(controller.quoteChipRequest?.requestId ?? 0);
@@ -502,12 +509,20 @@ export function WorkbenchAssistantSurface({
 
   useEffect(() => {
     setCapsuleYielded(false);
-    previousContentNearBottomRef.current = false;
+    previousContentNearBottomRef.current = null;
     previousCapsuleYieldEligibleRef.current = capsuleYieldEligible;
-  }, [capsuleYieldEligible, resolvedContentViewportKey]);
+  }, [capsuleYieldEligible]);
 
   useEffect(() => {
-    const enteredNearBottom = contentNearBottom && !previousContentNearBottomRef.current;
+    previousContentNearBottomRef.current = null;
+  }, [resolvedContentViewportKey]);
+
+  useEffect(() => {
+    if (contentNearBottom === null) {
+      previousCapsuleYieldEligibleRef.current = capsuleYieldEligible;
+      return;
+    }
+    const enteredNearBottom = contentNearBottom && previousContentNearBottomRef.current !== true;
     const enteredEligibleCapsule = capsuleYieldEligible && !previousCapsuleYieldEligibleRef.current;
     if (!contentNearBottom) {
       setCapsuleYielded(false);
@@ -516,7 +531,7 @@ export function WorkbenchAssistantSurface({
     }
     previousContentNearBottomRef.current = contentNearBottom;
     previousCapsuleYieldEligibleRef.current = capsuleYieldEligible;
-  }, [capsuleYieldEligible, contentNearBottom]);
+  }, [capsuleYieldEligible, contentNearBottom, resolvedContentViewportKey]);
 
   const restoreYieldedCapsule = useCallback(() => {
     setCapsuleYielded(false);
@@ -1701,6 +1716,20 @@ export function WorkbenchAssistantSurface({
   const stablePanelMode = renderDrawerContent ? "drawer" : renderMorphContent ? "morph" : "prewarm";
   const shouldMountStablePanel = surfaceMode !== "expanded" && (renderMorphContent || renderDrawerContent);
   const stablePanelContentReady = stablePanelMode === "drawer" && (drawerContentReady || panelMessageCount <= 0);
+  useBrowserOcclusionToken(
+    dockTransitionPhase !== null || drawerResize.dragging,
+    "window_transition",
+  );
+  useBrowserSpatialOcclusion(
+    expandedPanelFrameRef,
+    surfaceMode === "expanded" && dockTransitionPhase === null,
+    "workbench-assistant-expanded",
+  );
+  useBrowserSpatialOcclusion(
+    stablePanelRef,
+    shouldMountStablePanel && stablePanelMode !== "prewarm",
+    "workbench-assistant-dock",
+  );
   const stableReviewPanel =
     shouldMountStablePanel && stablePanelContentReady && workbenchReviewPanel && workbenchReviewDocument ? (
       <div
@@ -1872,6 +1901,7 @@ export function WorkbenchAssistantSurface({
   );
   const stableAssistantPanel = shouldMountStablePanel ? (
     <section
+      ref={stablePanelRef}
       className={[
         styles.morphPanel,
         stablePanelMode === "drawer" ? styles.drawer : "",
@@ -1970,6 +2000,7 @@ export function WorkbenchAssistantSurface({
             }}
           >
             <motion.div
+              ref={expandedPanelFrameRef}
               className={styles.expandedPanelFrame}
               data-btw-active={btwActive ? "true" : "false"}
               data-review-active={reviewActive ? "true" : "false"}

@@ -1,4 +1,5 @@
 import type { WebAnnotationTarget } from "../../runtime";
+import { canonicalizeBrowserFileAddress } from "../../domain";
 import type { WebAnnotationCoordinatorResolution } from "./resolverCoordinator";
 
 export interface WebAnnotationNavigationTarget {
@@ -9,6 +10,7 @@ export interface WebAnnotationNavigationTarget {
 }
 
 export interface WebAnnotationNavigationPanelSnapshot {
+  readonly hostKind: "agent" | "workbench";
   readonly scopeKey: string;
   readonly panelId: string;
   readonly active: boolean;
@@ -40,7 +42,7 @@ export class WebAnnotationPanelRegistry {
 
   register(panel: WebAnnotationNavigationPanel): () => void {
     const snapshot = panel.getSnapshot();
-    const key = panelKey(snapshot.scopeKey, snapshot.panelId);
+    const key = panelKey(snapshot.hostKind, snapshot.scopeKey, snapshot.panelId);
     this.#panels.set(key, panel);
     this.notify();
     return () => {
@@ -85,6 +87,7 @@ export class WebAnnotationNavigator {
     readonly scopeKey: string;
     readonly target: WebAnnotationNavigationTarget;
     readonly currentPanelId?: string;
+    readonly preferredHostKind?: "agent" | "workbench";
     createPanel(documentUrl: string): void;
   }): Promise<WebAnnotationNavigationResult> {
     this.#requests.get(input.scopeKey)?.abort();
@@ -112,6 +115,7 @@ export class WebAnnotationNavigator {
       readonly scopeKey: string;
       readonly target: WebAnnotationNavigationTarget;
       readonly currentPanelId?: string;
+      readonly preferredHostKind?: "agent" | "workbench";
       createPanel(documentUrl: string): void;
     },
     signal: AbortSignal,
@@ -120,24 +124,37 @@ export class WebAnnotationNavigator {
       this.#registry.list(input.scopeKey),
       input.target,
       input.currentPanelId,
+      input.preferredHostKind,
     );
     if (!panel) {
-      const priorIds = new Set(this.#registry.list(input.scopeKey).map((item) => item.getSnapshot().panelId));
+      const priorIds = new Set(
+        this.#registry.list(input.scopeKey).map((item) => snapshotKey(item.getSnapshot())),
+      );
       input.createPanel(input.target.documentUrl);
       panel = await this.#waitFor(() => {
         const candidates = this.#registry.list(input.scopeKey).filter((item) => {
           const snapshot = item.getSnapshot();
-          return !priorIds.has(snapshot.panelId) && panelMatches(snapshot, input.target);
+          return !priorIds.has(snapshotKey(snapshot)) && panelMatches(snapshot, input.target);
         });
-        return choosePanel(candidates, input.target, undefined);
+        return choosePanel(
+          candidates,
+          input.target,
+          undefined,
+          input.preferredHostKind,
+        );
       }, signal, "Timed out while opening the annotation source page");
     }
 
-    const panelId = panel.getSnapshot().panelId;
+    const selectedSnapshot = panel.getSnapshot();
+    const panelId = selectedSnapshot.panelId;
+    const hostKind = selectedSnapshot.hostKind;
     panel.activate();
     panel = await this.#waitFor(() => {
       const current = this.#registry.list(input.scopeKey).find(
-        (candidate) => candidate.getSnapshot().panelId === panelId,
+        (candidate) => {
+          const snapshot = candidate.getSnapshot();
+          return snapshot.panelId === panelId && snapshot.hostKind === hostKind;
+        },
       );
       if (!current) return null;
       const snapshot = current.getSnapshot();
@@ -211,14 +228,25 @@ function choosePanel(
   panels: readonly WebAnnotationNavigationPanel[],
   target: WebAnnotationNavigationTarget,
   currentPanelId?: string,
+  preferredHostKind?: "agent" | "workbench",
 ): WebAnnotationNavigationPanel | null {
   return panels
     .filter((panel) => panelMatches(panel.getSnapshot(), target))
     .sort((left, right) => {
       const leftSnapshot = left.getSnapshot();
       const rightSnapshot = right.getSnapshot();
-      const leftRank = panelRank(leftSnapshot, target, currentPanelId);
-      const rightRank = panelRank(rightSnapshot, target, currentPanelId);
+      const leftRank = panelRank(
+        leftSnapshot,
+        target,
+        currentPanelId,
+        preferredHostKind,
+      );
+      const rightRank = panelRank(
+        rightSnapshot,
+        target,
+        currentPanelId,
+        preferredHostKind,
+      );
       return rightRank - leftRank || leftSnapshot.panelId.localeCompare(rightSnapshot.panelId);
     })[0] ?? null;
 }
@@ -227,9 +255,11 @@ function panelRank(
   panel: WebAnnotationNavigationPanelSnapshot,
   target: WebAnnotationNavigationTarget,
   currentPanelId?: string,
+  preferredHostKind?: "agent" | "workbench",
 ): number {
-  return (panel.urlKey === target.urlKey ? 8 : 0)
-    + (panel.panelId === currentPanelId ? 4 : 0)
+  return (panel.urlKey === target.urlKey ? 16 : 0)
+    + (panel.panelId === currentPanelId ? 8 : 0)
+    + (panel.hostKind === preferredHostKind ? 4 : 0)
     + (panel.active ? 2 : 0)
     + (panel.ready ? 1 : 0);
 }
@@ -246,14 +276,25 @@ function comparableDocumentUrl(value: string): string {
   try {
     const url = new URL(value);
     url.hash = "";
+    if (url.protocol === "file:") {
+      return canonicalizeBrowserFileAddress(url.href).canonicalKey;
+    }
     return url.href;
   } catch {
     return value.trim();
   }
 }
 
-function panelKey(scopeKey: string, panelId: string): string {
-  return `${scopeKey}\u0000${panelId}`;
+function panelKey(
+  hostKind: WebAnnotationNavigationPanelSnapshot["hostKind"],
+  scopeKey: string,
+  panelId: string,
+): string {
+  return `${hostKind}\u0000${scopeKey}\u0000${panelId}`;
+}
+
+function snapshotKey(snapshot: WebAnnotationNavigationPanelSnapshot): string {
+  return panelKey(snapshot.hostKind, snapshot.scopeKey, snapshot.panelId);
 }
 
 function throwIfAborted(signal: AbortSignal): void {

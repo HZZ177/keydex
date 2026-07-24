@@ -16,7 +16,7 @@ const ERROR_COPY: Readonly<Record<string, { readonly title: string; readonly des
   timeout: { title: "网站响应超时", description: "网站等待时间过长，请稍后重试。" },
   desktop_runtime_required: {
     title: "需要 Keydex 桌面运行时",
-    description: "当前是普通 Web 开发页，无法承载原生 WebView2 浏览器表面。保留 pnpm run dev 后，请另行启动桌面开发壳。",
+    description: "当前普通 Web 预览无法承载原生 WebView2 页面。你仍可关闭或切换此标签，并继续使用文件树和助手；如需验证 file:// 与网页批注，请另行启动桌面开发壳。",
   },
   tls_certificate: {
     title: "此连接不安全",

@@ -28,6 +28,7 @@ import { flushSync } from "react-dom";
 
 import { runtimeBridge, type RuntimeBridge } from "@/runtime";
 import { BROWSER_LIMITS } from "@/renderer/features/browser/config";
+import { canonicalizeBrowserFileAddress } from "@/renderer/features/browser/domain";
 import {
   browserGeometryCoordinator,
   browserPanelRuntime,
@@ -1661,6 +1662,17 @@ function RightSidebarPanel({
     },
     [updateActiveScopePanelState],
   );
+  const openAgentHtmlBrowserPreview = useCallback(
+    (absolutePath: string) => {
+      try {
+        const address = canonicalizeBrowserFileAddress(absolutePath);
+        openDefaultRegisteredPanel("browser", true, { restoreUrl: address.url });
+      } catch (error) {
+        notifications.error(error instanceof Error ? error.message : "无法打开本地 HTML 预览");
+      }
+    },
+    [notifications, openDefaultRegisteredPanel],
+  );
 
   const lastWebAnnotationNavigationRequestRef = useRef(0);
   useEffect(() => {
@@ -1678,6 +1690,7 @@ function RightSidebarPanel({
     void createWebAnnotationClient(runtime.http).get(snapshot.reference.annotationId)
       .then((detail) => webAnnotationNavigator.navigate({
         scopeKey: activeScopeKey,
+        preferredHostKind: "agent",
         target: {
           annotationId: detail.annotation.id,
           resourceId: detail.resource.id,
@@ -2210,6 +2223,7 @@ function RightSidebarPanel({
                 ? {
                     maximized,
                     renderContext: filePanelRenderContext,
+                    onOpenHtmlBrowserPreview: openAgentHtmlBrowserPreview,
                     onRestore,
                   }
                 : null
@@ -2248,6 +2262,7 @@ function RightSidebarPanel({
                     markdownViewDescriptor={activePreviewMarkdownView}
                     onQuoteSelection={activeRenderContext?.onQuoteSelection ? activePreviewQuoteSelection : undefined}
                     onStartChatFromAnnotation={activeRenderContext?.onStartChatFromAnnotation}
+                    onOpenHtmlBrowserPreview={openAgentHtmlBrowserPreview}
                     chrome="panel"
                   />
                 </Suspense>

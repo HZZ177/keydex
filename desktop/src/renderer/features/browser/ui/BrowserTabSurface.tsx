@@ -1,0 +1,1182 @@
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+
+import { persistableBrowserMetadata, resolveBrowserAddress } from "@/renderer/features/browser/domain/browserNavigation";
+import type {
+  BrowserTabHostAdapter,
+  BrowserTabState,
+} from "@/renderer/features/browser/domain";
+import {
+  BROWSER_FEATURE_FLAGS,
+} from "@/renderer/features/browser/config";
+import {
+  createWebAnnotationClient,
+  createWebAnnotationHighlightPort,
+  createWebAnnotationResolverPort,
+  createWebAnnotationSessionPort,
+  createWebAnnotationStore,
+  WebAnnotationHighlightSynchronizer,
+  WebAnnotationDrawer,
+  WebAnnotationShelf,
+  webAnnotationPanelRegistry,
+  webAnnotationReferencePresentations,
+  summarizeWebAnnotationChanges,
+  WebAnnotationResolverCoordinator,
+  WebAnnotationSession,
+  type WebAnnotationCoordinatorResolution,
+  type WebAnnotationItem,
+  type WebAnnotationNavigationPanel,
+  type WebAnnotationVisibleStatus,
+} from "@/renderer/features/browser/annotations";
+import {
+  BrowserBridgeRouter,
+  browserDownloadController,
+  browserPanelRuntime,
+  browserRuntimePanelId,
+  BrowserPolicyCoordinator,
+  isBrowserHostRuntimeAvailable,
+  type BrowserBridgeEnvelope,
+  type BrowserExternalProtocolRequest,
+} from "@/renderer/features/browser/runtime";
+import { BrowserExternalProtocolPrompt } from "./BrowserExternalProtocolPrompt";
+import { BrowserFindBar } from "./BrowserFindBar";
+import { BrowserPanel } from "./BrowserPanel";
+import { BrowserZoomBar } from "./BrowserZoomBar";
+import { DangerousDownloadPrompt } from "./DangerousDownloadPrompt";
+import { DownloadsView } from "./DownloadsView";
+import {
+  PermissionPrompt,
+  type BrowserPermissionRequest,
+} from "./PermissionPrompt";
+import type { BrowserDownloadIndicator } from "./BrowserToolbar";
+import browserStyles from "@/renderer/features/browser/ui/BrowserPanel.module.css";
+import { openExternalProtocol } from "@/runtime/externalLinks";
+import { runtimeBridge } from "@/runtime";
+import {
+  emitAddWebAnnotationToComposer,
+  emitRemoveWebAnnotationFromComposers,
+} from "@/renderer/events/webAnnotationContext";
+import { useTheme } from "@/renderer/providers/ThemeProvider";
+import { useNotifications } from "@/renderer/providers/NotificationProvider";
+
+const traceBrowserAnnotation = (stage: string, detail: Record<string, unknown> = {}) => {
+  console.info("[Keydex Browser Annotation]", stage, detail);
+};
+
+export interface BrowserTabSurfaceProps<TState extends BrowserTabState = BrowserTabState> {
+  readonly host: BrowserTabHostAdapter<TState>;
+}
+
+export function BrowserTabSurface<TState extends BrowserTabState>({
+  host,
+}: BrowserTabSurfaceProps<TState>) {
+  const { active, scopeKey, state } = host;
+  const { theme } = useTheme();
+  const notifications = useNotifications();
+  const runtimePanelId = browserRuntimePanelId(scopeKey, state.id);
+  const runtimePanelRef = useRef({ ...state, id: runtimePanelId });
+  runtimePanelRef.current = { ...state, id: runtimePanelId };
+  const generationRef = useRef(0);
+  const [activatedGeneration, setActivatedGeneration] = useState(0);
+  const runtime = useSyncExternalStore(
+    browserPanelRuntime.store.subscribe,
+    () => browserPanelRuntime.store.getState().surfaces[runtimePanelId],
+    () => browserPanelRuntime.store.getState().surfaces[runtimePanelId],
+  );
+  const generation = runtime?.generation ?? activatedGeneration;
+  generationRef.current = generation;
+  const [address, setAddress] = useState(state.restoreUrl);
+  const [permissionRequest, setPermissionRequest] = useState<BrowserPermissionRequest | null>(null);
+  const [externalProtocolRequest, setExternalProtocolRequest] = useState<BrowserExternalProtocolRequest | null>(null);
+  const [respondingPermission, setRespondingPermission] = useState(false);
+  const [downloadsOpen, setDownloadsOpen] = useState(false);
+  const [downloadsIndicator, setDownloadsIndicator] = useState<BrowserDownloadIndicator | null>(null);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findFocusRequestId, setFindFocusRequestId] = useState(0);
+  const [findQuery, setFindQuery] = useState("");
+  const [findMatchCase, setFindMatchCase] = useState(false);
+  const [zoomOpen, setZoomOpen] = useState(false);
+  const [annotationsOpen, setAnnotationsOpen] = useState(false);
+  const [annotationSession, setAnnotationSession] = useState<WebAnnotationSession | null>(null);
+  const [annotationModeActive, setAnnotationModeActive] = useState(false);
+  const [annotationResolver, setAnnotationResolver] = useState<WebAnnotationResolverCoordinator | null>(null);
+  const [annotationResolutionStatuses, setAnnotationResolutionStatuses] = useState<
+    Readonly<Record<string, WebAnnotationVisibleStatus | undefined>>
+  >({});
+  const [annotationResolutionDetails, setAnnotationResolutionDetails] = useState<
+    Readonly<Record<string, WebAnnotationCoordinatorResolution | undefined>>
+  >({});
+  const annotationStore = useMemo(
+    () => createWebAnnotationStore(createWebAnnotationClient(runtimeBridge.http)),
+    [],
+  );
+  const requestFind = useCallback(() => {
+    setZoomOpen(false);
+    setFindOpen(true);
+    setFindFocusRequestId((current) => current + 1);
+  }, []);
+  const annotationHighlightPort = useMemo(
+    () => createWebAnnotationHighlightPort(browserPanelRuntime),
+    [],
+  );
+  const annotationState = useSyncExternalStore(
+    annotationStore.subscribe,
+    annotationStore.getState,
+    annotationStore.getState,
+  );
+  const addressInputRef = useRef<HTMLInputElement>(null);
+  const [respondingDownload, setRespondingDownload] = useState(false);
+  const downloads = useSyncExternalStore(
+    browserDownloadController.store.subscribe,
+    () => browserDownloadController.store.getState().items,
+    () => browserDownloadController.store.getState().items,
+  );
+  const surface = runtime?.generation === generation ? runtime.surface : null;
+  const navigation = runtime?.generation === generation ? runtime.navigation : null;
+  const dangerousDownload = Object.values(downloads).find((item) =>
+    item?.state === "requested"
+    && item.dangerous
+    && item.surface.panelId === runtimePanelId
+    && item.surface.generation === generation) ?? null;
+  const browserHostAvailable = isBrowserHostRuntimeAvailable();
+  const annotationsAvailable = BROWSER_FEATURE_FLAGS.annotationsEnabled;
+  const annotationEntry = annotationState.activePage
+    ? annotationState.pages[annotationState.activePage.pageKey]
+    : null;
+  const activeRef = useRef(active);
+  const hostRef = useRef(host);
+  const surfaceRef = useRef(surface);
+  const navigationRef = useRef(navigation);
+  const annotationResolverRef = useRef(annotationResolver);
+  const annotationSessionRef = useRef(annotationSession);
+  const annotationModeActiveRef = useRef(annotationModeActive);
+  const annotationHighlighterRef = useRef<WebAnnotationHighlightSynchronizer | null>(null);
+  const annotationHighlightContentRef = useRef<Readonly<Record<string, { readonly bodyMarkdown: string }>>>({});
+  const annotationItemsRef = useRef<readonly WebAnnotationItem[]>([]);
+  const downloadStateSnapshotRef = useRef<Readonly<Record<string, string | undefined>>>({});
+  const addAnnotationToComposerRef = useRef<(item: WebAnnotationItem) => ReturnType<typeof emitAddWebAnnotationToComposer>>(
+    () => "unhandled",
+  );
+  const deleteAnnotationRef = useRef<(annotationId: string) => Promise<void>>(async () => undefined);
+  const lastUrlKeyRef = useRef<string | null>(null);
+  const lastUrlKeyNavigationIdRef = useRef<string | null>(null);
+  const lastDocumentUrlRef = useRef(state.restoreUrl);
+  activeRef.current = active;
+  hostRef.current = host;
+  surfaceRef.current = surface;
+  navigationRef.current = navigation;
+  annotationResolverRef.current = annotationResolver;
+  annotationSessionRef.current = annotationSession;
+  annotationModeActiveRef.current = annotationModeActive;
+  annotationItemsRef.current = annotationEntry?.items ?? [];
+  annotationHighlightContentRef.current = Object.fromEntries(
+    annotationItemsRef.current.map((item) => [
+      item.annotation.id,
+      { bodyMarkdown: item.annotation.bodyMarkdown },
+    ]),
+  );
+  addAnnotationToComposerRef.current = (item) => {
+    const composerScopeKey = host.composerScopeKey;
+    if (!composerScopeKey) return "unhandled";
+    const settled = annotationResolutionDetails[item.annotation.id]?.settled
+      ?? annotationResolutionDetails[item.annotation.id]?.lastKnown
+      ?? null;
+    return emitAddWebAnnotationToComposer({
+      composerScopeKey,
+      reference: {
+        annotationId: item.annotation.id,
+        selectedRevision: item.annotation.revision,
+        selectedAt: new Date().toISOString(),
+        sourcePanelId: state.id,
+      },
+      presentation: {
+        annotationId: item.annotation.id,
+        title: item.resource.title,
+        summary: webAnnotationTargetSummary(item.annotation.target),
+        bodyMarkdown: item.annotation.bodyMarkdown,
+        origin: item.resource.origin,
+        sourceKind: item.resource.sourceKind ?? "web",
+        displayAddress: item.resource.documentUrl,
+        status: annotationResolutionStatuses[item.annotation.id],
+        change: summarizeWebAnnotationChanges(settled?.evidence?.changedSignals),
+        updatedAt: item.annotation.updatedAt,
+      },
+    });
+  };
+  deleteAnnotationRef.current = async (annotationId) => {
+    await annotationStore.getState().deleteAnnotation(annotationId);
+    emitRemoveWebAnnotationFromComposers(annotationId);
+  };
+  useEffect(() => {
+    const current = Object.fromEntries(
+      Object.values(downloads).flatMap((item) => (
+        item && item.surface.panelId === runtimePanelId ? [[item.id, item.state] as const] : []
+      )),
+    );
+    const previous = downloadStateSnapshotRef.current;
+    downloadStateSnapshotRef.current = current;
+    if (downloadsOpen) {
+      setDownloadsIndicator(null);
+      return;
+    }
+    const changedStates = Object.entries(current).flatMap(([id, downloadState]) => (
+      previous[id] !== downloadState ? [downloadState] : []
+    ));
+    if (changedStates.includes("failed")) {
+      setDownloadsIndicator("error");
+    } else if (changedStates.includes("completed")) {
+      setDownloadsIndicator("success");
+    } else if (changedStates.includes("paused")) {
+      setDownloadsIndicator("error");
+    } else if (changedStates.includes("downloading")) {
+      setDownloadsIndicator("loading");
+    } else if (changedStates.includes("cancelled")) {
+      setDownloadsIndicator(null);
+    }
+  }, [downloads, downloadsOpen, runtimePanelId]);
+  const updateAnnotationModeActive = useCallback((next: boolean) => {
+    annotationModeActiveRef.current = next;
+    setAnnotationModeActive(next);
+  }, []);
+  if (annotationEntry?.resource) {
+    lastUrlKeyRef.current = annotationEntry.resource.urlKey;
+    lastUrlKeyNavigationIdRef.current = annotationState.activePage?.navigationId ?? null;
+    lastDocumentUrlRef.current = annotationEntry.resource.documentUrl;
+  } else if (
+    active
+    && navigation?.url
+    && navigation.navigationId !== lastUrlKeyNavigationIdRef.current
+  ) {
+    lastUrlKeyRef.current = null;
+    lastDocumentUrlRef.current = navigation.url;
+  }
+  const navigationPanelRef = useRef<WebAnnotationNavigationPanel | null>(null);
+  if (!navigationPanelRef.current) {
+    navigationPanelRef.current = {
+      getSnapshot: () => ({
+        hostKind: host.kind,
+        scopeKey,
+        panelId: state.id,
+        active: activeRef.current,
+        ready: Boolean(
+          surfaceRef.current
+          && navigationRef.current
+          && !navigationRef.current.loading
+          && annotationResolverRef.current,
+        ),
+        urlKey: lastUrlKeyRef.current,
+        documentUrl: lastDocumentUrlRef.current,
+      }),
+      getResolution: (annotationId) => (
+        annotationResolverRef.current?.getSnapshot().resolutions[annotationId]
+      ),
+      activate: () => hostRef.current.activateTab(state.id),
+      reveal: async (annotationId, target) => {
+        const currentSurface = surfaceRef.current;
+        if (!currentSurface) throw new Error("浏览器页面尚未就绪");
+        await annotationHighlightPort.navigateToTarget({
+          surface: currentSurface,
+          annotationId,
+          target,
+        });
+      },
+    };
+  }
+
+  useEffect(() => (
+    state.profileMode === "persistent"
+      ? webAnnotationPanelRegistry.register(navigationPanelRef.current!)
+      : undefined
+  ), [scopeKey, state.id, state.profileMode]);
+  useEffect(() => {
+    webAnnotationPanelRegistry.notify();
+  }, [
+    active,
+    annotationEntry?.resource?.documentUrl,
+    annotationEntry?.resource?.urlKey,
+    annotationResolutionStatuses,
+    annotationResolver,
+    navigation?.loading,
+    navigation?.navigationId,
+    navigation?.url,
+    surface?.generation,
+    surface?.surfaceId,
+  ]);
+
+  useEffect(() => {
+    if (active) {
+      const next = browserPanelRuntime.activate(runtimePanelRef.current, theme);
+      generationRef.current = next;
+      setActivatedGeneration(next);
+    } else if (generationRef.current > 0) {
+      browserPanelRuntime.deactivate(runtimePanelId, generationRef.current);
+    }
+  }, [active, runtimePanelId, theme]);
+  const navigationCommandIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const command = state.navigationCommand;
+    if (!surface || !command || navigationCommandIdRef.current === command.id) return;
+    if (command.kind === "navigate" && !command.url) return;
+    navigationCommandIdRef.current = command.id;
+    const reloadMatchesAssociatedPage = command.kind !== "reload"
+      || !command.url
+      || navigation?.url === command.url;
+    const operation = command.kind === "navigate"
+      ? browserPanelRuntime.navigate(surface, command.url!, {
+          source: "app_preview",
+          userGesture: true,
+        })
+      : reloadMatchesAssociatedPage
+        ? browserPanelRuntime.history(surface, "reload")
+        : Promise.resolve();
+    void operation.then(() => {
+      const currentHost = hostRef.current;
+      if (currentHost.state.navigationCommand?.id !== command.id) return;
+      const {
+        navigationCommand: _completedCommand,
+        ...nextState
+      } = currentHost.state;
+      currentHost.updateState(nextState as TState);
+    }).catch((error: unknown) => {
+      navigationCommandIdRef.current = null;
+      browserPanelRuntime.store.getState().failCommand(
+        runtimePanelId,
+        generation,
+        error instanceof Error ? error.message : "浏览器导航失败",
+      );
+    });
+  }, [
+    generation,
+    runtimePanelId,
+    state.navigationCommand,
+    navigation?.url,
+    surface?.generation,
+    surface?.panelId,
+    surface?.surfaceId,
+  ]);
+  useEffect(() => {
+    setPermissionRequest(null);
+    setRespondingPermission(false);
+    setExternalProtocolRequest(null);
+  }, [generation]);
+  useEffect(() => () => {
+    if (generationRef.current > 0) browserPanelRuntime.deactivate(runtimePanelId, generationRef.current);
+  }, [runtimePanelId]);
+  useEffect(() => () => annotationStore.getState().dispose(), [annotationStore]);
+  useEffect(() => {
+    if (!surface || !annotationsAvailable) {
+      setAnnotationSession(null);
+      updateAnnotationModeActive(false);
+      setAnnotationsOpen(false);
+      return;
+    }
+    updateAnnotationModeActive(false);
+    const session = new WebAnnotationSession({
+      surface,
+      port: createWebAnnotationSessionPort(browserPanelRuntime),
+    });
+    const resolver = new WebAnnotationResolverCoordinator({
+      surface,
+      port: createWebAnnotationResolverPort(browserPanelRuntime),
+    });
+    const highlighter = new WebAnnotationHighlightSynchronizer({
+      surface,
+      port: annotationHighlightPort,
+    });
+    annotationHighlighterRef.current = highlighter;
+    const router = new BrowserBridgeRouter(surface);
+    const savingSelectionIds = new Set<string>();
+    let disposed = false;
+    const settleDraft = async (action: "save" | "cancel") => {
+      if (disposed) return;
+      const continueSelecting = annotationModeActiveRef.current;
+      traceBrowserAnnotation("renderer.draft.settle.started", {
+        action,
+        continueSelecting,
+        sessionStatus: session.getSnapshot().status,
+      });
+      try {
+        if (action === "save") {
+          if (continueSelecting) await session.completeDraftSaveAndContinue("element");
+          else session.completeDraftSave();
+        } else if (continueSelecting) {
+          await session.cancelDraftAndContinue("element");
+        } else {
+          session.cancelDraft();
+        }
+        traceBrowserAnnotation("renderer.draft.settle.completed", {
+          action,
+          continueSelecting,
+          sessionStatus: session.getSnapshot().status,
+          annotationModeActive: annotationModeActiveRef.current,
+        });
+      } catch (error) {
+        traceBrowserAnnotation("renderer.draft.settle.failed", {
+          action,
+          continueSelecting,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        if (!disposed) {
+          updateAnnotationModeActive(false);
+          notifications.error(error instanceof Error ? error.message : "无法继续网页批注模式");
+        }
+      }
+    };
+    const unbindRouter = router.bind(browserPanelRuntime.client);
+    const unsubscribeBridgeErrors = router.subscribeErrors((failure) => {
+      if (!annotationModeActiveRef.current && session.getSnapshot().status === "idle") return;
+      const code = failure.hostCode ?? failure.code;
+      console.warn("[Keydex web annotation bridge] message rejected", failure);
+      notifications.error(`网页批注消息链路异常（${code}）`);
+    });
+    const unsubscribeBridge = router.subscribe((envelope) => {
+      traceBrowserAnnotation("renderer.bridge.received", {
+        kind: envelope.kind,
+        requestId: envelope.requestId,
+        selectionId: "selectionId" in envelope.payload ? envelope.payload.selectionId : undefined,
+        bodyLength: "bodyMarkdown" in envelope.payload && typeof envelope.payload.bodyMarkdown === "string"
+          ? envelope.payload.bodyMarkdown.length
+          : undefined,
+      });
+      if (envelope.kind === "page.interaction") {
+        setAnnotationsOpen(false);
+        setDownloadsOpen(false);
+        return;
+      }
+      session.applyBridgeEnvelope(envelope);
+      resolver.applyBridgeEnvelope(envelope);
+      if (envelope.kind === "selection.result") setAnnotationsOpen(false);
+      if (envelope.kind === "highlight.action") {
+        const action = envelope as BrowserBridgeEnvelope<"highlight.action">;
+        if (action.payload.action === "resume_selection") {
+          if (!annotationModeActiveRef.current) return;
+          void session.startSelection("element").catch((error: unknown) => {
+            updateAnnotationModeActive(false);
+            void annotationHighlighterRef.current?.sync({}).catch(() => undefined);
+            notifications.error(error instanceof Error ? error.message : "无法继续网页批注模式");
+          });
+          return;
+        }
+        if (action.payload.action === "delete_annotation") {
+          const continueSelecting = annotationModeActiveRef.current;
+          void deleteAnnotationRef.current(action.payload.annotationId).then(() => {
+            notifications.success("网页批注已删除");
+          }).catch((error: unknown) => {
+            notifications.error(error instanceof Error ? error.message : "删除网页批注失败");
+          }).finally(() => {
+            if (!continueSelecting || !annotationModeActiveRef.current) return;
+            void session.startSelection("element").catch((error: unknown) => {
+              updateAnnotationModeActive(false);
+              void annotationHighlighterRef.current?.sync({}).catch(() => undefined);
+              notifications.error(error instanceof Error ? error.message : "无法继续网页批注模式");
+            });
+          });
+          return;
+        }
+        const item = annotationItemsRef.current.find((candidate) => (
+          candidate.annotation.id === action.payload.annotationId
+        ));
+        if (!item) {
+          notifications.error("该网页批注已不存在");
+          return;
+        }
+        const result = addAnnotationToComposerRef.current(item);
+        if (result === "added") notifications.success("网页批注已添加到输入框");
+        else if (result === "duplicate") notifications.info("该网页批注已在输入框中");
+        else if (result === "limit") notifications.warning("一次最多添加 20 条网页批注");
+        else notifications.error("当前没有可接收网页批注的输入框");
+        return;
+      }
+      if (envelope.kind === "annotation.cancelled") {
+        const cancellation = envelope as BrowserBridgeEnvelope<"annotation.cancelled">;
+        const snapshot = session.getSnapshot();
+        if (
+          snapshot.status === "draft"
+          && snapshot.draft.request.selectionId === cancellation.payload.selectionId
+        ) {
+          void settleDraft("cancel");
+        }
+        return;
+      }
+      if (envelope.kind === "selection.cancelled" || envelope.kind === "bridge.error") {
+        if (session.getSnapshot().status === "idle") updateAnnotationModeActive(false);
+        return;
+      }
+      if (envelope.kind !== "annotation.submit") return;
+      const submission = envelope as BrowserBridgeEnvelope<"annotation.submit">;
+      const snapshot = session.getSnapshot();
+      const submissionMatches = (
+        snapshot.status !== "draft"
+          ? false
+          : snapshot.draft.request.requestId === submission.requestId
+            && snapshot.draft.request.selectionId === submission.payload.selectionId
+            && !savingSelectionIds.has(submission.payload.selectionId)
+      );
+      traceBrowserAnnotation("renderer.annotation.submit.checked", {
+        requestId: submission.requestId,
+        selectionId: submission.payload.selectionId,
+        sessionStatus: snapshot.status,
+        submissionMatches,
+        alreadySaving: savingSelectionIds.has(submission.payload.selectionId),
+      });
+      if (!submissionMatches || snapshot.status !== "draft") return;
+      const bodyMarkdown = submission.payload.bodyMarkdown.trim();
+      if (!bodyMarkdown) {
+        void settleDraft("cancel");
+        notifications.warning("批注内容不能为空");
+        return;
+      }
+      savingSelectionIds.add(submission.payload.selectionId);
+      traceBrowserAnnotation("renderer.annotation.create.started", {
+        requestId: submission.requestId,
+        selectionId: submission.payload.selectionId,
+        bodyLength: bodyMarkdown.length,
+        activePage: Boolean(annotationStore.getState().activePage),
+      });
+      void annotationStore.getState().createAnnotation({
+        target: snapshot.draft.target,
+        bodyMarkdown,
+      }).then((detail) => {
+        if (snapshot.draft.liveBinding) {
+          resolver.confirmCreatedAnnotation({
+            resourceId: detail.resource.id,
+            annotationId: detail.annotation.id,
+            target: detail.annotation.target,
+            binding: snapshot.draft.liveBinding,
+          });
+        }
+        traceBrowserAnnotation("renderer.annotation.create.completed", {
+          requestId: submission.requestId,
+          selectionId: submission.payload.selectionId,
+          annotationId: detail.annotation.id,
+        });
+        const addResult = addAnnotationToComposerRef.current(detail);
+        if (addResult === "added") notifications.success("网页批注已创建并添加到输入框");
+        else if (addResult === "duplicate") notifications.success("网页批注已创建，输入框中已存在该引用");
+        else if (addResult === "limit") notifications.warning("网页批注已创建；输入框最多添加 20 条网页批注");
+        else notifications.warning("网页批注已创建；当前没有可接收引用的输入框");
+        void settleDraft("save");
+      }).catch((error: unknown) => {
+        traceBrowserAnnotation("renderer.annotation.create.failed", {
+          requestId: submission.requestId,
+          selectionId: submission.payload.selectionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        notifications.error(error instanceof Error ? error.message : "创建网页批注失败");
+        void settleDraft("cancel");
+      }).finally(() => {
+        savingSelectionIds.delete(submission.payload.selectionId);
+      });
+    });
+    const unsubscribeNavigation = browserPanelRuntime.client.subscribe((event) => {
+      if (
+        event.panelId === surface.panelId
+        && event.surfaceId === surface.surfaceId
+        && event.generation === surface.generation
+        && (event.kind === "selection.result"
+          || event.kind === "selection.cancelled"
+          || event.kind === "selection.failed")
+      ) {
+        traceBrowserAnnotation("renderer.host.received", {
+          kind: event.kind,
+          selectionRequestId: event.payload.selectionRequestId,
+          sessionStatus: session.getSnapshot().status,
+        });
+      }
+      if (
+        event.panelId === surface.panelId
+        && event.surfaceId === surface.surfaceId
+        && event.generation === surface.generation
+        && event.kind === "navigation.started"
+      ) {
+        updateAnnotationModeActive(false);
+        setAnnotationsOpen(false);
+        void session.handleNavigation();
+        resolver.handleNavigation(event.navigationId);
+      } else if (
+        event.panelId === surface.panelId
+        && event.surfaceId === surface.surfaceId
+        && event.generation === surface.generation
+        && event.kind === "resource.state_changed"
+      ) {
+        resolver.setSuspended(event.payload.next === "native_suspended" || event.payload.next === "discarded");
+      } else if (
+        event.panelId === surface.panelId
+        && event.surfaceId === surface.surfaceId
+        && event.generation === surface.generation
+        && event.kind === "surface.destroyed"
+      ) {
+        updateAnnotationModeActive(false);
+        resolver.setSuspended(true);
+      } else if (
+        event.panelId === surface.panelId
+        && event.surfaceId === surface.surfaceId
+        && event.generation === surface.generation
+        && (event.kind === "selection.cancelled" || event.kind === "selection.failed")
+        && session.getSnapshot().status === "idle"
+      ) {
+        updateAnnotationModeActive(false);
+      }
+    });
+    const unsubscribeSession = session.subscribe(() => {
+      const sessionStatus = session.getSnapshot().status;
+      resolver.setPaused(sessionStatus === "starting" || sessionStatus === "selecting"
+        || sessionStatus === "candidate" || sessionStatus === "cancelling");
+    });
+    const unsubscribeResolver = resolver.subscribe(() => {
+      const snapshot = resolver.getSnapshot();
+      setAnnotationResolutionStatuses(snapshot.visibleStatuses);
+      setAnnotationResolutionDetails(snapshot.resolutions);
+      void highlighter.sync(
+        annotationModeActiveRef.current ? snapshot.resolutions : {},
+        annotationHighlightContentRef.current,
+      ).catch(() => undefined);
+      webAnnotationPanelRegistry.notify();
+    });
+    setAnnotationSession(session);
+    setAnnotationResolver(resolver);
+    return () => {
+      disposed = true;
+      unsubscribeResolver();
+      unsubscribeSession();
+      unsubscribeNavigation();
+      unsubscribeBridge();
+      unsubscribeBridgeErrors();
+      unbindRouter();
+      resolver.dispose();
+      void highlighter.dispose().catch(() => undefined);
+      if (annotationHighlighterRef.current === highlighter) annotationHighlighterRef.current = null;
+      void session.closePanel();
+      setAnnotationSession((current) => current === session ? null : current);
+      updateAnnotationModeActive(false);
+      setAnnotationResolver((current) => current === resolver ? null : current);
+      setAnnotationResolutionStatuses({});
+      setAnnotationResolutionDetails({});
+    };
+  }, [annotationsAvailable, surface?.generation, surface?.panelId, surface?.surfaceId]);
+  useEffect(() => {
+    const activePage = annotationState.activePage;
+    if (!annotationResolver || !activePage || !annotationEntry?.resource) return;
+    annotationResolver.activatePage({
+      resourceId: annotationEntry.resource.id,
+      hostNavigationId: activePage.navigationId,
+      annotations: annotationEntry.items.map((item) => ({
+        resourceId: item.resource.id,
+        annotationId: item.annotation.id,
+        target: item.annotation.target,
+      })),
+    });
+  }, [annotationEntry?.items, annotationEntry?.resource, annotationResolver, annotationState.activePage]);
+  useEffect(() => {
+    const highlighter = annotationHighlighterRef.current;
+    const resolver = annotationResolverRef.current;
+    if (!highlighter || !resolver) return;
+    void highlighter.sync(
+      annotationModeActive ? resolver.getSnapshot().resolutions : {},
+      annotationHighlightContentRef.current,
+    ).catch(() => undefined);
+  }, [annotationEntry?.items, annotationModeActive]);
+  useEffect(() => {
+    for (const item of annotationEntry?.items ?? []) {
+      const settled = annotationResolutionDetails[item.annotation.id]?.settled
+        ?? annotationResolutionDetails[item.annotation.id]?.lastKnown
+        ?? null;
+      webAnnotationReferencePresentations.upsert({
+        annotationId: item.annotation.id,
+        title: item.resource.title,
+        summary: webAnnotationTargetSummary(item.annotation.target),
+        bodyMarkdown: item.annotation.bodyMarkdown,
+        origin: item.resource.origin,
+        sourceKind: item.resource.sourceKind ?? "web",
+        displayAddress: item.resource.documentUrl,
+        status: annotationResolutionStatuses[item.annotation.id],
+        change: summarizeWebAnnotationChanges(settled?.evidence?.changedSignals),
+        updatedAt: item.annotation.updatedAt,
+      });
+    }
+  }, [annotationEntry?.items, annotationResolutionDetails, annotationResolutionStatuses]);
+  useEffect(() => {
+    if (
+      !annotationsAvailable
+      || state.profileMode !== "persistent"
+      || !active
+      || !surface
+      || !navigation?.navigationId
+      || !navigation.url
+      || navigation.loading
+    ) return;
+    void annotationStore.getState().activatePage({
+      scope: webAnnotationScope(scopeKey),
+      sourceKind: navigation.url.toLowerCase().startsWith("file:")
+        ? "local_file"
+        : "web",
+      url: navigation.url,
+      title: navigation.title,
+      canonicalUrl: null,
+      profileMode: state.profileMode,
+      surface,
+      navigationId: navigation.navigationId,
+    });
+  }, [
+    active,
+    annotationStore,
+    annotationsAvailable,
+    navigation?.loading,
+    navigation?.navigationId,
+    navigation?.url,
+    scopeKey,
+    state.profileMode,
+    surface?.generation,
+    surface?.panelId,
+    surface?.surfaceId,
+  ]);
+  useEffect(() => {
+    if (active || !surface) return;
+    annotationStore.getState().closeSurface(surface);
+  }, [active, annotationStore, surface?.generation, surface?.panelId, surface?.surfaceId]);
+  useEffect(() => browserPanelRuntime.client.subscribe((event) => {
+    if (event.panelId !== runtimePanelId || event.generation !== generation) return;
+    if (event.kind === "permission.requested") setPermissionRequest(event.payload);
+    if (event.kind === "shortcut.requested") {
+      if (event.payload.shortcut === "find") {
+        requestFind();
+      } else if (event.payload.shortcut === "focus_address") {
+        addressInputRef.current?.focus();
+        addressInputRef.current?.select();
+      } else if (event.payload.shortcut === "reload" && surface) {
+        void browserPanelRuntime.history(surface, "reload");
+      } else if (event.payload.shortcut === "close_panel") {
+        host.closeTab(state.id);
+      }
+    }
+    if (
+      event.kind === "permission.expired"
+      && permissionRequest?.permissionRequestId === event.payload.permissionRequestId
+    ) setPermissionRequest(null);
+  }), [generation, host, permissionRequest?.permissionRequestId, requestFind, runtimePanelId, state.id, surface?.surfaceId]);
+  useEffect(() => {
+    if (!surface) return;
+    const coordinator = new BrowserPolicyCoordinator({
+      client: browserPanelRuntime.client,
+      surface,
+      onExternalProtocolRequest: setExternalProtocolRequest,
+      onNavigationFailure: () => undefined,
+      onOpenPanel: (url) => host.createTab({ restoreUrl: url, activate: true }),
+    });
+    coordinator.start();
+    return () => coordinator.stop();
+  }, [host, surface?.generation, surface?.panelId, surface?.surfaceId]);
+  useEffect(() => {
+    if (navigation?.url) setAddress(navigation.url);
+  }, [navigation?.url]);
+  useEffect(() => {
+    if (!surface) return;
+    void browserPanelRuntime.setZoom(surface, state.zoomFactor).catch(() => undefined);
+  }, [surface?.generation, surface?.surfaceId]);
+  useEffect(() => {
+    if (!surface) return;
+    const motion = typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-reduced-motion: reduce)")
+      : null;
+    const configure = () => {
+      void browserPanelRuntime.configureAppearance(surface, theme, motion?.matches ?? false).catch(() => undefined);
+    };
+    configure();
+    const unsubscribe = browserPanelRuntime.client.subscribe((event) => {
+      if (event.panelId !== surface.panelId
+        || event.surfaceId !== surface.surfaceId
+        || event.generation !== surface.generation
+        || event.kind !== "bridge.message"
+        || event.payload.bridgeEnvelope.kind !== "bridge.ready") return;
+      configure();
+    });
+    motion?.addEventListener("change", configure);
+    return () => {
+      unsubscribe();
+      motion?.removeEventListener("change", configure);
+    };
+  }, [surface?.generation, surface?.panelId, surface?.surfaceId, theme]);
+  useEffect(() => {
+    if (!navigation) return;
+    const metadata = persistableBrowserMetadata({ navigation });
+    if (!metadata) return;
+    const next = {
+      ...state,
+      title: metadata.title,
+      ...(metadata.faviconUrl ? { faviconUrl: metadata.faviconUrl } : {}),
+      restoreUrl: metadata.restoreUrl,
+      restoreUrlSanitized: metadata.restoreUrlSanitized,
+    } as TState;
+    if (
+      next.title !== state.title
+      || next.faviconUrl !== state.faviconUrl
+      || next.restoreUrl !== state.restoreUrl
+      || next.restoreUrlSanitized !== state.restoreUrlSanitized
+    ) {
+      host.updateState(next);
+    }
+  }, [host, navigation?.faviconUrl, navigation?.title, navigation?.url, state]);
+
+  const run = (operation: (surface: import("@/renderer/features/browser/domain").BrowserSurfaceRef) => Promise<void>) => {
+    if (!surface) return;
+    void operation(surface).catch((error: unknown) => {
+      browserPanelRuntime.store.getState().failCommand(runtimePanelId, generation, error instanceof Error ? error.message : "浏览器操作失败");
+    });
+  };
+  const respondPermission = (decision: "allow_once" | "deny") => {
+    if (!surface || !permissionRequest || respondingPermission) return;
+    setRespondingPermission(true);
+    void browserPanelRuntime.client.send("browser_respond_permission", {
+      ...surface,
+      permissionRequestId: permissionRequest.permissionRequestId,
+      origin: permissionRequest.origin,
+      decision,
+    }).then(() => {
+      browserPanelRuntime.setProtection(runtimePanelId, "permission", false);
+      setPermissionRequest(null);
+      setRespondingPermission(false);
+    }).catch(() => {
+      browserPanelRuntime.setProtection(runtimePanelId, "permission", false);
+      setPermissionRequest(null);
+      setRespondingPermission(false);
+    });
+  };
+  const stopFind = () => {
+    setFindOpen(false);
+    run((current) => browserPanelRuntime.stopFind(current));
+  };
+  const setZoom = (factor: number) => {
+    if (!surface || factor === state.zoomFactor) return;
+    void browserPanelRuntime.setZoom(surface, factor).then(() => {
+      host.updateState({
+        ...state,
+        zoomFactor: factor,
+        lastActivatedAt: new Date().toISOString(),
+      } as TState);
+    }).catch((error: unknown) => {
+      browserPanelRuntime.store.getState().failCommand(runtimePanelId, generation, error instanceof Error ? error.message : "页面缩放失败");
+    });
+  };
+  const annotationDisabledReason = browserAnnotationDisabledReason({
+    profileMode: state.profileMode,
+    ready: Boolean(annotationSession && annotationState.activePage && surface && navigation),
+    loading: Boolean(navigation?.loading),
+    failed: Boolean(navigation?.errorCategory || runtime?.status === "failed"),
+  });
+
+  const stopAnnotationMode = useCallback(() => {
+    setAnnotationsOpen(false);
+    updateAnnotationModeActive(false);
+    void annotationHighlighterRef.current?.sync({}).catch(() => undefined);
+    const currentSession = annotationSessionRef.current;
+    if (!currentSession) return;
+    const snapshot = currentSession.getSnapshot();
+    if (snapshot.status === "draft") {
+      currentSession.cancelDraft();
+    } else if (snapshot.status !== "idle" && snapshot.status !== "cancelling") {
+      void currentSession.cancelSelection("user");
+    }
+  }, [updateAnnotationModeActive]);
+
+  const startAnnotationMode = () => {
+    if (!annotationSession) return;
+    setAnnotationsOpen(false);
+    updateAnnotationModeActive(true);
+    const resolutions = annotationResolverRef.current?.getSnapshot().resolutions ?? {};
+    void annotationHighlighterRef.current?.sync(
+      resolutions,
+      annotationHighlightContentRef.current,
+    ).catch(() => undefined);
+    void annotationSession.startSelection("element").catch((error: unknown) => {
+      updateAnnotationModeActive(false);
+      void annotationHighlighterRef.current?.sync({}).catch(() => undefined);
+      notifications.error(error instanceof Error ? error.message : "无法进入网页批注模式");
+    });
+  };
+
+  const addAllAnnotationsToComposer = () => {
+    const items = annotationEntry?.items ?? [];
+    let added = 0;
+    let duplicates = 0;
+    let limited = false;
+    let unhandled = false;
+    for (const item of items) {
+      const result = addAnnotationToComposerRef.current(item);
+      if (result === "added") added += 1;
+      else if (result === "duplicate") duplicates += 1;
+      else if (result === "limit") {
+        limited = true;
+        break;
+      } else {
+        unhandled = true;
+        break;
+      }
+    }
+    if (added > 0) {
+      notifications.success(`已将 ${added} 条网页批注添加到输入框`);
+      if (limited) notifications.warning("输入框最多添加 20 条网页批注，其余批注未添加");
+    } else if (limited) {
+      notifications.warning("输入框最多添加 20 条网页批注");
+    } else if (unhandled) {
+      notifications.error("当前没有可接收网页批注的输入框");
+    } else if (duplicates > 0) {
+      notifications.info("当前页面的网页批注已全部在输入框中");
+    }
+  };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.key === "Escape" && annotationModeActiveRef.current) {
+        // The annotation button lives in the renderer chrome. Immediately
+        // after the first manual activation focus can therefore still belong
+        // to this window rather than the native WebView2 child, so Chromium's
+        // inspectModeCanceled event cannot observe Escape. Route that
+        // shell-focused case through the same stop boundary as the button.
+        event.preventDefault();
+        stopAnnotationMode();
+        return;
+      }
+      if (event.altKey || event.metaKey || !event.ctrlKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "l") {
+        event.preventDefault();
+        addressInputRef.current?.focus();
+        addressInputRef.current?.select();
+      } else if (key === "f") {
+        event.preventDefault();
+        requestFind();
+      } else if (key === "r") {
+        event.preventDefault();
+        run((current) => browserPanelRuntime.history(current, "reload"));
+      } else if (key === "w") {
+        event.preventDefault();
+        host.closeTab(state.id);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [generation, host, requestFind, state.id, stopAnnotationMode, surface?.surfaceId]);
+
+  const annotationShelf = annotationModeActive && annotationSession && state.profileMode === "persistent" ? (
+    <WebAnnotationShelf
+      count={annotationEntry?.items.length ?? 0}
+      open={annotationsOpen}
+      pageTitle={navigation?.title || state.title || "当前页面"}
+      pageUrl={navigation?.url || state.restoreUrl}
+      onAddAllToComposer={addAllAnnotationsToComposer}
+      onOpenChange={(open) => {
+        setAnnotationsOpen(open);
+        if (open) setDownloadsOpen(false);
+      }}
+    >
+      <WebAnnotationDrawer
+        open
+        profileMode={state.profileMode}
+        resolutionDetails={annotationResolutionDetails}
+        resolutions={annotationResolutionStatuses}
+        session={annotationSession}
+        showCreationActions={false}
+        store={annotationStore}
+        variant="shelf"
+        onAddToComposer={(item) => addAnnotationToComposerRef.current(item)}
+        onClose={() => setAnnotationsOpen(false)}
+        onDelete={(item) => deleteAnnotationRef.current(item.annotation.id)}
+      />
+    </WebAnnotationShelf>
+  ) : null;
+
+  return (
+    <div
+      className={browserStyles.workspace}
+      data-content="browser"
+      data-browser-host={host.kind}
+      hidden={!active}
+    >
+      <div className={browserStyles.browserMain}>
+        <BrowserPanel
+        active={active}
+        address={address}
+        addressInputRef={addressInputRef}
+        canGoBack={navigation?.canGoBack ?? false}
+        canGoForward={navigation?.canGoForward ?? false}
+        error={!browserHostAvailable
+          ? { category: "desktop_runtime_required", url: state.restoreUrl }
+          : navigation?.errorCategory
+          ? { category: navigation.errorCategory, url: navigation.url }
+          : runtime?.status === "failed"
+            ? { category: "process_failure", url: navigation?.url ?? state.restoreUrl }
+            : null}
+        empty={!navigation?.url}
+        loading={navigation?.loading ?? runtime?.status === "creating"}
+        annotationActive={annotationModeActive}
+        annotationDisabled={Boolean(annotationDisabledReason)}
+        annotationDisabledReason={annotationDisabledReason}
+        profileMode={state.profileMode}
+        resourceState={runtime?.resourceState ?? "discarded"}
+        surfaceReady={runtime?.status === "ready"}
+        surface={surface}
+        title={navigation?.title || state.title}
+        toolbarAccessory={(
+          <>
+            {findOpen ? (
+              <BrowserFindBar
+                focusRequestId={findFocusRequestId}
+                matchCase={findMatchCase}
+                query={findQuery}
+                onClose={stopFind}
+                onMatchCaseChange={setFindMatchCase}
+                onQueryChange={(value) => {
+                  setFindQuery(value);
+                  if (!value) run((current) => browserPanelRuntime.stopFind(current));
+                }}
+                onSearch={(backwards) => {
+                  if (findQuery) run((current) => browserPanelRuntime.find(current, findQuery, findMatchCase, backwards));
+                }}
+              />
+            ) : zoomOpen ? (
+              <BrowserZoomBar factor={state.zoomFactor} onChange={setZoom} onClose={() => setZoomOpen(false)} />
+            ) : null}
+          </>
+        )}
+        surfaceOverlay={(
+          <>
+            {annotationShelf}
+            {downloadsOpen ? <DownloadsView onClose={() => setDownloadsOpen(false)} /> : null}
+          </>
+        )}
+        downloadsActive={downloadsOpen}
+        downloadsIndicator={downloadsIndicator}
+        zoomFactor={state.zoomFactor}
+        onAddressChange={setAddress}
+        onAddressSubmit={(value) => {
+          try {
+            const target = resolveBrowserAddress(value).url;
+            setAddress(target);
+            run((current) => browserPanelRuntime.navigate(current, target, {
+              source: "address_bar",
+              userGesture: true,
+            }));
+          } catch (error) {
+            browserPanelRuntime.store.getState().failCommand(runtimePanelId, generation, error instanceof Error ? error.message : "地址无效");
+          }
+        }}
+        onAnnotations={annotationsAvailable
+          ? () => {
+              if (annotationModeActiveRef.current) stopAnnotationMode();
+              else startAnnotationMode();
+            }
+          : undefined}
+        onBack={() => run((current) => browserPanelRuntime.history(current, "back"))}
+        onForward={() => run((current) => browserPanelRuntime.history(current, "forward"))}
+        onDownloads={() => {
+          setFindOpen(false);
+          setZoomOpen(false);
+          setDownloadsOpen((value) => {
+            const open = !value;
+            if (open) {
+              setDownloadsIndicator(null);
+              setAnnotationsOpen(false);
+            }
+            return open;
+          });
+        }}
+        onFind={requestFind}
+        onReload={() => run((current) => browserPanelRuntime.history(current, "reload"))}
+        onRetry={() => {
+          if (surface) {
+            run((current) => browserPanelRuntime.navigate(
+              current,
+              navigation?.url ?? state.restoreUrl,
+              {
+                source: "restore",
+                initiatorUrl: navigation?.url,
+                userGesture: true,
+              },
+            ));
+          } else {
+            const next = browserPanelRuntime.activate(runtimePanelRef.current, theme);
+            generationRef.current = next;
+            setActivatedGeneration(next);
+          }
+        }}
+        onStop={() => run((current) => browserPanelRuntime.history(current, "stop"))}
+        onZoom={() => {
+          setFindOpen(false);
+          setZoomOpen((value) => !value);
+        }}
+      />
+      </div>
+      {permissionRequest ? (
+        <PermissionPrompt
+          request={permissionRequest}
+          responding={respondingPermission}
+          onAllow={() => respondPermission("allow_once")}
+          onDeny={() => respondPermission("deny")}
+        />
+      ) : null}
+      {externalProtocolRequest ? (
+        <BrowserExternalProtocolPrompt
+          request={externalProtocolRequest}
+          onCancel={() => setExternalProtocolRequest(null)}
+          onConfirm={(target) => {
+            void openExternalProtocol(target).finally(() => setExternalProtocolRequest(null));
+          }}
+        />
+      ) : null}
+      {dangerousDownload ? (
+        <DangerousDownloadPrompt
+          item={dangerousDownload}
+          responding={respondingDownload}
+          onAccept={() => {
+            setRespondingDownload(true);
+            void browserDownloadController.respond(dangerousDownload.id, "accept")
+              .finally(() => setRespondingDownload(false));
+          }}
+          onCancel={() => {
+            setRespondingDownload(true);
+            void browserDownloadController.respond(dangerousDownload.id, "cancel")
+              .finally(() => setRespondingDownload(false));
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function webAnnotationScope(scopeKey: string): import("@/renderer/features/browser/annotations").WebAnnotationScope {
+  if (scopeKey === "global") return { kind: "global", id: null };
+  const separator = scopeKey.indexOf(":");
+  const kind = scopeKey.slice(0, separator);
+  const id = scopeKey.slice(separator + 1).trim();
+  if ((kind !== "session" && kind !== "workspace") || !id) {
+    throw new Error(`Invalid browser annotation scope: ${scopeKey}`);
+  }
+  return { kind, id };
+}
+
+function webAnnotationTargetSummary(
+  target: WebAnnotationItem["annotation"]["target"],
+): string {
+  if (target.type === "text") return target.quote.exact;
+  if (target.type === "element") return target.accessibleName || target.textSummary || `<${target.tag}>`;
+  return `${Math.round(target.rect.width)} × ${Math.round(target.rect.height)} 区域`;
+}
+
+export function browserAnnotationDisabledReason(input: {
+  readonly profileMode: BrowserTabState["profileMode"];
+  readonly ready: boolean;
+  readonly loading: boolean;
+  readonly failed: boolean;
+}): string | undefined {
+  if (input.profileMode === "incognito") return "无痕模式不保存网页批注";
+  if (input.failed) return "当前页面不可用，无法创建网页批注";
+  if (!input.ready || input.loading) return "网页批注正在准备";
+  return undefined;
+}

@@ -94,6 +94,18 @@ def _source(url: str = "https://example.com/docs?page=1#region") -> dict:
     }
 
 
+def _local_source(
+    url: str = "file:///D:/wbf-missing-file/index.html#region",
+) -> dict:
+    return {
+        "source_kind": "local_file",
+        "url": url,
+        "title": "Local fixture",
+        "canonical_url": url.split("#", 1)[0],
+        "profile_mode": "persistent",
+    }
+
+
 def _register_payload(scope: dict, descriptor: dict, *, url: str | None = None) -> dict:
     return {
         "schema_version": 1,
@@ -113,6 +125,14 @@ def _region_target() -> dict:
     }
 
 
+def _local_region_target(
+    url: str = "file:///D:/wbf-missing-file/index.html#region",
+) -> dict:
+    return _region_target() | {
+        "frame": {"url": url, "index_path": []},
+    }
+
+
 def _create_payload(scope: dict, asset_id: str, *, url: str | None = None) -> dict:
     return {
         "schema_version": 1,
@@ -121,6 +141,38 @@ def _create_payload(scope: dict, asset_id: str, *, url: str | None = None) -> di
         "target": _region_target(),
         "body_markdown": "Region evidence",
         "tags": ["evidence"],
+        "properties": [],
+        "staged_asset_ids": [asset_id],
+    }
+
+
+def _local_register_payload(
+    scope: dict,
+    descriptor: dict,
+    *,
+    url: str = "file:///D:/wbf-missing-file/index.html#region",
+) -> dict:
+    return {
+        "schema_version": 1,
+        "scope": scope,
+        "source": _local_source(url),
+        "asset": descriptor,
+    }
+
+
+def _local_create_payload(
+    scope: dict,
+    asset_id: str,
+    *,
+    url: str = "file:///D:/wbf-missing-file/index.html#region",
+) -> dict:
+    return {
+        "schema_version": 1,
+        "scope": scope,
+        "source": _local_source(url),
+        "target": _local_region_target(url),
+        "body_markdown": "Local region evidence",
+        "tags": ["local", "evidence"],
         "properties": [],
         "staged_asset_ids": [asset_id],
     }
@@ -179,6 +231,57 @@ def test_managed_capture_register_attach_once_and_annotation_delete(tmp_path) ->
     assert deleted.status_code == 204
     assert asset_after_delete is None
     assert not directory.exists()
+
+
+def test_local_file_capture_register_attach_cancel_and_annotation_delete(tmp_path) -> None:
+    data_dir = tmp_path / "data"
+    scope = {"kind": "global", "id": None}
+    attached_id, attached_descriptor, attached_directory, _ = _write_capture(
+        data_dir,
+        suffix="a1",
+    )
+    cancelled_id, cancelled_descriptor, cancelled_directory, _ = _write_capture(
+        data_dir,
+        suffix="a2",
+    )
+
+    with _client(tmp_path) as client:
+        registered = client.post(
+            "/api/web-annotations/assets",
+            json=_local_register_payload(scope, attached_descriptor),
+        )
+        cancelled_registered = client.post(
+            "/api/web-annotations/assets",
+            json=_local_register_payload(scope, cancelled_descriptor),
+        )
+        cancelled = client.delete(f"/api/web-annotations/assets/{cancelled_id}")
+        created = client.post(
+            "/api/web-annotations",
+            json=_local_create_payload(scope, attached_id),
+        )
+
+        assert registered.status_code == 201
+        assert cancelled_registered.status_code == 201
+        assert cancelled.status_code == 204
+        assert created.status_code == 201
+        detail = created.json()
+        annotation_id = detail["annotation"]["id"]
+        resource = detail["resource"]
+        assert resource["source_kind"] == "local_file"
+        assert resource["normalization_version"] == 2
+        assert detail["assets"][0]["id"] == attached_id
+        assert detail["assets"][0]["state"] == "attached"
+        assert detail["assets"][0]["resource_id"] == resource["id"]
+        assert not cancelled_directory.exists()
+
+        deleted = client.delete(f"/api/web-annotations/{annotation_id}")
+        stored_asset = client.app.state.repositories.web_annotations.assets.get(
+            attached_id
+        )
+
+    assert deleted.status_code == 204
+    assert stored_asset is None
+    assert not attached_directory.exists()
 
 
 def test_region_retarget_attaches_new_evidence_atomically_and_preserves_content(tmp_path) -> None:

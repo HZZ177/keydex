@@ -147,6 +147,68 @@ describe("WebAnnotationClient", () => {
     });
   });
 
+  it("forwards local_file list/create identity and maps version-2 resources", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        items: [apiLocalItem()],
+        next_cursor: null,
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        ...apiLocalItem(),
+        target_history: [],
+        assets: [],
+      }, 201));
+    const client = createWebAnnotationClient(new HttpClient({
+      baseUrl: "http://127.0.0.1:8765",
+      fetcher,
+    }));
+    const localTarget: WebRegionTarget = {
+      ...regionTarget,
+      frame: {
+        url: "file:///D:/workspace/index.html#chart",
+        indexPath: [],
+      },
+    };
+
+    const listed = await client.list({
+      scope: { kind: "workspace", id: "workspace-1" },
+      sourceKind: "local_file",
+      url: "file:///D:/workspace/index.html#chart",
+    });
+    await client.create({
+      scope: { kind: "workspace", id: "workspace-1" },
+      source: {
+        sourceKind: "local_file",
+        url: "file:///D:/workspace/index.html#chart",
+        title: "Local chart",
+        canonicalUrl: "file:///D:/workspace/index.html",
+        profileMode: "persistent",
+      },
+      target: localTarget,
+      bodyMarkdown: "Local body",
+    });
+
+    expect(fetcher.mock.calls[0][0]).toContain("source_kind=local_file");
+    expect(fetcher.mock.calls[0][0]).toContain(
+      "url=file%3A%2F%2F%2FD%3A%2Fworkspace%2Findex.html%23chart",
+    );
+    expect(listed.items[0].resource).toMatchObject({
+      sourceKind: "local_file",
+      normalizationVersion: 2,
+      origin: "file://",
+    });
+    expect(JSON.parse(String((fetcher.mock.calls[1][1] as RequestInit).body))).toMatchObject({
+      source: {
+        source_kind: "local_file",
+        url: "file:///D:/workspace/index.html#chart",
+        canonical_url: "file:///D:/workspace/index.html",
+      },
+      target: {
+        frame: { url: "file:///D:/workspace/index.html#chart" },
+      },
+    });
+  });
+
   it("clones region evidence into an immutable session attachment", async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(jsonResponse(apiEvidenceClone()));
     const client = createWebAnnotationClient(new HttpClient({
@@ -231,6 +293,7 @@ function apiItem(overrides: { revision?: number } = {}) {
     resource: {
       id: "resource-1",
       scope: { kind: "session", id: "session one" },
+      source_kind: "web",
       normalization_version: 1,
       url_key: "a".repeat(64),
       url_normalized: "https://example.test/article",
@@ -277,6 +340,35 @@ function apiItem(overrides: { revision?: number } = {}) {
       revision: overrides.revision ?? 1,
       created_at: "2026-07-22T00:00:00Z",
       updated_at: "2026-07-22T00:00:00Z",
+    },
+  };
+}
+
+function apiLocalItem() {
+  const value = apiItem();
+  return {
+    ...value,
+    resource: {
+      ...value.resource,
+      scope: { kind: "workspace", id: "workspace-1" },
+      source_kind: "local_file",
+      normalization_version: 2,
+      url_key: "f".repeat(64),
+      url_normalized: "file:///D:/workspace/index.html#chart",
+      document_url: "file:///D:/workspace/index.html",
+      canonical_url: "file:///D:/workspace/index.html",
+      origin: "file://",
+      title: "Local chart",
+    },
+    annotation: {
+      ...value.annotation,
+      target: {
+        ...value.annotation.target,
+        frame: {
+          ...value.annotation.target.frame,
+          url: "file:///D:/workspace/index.html#chart",
+        },
+      },
     },
   };
 }

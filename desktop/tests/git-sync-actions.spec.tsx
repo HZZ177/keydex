@@ -84,6 +84,24 @@ describe("GitSyncActions", () => {
     expect(screen.getByRole("button", { name: "更新" }).hasAttribute("disabled")).toBe(true);
   });
 
+  it("offers system credential login inside a failed update dialog", async () => {
+    const onCredentialLogin = vi.fn().mockResolvedValue(undefined);
+    render(<GitSyncActions
+      {...baseProps()}
+      status={statusWithUpstream("main", "origin/main", 0, 1)}
+      updateError="Git 凭据不可用"
+      credentialLoginRemote="origin"
+      onCredentialLogin={onCredentialLogin}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "更新…" }));
+    const dialog = screen.getByRole("dialog", { name: "更新项目" });
+    expect(dialog.textContent).toContain("origin 需要登录");
+    expect(dialog.textContent).toContain("Keydex 不会读取或保存密码");
+    fireEvent.click(within(dialog).getByRole("button", { name: "登录远程仓库" }));
+    await waitFor(() => expect(onCredentialLogin).toHaveBeenCalledTimes(1));
+  });
+
   it("previews source and target and requires an explicit upstream for first push", async () => {
     const onPush = vi.fn();
     render(<GitSyncActions

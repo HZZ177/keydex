@@ -21,6 +21,7 @@ describe("WebAnnotationShelf", () => {
     );
 
     const toggle = screen.getByRole("button", { name: "展开当前页面网页批注，12 条批注" });
+    expect(screen.getByRole("region", { name: "当前页面网页批注" }).dataset.annotationMode).toBe("active");
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(screen.getByText("当前页面批注消息列表")).not.toBeNull();
     expect(screen.getByText("A very long page title that must yield space to the fixed action")).not.toBeNull();

@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -23,14 +24,15 @@ use super::config::BROWSER_RESOLVE_BATCH_SIZE;
 use super::contract::{
     BridgeErrorPayload, BridgeMessagePayload, BrowserAppearanceTheme, BrowserCommandError,
     BrowserCommandErrorCode, BrowserCommandResponse, BrowserEvent, BrowserHighlightState,
-    BrowserNewWindowDisposition, BrowserReloadMode, BrowserSelectionMode, BrowserSurfaceRef,
-    BrowserVisibilityReason, CaptureCompletedPayload, CaptureFailedPayload, CaptureRegionInput,
-    ClearHighlightsInput, ClearProfileDataInput, ConfigureAppearanceInput, ControlDownloadInput,
-    CreateSurfaceInput, DiscardCaptureInput, ExternalProtocolPayload, FindInput,
-    NavigateAnnotationTargetInput, NavigateInput, NavigationFailedPayload, NavigationPayload,
-    NewWindowPayload, PageHistoryPayload, PageLoadingPayload, PageSourcePayload, PageTitlePayload,
-    ReasonPayload, ReloadInput, RenderHighlightsInput, ResolveAnnotationsInput,
-    ResourceStatePayload, RespondDownloadInput, RespondPermissionInput, SelectionCancelledPayload,
+    BrowserNavigationIntent, BrowserNavigationIntentSource, BrowserNewWindowDisposition,
+    BrowserReloadMode, BrowserSelectionMode, BrowserSurfaceRef, BrowserVisibilityReason,
+    CaptureCompletedPayload, CaptureFailedPayload, CaptureRegionInput, ClearHighlightsInput,
+    ClearProfileDataInput, ConfigureAppearanceInput, ControlDownloadInput, CreateSurfaceInput,
+    DiscardCaptureInput, ExternalProtocolPayload, FindInput, NavigateAnnotationTargetInput,
+    NavigateInput, NavigationFailedPayload, NavigationPayload, NewWindowPayload,
+    PageHistoryPayload, PageLoadingPayload, PageSourcePayload, PageTitlePayload, ReasonPayload,
+    ReloadInput, RenderHighlightsInput, ResolveAnnotationsInput, ResourceStatePayload,
+    RespondDownloadInput, RespondPermissionInput, SelectionCancelledPayload,
     SelectionFailedPayload, SelectionResultPayload, SetResourceStateInput, SetVisibilityInput,
     SetZoomInput, StartSelectionInput, SurfaceReadyPayload, TakeIncognitoCaptureInput,
     BROWSER_EVENT_TOPIC,
@@ -60,6 +62,34 @@ use super::ui_actor::{BrowserUiActorHandle, NativeBrowserSurface};
 const MAIN_WEBVIEW_LABEL: &str = "main";
 const BROWSER_LINK_POLICY_SCRIPT: &str = include_str!("page_link_policy.js");
 
+#[derive(Clone, Default)]
+struct BrowserNavigationPolicyGate {
+    pending_trusted_targets: Arc<Mutex<HashMap<String, String>>>,
+}
+
+impl BrowserNavigationPolicyGate {
+    fn register(&self, surface: &BrowserSurfaceRef, target: &Url) {
+        if let Ok(mut pending) = self.pending_trusted_targets.lock() {
+            pending.insert(surface_policy_key(surface), target.as_str().to_string());
+        }
+    }
+
+    fn consume_matching(&self, surface: &BrowserSurfaceRef, target: &str) -> bool {
+        let Ok(mut pending) = self.pending_trusted_targets.lock() else {
+            return false;
+        };
+        pending
+            .remove(&surface_policy_key(surface))
+            .is_some_and(|expected| equivalent_browser_urls(&expected, target))
+    }
+
+    fn remove(&self, surface: &BrowserSurfaceRef) {
+        if let Ok(mut pending) = self.pending_trusted_targets.lock() {
+            pending.remove(&surface_policy_key(surface));
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct BrowserHostState {
     surfaces: Arc<Mutex<SurfaceTable<NativeBrowserSurface>>>,
@@ -73,6 +103,7 @@ pub(crate) struct BrowserHostState {
     failures: BrowserFailureCoordinator,
     captures: BrowserCaptureManager,
     inspector: BrowserDevToolsInspector,
+    navigation_policy: BrowserNavigationPolicyGate,
     closing: Arc<AtomicBool>,
 }
 
@@ -90,6 +121,7 @@ impl Default for BrowserHostState {
             failures: BrowserFailureCoordinator::default(),
             captures: BrowserCaptureManager::default(),
             inspector: BrowserDevToolsInspector::default(),
+            navigation_policy: BrowserNavigationPolicyGate::default(),
             closing: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -118,7 +150,11 @@ pub(crate) async fn browser_create_surface(
     if payload.panel_id.is_empty() || payload.generation == 0 {
         return invalid_request(request_id, "panelId and generation are required");
     }
-    let initial_url = match parse_browser_url(&payload.initial_url, true) {
+    let initial_url = match authorize_browser_navigation_url(
+        &payload.initial_url,
+        true,
+        &payload.initial_navigation_intent,
+    ) {
         Ok(url) => url,
         Err(error) => return failure(request_id, error),
     };
@@ -445,6 +481,9 @@ pub(crate) async fn browser_create_surface(
 
     if initial_url.as_str() != "about:blank" {
         state
+            .navigation_policy
+            .register(&identity.reference, &initial_url);
+        state
             .lifecycle
             .begin_navigation(&identity.reference, bootstrap_navigation_id);
         emit_browser_event(
@@ -460,6 +499,7 @@ pub(crate) async fn browser_create_surface(
             let url = initial_url.as_str().to_string();
             move |surface| surface.navigate(&url)
         }) {
+            state.navigation_policy.remove(&identity.reference);
             emit_navigation_failed(
                 &caller,
                 &state,
@@ -555,6 +595,7 @@ impl BrowserHostState {
             }
             self.resources.remove(&surface);
             self.captures.release_surface(&surface);
+            self.navigation_policy.remove(&surface);
             self.lifecycle.remove(&surface);
             self.profiles
                 .release_surface(&std::env::temp_dir(), &surface);
@@ -586,6 +627,7 @@ pub(crate) async fn browser_destroy_surface(
     let state = caller.state::<BrowserHostState>().inner().clone();
     state.resources.remove(&payload);
     state.captures.release_surface(&payload);
+    state.navigation_policy.remove(&payload);
     let abandoned_selection = state.inspector.remove_surface(&payload);
     let outcome = match state.surfaces.lock() {
         Ok(mut surfaces) => surfaces.destroy_checked(&payload),
@@ -767,7 +809,7 @@ pub(crate) async fn browser_navigate(
         return failure(request_id, error);
     }
     let state = caller.state::<BrowserHostState>().inner().clone();
-    let url = match parse_browser_url(&payload.url, false) {
+    let url = match authorize_browser_navigation_url(&payload.url, false, &payload.intent) {
         Ok(url) => url,
         Err(error) => return failure(request_id, error),
     };
@@ -794,9 +836,11 @@ pub(crate) async fn browser_navigate(
         }),
     );
     let navigation_url = url.as_str().to_string();
+    state.navigation_policy.register(&payload.surface, &url);
     match webview.run(move |surface| surface.navigate(&navigation_url)) {
         Ok(()) => success(request_id),
         Err(reason) => {
+            state.navigation_policy.remove(&payload.surface);
             emit_navigation_failed(
                 &caller,
                 &state,
@@ -1827,6 +1871,7 @@ fn abort_surface(state: &BrowserHostState, identity: &super::surface::SurfaceIde
         .downloads
         .cancel_pending_for_surface(None, &identity.reference);
     state.captures.release_surface(&identity.reference);
+    state.navigation_policy.remove(&identity.reference);
     state
         .profiles
         .release_surface(&std::env::temp_dir(), &identity.reference);
@@ -1875,7 +1920,10 @@ fn attach_page_lifecycle_observers(
         DocumentTitleChangedEventHandler, NavigationCompletedEventHandler,
         NavigationStartingEventHandler,
     };
-    use windows_061::{core::PWSTR, Win32::System::Com::CoTaskMemFree};
+    use windows_061::{
+        core::{BOOL, PWSTR},
+        Win32::System::Com::CoTaskMemFree,
+    };
 
     surface.run(move |surface_handle| unsafe {
         let core = surface_handle.core();
@@ -1911,8 +1959,8 @@ fn attach_page_lifecycle_observers(
         let start_surface = reference.clone();
         let mut start_token = 0_i64;
         core.add_NavigationStarting(
-            &NavigationStartingEventHandler::create(Box::new(move |_, args| {
-                let Some(args) = args else {
+            &NavigationStartingEventHandler::create(Box::new(move |sender, args| {
+                let (Some(sender), Some(args)) = (sender, args) else {
                     return Ok(());
                 };
                 let mut value = PWSTR::null();
@@ -1921,6 +1969,41 @@ fn attach_page_lifecycle_observers(
                 }
                 let url = value.to_string().unwrap_or_default();
                 CoTaskMemFree(Some(value.0.cast()));
+                let mut source_value = PWSTR::null();
+                let source_url =
+                    if sender.Source(&mut source_value).is_ok() && !source_value.is_null() {
+                        let source = source_value.to_string().ok();
+                        CoTaskMemFree(Some(source_value.0.cast()));
+                        source
+                    } else {
+                        None
+                    };
+                let mut redirected = BOOL::default();
+                let _ = args.IsRedirected(&mut redirected);
+                let mut user_initiated = BOOL::default();
+                let _ = args.IsUserInitiated(&mut user_initiated);
+                let pending_trusted = start_state
+                    .navigation_policy
+                    .consume_matching(&start_surface, &url);
+                if authorize_native_navigation_start(
+                    &url,
+                    source_url.as_deref(),
+                    redirected.as_bool(),
+                    user_initiated.as_bool(),
+                    pending_trusted,
+                )
+                .is_err()
+                {
+                    let _ = args.SetCancel(true);
+                    emit_navigation_failed(
+                        &start_emitter,
+                        &start_state,
+                        &start_surface,
+                        &url,
+                        "policy_denied",
+                    );
+                    return Ok(());
+                }
                 start_state.downloads.begin_navigation(&start_surface);
                 let navigation_id = format!("native-{}", uuid::Uuid::new_v4().simple());
                 if !start_state
@@ -2076,16 +2159,20 @@ fn emit_native_navigation_event(
         }
         NativeNavigationEvent::NewWindowRequested {
             url,
+            source_url,
             user_initiated,
         } => {
-            if user_initiated && parse_browser_url(&url, false).is_ok() {
+            if parse_browser_url(&url, false).is_ok() {
+                let policy_allowed = is_popup_navigation_allowed(&url, &source_url, user_initiated);
                 emit_browser_event(
                     emitter,
                     state,
                     surface,
                     BrowserEvent::NewWindowRequested(NewWindowPayload {
                         url,
-                        user_gesture: true,
+                        source_url,
+                        user_gesture: user_initiated,
+                        policy_allowed,
                         disposition: BrowserNewWindowDisposition::Tab,
                     }),
                 );
@@ -2241,6 +2328,17 @@ pub(crate) fn parse_browser_url(
     value: &str,
     allow_internal_blank: bool,
 ) -> Result<Url, BrowserCommandError> {
+    if value.is_empty()
+        || value.len() > 8_192
+        || value.chars().any(char::is_control)
+        || has_malformed_percent_encoding(value)
+    {
+        return Err(error(
+            BrowserCommandErrorCode::InvalidRequest,
+            "Browser URL is invalid",
+            false,
+        ));
+    }
     let url = value.parse::<Url>().map_err(|_| {
         error(
             BrowserCommandErrorCode::InvalidRequest,
@@ -2248,6 +2346,9 @@ pub(crate) fn parse_browser_url(
             false,
         )
     })?;
+    if url.scheme() == "file" {
+        validate_browser_file_url(&url)?;
+    }
     if !is_allowed_browser_url(&url, allow_internal_blank) {
         return Err(error(
             BrowserCommandErrorCode::PolicyDenied,
@@ -2261,6 +2362,269 @@ pub(crate) fn parse_browser_url(
 pub(crate) fn is_allowed_browser_url(url: &Url, allow_internal_blank: bool) -> bool {
     matches!(url.scheme(), "http" | "https")
         || (allow_internal_blank && url.as_str() == "about:blank")
+        || (url.scheme() == "file" && validate_browser_file_url(url).is_ok())
+}
+
+pub(crate) fn authorize_browser_navigation_url(
+    value: &str,
+    allow_internal_blank: bool,
+    intent: &BrowserNavigationIntent,
+) -> Result<Url, BrowserCommandError> {
+    let url = parse_browser_url(value, allow_internal_blank)?;
+    if url.scheme() != "file" {
+        return Ok(url);
+    }
+
+    let direct_trusted = matches!(
+        intent.source,
+        BrowserNavigationIntentSource::AddressBar
+            | BrowserNavigationIntentSource::AppPreview
+            | BrowserNavigationIntentSource::Restore
+    );
+    let same_local_context = matches!(
+        intent.source,
+        BrowserNavigationIntentSource::PageLink
+            | BrowserNavigationIntentSource::Redirect
+            | BrowserNavigationIntentSource::Popup
+            | BrowserNavigationIntentSource::History
+    ) && intent
+        .initiator_url
+        .as_deref()
+        .and_then(|initiator| parse_browser_url(initiator, false).ok())
+        .is_some_and(|initiator| initiator.scheme() == "file");
+    let gesture_satisfied = !matches!(
+        intent.source,
+        BrowserNavigationIntentSource::PageLink | BrowserNavigationIntentSource::Popup
+    ) || intent.user_gesture;
+
+    if (!direct_trusted && !same_local_context) || !gesture_satisfied {
+        return Err(error(
+            BrowserCommandErrorCode::PolicyDenied,
+            "Remote pages cannot navigate to local files",
+            false,
+        ));
+    }
+    Ok(url)
+}
+
+fn authorize_native_navigation_start(
+    target: &str,
+    initiator_url: Option<&str>,
+    redirected: bool,
+    user_gesture: bool,
+    pending_trusted: bool,
+) -> Result<Url, BrowserCommandError> {
+    let parsed = parse_browser_url(target, true)?;
+    if parsed.scheme() != "file" || pending_trusted {
+        return Ok(parsed);
+    }
+    authorize_browser_navigation_url(
+        target,
+        false,
+        &BrowserNavigationIntent {
+            source: if redirected || !user_gesture {
+                BrowserNavigationIntentSource::Redirect
+            } else {
+                BrowserNavigationIntentSource::PageLink
+            },
+            initiator_url: initiator_url.map(str::to_string),
+            user_gesture,
+        },
+    )
+}
+
+fn is_popup_navigation_allowed(target: &str, source_url: &str, user_gesture: bool) -> bool {
+    user_gesture
+        && authorize_browser_navigation_url(
+            target,
+            false,
+            &BrowserNavigationIntent {
+                source: BrowserNavigationIntentSource::Popup,
+                initiator_url: Some(source_url.to_string()),
+                user_gesture,
+            },
+        )
+        .is_ok()
+}
+
+fn surface_policy_key(surface: &BrowserSurfaceRef) -> String {
+    format!(
+        "{}\u{0}{}\u{0}{}",
+        surface.panel_id, surface.surface_id, surface.generation
+    )
+}
+
+fn equivalent_browser_urls(left: &str, right: &str) -> bool {
+    match (left.parse::<Url>(), right.parse::<Url>()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left == right,
+    }
+}
+
+fn validate_browser_file_url(url: &Url) -> Result<(), BrowserCommandError> {
+    let invalid = || {
+        error(
+            BrowserCommandErrorCode::InvalidRequest,
+            "Local file URL is invalid",
+            false,
+        )
+    };
+    if url.scheme() != "file"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+        || url.path().is_empty()
+        || url.path() == "/"
+        || url.path().ends_with('/')
+    {
+        return Err(invalid());
+    }
+
+    let segments = url
+        .path_segments()
+        .ok_or_else(invalid)?
+        .map(decode_file_segment)
+        .collect::<Result<Vec<_>, _>>()?;
+    if segments.is_empty() {
+        return Err(invalid());
+    }
+    let host = url.host_str().unwrap_or_default();
+    if host.is_empty() || host.eq_ignore_ascii_case("localhost") {
+        let Some(drive) = segments.first() else {
+            return Err(invalid());
+        };
+        let drive_bytes = drive.as_bytes();
+        if drive_bytes.len() != 2
+            || !drive_bytes[0].is_ascii_alphabetic()
+            || drive_bytes[1] != b':'
+            || segments.len() < 2
+        {
+            return Err(invalid());
+        }
+        for segment in segments.iter().skip(1) {
+            validate_windows_file_segment(segment)?;
+        }
+    } else {
+        if !is_valid_file_authority(host) || segments.len() < 2 {
+            return Err(invalid());
+        }
+        for segment in &segments {
+            validate_windows_file_segment(segment)?;
+        }
+    }
+
+    #[cfg(windows)]
+    if url.to_file_path().is_ok_and(|path| path.is_dir()) {
+        return Err(error(
+            BrowserCommandErrorCode::InvalidRequest,
+            "Local directories cannot be opened as browser pages",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_windows_file_segment(segment: &str) -> Result<(), BrowserCommandError> {
+    if segment.is_empty()
+        || segment == "."
+        || segment == ".."
+        || segment.chars().any(|character| {
+            character.is_control()
+                || matches!(
+                    character,
+                    '<' | '>' | ':' | '"' | '|' | '?' | '*' | '/' | '\\'
+                )
+        })
+    {
+        return Err(error(
+            BrowserCommandErrorCode::InvalidRequest,
+            "Local file path contains invalid characters",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn decode_file_segment(segment: &str) -> Result<String, BrowserCommandError> {
+    let bytes = segment.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len() {
+                return Err(error(
+                    BrowserCommandErrorCode::InvalidRequest,
+                    "Local file URL contains malformed percent encoding",
+                    false,
+                ));
+            }
+            let high = decode_hex(bytes[index + 1]).ok_or_else(|| {
+                error(
+                    BrowserCommandErrorCode::InvalidRequest,
+                    "Local file URL contains malformed percent encoding",
+                    false,
+                )
+            })?;
+            let low = decode_hex(bytes[index + 2]).ok_or_else(|| {
+                error(
+                    BrowserCommandErrorCode::InvalidRequest,
+                    "Local file URL contains malformed percent encoding",
+                    false,
+                )
+            })?;
+            decoded.push((high << 4) | low);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).map_err(|_| {
+        error(
+            BrowserCommandErrorCode::InvalidRequest,
+            "Local file URL path is not valid UTF-8",
+            false,
+        )
+    })
+}
+
+fn has_malformed_percent_encoding(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && (index + 2 >= bytes.len()
+                || decode_hex(bytes[index + 1]).is_none()
+                || decode_hex(bytes[index + 2]).is_none())
+        {
+            return true;
+        }
+        index += if bytes[index] == b'%' { 3 } else { 1 };
+    }
+    false
+}
+
+fn decode_hex(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn is_valid_file_authority(authority: &str) -> bool {
+    !authority.is_empty()
+        && authority.len() <= 253
+        && authority.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|value| value.is_ascii_alphanumeric() || value == b'-')
+        })
 }
 
 fn success(request_id: String) -> BrowserCommandResponse {
@@ -2367,22 +2731,259 @@ fn debug_managed_root(_variable: &str, fallback: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
+    fn intent(
+        source: BrowserNavigationIntentSource,
+        initiator_url: Option<&str>,
+        user_gesture: bool,
+    ) -> BrowserNavigationIntent {
+        BrowserNavigationIntent {
+            source,
+            initiator_url: initiator_url.map(str::to_string),
+            user_gesture,
+        }
+    }
+
     #[test]
-    fn url_policy_allows_only_remote_http_and_internal_blank() {
+    fn url_parser_accepts_remote_and_legal_windows_file_urls() {
         assert!(parse_browser_url("https://example.com/docs", false).is_ok());
         assert!(parse_browser_url("http://127.0.0.1:4173/probe", false).is_ok());
         assert!(parse_browser_url("about:blank", true).is_ok());
+        assert!(parse_browser_url("file:///C:/workspace/index.html", false).is_ok());
+        assert!(parse_browser_url(
+            "file:///C:/workspace/%E4%B8%AD%E6%96%87%20%E9%A1%B5.html",
+            false,
+        )
+        .is_ok());
+        assert!(parse_browser_url(
+            "file:///C:/workspace/%E4%B8%AD%E6%96%87%20%E7%9B%AE%E5%BD%95/100%25%23done.html",
+            false,
+        )
+        .is_ok());
+        assert!(parse_browser_url("file://server/share/folder/index.html", false).is_ok());
+    }
+
+    #[test]
+    fn url_parser_rejects_invalid_schemes_authorities_paths_and_directories() {
         for denied in [
             "about:blank",
             "javascript:alert(1)",
             "data:text/html,hello",
-            "file:///C:/secret.txt",
             "blob:https://example.com/id",
             "keydex://browser",
             "not a url",
+            "file://user:pass@server/share/index.html",
+            "file:///tmp/index.html",
+            "file:///C:/workspace/folder/",
+            "file://server/share/",
+            "file://server/share",
+            "file:///C:/bad/%ZZ/index.html",
+            "file:///C:/bad/%2F/index.html",
         ] {
             assert!(parse_browser_url(denied, false).is_err(), "{denied}");
         }
+    }
+
+    #[test]
+    fn navigation_authorizer_allows_only_trusted_file_intents() {
+        let file_target = "file:///D:/workspace/next.html";
+        for allowed in [
+            intent(BrowserNavigationIntentSource::AddressBar, None, true),
+            intent(BrowserNavigationIntentSource::AppPreview, None, false),
+            intent(BrowserNavigationIntentSource::Restore, None, false),
+            intent(
+                BrowserNavigationIntentSource::PageLink,
+                Some("file:///D:/workspace/index.html"),
+                true,
+            ),
+            intent(
+                BrowserNavigationIntentSource::Redirect,
+                Some("file:///D:/workspace/index.html"),
+                false,
+            ),
+            intent(
+                BrowserNavigationIntentSource::Popup,
+                Some("file:///D:/workspace/index.html"),
+                true,
+            ),
+            intent(
+                BrowserNavigationIntentSource::History,
+                Some("file:///D:/workspace/index.html"),
+                false,
+            ),
+        ] {
+            assert!(
+                authorize_browser_navigation_url(file_target, false, &allowed).is_ok(),
+                "{allowed:?}",
+            );
+        }
+
+        for denied in [
+            intent(
+                BrowserNavigationIntentSource::PageLink,
+                Some("https://example.test/article"),
+                true,
+            ),
+            intent(
+                BrowserNavigationIntentSource::Redirect,
+                Some("https://example.test/article"),
+                false,
+            ),
+            intent(
+                BrowserNavigationIntentSource::Popup,
+                Some("https://example.test/article"),
+                true,
+            ),
+            intent(
+                BrowserNavigationIntentSource::History,
+                Some("https://example.test/article"),
+                false,
+            ),
+            intent(
+                BrowserNavigationIntentSource::PageLink,
+                Some("file:///D:/workspace/index.html"),
+                false,
+            ),
+            intent(
+                BrowserNavigationIntentSource::Popup,
+                Some("file:///D:/workspace/index.html"),
+                false,
+            ),
+        ] {
+            let error = authorize_browser_navigation_url(file_target, false, &denied).unwrap_err();
+            assert_eq!(
+                error.code,
+                BrowserCommandErrorCode::PolicyDenied,
+                "{denied:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn navigation_authorizer_keeps_http_and_internal_blank_policy_unchanged() {
+        for source in [
+            BrowserNavigationIntentSource::AddressBar,
+            BrowserNavigationIntentSource::AppPreview,
+            BrowserNavigationIntentSource::PageLink,
+            BrowserNavigationIntentSource::Redirect,
+            BrowserNavigationIntentSource::Popup,
+            BrowserNavigationIntentSource::Restore,
+            BrowserNavigationIntentSource::History,
+        ] {
+            let navigation_intent = intent(source, Some("file:///D:/workspace/index.html"), false);
+            assert!(authorize_browser_navigation_url(
+                "https://example.test/docs",
+                false,
+                &navigation_intent,
+            )
+            .is_ok());
+        }
+        let restore = intent(BrowserNavigationIntentSource::Restore, None, false);
+        assert!(authorize_browser_navigation_url("about:blank", true, &restore).is_ok());
+        assert!(authorize_browser_navigation_url("about:blank", false, &restore).is_err());
+    }
+
+    #[test]
+    fn native_start_policy_covers_file_http_links_redirects_history_and_trusted_commands() {
+        assert!(authorize_native_navigation_start(
+            "file:///D:/workspace/next.html",
+            Some("file:///D:/workspace/index.html"),
+            false,
+            true,
+            false,
+        )
+        .is_ok());
+        assert!(authorize_native_navigation_start(
+            "file:///D:/workspace/redirected.html",
+            Some("file:///D:/workspace/index.html"),
+            true,
+            false,
+            false,
+        )
+        .is_ok());
+        assert!(authorize_native_navigation_start(
+            "https://example.test/docs",
+            Some("file:///D:/workspace/index.html"),
+            false,
+            true,
+            false,
+        )
+        .is_ok());
+        for (redirected, user_gesture) in [(false, true), (true, false), (false, false)] {
+            let denied = authorize_native_navigation_start(
+                "file:///D:/workspace/private.html",
+                Some("https://example.test/article"),
+                redirected,
+                user_gesture,
+                false,
+            )
+            .unwrap_err();
+            assert_eq!(denied.code, BrowserCommandErrorCode::PolicyDenied);
+        }
+        assert!(authorize_native_navigation_start(
+            "file:///D:/workspace/address-bar.html",
+            Some("https://example.test/article"),
+            false,
+            false,
+            true,
+        )
+        .is_ok());
+        assert!(authorize_native_navigation_start(
+            "data:text/html,blocked",
+            Some("file:///D:/workspace/index.html"),
+            false,
+            true,
+            false,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn popup_policy_requires_a_gesture_and_never_allows_remote_to_file() {
+        assert!(is_popup_navigation_allowed(
+            "file:///D:/workspace/popup.html",
+            "file:///D:/workspace/index.html",
+            true,
+        ));
+        assert!(is_popup_navigation_allowed(
+            "https://example.test/popup",
+            "file:///D:/workspace/index.html",
+            true,
+        ));
+        assert!(!is_popup_navigation_allowed(
+            "file:///D:/workspace/private.html",
+            "https://example.test/article",
+            true,
+        ));
+        assert!(!is_popup_navigation_allowed(
+            "file:///D:/workspace/popup.html",
+            "file:///D:/workspace/index.html",
+            false,
+        ));
+        assert!(!is_popup_navigation_allowed(
+            "https://example.test/popup",
+            "https://example.test/article",
+            false,
+        ));
+    }
+
+    #[test]
+    fn pending_navigation_gate_is_surface_generation_scoped_and_single_consume() {
+        let gate = BrowserNavigationPolicyGate::default();
+        let first = BrowserSurfaceRef {
+            panel_id: "panel-1".to_string(),
+            surface_id: "surface-1".to_string(),
+            generation: 1,
+        };
+        let newer = BrowserSurfaceRef {
+            generation: 2,
+            ..first.clone()
+        };
+        let target = parse_browser_url("file:///D:/workspace/index.html", false).unwrap();
+        gate.register(&first, &target);
+
+        assert!(!gate.consume_matching(&newer, target.as_str()));
+        assert!(gate.consume_matching(&first, "file:///D:/workspace/index.html"));
+        assert!(!gate.consume_matching(&first, target.as_str()));
     }
 
     #[test]

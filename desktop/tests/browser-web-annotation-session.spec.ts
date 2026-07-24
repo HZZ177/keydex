@@ -93,6 +93,37 @@ describe("WebAnnotationSession", () => {
     expect(harness.setProtection).toHaveBeenLastCalledWith("panel-1", "selection", false);
   });
 
+  it("cancels a local-file region draft on navigation and releases its capture and protection", async () => {
+    const harness = createHarness(["selection-local"]);
+    const localTarget: WebRegionTarget = {
+      ...target,
+      frame: { url: "file:///D:/workspace/index.html", indexPath: [] },
+    };
+    await harness.session.startSelection("region");
+    expect(harness.session.applyBridgeEnvelope(selectionResult("selection-local", {
+      target: localTarget,
+    }))).toBe(true);
+    expect(harness.session.applyHostEvent(captureCompleted("capture:selection-local"))).toBe(true);
+
+    await harness.session.handleNavigation();
+
+    expect(harness.session.getSnapshot()).toEqual({
+      status: "idle",
+      lastExitReason: "navigation",
+      error: null,
+    });
+    expect(harness.discardCapture).toHaveBeenCalledWith({
+      surface,
+      captureRequestId: "capture:selection-local",
+    });
+    expect(harness.setProtection).toHaveBeenLastCalledWith(
+      "panel-1",
+      "annotation_draft",
+      false,
+    );
+    expect(harness.session.applyHostEvent(captureCompleted("capture:selection-local"))).toBe(false);
+  });
+
   it("runs the global surface teardown after Chromium reports an Escape cancellation", async () => {
     const harness = createHarness(["selection-1"]);
     await harness.session.startSelection("element");
@@ -216,6 +247,10 @@ describe("WebAnnotationSession", () => {
     draftHarness.session.applyBridgeEnvelope(selectionResult("selection-2"));
     await draftHarness.session.closePanel();
     expect(draftHarness.session.getSnapshot().status).toBe("idle");
+    expect(draftHarness.discardCapture).toHaveBeenCalledWith({
+      surface,
+      captureRequestId: "capture:selection-2",
+    });
     expect(JSON.stringify({ kind: "browser", restoreUrl: "https://example.test" })).not.toContain("draft:");
     expect(draftHarness.setProtection).toHaveBeenLastCalledWith("panel-1", "annotation_draft", false);
   });
@@ -365,7 +400,7 @@ function captureCompleted(
   captureRequestId: string,
 ): import("../src/renderer/features/browser/domain").BrowserEventEnvelope<"capture.completed"> {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "capture.completed",
     ...surface,
     sequence: 4,
@@ -405,7 +440,7 @@ function nativeElementResult(
   selectionRequestId: string,
 ): import("../src/renderer/features/browser/domain").BrowserEventEnvelope<"selection.result"> {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "selection.result",
     ...surface,
     sequence: 5,
@@ -424,7 +459,7 @@ function nativeSelectionCancelled(
   selectionRequestId: string,
 ): import("../src/renderer/features/browser/domain").BrowserEventEnvelope<"selection.cancelled"> {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "selection.cancelled",
     ...surface,
     sequence: 6,

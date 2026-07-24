@@ -4,7 +4,7 @@ export const BROWSER_INTERNAL_BLANK_URL = "about:blank" as const;
 
 export const BROWSER_PROTOCOL_VERSIONS = Object.freeze({
   rightSidebarState: 2,
-  browserHost: 1,
+  browserHost: 2,
   webAnnotation: 1,
   webAnnotationBridge: 1,
 } as const);

@@ -108,6 +108,7 @@ function MessageTextComponent({
   const previewScopeKey = previewContext?.activeScopeKey ?? null;
   const previewPanelOpen = previewContext?.panelOpen ?? false;
   const previewPanelActiveEntryId = previewContext?.panelActiveEntryId ?? null;
+  const previewWorkspaceRootPath = previewContext?.hostContext?.workspaceRootPath ?? null;
   const isUser = message.kind === "user";
   const useConversationRuntime = conversationMarkdownRuntimeEnabled(import.meta.env.MODE, typeof Worker !== "undefined");
   const isStreaming = message.status === "pending" || message.status === "running";
@@ -254,8 +255,16 @@ function MessageTextComponent({
     () => createConversationMarkdownRendererRegistry({
       htmlPreviewRuntime: workspaceRuntime?.localPreview,
       previewContext: previewContextRef.current,
+      workspaceRootPath: previewWorkspaceRootPath,
     }),
-    [previewAvailable, previewPanelActiveEntryId, previewPanelOpen, previewScopeKey, workspaceRuntime],
+    [
+      previewAvailable,
+      previewPanelActiveEntryId,
+      previewPanelOpen,
+      previewScopeKey,
+      previewWorkspaceRootPath,
+      workspaceRuntime,
+    ],
   );
   const conversationImageRuntime = useMemo(
     () => new ImageResourceRuntime({
@@ -976,12 +985,13 @@ function MessageQuoteContextChip({ item }: { item: AgentContextItem }) {
 function MessageWebAnnotationContextChip({ item }: { item: AgentContextItem }) {
   const snapshot = webAnnotationSnapshotFromContextItem(item);
   if (!snapshot) return <MessagePlainContextChip item={item} />;
+  const sourceLabel = snapshot.page.sourceKind === "local_file" ? "本地页面批注" : "网页批注";
   const label = snapshot.page.title
-    ? `网页批注 · ${snapshot.page.title}`
-    : item.label || "网页批注";
+    ? `${sourceLabel} · ${snapshot.page.title}`
+    : item.label || sourceLabel;
   const status = webAnnotationSnapshotStatusLabel(snapshot);
   const description = [
-    snapshot.page.documentUrl,
+    snapshot.page.displayAddress || snapshot.page.documentUrl,
     `${snapshot.anchor.display.label} · ${status}`,
     snapshot.comment.bodyMarkdown,
   ].filter(Boolean).join("\n\n");
@@ -997,7 +1007,7 @@ function MessageWebAnnotationContextChip({ item }: { item: AgentContextItem }) {
       chipElement="button"
       chipButtonProps={{
         type: "button",
-        "aria-label": `打开网页批注来源 ${snapshot.page.title || snapshot.page.origin}`,
+        "aria-label": `打开${sourceLabel}来源 ${snapshot.page.title || snapshot.page.origin}`,
         onClick: () => emitNavigateToWebAnnotation(snapshot),
       }}
       chipProps={{

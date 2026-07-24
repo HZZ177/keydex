@@ -1,5 +1,6 @@
 import type { BrowserEventEnvelope } from "../domain";
 import type { BrowserSurfaceRef } from "../domain";
+import { authorizeBrowserNavigation } from "../domain/browserNavigation";
 import type { BrowserHostClient, BrowserHostUnlisten } from "./BrowserHostClient";
 
 export interface BrowserNavigationFailure {
@@ -42,8 +43,24 @@ export class BrowserPolicyCoordinator {
     if (this.#options.surface && !sameSurface(this.#options.surface, event)) return;
     switch (event.kind) {
       case "new_window.requested":
-        if (event.payload.userGesture && isAllowedPanelUrl(event.payload.url)) {
-          this.#options.onOpenPanel(event.payload.url);
+        try {
+          if (!event.payload.policyAllowed || !event.payload.userGesture) {
+            throw new Error("Browser Host denied popup navigation");
+          }
+          const authorized = authorizeBrowserNavigation({
+            target: event.payload.url,
+            intent: {
+              source: "popup",
+              initiatorUrl: event.payload.sourceUrl,
+              userGesture: event.payload.userGesture,
+            },
+          });
+          this.#options.onOpenPanel(authorized.url);
+        } catch {
+          this.#options.onNavigationFailure({
+            category: "policy_denied",
+            url: event.payload.url,
+          });
         }
         break;
       case "external_protocol.requested": {
@@ -83,14 +100,5 @@ export function normalizeExternalProtocolRequest(input: {
     return { scheme, target: target.toString() };
   } catch {
     return null;
-  }
-}
-
-function isAllowedPanelUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
   }
 }

@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -6,6 +9,57 @@ import {
 } from "@/renderer/components/diff/engine/PierreViewportHorizontalScrollbars";
 
 describe("Pierre viewport blank-area horizontal scrolling", () => {
+  it("keeps pane vertical scrollbars visible and renders an inset arrowless horizontal rail", () => {
+    const component = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/renderer/components/diff/engine/PierreViewportHorizontalScrollbars.tsx",
+      ),
+      "utf8",
+    );
+    const styles = readFileSync(
+      resolve(
+        process.cwd(),
+        "src/renderer/components/diff/engine/PierreViewportHorizontalScrollbars.module.css",
+      ),
+      "utf8",
+    );
+    const diffViewStyles = readFileSync(
+      resolve(process.cwd(), "src/renderer/components/diff/KeydexDiffView.module.css"),
+      "utf8",
+    );
+
+    expect(component).not.toMatch(/\[data-code\]\s*{[^}]*scrollbar-width:\s*none/s);
+    expect(component).toMatch(
+      /\[data-code\]::\-webkit-scrollbar\s*{[^}]*width:\s*11px !important;[^}]*height:\s*0 !important;/s,
+    );
+    expect(styles).toMatch(
+      /\.scroller\s*{[^}]*left:\s*calc\(var\(--scrollbar-left\) \+ 6px\);[^}]*width:\s*max\(0px, calc\(var\(--scrollbar-width\) - 12px\)\);/s,
+    );
+    expect(styles).not.toMatch(/\.scroller\s*{[^}]*scrollbar-width:\s*thin/s);
+    expect(styles).toMatch(
+      /\.overlay \.scroller::\-webkit-scrollbar\s*{[^}]*height:\s*14px;/s,
+    );
+    expect(styles).toMatch(
+      /\.overlay \.scroller::\-webkit-scrollbar-thumb\s*{[^}]*border:\s*1px solid transparent;/s,
+    );
+    expect(styles).toMatch(
+      /\.overlay \.scroller::\-webkit-scrollbar-button\s*{[^}]*display:\s*none;[^}]*\-webkit-appearance:\s*none;/s,
+    );
+    expect(diffViewStyles).toMatch(
+      /\.patchViewport\s*{[^}]*width:\s*100%;[^}]*scrollbar-gutter:\s*stable;/s,
+    );
+    expect(diffViewStyles).not.toMatch(
+      /\.patchViewport\s*{[^}]*scrollbar-(?:width|color):/s,
+    );
+    expect(diffViewStyles).toMatch(
+      /\.patchViewport::\-webkit-scrollbar\s*{[^}]*width:\s*12px;[^}]*height:\s*12px;/s,
+    );
+    expect(diffViewStyles).toMatch(
+      /\.patchViewport::\-webkit-scrollbar-thumb\s*{[^}]*border:\s*2px solid transparent;/s,
+    );
+  });
+
   it("routes a horizontal wheel gesture from the blank viewport area to the pane under the pointer", () => {
     const left = pane(0, 320, 960);
     const right = pane(320, 320, 960);

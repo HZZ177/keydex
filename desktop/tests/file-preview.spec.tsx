@@ -296,6 +296,37 @@ describe("FilePreview", () => {
       .toBe("sha256:local-snapshot");
   });
 
+  it("opens external HTML and HTM files in source mode through the local document pipeline", async () => {
+    const readDocument = vi.fn().mockResolvedValue({
+      document_id: "tauri:D:/prototypes/landing.HTM",
+      source: "tauri",
+      path: "D:/prototypes/landing.HTM",
+      revision: "sha256:external-html",
+      encoding: "utf-8",
+      total_bytes: 34,
+      content: "<main><h1>External page</h1></main>",
+    });
+    const runtime = {
+      localPreview: {
+        readFile: vi.fn(),
+        readDocument,
+        readMedia: vi.fn(),
+      },
+    } as unknown as RuntimeBridge;
+
+    render(<FilePreview request={{ type: "local-file", path: "D:/prototypes/landing.HTM" }} runtime={runtime} />);
+
+    const sourceViewer = await screen.findByTestId("file-source-viewer");
+    expect(sourceViewer.querySelector(".cm-content")?.textContent).toContain("External page");
+    expect(readDocument).toHaveBeenCalledWith(
+      "D:/prototypes/landing.HTM",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(screen.queryByTitle("HTML 文件预览")).toBeNull();
+    expect(screen.queryByRole("button", { name: "预览" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "分屏" })).toBeNull();
+  });
+
   it("keeps A/B late results out of the preview after a rapid switch to C", async () => {
     const resolvers = new Map<string, (value: DocumentReadResult) => void>();
     const signals = new Map<string, AbortSignal>();
@@ -384,6 +415,55 @@ describe("FilePreview", () => {
 
     await waitFor(() => expect(onViewportNearBottomChange).toHaveBeenLastCalledWith(true));
     expect(document.querySelector("[data-file-preview-bottom-safe-area='true']")).toBeNull();
+  });
+
+  it("waits for async markdown geometry before reporting viewport proximity", async () => {
+    const metrics = { clientWidth: 640, clientHeight: 200, scrollHeight: 200 };
+    mockSourceScrollMetrics(metrics);
+    const onViewportNearBottomChange = vi.fn();
+    const baseSnapshotLoader = globalThis.__KEYDEX_TEST_FILE_MARKDOWN_SNAPSHOT_LOADER__!;
+    let releaseSnapshot: (() => void) | null = null;
+    const snapshotGate = new Promise<void>((resolve) => {
+      releaseSnapshot = resolve;
+    });
+    const snapshotLoader = vi.fn(
+      async (input: Parameters<typeof baseSnapshotLoader>[0]) => {
+        await snapshotGate;
+        return baseSnapshotLoader(input);
+      },
+    );
+    const runtime = fakeRuntime({
+      readFile: vi.fn().mockResolvedValue({
+        path: "README.md",
+        content: `# Long document\n\n${"A delayed line.\n\n".repeat(200)}`,
+        encoding: "utf-8",
+      }),
+    });
+
+    render(
+      <FilePreview
+        request={{ type: "file", path: "README.md" }}
+        sessionId="ses-1"
+        runtime={runtime}
+        chrome="panel"
+        markdownRuntimeSnapshotLoader={snapshotLoader}
+        onViewportNearBottomChange={onViewportNearBottomChange}
+      />,
+    );
+
+    await waitFor(() => expect(snapshotLoader).toHaveBeenCalledTimes(1));
+    expect(onViewportNearBottomChange).toHaveBeenCalledWith(null);
+    expect(onViewportNearBottomChange).not.toHaveBeenCalledWith(true);
+
+    metrics.scrollHeight = 1000;
+    await act(async () => {
+      releaseSnapshot?.();
+      await snapshotGate;
+    });
+
+    expect(await screen.findByRole("heading", { name: "Long document" })).not.toBeNull();
+    await waitFor(() => expect(onViewportNearBottomChange).toHaveBeenLastCalledWith(false));
+    expect(onViewportNearBottomChange).not.toHaveBeenCalledWith(true);
   });
 
   it("keeps panel file previews loading through the open animation", async () => {
@@ -1846,7 +1926,7 @@ describe("FilePreview", () => {
     }
   });
 
-  it("allows html file scripts in an origin-isolated sandboxed preview frame", async () => {
+  it("opens workspace html files in source mode without mounting an embedded frame", async () => {
     const runtime = fakeRuntime({
       readFile: vi.fn().mockResolvedValue({
         path: "index.html",
@@ -1857,10 +1937,240 @@ describe("FilePreview", () => {
 
     render(<FilePreview request={{ type: "file", path: "index.html" }} sessionId="ses-1" runtime={runtime} />);
 
-    const frame = (await screen.findByTitle("HTML 文件预览")) as HTMLIFrameElement;
-    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
-    expect(frame.getAttribute("sandbox")).not.toContain("allow-same-origin");
-    expect(frame.getAttribute("srcdoc")).toContain("页面预览");
+    const sourceViewer = await screen.findByTestId("file-source-viewer");
+    expect(sourceViewer.querySelector(".cm-content")?.textContent).toContain("页面预览");
+    expect(screen.queryByTitle("HTML 文件预览")).toBeNull();
+    expect(screen.queryByRole("button", { name: "预览" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "分屏" })).toBeNull();
+  });
+
+  it("sends only a resolved absolute workspace HTML path to the browser preview action", async () => {
+    const onOpenHtmlBrowserPreview = vi.fn();
+    const runtime = fakeRuntime({
+      readFile: vi.fn().mockResolvedValue({
+        path: "pages/index.html",
+        content: "<main>Workspace page</main>",
+        encoding: "utf-8",
+      }),
+    });
+
+    render(
+      <FilePreview
+        request={{ type: "file", path: "pages/index.html" }}
+        sessionId="ses-1"
+        runtime={runtime}
+        workspaceRootPath="D:/repo"
+        onOpenHtmlBrowserPreview={onOpenHtmlBrowserPreview}
+      />,
+    );
+
+    await screen.findByTestId("file-source-viewer");
+    fireEvent.click(screen.getByTestId("html-browser-preview-action"));
+    expect(onOpenHtmlBrowserPreview).toHaveBeenCalledOnce();
+    expect(onOpenHtmlBrowserPreview).toHaveBeenCalledWith("D:/repo/pages/index.html");
+  });
+
+  it("does not expose the HTML browser preview action when an absolute path cannot be resolved", async () => {
+    const runtime = fakeRuntime({
+      readFile: vi.fn().mockResolvedValue({
+        path: "index.html",
+        content: "<main>Unknown root</main>",
+        encoding: "utf-8",
+      }),
+    });
+
+    render(
+      <FilePreview
+        request={{ type: "file", path: "index.html" }}
+        sessionId="ses-1"
+        runtime={runtime}
+        onOpenHtmlBrowserPreview={vi.fn()}
+      />,
+    );
+
+    await screen.findByTestId("file-source-viewer");
+    expect(screen.queryByTestId("html-browser-preview-action")).toBeNull();
+  });
+
+  it("notifies the associated HTML browser exactly once after a successful disk save", async () => {
+    const onPersistedHtmlRevision = vi.fn();
+    const writeDocument = vi.fn().mockResolvedValue({
+      protocol_version: "document-write/v1",
+      path: "index.html",
+      revision: "sha256:after",
+      encoding: "utf-8",
+      total_bytes: 24,
+    });
+    const runtime = fakeRuntime({
+      readDocument: vi.fn().mockResolvedValue({
+        document_id: "workspace:session:ses-1:index.html",
+        source: "workspace",
+        path: "index.html",
+        content: "<main>before</main>",
+        encoding: "utf-8",
+        revision: "sha256:before",
+        total_bytes: 19,
+      }),
+      writeDocument,
+    });
+    render(
+      <FilePreview
+        request={{ type: "file", path: "index.html" }}
+        sessionId="ses-1"
+        runtime={runtime}
+        workspaceRootPath="D:/repo"
+        onPersistedHtmlRevision={onPersistedHtmlRevision}
+      />,
+    );
+    const sourceViewer = await screen.findByTestId("file-source-viewer");
+    const view = EditorView.findFromDOM(sourceViewer)!;
+    act(() => {
+      view.dispatch({
+        changes: { from: 6, to: 12, insert: "after" },
+        userEvent: "input",
+      });
+    });
+
+    await waitFor(() => expect(writeDocument).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      expect(onPersistedHtmlRevision).toHaveBeenCalledWith(
+        "D:/repo/index.html",
+        "save",
+        "sha256:after",
+      );
+    });
+    expect(onPersistedHtmlRevision).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not notify the associated HTML browser while a disk save is still pending", async () => {
+    const onPersistedHtmlRevision = vi.fn();
+    const writeDocument = vi.fn((): Promise<never> => new Promise(() => undefined));
+    const runtime = fakeRuntime({
+      readDocument: vi.fn().mockResolvedValue({
+        document_id: "workspace:session:ses-1:index.html",
+        source: "workspace",
+        path: "index.html",
+        content: "<main>before</main>",
+        encoding: "utf-8",
+        revision: "sha256:before",
+        total_bytes: 19,
+      }),
+      writeDocument,
+    });
+    render(
+      <FilePreview
+        request={{ type: "file", path: "index.html" }}
+        sessionId="ses-1"
+        runtime={runtime}
+        workspaceRootPath="D:/repo"
+        onPersistedHtmlRevision={onPersistedHtmlRevision}
+      />,
+    );
+    const sourceViewer = await screen.findByTestId("file-source-viewer");
+    act(() => {
+      EditorView.findFromDOM(sourceViewer)?.dispatch({
+        changes: { from: 6, to: 12, insert: "pending" },
+        userEvent: "input",
+      });
+    });
+
+    await waitFor(() => expect(writeDocument).toHaveBeenCalledTimes(1));
+    expect(onPersistedHtmlRevision).not.toHaveBeenCalled();
+  });
+
+  it("does not notify the associated HTML browser after a failed disk save", async () => {
+    const onPersistedHtmlRevision = vi.fn();
+    const writeDocument = vi.fn().mockRejectedValue(new Error("disk full"));
+    const runtime = fakeRuntime({
+      readDocument: vi.fn().mockResolvedValue({
+        document_id: "workspace:session:ses-1:index.html",
+        source: "workspace",
+        path: "index.html",
+        content: "<main>before</main>",
+        encoding: "utf-8",
+        revision: "sha256:before",
+        total_bytes: 19,
+      }),
+      writeDocument,
+    });
+    render(
+      <NotificationProvider>
+        <FilePreview
+          request={{ type: "file", path: "index.html" }}
+          sessionId="ses-1"
+          runtime={runtime}
+          workspaceRootPath="D:/repo"
+          onPersistedHtmlRevision={onPersistedHtmlRevision}
+        />
+      </NotificationProvider>,
+    );
+    const sourceViewer = await screen.findByTestId("file-source-viewer");
+    act(() => {
+      EditorView.findFromDOM(sourceViewer)?.dispatch({
+        changes: { from: 6, to: 12, insert: "failed" },
+        userEvent: "input",
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("notification-viewport").textContent).toContain("自动保存失败：disk full");
+    });
+    expect(onPersistedHtmlRevision).not.toHaveBeenCalled();
+  });
+
+  it("does not notify the associated HTML browser after a revision conflict", async () => {
+    const onPersistedHtmlRevision = vi.fn();
+    const writeDocument = vi.fn().mockRejectedValue(new RuntimeHttpError({
+      code: "revision_conflict",
+      message: "Document revision no longer matches the edited revision",
+      details: { actual_revision: "sha256:external" },
+      status: 409,
+      method: "POST",
+      path: "/write/document",
+      body: {},
+      rawText: "",
+    }));
+    const readDocument = vi.fn()
+      .mockResolvedValueOnce({
+        document_id: "workspace:session:ses-1:index.html",
+        source: "workspace",
+        path: "index.html",
+        content: "<main>before</main>",
+        encoding: "utf-8",
+        revision: "sha256:before",
+        total_bytes: 19,
+      })
+      .mockResolvedValue({
+        document_id: "workspace:session:ses-1:index.html",
+        source: "workspace",
+        path: "index.html",
+        content: "<main>external</main>",
+        encoding: "utf-8",
+        revision: "sha256:external",
+        total_bytes: 21,
+      });
+    const runtime = fakeRuntime({ readDocument, writeDocument });
+    render(
+      <NotificationProvider>
+        <FilePreview
+          request={{ type: "file", path: "index.html" }}
+          sessionId="ses-1"
+          runtime={runtime}
+          workspaceRootPath="D:/repo"
+          onPersistedHtmlRevision={onPersistedHtmlRevision}
+        />
+      </NotificationProvider>,
+    );
+    const sourceViewer = await screen.findByTestId("file-source-viewer");
+    act(() => {
+      EditorView.findFromDOM(sourceViewer)?.dispatch({
+        changes: { from: 6, to: 12, insert: "draft" },
+        userEvent: "input",
+      });
+    });
+
+    expect(await screen.findByRole("dialog", { name: "文件保存冲突" })).not.toBeNull();
+    expect(onPersistedHtmlRevision).not.toHaveBeenCalled();
   });
 
   it("uses the html frame as the only panel scroll owner and accepts its bottom proximity report", async () => {
@@ -1935,7 +2245,7 @@ describe("FilePreview", () => {
     expect(onViewportNearBottomChange).not.toHaveBeenCalledWith(true);
   });
 
-  it("opens workspace html files through the isolated local preview origin", async () => {
+  it("keeps nested workspace html files in source mode without preparing a local preview origin", async () => {
     const prepareHtmlFile = vi.fn().mockResolvedValue({
       path: "D:\\repo\\.ktaicoding\\prototype\\A2UI\\index.html",
       url: "http://127.0.0.1:8765/api/local-preview/html/token/.ktaicoding/prototype/A2UI/index.html",
@@ -1960,20 +2270,13 @@ describe("FilePreview", () => {
       />,
     );
 
-    const frame = (await screen.findByTitle("HTML 文件预览")) as HTMLIFrameElement;
-    expect(prepareHtmlFile).toHaveBeenCalledWith(
-      "D:/repo/.ktaicoding/prototype/A2UI/index.html",
-      "D:/repo",
-    );
-    expect(frame.getAttribute("src")).toBe(
-      "http://127.0.0.1:8765/api/local-preview/html/token/.ktaicoding/prototype/A2UI/index.html",
-    );
-    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
-    expect(frame.getAttribute("sandbox")).not.toContain("allow-same-origin");
-    expect(frame.getAttribute("srcdoc")).toBeNull();
+    const sourceViewer = await screen.findByTestId("file-source-viewer");
+    expect(sourceViewer.querySelector(".cm-content")?.textContent).toContain("prototype-subpage.html");
+    expect(prepareHtmlFile).not.toHaveBeenCalled();
+    expect(screen.queryByTitle("HTML 文件预览")).toBeNull();
   });
 
-  it("does not silently fall back to srcdoc when the workspace html runtime is stale", async () => {
+  it("does not require the legacy local preview runtime to show workspace html source", async () => {
     const runtime = fakeRuntime({
       readFile: vi.fn().mockResolvedValue({
         path: ".ktaicoding/prototype/A2UI/index.html",
@@ -1991,13 +2294,13 @@ describe("FilePreview", () => {
       />,
     );
 
-    expect((await screen.findByRole("alert")).textContent).toContain(
-      "HTML 直接预览运行时尚未更新，请刷新 Keydex 页面后重新打开文件。",
-    );
+    const sourceViewer = await screen.findByTestId("file-source-viewer");
+    expect(sourceViewer.querySelector(".cm-content")?.textContent).toContain("prototype-subpage.html");
+    expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.queryByTitle("HTML 文件预览")).toBeNull();
   });
 
-  it("opens Vite-backed html files through their loopback server origin", async () => {
+  it("keeps Vite-backed workspace html files in source mode", async () => {
     const prepareHtmlFile = vi.fn();
     const runtime = {
       ...fakeRuntime({
@@ -2021,13 +2324,10 @@ describe("FilePreview", () => {
       />,
     );
 
-    const frame = (await screen.findByTitle("HTML 文件预览")) as HTMLIFrameElement;
-    expect(frame.getAttribute("sandbox")).toBe("allow-scripts allow-same-origin");
-    expect(frame.getAttribute("src")).toBe(
-      "http://localhost:4173/prototype-20260623-001-a2ui-config.html",
-    );
-    expect(frame.getAttribute("srcdoc")).toBeNull();
+    const sourceViewer = await screen.findByTestId("file-source-viewer");
+    expect(sourceViewer.querySelector(".cm-content")?.textContent).toContain("@vite/client");
     expect(prepareHtmlFile).not.toHaveBeenCalled();
+    expect(screen.queryByTitle("HTML 文件预览")).toBeNull();
   });
 
   it("renders direct html content into the sandboxed frame without an empty first document", () => {
@@ -2053,7 +2353,7 @@ describe("FilePreview", () => {
     expect(frame.getAttribute("srcdoc")).not.toContain("文件为空");
   });
 
-  it("shows html source and sandboxed preview in split mode", async () => {
+  it("does not offer an embedded split preview for workspace html files", async () => {
     const runtime = fakeRuntime({
       readFile: vi.fn().mockResolvedValue({
         path: "index.html",
@@ -2064,14 +2364,10 @@ describe("FilePreview", () => {
 
     render(<FilePreview request={{ type: "file", path: "index.html" }} sessionId="ses-1" runtime={runtime} />);
 
-    expect(await screen.findByTitle("HTML 文件预览")).not.toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "分屏" }));
-
-    const frame = screen.getByTitle("HTML 文件预览") as HTMLIFrameElement;
-    expect(screen.getByLabelText("源码内容").textContent).toContain("<main>");
-    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
-    expect(frame.getAttribute("sandbox")).not.toContain("allow-same-origin");
-    expect(frame.getAttribute("srcdoc")).toContain("页面预览");
+    const sourceViewer = await screen.findByTestId("file-source-viewer");
+    expect(sourceViewer.querySelector(".cm-content")?.textContent).toContain("<main>");
+    expect(screen.queryByTitle("HTML 文件预览")).toBeNull();
+    expect(screen.queryByRole("button", { name: "分屏" })).toBeNull();
   });
 
   it("renders image files through workspace media runtime", async () => {

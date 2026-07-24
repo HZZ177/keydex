@@ -133,6 +133,22 @@ def test_git_environment_forces_non_interactive_parseable_defaults() -> None:
     assert environment["CUSTOM"] == "kept"
 
 
+def test_git_environment_allows_only_explicit_gcm_gui_interaction() -> None:
+    environment = git_environment(
+        {
+            "GIT_ASKPASS": "untrusted-askpass.exe",
+            "SSH_ASKPASS": "untrusted-ssh-askpass.exe",
+        },
+        allow_credential_prompt=True,
+    )
+
+    assert environment["GCM_INTERACTIVE"] == "true"
+    assert environment["GCM_GUI_PROMPT"] == "true"
+    assert environment["GIT_TERMINAL_PROMPT"] == "0"
+    assert "GIT_ASKPASS" not in environment
+    assert "SSH_ASKPASS" not in environment
+
+
 def test_git_output_decoder_preserves_utf8_names_and_replaces_invalid_bytes() -> None:
     assert decode_git_output("中文 😀\n".encode()) == "中文 😀\n"
     assert decode_git_output(b"invalid:\xff").startswith("invalid:")

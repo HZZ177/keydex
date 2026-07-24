@@ -10,6 +10,7 @@ import {
   MessageCircle,
   Moon,
   MoreHorizontal,
+  Palette,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
@@ -25,6 +26,7 @@ import {
 import { motion } from "motion/react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, SetStateAction } from "react";
 import {
+  Fragment,
   useCallback,
   useEffect,
   useId,
@@ -75,6 +77,16 @@ import {
 } from "@/renderer/utils/sessionMarkdownExport";
 import type { AgentSession } from "@/types/protocol";
 
+import { ProjectIconColorPicker } from "./ProjectIconColorPicker";
+import {
+  projectIconColorValue,
+  projectIconOutlineValue,
+  projectIconSwatchValue,
+  readProjectIconColorPreferences,
+  updateProjectIconColorPreference,
+  writeProjectIconColorPreferences,
+  type ProjectIconColorId,
+} from "./projectIconColors";
 import styles from "./Sider.module.css";
 
 export interface SiderEntry {
@@ -121,7 +133,8 @@ const SESSION_ACTION_MENU_GAP = 10;
 const SESSION_ACTION_MENU_EDGE = 8;
 const SESSION_ACTION_MENU_CLOSE_MS = 120;
 const PROJECT_ACTION_MENU_ID = "__project_actions__";
-const PROJECT_CONTEXT_ACTION_MENU_HEIGHT = 108;
+const PROJECT_ACTION_MENU_WIDTH = 174;
+const PROJECT_ACTION_MENU_HEIGHT = 330;
 interface SessionHistoryCacheEntry {
   sessions: AgentSession[];
   lifecycleRevision: number;
@@ -210,6 +223,7 @@ export function Sider({
   const [archivingWorkspaceId, setArchivingWorkspaceId] = useState<string | null>(null);
   const [workspaceArchiveTarget, setWorkspaceArchiveTarget] = useState<{ id: string; title: string } | null>(null);
   const [workspaceArchiveBlocker, setWorkspaceArchiveBlocker] = useState<LifecycleRuntimeError | null>(null);
+  const [projectIconColors, setProjectIconColors] = useState(readProjectIconColorPreferences);
   const historyRef = useRef<HTMLDivElement | null>(null);
   const lifecycleEventGateRef = useRef(createLifecycleEventGate());
   const lifecycleEntityStateRef = useRef(new Map<string, string>());
@@ -334,6 +348,16 @@ export function Sider({
     },
     [runtime],
   );
+
+  const changeProjectIconColor = useCallback((workspaceId: string, colorId: ProjectIconColorId | null) => {
+    setProjectIconColors((current) => {
+      const next = updateProjectIconColorPreference(current, workspaceId, colorId);
+      if (next !== current) {
+        writeProjectIconColorPreferences(next);
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     loadedSessionsRef.current = loadedSessions;
@@ -1050,6 +1074,10 @@ export function Sider({
                   exportingSessionId={exportingSessionId}
                   sessionIndicators={sessionIndicators}
                   workspaceId={group.workspaceId}
+                  workspaceRootPath={group.rootPath}
+                  projectIconColorId={group.workspaceId ? projectIconColors[group.workspaceId] ?? null : null}
+                  canManageWorkspace={canManageWorkspaces}
+                  onProjectIconColorChange={changeProjectIconColor}
                   getSessionPath={getSessionPath}
                   getWorkspaceNewConversationPath={getWorkspaceNewConversationPath}
                   historyExpansionLoading={Boolean(group.workspaceId && loadingWorkspaceHistoryIds.has(group.workspaceId))}
@@ -1067,6 +1095,12 @@ export function Sider({
                   onExportSession={(item) => void exportConversation(item)}
                   onForkSession={(item) => void forkConversationFromLatestCheckpoint(item)}
                   onStartRename={startRenameConversation}
+                  onStartWorkspaceRename={(workspaceId, title) => startRenameWorkspace(workspaceId, title)}
+                  onRevealWorkspace={(rootPath) => void revealWorkspace(rootPath)}
+                  onArchiveWorkspace={(workspaceId, title) => {
+                    setWorkspaceArchiveTarget({ id: workspaceId, title });
+                    setWorkspaceArchiveBlocker(null);
+                  }}
                   onTogglePinned={(item, pinned) => void togglePinnedConversation(item, pinned)}
                   onRefresh={refreshSessionList}
                   onNavigate={navigateTo}
@@ -1132,6 +1166,7 @@ export function Sider({
                     sessionIndicators={sessionIndicators}
                     workspaceId={group.workspaceId}
                     workspaceRootPath={group.rootPath}
+                    projectIconColorId={group.workspaceId ? projectIconColors[group.workspaceId] ?? null : null}
                     canManageWorkspace={canManageWorkspaces}
                     getSessionPath={getSessionPath}
                     getWorkspaceNewConversationPath={getWorkspaceNewConversationPath}
@@ -1153,6 +1188,7 @@ export function Sider({
                     onForkSession={(item) => void forkConversationFromLatestCheckpoint(item)}
                     onStartRename={startRenameConversation}
                     onStartWorkspaceRename={(workspaceId, title) => startRenameWorkspace(workspaceId, title)}
+                    onProjectIconColorChange={changeProjectIconColor}
                     onRevealWorkspace={(rootPath) => void revealWorkspace(rootPath)}
                     onArchiveWorkspace={(workspaceId, title) => {
                       setWorkspaceArchiveTarget({ id: workspaceId, title });
@@ -1513,6 +1549,7 @@ interface SiderSectionProps {
   sessionIndicators?: Record<string, SessionIndicator>;
   workspaceId?: string;
   workspaceRootPath?: string;
+  projectIconColorId?: ProjectIconColorId | null;
   canManageWorkspace?: boolean;
   historyExpansionLoading?: boolean;
   historyHasMore?: boolean;
@@ -1527,6 +1564,7 @@ interface SiderSectionProps {
   onRefresh?: () => Promise<void> | void;
   onStartRename?: (item: SiderEntry) => void;
   onStartWorkspaceRename?: (workspaceId: string, title: string) => void;
+  onProjectIconColorChange?: (workspaceId: string, colorId: ProjectIconColorId | null) => void;
   onRevealWorkspace?: (rootPath?: string) => void;
   onArchiveWorkspace?: (workspaceId: string, title: string) => void;
   onTogglePinned?: (item: SiderEntry, pinned: boolean) => void;
@@ -1621,6 +1659,7 @@ function SiderSection({
   sessionIndicators = {},
   workspaceId,
   workspaceRootPath,
+  projectIconColorId = null,
   canManageWorkspace = false,
   historyExpansionLoading = false,
   historyHasMore = false,
@@ -1635,10 +1674,12 @@ function SiderSection({
   onRefresh,
   onStartRename,
   onStartWorkspaceRename,
+  onProjectIconColorChange,
   onRevealWorkspace,
   onArchiveWorkspace,
   onTogglePinned,
 }: SiderSectionProps) {
+  const { theme } = useTheme();
   const notifications = useNotifications();
   const [hoveredSession, setHoveredSession] = useState<SessionHoverCard | null>(null);
   const [hoveredProject, setHoveredProject] = useState<ProjectHoverCard | null>(null);
@@ -1646,6 +1687,7 @@ function SiderSection({
   const [actionMenuSource, setActionMenuSource] = useState<"button" | "context">("button");
   const [closingActionMenuId, setClosingActionMenuId] = useState<string | null>(null);
   const [actionMenuPosition, setActionMenuPosition] = useState<CSSProperties | null>(null);
+  const [projectColorPickerOpen, setProjectColorPickerOpen] = useState(false);
   const [sectionExpanded, setSectionExpanded] = useState(true);
   const [requestedHistoryExpansionCount, setRequestedHistoryExpansionCount] = useState(0);
   const [localHistoryExpansionLoading, setLocalHistoryExpansionLoading] = useState(false);
@@ -1679,11 +1721,22 @@ function SiderSection({
     && workspaceId
     && canManageWorkspace
     && onStartWorkspaceRename
+    && onProjectIconColorChange
     && onRevealWorkspace
     && onArchiveWorkspace,
   );
   const projectMenuOpen = actionMenuId === PROJECT_ACTION_MENU_ID;
   const projectMenuVisible = projectMenuOpen || closingActionMenuId === PROJECT_ACTION_MENU_ID;
+  const projectIconColor = projectIconColorValue(projectIconColorId, theme);
+  const projectIconFill = projectIconSwatchValue(projectIconColorId, theme);
+  const projectIconOutline = projectIconOutlineValue(projectIconColorId, theme);
+  const projectFolderIconStyle: CSSProperties | undefined = projectIconFill && projectIconOutline
+    ? {
+        color: projectIconOutline,
+        fill: projectIconFill,
+        fillOpacity: theme === "dark" ? 0.92 : 0.86,
+      }
+    : undefined;
 
   useEffect(() => {
     const activePathChanged = previousActivePathRef.current !== activePath;
@@ -1730,6 +1783,7 @@ function SiderSection({
     }
     setClosingActionMenuId(actionMenuId);
     setActionMenuId(null);
+    setProjectColorPickerOpen(false);
     actionMenuCloseTimerRef.current = window.setTimeout(() => {
       setClosingActionMenuId((current) => (current === actionMenuId ? null : current));
       setActionMenuPosition(null);
@@ -1737,26 +1791,35 @@ function SiderSection({
     }, SESSION_ACTION_MENU_CLOSE_MS);
   }, [actionMenuId]);
 
-  const getActionMenuPosition = useCallback((target: HTMLElement): CSSProperties => {
+  const getActionMenuPosition = useCallback((
+    target: HTMLElement,
+    menuWidth = SESSION_ACTION_MENU_WIDTH,
+    menuHeight = SESSION_ACTION_MENU_HEIGHT,
+  ): CSSProperties => {
     const rect = target.getBoundingClientRect();
-    const left = Math.min(
-      rect.right + SESSION_ACTION_MENU_GAP,
-      window.innerWidth - SESSION_ACTION_MENU_WIDTH - SESSION_ACTION_MENU_EDGE,
+    const maxLeft = Math.max(
+      SESSION_ACTION_MENU_EDGE,
+      window.innerWidth - menuWidth - SESSION_ACTION_MENU_EDGE,
     );
-    const top = Math.min(
-      Math.max(rect.top - 4, SESSION_ACTION_MENU_EDGE),
-      window.innerHeight - SESSION_ACTION_MENU_HEIGHT - SESSION_ACTION_MENU_EDGE,
+    const maxTop = Math.max(
+      SESSION_ACTION_MENU_EDGE,
+      window.innerHeight - menuHeight - SESSION_ACTION_MENU_EDGE,
     );
     return {
-      left: Math.round(left),
-      top: Math.round(top),
+      left: Math.round(clamp(rect.right + SESSION_ACTION_MENU_GAP, SESSION_ACTION_MENU_EDGE, maxLeft)),
+      top: Math.round(clamp(rect.top - 4, SESSION_ACTION_MENU_EDGE, maxTop)),
     };
   }, []);
 
-  const getActionMenuPositionFromPoint = useCallback((clientX: number, clientY: number, menuHeight: number): CSSProperties => {
+  const getActionMenuPositionFromPoint = useCallback((
+    clientX: number,
+    clientY: number,
+    menuHeight: number,
+    menuWidth = SESSION_ACTION_MENU_WIDTH,
+  ): CSSProperties => {
     const maxLeft = Math.max(
       SESSION_ACTION_MENU_EDGE,
-      window.innerWidth - SESSION_ACTION_MENU_WIDTH - SESSION_ACTION_MENU_EDGE,
+      window.innerWidth - menuWidth - SESSION_ACTION_MENU_EDGE,
     );
     const maxTop = Math.max(
       SESSION_ACTION_MENU_EDGE,
@@ -1777,6 +1840,7 @@ function SiderSection({
     setActionMenuPosition(position);
     setActionMenuSource(source);
     setActionMenuId(id);
+    setProjectColorPickerOpen(false);
   }, []);
 
   useEffect(() => {
@@ -1870,6 +1934,83 @@ function SiderSection({
     }
   }, [notifications]);
 
+  const openSessionContextMenu = (event: ReactMouseEvent<HTMLElement>, item: SiderEntry) => {
+    if (!canOpenSessionActionMenu) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    setHoveredSession(null);
+    openActionMenu(
+      item.id,
+      getActionMenuPositionFromPoint(event.clientX, event.clientY, SESSION_CONTEXT_ACTION_MENU_HEIGHT),
+      "context",
+    );
+  };
+
+  const renderSessionActionMenu = (item: SiderEntry): ReactNode => {
+    const menuOpen = actionMenuId === item.id;
+    const menuVisible = menuOpen || closingActionMenuId === item.id;
+    if (!menuVisible || !actionMenuPosition) {
+      return null;
+    }
+    const isForking = forkingSessionId === item.id;
+    const isExporting = exportingSessionId === item.id;
+    const isArchiving = archivingSessionId === item.id;
+    const showContextRefresh = actionMenuSource === "context" && Boolean(onRefresh);
+    return createPortal(
+      <div
+        className={styles.historyActionMenu}
+        data-state={menuOpen ? "open" : "closing"}
+        ref={actionMenuRef}
+        role="menu"
+        aria-label={`会话操作 ${item.title}`}
+        style={actionMenuPosition}
+      >
+        <SessionActionMenuItems
+          canExport={canExport}
+          exporting={isExporting}
+          onExport={() => {
+            setHoveredSession(null);
+            closeActionMenu();
+            onExportSession?.(item);
+          }}
+          canFork={canFork}
+          forking={isForking}
+          onFork={() => {
+            setHoveredSession(null);
+            closeActionMenu();
+            onForkSession?.(item);
+          }}
+          canMutate={canMutate}
+          onRename={() => {
+            setHoveredSession(null);
+            closeActionMenu();
+            onStartRename?.(item);
+          }}
+          onCopyId={() => {
+            setHoveredSession(null);
+            closeActionMenu();
+            void copySessionId(item.id);
+          }}
+          archiving={isArchiving}
+          onArchive={() => {
+            setHoveredSession(null);
+            closeActionMenu();
+            onArchive?.(item);
+          }}
+          showRefresh={showContextRefresh}
+          onRefresh={() => {
+            setHoveredSession(null);
+            closeActionMenu();
+            void onRefresh?.();
+          }}
+        />
+      </div>,
+      document.body,
+    );
+  };
+
   const renderHistoryRow = (item: SiderEntry) => {
     const path = getSessionPath(item.id);
     const active = routeSelectionEnabled && isActivePath(activePath, path);
@@ -1893,22 +2034,6 @@ function SiderSection({
     const menuOpen = actionMenuId === item.id;
     const menuVisible = menuOpen || closingActionMenuId === item.id;
     const canShowHoverCard = editing?.id !== item.id && archivingSessionId !== item.id && !menuVisible;
-    const isExporting = exportingSessionId === item.id;
-    const isArchiving = archivingSessionId === item.id;
-    const showContextRefresh = menuVisible && actionMenuSource === "context" && Boolean(onRefresh);
-    const openContextMenu = (event: ReactMouseEvent<HTMLElement>) => {
-      if (!canOpenSessionActionMenu) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      setHoveredSession(null);
-      openActionMenu(
-        item.id,
-        getActionMenuPositionFromPoint(event.clientX, event.clientY, SESSION_CONTEXT_ACTION_MENU_HEIGHT),
-        "context",
-      );
-    };
     return (
       <motion.div
         className={styles.historyRow}
@@ -1922,7 +2047,9 @@ function SiderSection({
         data-can-mutate={canMutate ? "true" : "false"}
         data-forking={isForking ? "true" : "false"}
         data-menu-open={menuVisible ? "true" : "false"}
-        onContextMenu={canOpenSessionActionMenu ? openContextMenu : undefined}
+        onContextMenu={
+          canOpenSessionActionMenu ? (event) => openSessionContextMenu(event, item) : undefined
+        }
         onBlurCapture={
           canShowHoverCard
             ? (event) => {
@@ -2010,59 +2137,7 @@ function SiderSection({
                 >
                   <MoreHorizontal size={14} aria-hidden="true" />
                 </button>
-                {menuVisible && actionMenuPosition
-                  ? createPortal(
-                      <div
-                        className={styles.historyActionMenu}
-                        data-state={menuOpen ? "open" : "closing"}
-                        ref={actionMenuRef}
-                        role="menu"
-                        aria-label={`会话操作 ${item.title}`}
-                        style={actionMenuPosition}
-                      >
-                        <SessionActionMenuItems
-                          canExport={canExport}
-                          exporting={isExporting}
-                          onExport={() => {
-                            setHoveredSession(null);
-                            closeActionMenu();
-                            onExportSession?.(item);
-                          }}
-                          canFork={canFork}
-                          forking={isForking}
-                          onFork={() => {
-                            setHoveredSession(null);
-                            closeActionMenu();
-                            onForkSession?.(item);
-                          }}
-                          canMutate={canMutate}
-                          onRename={() => {
-                            setHoveredSession(null);
-                            closeActionMenu();
-                            onStartRename?.(item);
-                          }}
-                          onCopyId={() => {
-                            setHoveredSession(null);
-                            closeActionMenu();
-                            void copySessionId(item.id);
-                          }}
-                          archiving={isArchiving}
-                          onArchive={() => {
-                            setHoveredSession(null);
-                            closeActionMenu();
-                            onArchive?.(item);
-                          }}
-                          showRefresh={showContextRefresh}
-                          onRefresh={() => {
-                            setHoveredSession(null);
-                            closeActionMenu();
-                            void onRefresh?.();
-                          }}
-                        />
-                      </div>,
-                      document.body,
-                    )
-                  : null}
+                {renderSessionActionMenu(item)}
               </div>
             ) : null}
           </div>
@@ -2078,8 +2153,85 @@ function SiderSection({
     setHoveredProject(null);
     openActionMenu(
       PROJECT_ACTION_MENU_ID,
-      getActionMenuPositionFromPoint(event.clientX, event.clientY, PROJECT_CONTEXT_ACTION_MENU_HEIGHT),
+      getActionMenuPositionFromPoint(
+        event.clientX,
+        event.clientY,
+        PROJECT_ACTION_MENU_HEIGHT,
+        PROJECT_ACTION_MENU_WIDTH,
+      ),
       "context",
+    );
+  };
+
+  const renderProjectActionMenu = (): ReactNode => {
+    if (!projectMenuVisible || !actionMenuPosition || !workspaceId) {
+      return null;
+    }
+    return createPortal(
+      <div
+        className={styles.historyActionMenu}
+        data-state={projectMenuOpen ? "open" : "closing"}
+        ref={actionMenuRef}
+        role="menu"
+        aria-label={`项目操作 ${title}`}
+        data-project-menu="true"
+        style={actionMenuPosition}
+      >
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            closeActionMenu();
+            onStartWorkspaceRename?.(workspaceId, title);
+          }}
+        >
+          <Pencil size={14} />
+          <span>重命名</span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          aria-expanded={projectColorPickerOpen}
+          onClick={(event) => {
+            event.stopPropagation();
+            setProjectColorPickerOpen((open) => !open);
+          }}
+        >
+          <Palette size={14} style={projectIconColor ? { color: projectIconColor } : undefined} />
+          <span>图标颜色</span>
+        </button>
+        {projectColorPickerOpen ? (
+          <ProjectIconColorPicker
+            value={projectIconColorId}
+            onChange={(colorId) => onProjectIconColorChange?.(workspaceId, colorId)}
+          />
+        ) : null}
+        <button
+          type="button"
+          role="menuitem"
+          disabled={!workspaceRootPath}
+          onClick={() => {
+            closeActionMenu();
+            onRevealWorkspace?.(workspaceRootPath);
+          }}
+        >
+          <FolderOpen size={14} />
+          <span>资源管理器</span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          data-tone="danger"
+          onClick={() => {
+            closeActionMenu();
+            onArchiveWorkspace?.(workspaceId, title);
+          }}
+        >
+          <Archive size={14} />
+          <span>归档</span>
+        </button>
+      </div>,
+      document.body,
     );
   };
 
@@ -2098,9 +2250,11 @@ function SiderSection({
             aria-controls={sectionItemsId}
             aria-expanded={sectionExpanded}
             aria-label={`${sectionExpanded ? "收起" : "展开"}${sectionToggleLabel}`}
+            data-app-context-menu={canOpenProjectActionMenu ? "local" : undefined}
             data-active={collapsedProjectActive ? "true" : "false"}
             onBlur={() => setHoveredProject(null)}
             onClick={() => setSectionExpanded((expanded) => !expanded)}
+            onContextMenu={canOpenProjectActionMenu ? openProjectContextMenu : undefined}
             onFocus={(event) => showProjectCard(collapsedProjectActive, event.currentTarget)}
             onMouseEnter={(event) => showProjectCard(collapsedProjectActive, event.currentTarget)}
             onMouseLeave={() => setHoveredProject(null)}
@@ -2108,11 +2262,19 @@ function SiderSection({
             {kind === "pinned" ? (
               <span className={styles.collapsedPinnedMarker}>置</span>
             ) : (
-              <CollapsedSectionIcon className={styles.collapsedProjectFolder} size={16} strokeWidth={1.8} aria-hidden="true" />
+              <CollapsedSectionIcon
+                className={styles.collapsedProjectFolder}
+                data-project-icon-color={projectIconColorId ?? "default"}
+                size={16}
+                strokeWidth={projectIconFill ? 1.65 : 1.8}
+                style={projectFolderIconStyle}
+                aria-hidden="true"
+              />
             )}
             <ChevronDown className={styles.collapsedProjectChevron} size={10} strokeWidth={2.15} aria-hidden="true" />
           </button>
         ) : null}
+        {renderProjectActionMenu()}
         <div
           className={styles.collapsedSectionItems}
           aria-hidden={canToggleSection && !sectionExpanded}
@@ -2124,35 +2286,46 @@ function SiderSection({
               const path = getSessionPath(item.id);
               const active = routeSelectionEnabled && isActivePath(activePath, path);
               const indicator = sessionIndicators[item.id] ?? EMPTY_SESSION_INDICATOR;
+              const menuOpen = actionMenuId === item.id;
+              const menuVisible = menuOpen || closingActionMenuId === item.id;
               return (
-                <button
-                  aria-current={active ? "page" : undefined}
-                  aria-label={`打开会话 ${item.title}`}
-                  className={styles.collapsedSessionButton}
-                  data-active={active ? "true" : "false"}
-                  key={item.id}
-                  onBlur={() => setHoveredSession(null)}
-                  onClick={() => onNavigate?.(path)}
-                  onFocus={(event) => showSessionCard(item, active, event.currentTarget)}
-                  onMouseEnter={(event) => showSessionCard(item, active, event.currentTarget)}
-                  onMouseLeave={() => setHoveredSession(null)}
-                  type="button"
-                >
-                  {indicator.isStreaming && !indicator.waitingApproval && !indicator.waitingInteraction ? (
-                    <span
-                      className={styles.collapsedSessionLoading}
-                      data-collapsed-loading="true"
-                      aria-hidden="true"
-                    >
-                      <span className={styles.historyStreamingSpinner} />
-                    </span>
-                  ) : (
-                    <>
-                      <span className={styles.collapsedSessionInitial}>{sessionInitial(item.title)}</span>
-                      <SessionStatusIndicators indicator={indicator} collapsed />
-                    </>
-                  )}
-                </button>
+                <Fragment key={item.id}>
+                  <button
+                    aria-current={active ? "page" : undefined}
+                    aria-label={`打开会话 ${item.title}`}
+                    className={styles.collapsedSessionButton}
+                    data-app-context-menu={canOpenSessionActionMenu ? "local" : undefined}
+                    data-active={active ? "true" : "false"}
+                    data-menu-open={menuVisible ? "true" : "false"}
+                    onBlur={() => setHoveredSession(null)}
+                    onClick={() => onNavigate?.(path)}
+                    onContextMenu={
+                      canOpenSessionActionMenu
+                        ? (event) => openSessionContextMenu(event, item)
+                        : undefined
+                    }
+                    onFocus={(event) => showSessionCard(item, active, event.currentTarget)}
+                    onMouseEnter={(event) => showSessionCard(item, active, event.currentTarget)}
+                    onMouseLeave={() => setHoveredSession(null)}
+                    type="button"
+                  >
+                    {indicator.isStreaming && !indicator.waitingApproval && !indicator.waitingInteraction ? (
+                      <span
+                        className={styles.collapsedSessionLoading}
+                        data-collapsed-loading="true"
+                        aria-hidden="true"
+                      >
+                        <span className={styles.historyStreamingSpinner} />
+                      </span>
+                    ) : (
+                      <>
+                        <span className={styles.collapsedSessionInitial}>{sessionInitial(item.title)}</span>
+                        <SessionStatusIndicators indicator={indicator} collapsed />
+                      </>
+                    )}
+                  </button>
+                  {renderSessionActionMenu(item)}
+                </Fragment>
               );
             })}
           </div>
@@ -2188,9 +2361,21 @@ function SiderSection({
             onClick={() => setSectionExpanded((expanded) => !expanded)}
           >
             {kind === "pinned" ? null : sectionExpanded ? (
-              <FolderOpen size={15} strokeWidth={1.75} aria-hidden="true" />
+              <FolderOpen
+                data-project-icon-color={projectIconColorId ?? "default"}
+                size={15}
+                strokeWidth={projectIconFill ? 1.55 : 1.75}
+                style={projectFolderIconStyle}
+                aria-hidden="true"
+              />
             ) : (
-              <Folder size={15} strokeWidth={1.75} aria-hidden="true" />
+              <Folder
+                data-project-icon-color={projectIconColorId ?? "default"}
+                size={15}
+                strokeWidth={projectIconFill ? 1.55 : 1.75}
+                style={projectFolderIconStyle}
+                aria-hidden="true"
+              />
             )}
             <span>{title}</span>
             {kind === "pinned" ? (
@@ -2224,27 +2409,21 @@ function SiderSection({
                       closeActionMenu();
                       return;
                     }
-                    openActionMenu(PROJECT_ACTION_MENU_ID, getActionMenuPosition(event.currentTarget), "button");
+                    openActionMenu(
+                      PROJECT_ACTION_MENU_ID,
+                      getActionMenuPosition(
+                        event.currentTarget,
+                        PROJECT_ACTION_MENU_WIDTH,
+                        PROJECT_ACTION_MENU_HEIGHT,
+                      ),
+                      "button",
+                    );
                   }}
                 >
                   <MoreHorizontal size={14} aria-hidden="true" />
                 </button>
               ) : null}
-              {projectMenuVisible && actionMenuPosition ? createPortal(
-                <div
-                  className={styles.historyActionMenu}
-                  data-state={projectMenuOpen ? "open" : "closing"}
-                  ref={actionMenuRef}
-                  role="menu"
-                  aria-label={`项目操作 ${title}`}
-                  style={actionMenuPosition}
-                >
-                  <button type="button" role="menuitem" onClick={() => { closeActionMenu(); onStartWorkspaceRename?.(workspaceId, title); }}><Pencil size={14} /><span>重命名</span></button>
-                  <button type="button" role="menuitem" disabled={!workspaceRootPath} onClick={() => { closeActionMenu(); onRevealWorkspace?.(workspaceRootPath); }}><FolderOpen size={14} /><span>资源管理器</span></button>
-                  <button type="button" role="menuitem" data-tone="danger" onClick={() => { closeActionMenu(); onArchiveWorkspace?.(workspaceId, title); }}><Archive size={14} /><span>归档</span></button>
-                </div>,
-                document.body,
-              ) : null}
+              {renderProjectActionMenu()}
             </div>
           ) : null}
         </div>

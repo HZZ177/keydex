@@ -24,6 +24,8 @@ export function GitSyncActions({
   updateStrategy,
   updateBusy,
   updateError = null,
+  credentialLoginRemote = null,
+  credentialLoginBusy = false,
   pushBusy,
   pushError = null,
   outgoingCommits = [],
@@ -31,6 +33,7 @@ export function GitSyncActions({
   onFetch,
   onUpdateStrategyChange,
   onUpdate,
+  onCredentialLogin,
   onPush,
 }: {
   remotes: readonly GitRemoteInfo[];
@@ -39,6 +42,8 @@ export function GitSyncActions({
   updateStrategy: GitUpdateStrategy;
   updateBusy: boolean;
   updateError?: string | null;
+  credentialLoginRemote?: string | null;
+  credentialLoginBusy?: boolean;
   pushBusy: boolean;
   pushError?: string | null;
   outgoingCommits?: readonly GitCommitSummary[];
@@ -46,6 +51,7 @@ export function GitSyncActions({
   onFetch: (options: GitFetchOptions) => void | Promise<void>;
   onUpdateStrategyChange: (strategy: GitUpdateStrategy) => void;
   onUpdate: (strategy: GitUpdateStrategy) => void | boolean | Promise<void | boolean>;
+  onCredentialLogin?: () => void | Promise<void>;
   onPush: (options: GitPushOptions) => void | boolean | Promise<void | boolean>;
 }) {
   const [target, setTarget] = useState(remotes[0]?.name ?? "origin");
@@ -119,6 +125,8 @@ export function GitSyncActions({
         initialStrategy={updateStrategy}
         busy={updateBusy}
         error={updateError}
+        credentialHost={credentialLoginRemote}
+        credentialBusy={credentialLoginBusy}
         onCancel={() => setUpdateDialogOpen(false)}
         onConfirm={async (strategy) => {
           onUpdateStrategyChange(strategy);
@@ -126,6 +134,7 @@ export function GitSyncActions({
           if (succeeded !== false) setUpdateDialogOpen(false);
           return succeeded;
         }}
+        onCredentialLogin={credentialLoginRemote ? onCredentialLogin : undefined}
       />
       {pushDialogOpen ? <GitPushDialog
         open={pushDialogOpen}

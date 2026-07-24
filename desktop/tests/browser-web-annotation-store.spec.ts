@@ -111,6 +111,104 @@ describe("webAnnotationStore", () => {
     expect(activeEntry(store)).toMatchObject({ status: "ready", refreshing: false });
   });
 
+  it("canonicalizes equivalent local URLs, forwards source kind, and keeps CRUD in one cache", async () => {
+    const local = localItem();
+    const list = vi.fn().mockResolvedValue(page(local));
+    const create = vi.fn().mockResolvedValue(detail(local));
+    const store = createWebAnnotationStore(client({ list, create }));
+    const scope = local.resource.scope;
+
+    await store.getState().activatePage({
+      ...activation(
+        scope,
+        "D:\\WBF Missing\\Index.html",
+        firstSurface,
+        "navigation-local-1",
+      ),
+      sourceKind: "local_file",
+    });
+    const firstKey = store.getState().activePage?.pageKey;
+    await store.getState().activatePage({
+      ...activation(
+        scope,
+        "file:///d:/wbf%20missing/index.html",
+        secondSurface,
+        "navigation-local-2",
+      ),
+      sourceKind: "local_file",
+    });
+    await store.getState().createAnnotation({
+      target: local.annotation.target,
+      bodyMarkdown: "Local body",
+    });
+
+    expect(firstKey).toBe(webAnnotationCacheKey(scope, local.resource.urlKey, "local_file"));
+    expect(store.getState().activePage).toMatchObject({
+      sourceKind: "local_file",
+      pageKey: firstKey,
+    });
+    expect(Object.keys(store.getState().pages)).toEqual([firstKey]);
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(list).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      sourceKind: "local_file",
+      url: "D:\\WBF Missing\\Index.html",
+    }));
+    expect(list).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      sourceKind: "local_file",
+      url: "file:///d:/wbf%20missing/index.html",
+    }));
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      scope,
+      source: expect.objectContaining({
+        sourceKind: "local_file",
+        url: "file:///d:/wbf%20missing/index.html",
+      }),
+    }));
+  });
+
+  it("treats a renamed local file as a new identity while retaining the old missing-file records", async () => {
+    const local = localItem();
+    const list = vi.fn()
+      .mockResolvedValueOnce(page(local))
+      .mockResolvedValueOnce({ items: [], nextCursor: null });
+    const store = createWebAnnotationStore(client({ list }));
+    const scope = local.resource.scope;
+
+    await store.getState().activatePage({
+      ...activation(
+        scope,
+        local.resource.urlNormalized,
+        firstSurface,
+        "navigation-local-original",
+      ),
+      sourceKind: "local_file",
+    });
+    const originalKey = store.getState().activePage?.pageKey;
+    expect(originalKey).toBe(webAnnotationCacheKey(scope, local.resource.urlKey, "local_file"));
+
+    await store.getState().activatePage({
+      ...activation(
+        scope,
+        "file:///D:/WBF%20Missing/Renamed.html",
+        secondSurface,
+        "navigation-local-renamed",
+      ),
+      sourceKind: "local_file",
+    });
+
+    expect(store.getState().activePage).toMatchObject({
+      sourceKind: "local_file",
+      navigationId: "navigation-local-renamed",
+    });
+    expect(store.getState().activePage?.pageKey).not.toBe(originalKey);
+    expect(activeEntry(store).items).toEqual([]);
+    expect(store.getState().pages[originalKey!]?.items[0].annotation.id).toBe("annotation-local");
+    expect(list).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      sourceKind: "local_file",
+      url: "file:///D:/WBF%20Missing/Renamed.html",
+    }));
+  });
+
   it("recovers a stale concurrent update from the server current record", async () => {
     const original = item("session", "session-1", "a", "annotation-1", 1, "Original");
     const current = item("session", "session-1", "a", "annotation-1", 2, "Remote");
@@ -398,6 +496,33 @@ function item(
   };
 }
 
+function localItem(): WebAnnotationItem {
+  const value = item("workspace", "workspace-1", "f", "annotation-local");
+  return {
+    ...value,
+    resource: {
+      ...value.resource,
+      sourceKind: "local_file",
+      normalizationVersion: 2,
+      urlNormalized: "file:///D:/WBF%20Missing/Index.html",
+      documentUrl: "file:///D:/WBF%20Missing/Index.html",
+      canonicalUrl: "file:///D:/WBF%20Missing/Index.html",
+      origin: "file://",
+      title: "Index.html",
+    },
+    annotation: {
+      ...value.annotation,
+      target: {
+        ...target,
+        frame: {
+          url: "file:///D:/WBF%20Missing/Index.html",
+          indexPath: [],
+        },
+      },
+    },
+  };
+}
+
 function detail(value: WebAnnotationItem): WebAnnotationDetail {
   return { ...value, targetHistory: [], assets: [] };
 }
@@ -443,6 +568,7 @@ function toApiItem(value: WebAnnotationItem) {
     resource: {
       id: value.resource.id,
       scope: value.resource.scope,
+      source_kind: value.resource.sourceKind ?? "web",
       normalization_version: value.resource.normalizationVersion,
       url_key: value.resource.urlKey,
       url_normalized: value.resource.urlNormalized,

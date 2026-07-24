@@ -31,8 +31,11 @@ export function GitUpdateDialog({
   initialStrategy,
   busy = false,
   error = null,
+  credentialHost = null,
+  credentialBusy = false,
   onCancel,
   onConfirm,
+  onCredentialLogin,
   onOpenBranchSettings,
 }: {
   open: boolean;
@@ -40,8 +43,11 @@ export function GitUpdateDialog({
   initialStrategy: GitUpdateStrategy;
   busy?: boolean;
   error?: string | null;
+  credentialHost?: string | null;
+  credentialBusy?: boolean;
   onCancel: () => void;
   onConfirm: (strategy: GitUpdateStrategy) => void | boolean | Promise<void | boolean>;
+  onCredentialLogin?: () => void | Promise<void>;
   onOpenBranchSettings?: () => void;
 }) {
   const [strategy, setStrategy] = useState<GitUpdateChoice>(() => updateChoice(initialStrategy));
@@ -60,7 +66,7 @@ export function GitUpdateDialog({
   const head = status?.branch.head ?? (status?.branch.detachedAt ? `分离指针 ${status.branch.detachedAt.slice(0, 12)}` : "当前分支");
   const dirtyCount = status?.files.length ?? 0;
   const confirm = async () => {
-    if (busy || !upstream || submittingRef.current) return;
+    if (busy || credentialBusy || !upstream || submittingRef.current) return;
     submittingRef.current = true;
     try {
       await onConfirm(strategy);
@@ -75,7 +81,7 @@ export function GitUpdateDialog({
       description="“传入更改”指上方显示的上游分支中的新提交。选择如何把它们整合到当前分支。"
       confirmLabel={busy ? "正在更新…" : "更新"}
       busy={busy}
-      valid={Boolean(upstream)}
+      valid={Boolean(upstream) && !credentialBusy}
       error={error}
       onCancel={onCancel}
       onSubmit={confirm}
@@ -103,6 +109,21 @@ export function GitUpdateDialog({
         ))}
       </fieldset>
       <p className={styles.updateChoiceHint}>如果当前分支没有本地独有提交，两种方式都会直接更新到上游的最新位置。</p>
+
+      {onCredentialLogin ? (
+        <GitDialogSummary tone="warning">
+          <strong>{credentialHost ? `${credentialHost} 需要登录` : "远程仓库需要登录"}</strong>
+          <span>凭据将由系统 Git Credential Manager 保存，Keydex 不会读取或保存密码。</span>
+          <button
+            className={styles.inlineAction}
+            type="button"
+            disabled={busy || credentialBusy}
+            onClick={() => void onCredentialLogin()}
+          >
+            {credentialBusy ? "正在等待登录…" : "登录远程仓库"}
+          </button>
+        </GitDialogSummary>
+      ) : null}
 
       {dirtyCount > 0 ? (
         <GitDialogSummary tone="warning">

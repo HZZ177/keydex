@@ -1,6 +1,9 @@
-import type { BrowserPanelState } from "@/renderer/components/layout/rightSidebar/types";
-
-import type { BrowserSurfaceRef, BrowserVisibilityReason } from "../domain";
+import type {
+  BrowserNavigationIntent,
+  BrowserProfileMode,
+  BrowserSurfaceRef,
+  BrowserVisibilityReason,
+} from "../domain";
 import { BROWSER_INTERNAL_BLANK_URL } from "../config";
 import { readBrowserAppearanceTheme, readBrowserPageAppearance } from "../visualContract";
 import { createBrowserRuntimeStore, type BrowserRuntimeStore } from "../state";
@@ -11,7 +14,7 @@ import type { BrowserSurfaceResourceState } from "../state/browserRuntimeStore";
 
 interface BrowserResourceEntry {
   readonly panelId: string;
-  panel: BrowserPanelState;
+  panel: BrowserRuntimePanelState;
   generation: number;
   surface: BrowserSurfaceRef | null;
   active: boolean;
@@ -19,6 +22,12 @@ interface BrowserResourceEntry {
   state: BrowserSurfaceResourceState;
   theme: "light" | "dark";
   readonly protections: Set<string>;
+}
+
+export interface BrowserRuntimePanelState {
+  readonly id: string;
+  readonly restoreUrl: string;
+  readonly profileMode: BrowserProfileMode;
 }
 
 export interface BrowserPanelRuntimeClient {
@@ -52,7 +61,7 @@ export class BrowserPanelRuntimeController {
     this.store = store;
   }
 
-  activate(panel: BrowserPanelState, theme: "light" | "dark" = "light"): number {
+  activate(panel: BrowserRuntimePanelState, theme: "light" | "dark" = "light"): number {
     if (this.#browserCircuitOpen) {
       const generation = this.#lastGeneration.get(panel.id) ?? 1;
       this.store.getState().beginCreate(panel.id, generation, panel.profileMode, panel.restoreUrl);
@@ -94,6 +103,10 @@ export class BrowserPanelRuntimeController {
           generation,
           profileMode: panel.profileMode,
           initialUrl: panel.restoreUrl || BROWSER_INTERNAL_BLANK_URL,
+          initialNavigationIntent: {
+            source: "restore",
+            userGesture: false,
+          },
           ...appearance,
         });
       })
@@ -146,11 +159,19 @@ export class BrowserPanelRuntimeController {
     void this.#rebalance("memory_pressure", true);
   }
 
-  async navigate(surface: BrowserSurfaceRef, url: string): Promise<void> {
+  async navigate(
+    surface: BrowserSurfaceRef,
+    url: string,
+    intent: BrowserNavigationIntent = {
+      source: "address_bar",
+      userGesture: true,
+    },
+  ): Promise<void> {
     await this.client.send("browser_navigate", {
       ...surface,
       navigationId: `navigation-${cryptoId()}`,
       url,
+      intent,
     });
   }
 
@@ -329,15 +350,8 @@ export class BrowserPanelRuntimeController {
       panelId,
       panel: {
         id: panelId,
-        kind: "browser",
-        schemaVersion: 1,
-        title: "新标签页",
         restoreUrl: "",
-        restoreUrlSanitized: false,
         profileMode: "persistent",
-        zoomFactor: 1,
-        createdAt: new Date(0).toISOString(),
-        lastActivatedAt: new Date(0).toISOString(),
       },
       generation,
       surface: null,

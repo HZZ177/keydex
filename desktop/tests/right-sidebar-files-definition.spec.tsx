@@ -73,6 +73,7 @@ describe("files right sidebar panel definition", () => {
           workspaceId: "workspace-test",
           runtime: {} as RuntimeBridge,
         },
+        onOpenHtmlBrowserPreview: vi.fn(),
         onRestore: vi.fn(),
       },
       updateState: vi.fn(),

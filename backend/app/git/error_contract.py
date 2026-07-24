@@ -52,7 +52,7 @@ GIT_ERROR_CONTRACT: dict[str, GitErrorContractEntry] = {
         401,
         "after_fix",
         "none",
-        "Configure credentials in the system credential manager or an external Git client.",
+        "Start explicit credential login, complete the system prompt, then retry.",
     ),
     "git_credential_helper_failed": GitErrorContractEntry(
         502, "after_fix", "none", "Repair or sign in to the configured system credential helper."

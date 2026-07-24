@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -52,6 +53,24 @@ def _create_payload(scope: dict, *, suffix: str = "one", url: str | None = None)
     }
 
 
+def _local_create_payload(
+    scope: dict,
+    *,
+    suffix: str = "one",
+    url: str = "file:///D:/wbf-missing-file/index.html#one",
+) -> dict:
+    payload = _create_payload(scope, suffix=suffix)
+    payload["source"] = {
+        "source_kind": "local_file",
+        "url": url,
+        "title": "Missing local fixture",
+        "canonical_url": url.split("#", 1)[0],
+        "profile_mode": "persistent",
+    }
+    payload["target"]["frame"]["url"] = url
+    return payload
+
+
 def _create_session(client: TestClient, title: str) -> dict:
     response = client.post("/api/sessions", json={"title": title})
     assert response.status_code == 200
@@ -60,6 +79,266 @@ def _create_session(client: TestClient, title: str) -> dict:
 
 def _error_code(response) -> str:
     return response.json()["detail"]["code"]
+
+
+def test_api_rejects_explicit_source_kind_scheme_mismatches_before_persistence(tmp_path) -> None:
+    with _client(tmp_path) as client:
+        session = _create_session(client, "Annotation source kind validation")
+        scope = {"kind": "session", "id": session["id"]}
+        local_with_http = _create_payload(scope, url="https://example.com/docs")
+        local_with_http["source"]["source_kind"] = "local_file"
+        web_with_file = _create_payload(scope, url="file:///D:/workspace/index.html")
+        web_with_file["source"]["source_kind"] = "web"
+
+        local_response = client.post("/api/web-annotations", json=local_with_http)
+        web_response = client.post("/api/web-annotations", json=web_with_file)
+
+        assert local_response.status_code == 400
+        assert web_response.status_code == 400
+        assert _error_code(local_response) == "web_annotation_invalid_url"
+        assert _error_code(web_response) == "web_annotation_invalid_url"
+
+
+def test_list_api_validates_local_file_query_kind_without_reading_disk(tmp_path) -> None:
+    with _client(tmp_path) as client:
+        response = client.get(
+            "/api/web-annotations",
+            params={
+                "scope_kind": "global",
+                "source_kind": "local_file",
+                "url": "file:///tmp/not-a-windows-file.html",
+            },
+        )
+
+        assert response.status_code == 400
+        assert _error_code(response) == "web_annotation_invalid_url"
+
+
+def test_local_file_crud_conflict_retarget_and_delete_never_reads_page(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    blocked_path_marker = "wbf-missing-file"
+    original_open = Path.open
+    original_stat = Path.stat
+
+    def guarded_open(path: Path, *args, **kwargs):
+        if blocked_path_marker in str(path).casefold():
+            raise AssertionError("local-file annotation identity must not open the page")
+        return original_open(path, *args, **kwargs)
+
+    def guarded_stat(path: Path, *args, **kwargs):
+        if blocked_path_marker in str(path).casefold():
+            raise AssertionError("local-file annotation identity must not stat the page")
+        return original_stat(path, *args, **kwargs)
+
+    with _client(tmp_path) as client:
+        monkeypatch.setattr(Path, "open", guarded_open)
+        monkeypatch.setattr(Path, "stat", guarded_stat)
+        session = _create_session(client, "Local annotation CRUD")
+        scope = {"kind": "session", "id": session["id"]}
+        created = client.post("/api/web-annotations", json=_local_create_payload(scope))
+
+        assert created.status_code == 201
+        detail = created.json()
+        annotation_id = detail["annotation"]["id"]
+        assert detail["resource"]["source_kind"] == "local_file"
+        assert detail["resource"]["normalization_version"] == 2
+        assert detail["resource"]["url_normalized"].startswith(
+            "file:///D:/wbf-missing-file/index.html"
+        )
+
+        exact = client.get(
+            "/api/web-annotations",
+            params={
+                "scope_kind": "session",
+                "scope_id": session["id"],
+                "source_kind": "local_file",
+                "url": "file:///d:/WBF-MISSING-FILE/index.html#one",
+            },
+        )
+        loaded = client.get(f"/api/web-annotations/{annotation_id}")
+        patched = client.patch(
+            f"/api/web-annotations/{annotation_id}",
+            json={
+                "schema_version": 1,
+                "expected_revision": 1,
+                "body_markdown": "Local update",
+            },
+        )
+        stale = client.patch(
+            f"/api/web-annotations/{annotation_id}",
+            json={
+                "schema_version": 1,
+                "expected_revision": 1,
+                "body_markdown": "Must lose",
+            },
+        )
+        retargeted = client.put(
+            f"/api/web-annotations/{annotation_id}/target",
+            json={
+                "schema_version": 1,
+                "expected_revision": 2,
+                "target": {
+                    **_text_target(exact="Local replacement", start=40),
+                    "frame": {
+                        "url": "file:///D:/wbf-missing-file/index.html#one",
+                        "index_path": [],
+                    },
+                },
+                "reason": "user_retarget",
+            },
+        )
+        deleted = client.delete(f"/api/web-annotations/{annotation_id}")
+        missing = client.get(f"/api/web-annotations/{annotation_id}")
+
+    assert exact.status_code == 200
+    assert [item["annotation"]["id"] for item in exact.json()["items"]] == [annotation_id]
+    assert loaded.status_code == 200
+    assert patched.status_code == 200
+    assert patched.json()["annotation"]["body_markdown"] == "Local update"
+    assert stale.status_code == 409
+    assert _error_code(stale) == "web_annotation_revision_conflict"
+    assert retargeted.status_code == 200
+    assert retargeted.json()["annotation"]["revision"] == 3
+    assert len(retargeted.json()["target_history"]) == 1
+    assert deleted.status_code == 204
+    assert missing.status_code == 404
+
+
+def test_local_file_document_query_groups_fragments_and_excludes_web(tmp_path) -> None:
+    scope = {"kind": "global", "id": None}
+    with _client(tmp_path) as client:
+        local_ids = []
+        for suffix in ("one", "two"):
+            response = client.post(
+                "/api/web-annotations",
+                json=_local_create_payload(
+                    scope,
+                    suffix=suffix,
+                    url=f"file:///D:/wbf-missing-file/index.html#{suffix}",
+                ),
+            )
+            assert response.status_code == 201
+            local_ids.append(response.json()["annotation"]["id"])
+        web = client.post("/api/web-annotations", json=_create_payload(scope, suffix="web"))
+        listed = client.get(
+            "/api/web-annotations",
+            params={
+                "scope_kind": "global",
+                "source_kind": "local_file",
+                "document_url": "D:\\wbf-missing-file\\index.html",
+            },
+        )
+
+    assert web.status_code == 201
+    assert listed.status_code == 200
+    assert {item["annotation"]["id"] for item in listed.json()["items"]} == set(local_ids)
+    assert {
+        item["resource"]["source_kind"] for item in listed.json()["items"]
+    } == {"local_file"}
+
+
+def test_local_file_patch_and_retarget_use_persisted_source_kind(tmp_path) -> None:
+    scope = {"kind": "global", "id": None}
+    with _client(tmp_path) as client:
+        created = client.post(
+            "/api/web-annotations",
+            json=_local_create_payload(scope),
+        )
+        assert created.status_code == 201
+        annotation_id = created.json()["annotation"]["id"]
+        accepted_property = client.patch(
+            f"/api/web-annotations/{annotation_id}",
+            json={
+                "schema_version": 1,
+                "expected_revision": 1,
+                "properties": [
+                    {
+                        "key": "reference",
+                        "type": "url",
+                        "value": "file:///D:/wbf-missing-file/related.html",
+                    }
+                ],
+            },
+        )
+        rejected_property = client.patch(
+            f"/api/web-annotations/{annotation_id}",
+            json={
+                "schema_version": 1,
+                "expected_revision": 2,
+                "properties": [
+                    {
+                        "key": "reference",
+                        "type": "url",
+                        "value": "https://example.com/remote",
+                    }
+                ],
+            },
+        )
+        rejected_target = client.put(
+            f"/api/web-annotations/{annotation_id}/target",
+            json={
+                "schema_version": 1,
+                "expected_revision": 2,
+                "target": _text_target(exact="Wrong scheme", start=30),
+            },
+        )
+        loaded = client.get(f"/api/web-annotations/{annotation_id}")
+
+    assert accepted_property.status_code == 200
+    assert accepted_property.json()["annotation"]["revision"] == 2
+    assert rejected_property.status_code == 400
+    assert _error_code(rejected_property) == "web_annotation_request_invalid"
+    assert rejected_target.status_code == 400
+    assert _error_code(rejected_target) == "web_annotation_target_invalid"
+    assert loaded.status_code == 200
+    assert loaded.json()["annotation"]["revision"] == 2
+    assert loaded.json()["target_history"] == []
+
+
+def test_local_file_identity_is_isolated_across_all_scopes(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    with _client(tmp_path) as client:
+        session = _create_session(client, "Local annotation session scope")
+        workspace_response = client.post(
+            "/api/workspaces",
+            json={"root_path": str(project), "name": "Local annotation workspace"},
+        )
+        assert workspace_response.status_code == 200
+        workspace = workspace_response.json()["workspace"]
+        scopes = (
+            {"kind": "session", "id": session["id"]},
+            {"kind": "workspace", "id": workspace["id"]},
+            {"kind": "global", "id": None},
+        )
+        created_ids: list[str] = []
+        for index, scope in enumerate(scopes):
+            response = client.post(
+                "/api/web-annotations",
+                json=_local_create_payload(scope, suffix=f"scope-{index}"),
+            )
+            assert response.status_code == 201
+            created_ids.append(response.json()["annotation"]["id"])
+
+        listed_ids = []
+        for scope in scopes:
+            params = {
+                "scope_kind": scope["kind"],
+                "source_kind": "local_file",
+                "url": "file:///D:/wbf-missing-file/index.html#one",
+            }
+            if scope["id"] is not None:
+                params["scope_id"] = scope["id"]
+            response = client.get(
+                "/api/web-annotations",
+                params=params,
+            )
+            assert response.status_code == 200
+            listed_ids.append(response.json()["items"][0]["annotation"]["id"])
+
+    assert listed_ids == created_ids
 
 
 def test_web_annotation_crud_revision_retarget_and_history(tmp_path) -> None:

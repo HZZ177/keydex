@@ -16,9 +16,15 @@ from backend.app.web_annotations.models import (
     WebAnnotationResourceRecord,
     WebAnnotationRetargetRequest,
     WebAnnotationScope,
+    WebAnnotationSourceKind,
+    validate_properties_source_kind,
+    validate_target_source_kind,
 )
 from backend.app.web_annotations.repository import WebAnnotationRevisionConflict
-from backend.app.web_annotations.url_identity import WebUrlIdentityError, normalize_web_url
+from backend.app.web_annotations.url_identity import (
+    WebUrlIdentityError,
+    normalize_annotation_url,
+)
 
 
 class WebAnnotationServiceError(Exception):
@@ -43,6 +49,7 @@ class WebAnnotationService:
         document_url: str | None,
         cursor: str | None,
         limit: int,
+        source_kind: WebAnnotationSourceKind = "web",
     ) -> WebAnnotationPage:
         self._require_scope(scope)
         if (url is None) == (document_url is None):
@@ -52,16 +59,21 @@ class WebAnnotationService:
             )
         try:
             if url is not None:
-                identity = normalize_web_url(url)
+                identity = normalize_annotation_url(url, source_kind=source_kind)
                 resource = self._web.resources.find_by_identity(
                     scope=scope,
+                    source_kind=source_kind,
                     url_key=identity.url_key,
                 )
                 resources = [resource] if resource is not None else []
             else:
-                normalized_document = normalize_web_url(document_url or "").document_url
+                normalized_document = normalize_annotation_url(
+                    document_url or "",
+                    source_kind=source_kind,
+                ).document_url
                 resources = self._web.resources.list_by_document(
                     scope=scope,
+                    source_kind=source_kind,
                     document_url=normalized_document,
                 )
         except WebUrlIdentityError as exc:
@@ -156,6 +168,17 @@ class WebAnnotationService:
         payload: WebAnnotationPatchRequest,
     ) -> WebAnnotationDetail:
         current = self.get(annotation_id)
+        if payload.properties is not None:
+            try:
+                validate_properties_source_kind(
+                    payload.properties,
+                    current.resource.source_kind,
+                )
+            except ValueError as exc:
+                raise WebAnnotationServiceError(
+                    "web_annotation_request_invalid",
+                    str(exc),
+                ) from exc
         try:
             updated = self._web.annotations.patch(
                 annotation_id,
@@ -181,6 +204,16 @@ class WebAnnotationService:
         payload: WebAnnotationRetargetRequest,
     ) -> WebAnnotationDetail:
         current = self.get(annotation_id)
+        try:
+            validate_target_source_kind(
+                payload.target,
+                current.resource.source_kind,
+            )
+        except ValueError as exc:
+            raise WebAnnotationServiceError(
+                "web_annotation_target_invalid",
+                str(exc),
+            ) from exc
         if payload.target.type == "region" and not payload.staged_asset_ids:
             raise WebAnnotationServiceError(
                 "web_annotation_asset_state_conflict",

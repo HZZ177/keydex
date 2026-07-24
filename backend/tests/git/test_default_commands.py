@@ -6,6 +6,7 @@ from backend.app.git.models import (
     GitApiError,
     GitBisectControlCommandRequest,
     GitBisectStartCommandRequest,
+    GitBranchCommandRequest,
     GitBranchDeleteCommandRequest,
     GitBranchRenameCommandRequest,
     GitCheckoutCommandRequest,
@@ -119,6 +120,27 @@ def test_checkout_can_explicitly_enter_detached_head() -> None:
     assert definition.prepare(request.model_copy(update={"detach": False})).argv == (
         "switch",
         "v1.0.0",
+    )
+
+
+def test_create_branch_can_explicitly_track_remote_start_point() -> None:
+    definition = create_default_git_command_registry().get("create_branch")
+    request = GitBranchCommandRequest(
+        workspace_id="workspace-1",
+        project_root="D:/repo",
+        repository_id="repo-1",
+        idempotency_key="tracking-branch-key",
+        branch_name="release/next",
+        start_point="origin/release/next",
+        track=True,
+    )
+
+    assert definition.prepare(request).argv == (
+        "switch",
+        "-c",
+        "release/next",
+        "--track",
+        "origin/release/next",
     )
 
 

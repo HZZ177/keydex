@@ -301,7 +301,7 @@ export function ConversationSessionSurface({
     return {
       ...panelModel,
       messages: sidecarMessages,
-      loading: false,
+      loading: selectedSubagentRun ? panelModel.loading : false,
       loadingOlderHistory: false,
       sessionViewState: panelModel.sessionViewState
         ? {
@@ -310,7 +310,7 @@ export function ConversationSessionSurface({
           }
         : panelModel.sessionViewState,
     };
-  }, [isSidecar, panelModel, sidecarMessages]);
+  }, [isSidecar, panelModel, selectedSubagentRun, sidecarMessages]);
   const focusTurnNavigationRequest = useMemo(() => {
     if (typeof focusTurnIndex !== "number" || !Number.isFinite(focusTurnIndex)) {
       return null;
@@ -1034,8 +1034,8 @@ export function ConversationSessionSurface({
             topNotice={sidecarHistoryNotice}
             showForkSourceMarkers={false}
             showForkActions={false}
-            emptyText="旁路对话暂无消息"
-            emptyTestId="btw-conversation-empty"
+            emptyText={selectedSubagentRun ? "Sub-Agent 暂无消息" : "旁路对话暂无消息"}
+            emptyTestId={selectedSubagentRun ? "subagent-conversation-empty" : "btw-conversation-empty"}
             a2uiDebugInfoEnabled={a2uiDebugInfoEnabled}
             a2uiRenderSuspended={a2uiRenderSuspended}
           />

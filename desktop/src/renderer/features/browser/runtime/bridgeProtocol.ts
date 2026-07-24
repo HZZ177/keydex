@@ -1,4 +1,5 @@
 import type { BrowserSurfaceRef } from "../domain";
+import { canonicalizeBrowserFileAddress } from "../domain/browserNavigation";
 
 export const WEB_ANNOTATION_BRIDGE_PROTOCOL = "keydex.web-annotation.v1" as const;
 export const WEB_ANNOTATION_BRIDGE_MAX_MESSAGE_BYTES = 256 * 1024;
@@ -515,10 +516,7 @@ function validateTarget(value: unknown): value is WebAnnotationTarget {
     if (value.role !== undefined && !isBoundedString(value.role, 128)) return false;
     if (value.accessibleName !== undefined && !isBoundedString(value.accessibleName, 1_024)) return false;
     if (value.textSummary !== undefined && !isBoundedString(value.textSummary, 1_024)) return false;
-    if (!Array.isArray(value.stableAttributes) || value.stableAttributes.length > 20 || value.stableAttributes.some((entry) =>
-      !isExactRecord(entry, ["name", "value"])
-      || !isOneOf(entry.name, ["id", "name", "type", "href", "src", "alt", "title", "aria-label", "role"])
-      || !isBoundedString(entry.value, 2_048))) return false;
+    if (!validateStableAttributes(value.stableAttributes, value.frame)) return false;
     if (!validateDomPath(value.path) || (value.shadowHostPath !== undefined && !validateDomPath(value.shadowHostPath))) return false;
     return isExactRecord(value.context, ["headingPath"])
       && validateStrings(value.context.headingPath, 16, 256)
@@ -539,7 +537,8 @@ function validateTarget(value: unknown): value is WebAnnotationTarget {
       || (value.relativeElement.role !== undefined && !isBoundedString(value.relativeElement.role, 128, 1))
       || (value.relativeElement.accessibleName !== undefined && !isBoundedString(value.relativeElement.accessibleName, 1_024, 1))
       || (value.relativeElement.textSummary !== undefined && !isBoundedString(value.relativeElement.textSummary, 1_024, 1))
-      || (value.relativeElement.stableAttributes !== undefined && !validateStableAttributes(value.relativeElement.stableAttributes)))) return false;
+      || (value.relativeElement.stableAttributes !== undefined
+        && !validateStableAttributes(value.relativeElement.stableAttributes, value.frame)))) return false;
     if (value.visual !== undefined && (!isRecordWithOptional(
       value.visual,
       ["fingerprintVersion", "localDigest"],
@@ -557,11 +556,19 @@ function validateTarget(value: unknown): value is WebAnnotationTarget {
   return false;
 }
 
-function validateStableAttributes(value: unknown): value is readonly WebStableElementAttribute[] {
+function validateStableAttributes(
+  value: unknown,
+  frame?: unknown,
+): value is readonly WebStableElementAttribute[] {
+  const frameKind = isPlainRecord(frame) ? safePageUrlKind(frame.url) : null;
   return Array.isArray(value) && value.length <= 20 && value.every((entry) =>
     isExactRecord(entry, ["name", "value"])
     && isOneOf(entry.name, ["id", "name", "type", "href", "src", "alt", "title", "aria-label", "role"])
-    && isBoundedString(entry.value, 2_048));
+    && isBoundedString(entry.value, 2_048)
+    && (
+      (entry.name !== "href" && entry.name !== "src")
+      || stableUrlAttributeAllowed(entry.value, frameKind)
+    ));
 }
 
 function validateCaptureGeometry(value: unknown): value is WebRegionCaptureGeometry {
@@ -600,13 +607,31 @@ function validateFrame(value: unknown): value is PersistedFrameLocator {
 }
 
 function isSafePageUrl(value: unknown): value is string {
-  if (!isBoundedString(value, 4_096, 1)) return false;
+  return safePageUrlKind(value) !== null;
+}
+
+function safePageUrlKind(value: unknown): "blank" | "remote" | "file" | null {
+  if (!isBoundedString(value, 4_096, 1)) return null;
+  if (value === "about:blank") return "blank";
   try {
     const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:" || value === "about:blank";
+    if (url.protocol === "http:" || url.protocol === "https:") return "remote";
+    if (url.protocol === "file:") {
+      canonicalizeBrowserFileAddress(value);
+      return "file";
+    }
+    return null;
   } catch {
-    return value === "about:blank";
+    return null;
   }
+}
+
+function stableUrlAttributeAllowed(
+  value: string,
+  frameKind: "blank" | "remote" | "file" | null,
+): boolean {
+  const valueKind = safePageUrlKind(value);
+  return valueKind === "remote" || (valueKind === "file" && frameKind === "file");
 }
 
 function validateIds(value: unknown, max: number): value is readonly string[] {

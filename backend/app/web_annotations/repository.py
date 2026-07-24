@@ -54,6 +54,7 @@ class WebAnnotationResourcesRepository:
         candidate = WebAnnotationResourceRecord(
             id=resolved_id,
             scope=scope,
+            source_kind=identity.source_kind,
             normalization_version=identity.normalization_version,
             url_key=identity.url_key,
             url_normalized=identity.url_normalized,
@@ -74,16 +75,17 @@ class WebAnnotationResourcesRepository:
             conn.execute(
                 """
                 insert into web_annotation_resources (
-                  id, scope_kind, session_id, workspace_id, normalization_version,
-                  url_key, url_normalized, document_url, canonical_url, origin,
-                  title, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  id, scope_kind, session_id, workspace_id, source_kind,
+                  normalization_version, url_key, url_normalized, document_url,
+                  canonical_url, origin, title, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     candidate.id,
                     candidate.scope.kind,
                     session_id,
                     workspace_id,
+                    candidate.source_kind,
                     candidate.normalization_version,
                     candidate.url_key,
                     candidate.url_normalized,
@@ -118,7 +120,12 @@ class WebAnnotationResourcesRepository:
             else self.db.transaction(immediate=True)
         )
         with transaction as conn:
-            current_row = _find_resource_row(conn, scope=scope, url_key=identity.url_key)
+            current_row = _find_resource_row(
+                conn,
+                scope=scope,
+                source_kind=identity.source_kind,
+                url_key=identity.url_key,
+            )
             if current_row is None:
                 return self.create(
                     scope=scope,
@@ -131,6 +138,7 @@ class WebAnnotationResourcesRepository:
             candidate = WebAnnotationResourceRecord(
                 id=current.id,
                 scope=current.scope,
+                source_kind=identity.source_kind,
                 normalization_version=identity.normalization_version,
                 url_key=identity.url_key,
                 url_normalized=identity.url_normalized,
@@ -144,11 +152,13 @@ class WebAnnotationResourcesRepository:
             conn.execute(
                 """
                 update web_annotation_resources
-                set normalization_version = ?, url_normalized = ?, document_url = ?,
-                    canonical_url = ?, origin = ?, title = ?, updated_at = ?
+                set source_kind = ?, normalization_version = ?, url_normalized = ?,
+                    document_url = ?, canonical_url = ?, origin = ?, title = ?,
+                    updated_at = ?
                 where id = ?
                 """,
                 (
+                    candidate.source_kind,
                     candidate.normalization_version,
                     candidate.url_normalized,
                     candidate.document_url,
@@ -186,8 +196,13 @@ class WebAnnotationResourcesRepository:
         *,
         scope: WebAnnotationScope,
         url_key: str,
+        source_kind: Literal["web", "local_file"] = "web",
     ) -> WebAnnotationResourceRecord | None:
-        query, params = _scope_resource_query(scope, "url_key = ?", (url_key,))
+        query, params = _scope_resource_query(
+            scope,
+            "source_kind = ? and url_key = ?",
+            (source_kind, url_key),
+        )
         with self.db.connect() as conn:
             row = conn.execute(query, params).fetchone()
         return _resource_from_row(row) if row is not None else None
@@ -197,11 +212,12 @@ class WebAnnotationResourcesRepository:
         *,
         scope: WebAnnotationScope,
         document_url: str,
+        source_kind: Literal["web", "local_file"] = "web",
     ) -> list[WebAnnotationResourceRecord]:
         query, params = _scope_resource_query(
             scope,
-            "document_url = ?",
-            (document_url,),
+            "source_kind = ? and document_url = ?",
+            (source_kind, document_url),
             order_by="updated_at desc, id desc",
         )
         with self.db.connect() as conn:
@@ -811,6 +827,7 @@ def _resource_from_row(row: sqlite3.Row) -> WebAnnotationResourceRecord:
             kind=scope_kind,
             id=str(scope_id) if scope_id is not None else None,
         ),
+        source_kind=cast(Literal["web", "local_file"], str(row["source_kind"])),
         normalization_version=int(row["normalization_version"]),
         url_key=str(row["url_key"]),
         url_normalized=str(row["url_normalized"]),
@@ -900,9 +917,14 @@ def _find_resource_row(
     conn: sqlite3.Connection,
     *,
     scope: WebAnnotationScope,
+    source_kind: Literal["web", "local_file"],
     url_key: str,
 ) -> sqlite3.Row | None:
-    query, params = _scope_resource_query(scope, "url_key = ?", (url_key,))
+    query, params = _scope_resource_query(
+        scope,
+        "source_kind = ? and url_key = ?",
+        (source_kind, url_key),
+    )
     return conn.execute(query, params).fetchone()
 
 

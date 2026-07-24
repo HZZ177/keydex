@@ -26,6 +26,29 @@ describe("AppTooltipLayer", () => {
     expect(screen.getByRole("tooltip").textContent).toBe("复制消息");
   });
 
+  it("honors a target-specific tooltip delay", () => {
+    vi.useFakeTimers();
+    render(
+      <div data-tooltip-scope="true">
+        <AppTooltipLayer scopeSelector="[data-tooltip-scope='true']" delayMs={20} />
+        <a
+          href="#file"
+          data-tooltip-label="desktop/src/renderer/App.tsx"
+          data-tooltip-delay-ms="500"
+        >
+          App.tsx
+        </a>
+      </div>,
+    );
+
+    fireEvent.pointerOver(screen.getByRole("link", { name: "App.tsx" }));
+    act(() => vi.advanceTimersByTime(499));
+    expect(screen.queryByRole("tooltip")).toBeNull();
+
+    act(() => vi.advanceTimersByTime(1));
+    expect(screen.getByRole("tooltip").textContent).toBe("desktop/src/renderer/App.tsx");
+  });
+
   it("lets a nested owned layer handle its target without duplicate ancestor tooltips", () => {
     vi.useFakeTimers();
     render(

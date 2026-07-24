@@ -11,6 +11,7 @@ import type {
   PreviewRenderContext,
 } from "@/renderer/providers/PreviewProvider";
 import type { SubagentRunSnapshot } from "@/types/subagents";
+import type { BrowserTabState } from "@/renderer/features/browser/domain";
 
 export const RIGHT_SIDEBAR_SCOPE_STATE_SCHEMA_VERSION =
   BROWSER_PROTOCOL_VERSIONS.rightSidebarState;
@@ -79,14 +80,8 @@ export interface ReviewPanelState extends RightSidebarPanelStateBase<"review"> {
   readonly requestId: number;
 }
 
-export interface BrowserPanelState extends RightSidebarPanelStateBase<"browser"> {
-  readonly title: string;
-  readonly faviconUrl?: string;
-  readonly restoreUrl: string;
-  readonly restoreUrlSanitized: boolean;
-  readonly profileMode: "persistent" | "incognito";
-  readonly zoomFactor: number;
-}
+export interface BrowserPanelState
+  extends RightSidebarPanelStateBase<"browser">, BrowserTabState {}
 
 export interface RightSidebarPanelStateMap {
   readonly files: FilesPanelState;
@@ -142,6 +137,7 @@ export interface RightSidebarPanelRenderProps<K extends RightSidebarPanelKind> {
 export interface FilesPanelHostContext {
   readonly maximized: boolean;
   readonly renderContext: PreviewRenderContext;
+  onOpenHtmlBrowserPreview(absolutePath: string): void;
   onRestore(): void;
 }
 

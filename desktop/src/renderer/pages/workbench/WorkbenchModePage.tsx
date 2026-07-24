@@ -1,4 +1,12 @@
-import { ChevronLeft, ChevronRight, PanelLeftClose, PanelRightClose, X } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  FileCode2,
+  Globe2,
+  PanelLeftClose,
+  PanelRightClose,
+  X,
+} from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -26,6 +34,20 @@ import {
 import { evictFileMarkdownRuntimeEntry } from "@/renderer/components/workspace/fileMarkdownRuntime";
 import { emitSessionCreated } from "@/renderer/events/sessionEvents";
 import { composerNewWorkspaceDraftScope } from "@/renderer/features/composer";
+import {
+  canonicalizeBrowserFileAddress,
+  normalizePersistedBrowserTab,
+  serializePersistableBrowserTab,
+  type BrowserTabCreateOptions,
+  type PersistedBrowserTabSnapshot,
+} from "@/renderer/features/browser/domain";
+import {
+  browserGeometryCoordinator,
+  browserPanelRuntime,
+  browserRuntimePanelId,
+  useBrowserOcclusionToken,
+} from "@/renderer/features/browser/runtime";
+import { BrowserTabSurface } from "@/renderer/features/browser/ui/BrowserTabSurface";
 import { rightSidebarPersistenceForRuntime } from "@/renderer/components/layout/rightSidebar/persistence";
 import { useLayoutState } from "@/renderer/hooks/layout/LayoutStateProvider";
 import { clampWorkbenchAssistantDrawerWidth } from "@/renderer/hooks/layout/layoutStore";
@@ -50,6 +72,16 @@ import {
 import { isAbsoluteFilePath, workspaceRelativeFilePath } from "@/renderer/utils/fileLinks";
 import type { AgentSession, PendingInputMode, Workspace } from "@/types/protocol";
 
+import {
+  createWorkbenchBrowserAdapter,
+  type WorkbenchBrowserTabState,
+} from "./workbenchBrowserAdapter";
+import {
+  closeWorkbenchTabState,
+  disposeWorkbenchBrowserTabOnce,
+  openWorkbenchBrowserTabState,
+  requestWorkbenchAssociatedBrowserReloadState,
+} from "./workbenchMainTabModel";
 import {
   resolveWorkbenchAssistantDockInlineWidth,
   WorkbenchAssistantSurface,
@@ -79,7 +111,8 @@ export interface WorkbenchModePageProps {
   onOpenMcpSettings?: () => void;
 }
 
-interface WorkbenchMainPreviewTabState {
+interface WorkbenchMainFileTabState {
+  kind: "file";
   id: string;
   request: PreviewRequest;
   requestId: number;
@@ -92,9 +125,23 @@ interface WorkbenchMainPreviewTabState {
   markdownView: PreviewMarkdownViewDescriptor;
 }
 
+type WorkbenchMainTabState = WorkbenchMainFileTabState | WorkbenchBrowserTabState;
+
 interface WorkbenchPreviewTabsState {
   activeTabId: string | null;
-  tabs: WorkbenchMainPreviewTabState[];
+  tabs: WorkbenchMainTabState[];
+}
+
+interface PersistedWorkbenchBrowserTabState {
+  kind: "browser";
+  browser: PersistedBrowserTabSnapshot;
+  previewFilePath?: string;
+  previewFileKey?: string;
+}
+
+interface PersistedWorkbenchPreviewTabsState {
+  activeTabId: string | null;
+  tabs: Array<WorkbenchMainFileTabState | PersistedWorkbenchBrowserTabState>;
 }
 
 interface WorkbenchModeUiState {
@@ -187,9 +234,12 @@ export function WorkbenchModePage({
   const workspaceShellRef = useRef<HTMLElement | null>(null);
   const canvasContentRef = useRef<HTMLDivElement | null>(null);
   const previewBrowserRootWidthRef = useRef(0);
+  const browserResizeSessionRef = useRef<number | null>(null);
   const handledFilePanelRequestIdRef = useRef(previewContext?.filePanelRequest?.requestId ?? 0);
   const handledPreviewEntryStampRef = useRef(previewContext?.activeEntry ? previewEntryStamp(previewContext.activeEntry) : "");
   const mainPreviewRequestSeqRef = useRef(maxWorkbenchPreviewRequestId(initialWorkbenchUiState?.previewTabs));
+  const browserTabSeqRef = useRef(0);
+  const disposedBrowserTabIdsRef = useRef(new Set<string>());
   const [creatingSession, setCreatingSession] = useState(false);
   const [btwSession, setBtwSession] = useState<AgentSession | null>(null);
   const [btwLoadedHistoryTurnCount, setBtwLoadedHistoryTurnCount] = useState<number | null>(null);
@@ -209,7 +259,8 @@ export function WorkbenchModePage({
   }, [workbenchPreviewTabs]);
   const retainedWorkbenchMarkdownViewsRef = useRef(new Map<string, PreviewMarkdownViewDescriptor>());
   useEffect(() => {
-    const next = new Map(workbenchPreviewTabs.tabs.map((tab) => [tab.id, tab.markdownView]));
+    const next = new Map(workbenchPreviewTabs.tabs.flatMap((tab) =>
+      tab.kind === "file" ? [[tab.id, tab.markdownView] as const] : []));
     for (const [tabId, descriptor] of retainedWorkbenchMarkdownViewsRef.current) {
       if (!next.has(tabId)) evictFileMarkdownRuntimeEntry(descriptor.scopeId, descriptor.entryId);
     }
@@ -230,12 +281,28 @@ export function WorkbenchModePage({
     () => workbenchPreviewTabs.tabs.find((tab) => tab.id === workbenchPreviewTabs.activeTabId) ?? null,
     [workbenchPreviewTabs.activeTabId, workbenchPreviewTabs.tabs],
   );
-  const [mainPreviewNearBottom, setMainPreviewNearBottom] = useState(false);
   const assistantViewportKey = activeWorkbenchPreviewTab
-    ? `${activeWorkbenchPreviewTab.id}:${activeWorkbenchPreviewTab.requestId}:${activeWorkbenchPreviewTab.refreshRequestId ?? 0}`
+    ? activeWorkbenchPreviewTab.kind === "file"
+      ? `${activeWorkbenchPreviewTab.id}:${activeWorkbenchPreviewTab.requestId}:${activeWorkbenchPreviewTab.refreshRequestId ?? 0}`
+      : `${activeWorkbenchPreviewTab.id}:${activeWorkbenchPreviewTab.restoreUrl}`
     : "workspace-browser";
-  useEffect(() => {
-    setMainPreviewNearBottom(false);
+  const [mainPreviewProximity, setMainPreviewProximity] = useState<{
+    key: string;
+    nearBottom: boolean | null;
+  }>({
+    key: assistantViewportKey,
+    nearBottom: activeWorkbenchPreviewTab?.kind === "file" ? null : false,
+  });
+  const mainPreviewNearBottom = activeWorkbenchPreviewTab?.kind !== "file"
+    ? false
+    : mainPreviewProximity.key === assistantViewportKey
+      ? mainPreviewProximity.nearBottom
+      : null;
+  const handleMainPreviewNearBottomChange = useCallback((nearBottom: boolean | null) => {
+    setMainPreviewProximity({
+      key: assistantViewportKey,
+      nearBottom,
+    });
   }, [assistantViewportKey]);
   const previousWorkbenchUiScopeRef = useRef({
     externalPreviewPath,
@@ -244,7 +311,9 @@ export function WorkbenchModePage({
   const previousSessionIdRef = useRef(selectedSessionId);
   const handledExternalPreviewIntentKeyRef = useRef<string | null>(null);
   const activeWorkbenchPreviewPath = activeWorkbenchPreviewTab
-    ? targetPathForPreviewRequest(activeWorkbenchPreviewTab.request)
+    ? activeWorkbenchPreviewTab.kind === "file"
+      ? targetPathForPreviewRequest(activeWorkbenchPreviewTab.request)
+      : activeWorkbenchPreviewTab.previewFilePath ?? null
     : null;
   const selectorValue: WorkspaceSelection = selectedWorkspace
     ? { type: "workspace", workspace: selectedWorkspace }
@@ -312,12 +381,32 @@ export function WorkbenchModePage({
       clampWorkbenchPreviewBrowserWidth(startWidth + clientX - startX),
     [clampWorkbenchPreviewBrowserWidth],
   );
+  const beginWorkbenchBrowserInteractiveResize = useCallback((input: {
+    readonly startWidth: number;
+    readonly startScreenCoordinate: number;
+  }) => {
+    const rootWidth =
+      previewBrowserRootWidthRef.current || canvasContentRef.current?.getBoundingClientRect().width || 0;
+    browserResizeSessionRef.current = browserGeometryCoordinator.beginInteractiveResize(
+      workbenchBrowserInteractiveResizeInput(
+        input.startWidth,
+        input.startScreenCoordinate,
+        rootWidth,
+      ),
+    );
+  }, []);
+  const endWorkbenchBrowserInteractiveResize = useCallback(() => {
+    browserGeometryCoordinator.endInteractiveResize(browserResizeSessionRef.current);
+    browserResizeSessionRef.current = null;
+  }, []);
   const workbenchPreviewResize = useRafPanelResize({
     disabled: !activeWorkbenchPreviewTab,
     width: previewBrowserWidth,
     getWidth: getWorkbenchPreviewBrowserDragWidth,
     onPreview: previewWorkbenchPreviewBrowserWidth,
     onCommit: commitWorkbenchPreviewBrowserWidth,
+    onDragStart: beginWorkbenchBrowserInteractiveResize,
+    onDragEnd: endWorkbenchBrowserInteractiveResize,
   });
   const startWorkbenchPreviewResize = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -496,7 +585,7 @@ export function WorkbenchModePage({
       const tabId = workbenchPreviewTabId(request);
       const existingTab = workbenchPreviewTabsRef.current.tabs.find((item) => item.id === tabId) ?? null;
       const existingActiveTab = workbenchPreviewTabsRef.current.activeTabId === tabId
-        ? existingTab
+        ? existingTab?.kind === "file" ? existingTab : null
         : null;
       const canRevealInActiveTab = existingActiveTab?.request.type === request.type;
       const nextRequestId = requestId ?? nextMainPreviewRequestId();
@@ -504,7 +593,7 @@ export function WorkbenchModePage({
         setWorkbenchPreviewTabs((current) => {
           const next = {
             activeTabId: tabId,
-            tabs: current.tabs.map((item) => item.id === tabId
+            tabs: current.tabs.map((item) => item.id === tabId && item.kind === "file"
               ? {
                   ...item,
                   request: request.type === "skill-resource" ? request : item.request,
@@ -522,11 +611,12 @@ export function WorkbenchModePage({
         return;
       }
       resetMainPreviewOutline();
-      const tab: WorkbenchMainPreviewTabState = {
+      const tab: WorkbenchMainFileTabState = {
+        kind: "file",
         id: tabId,
         request,
         requestId: nextRequestId,
-        refreshRequestId: existingTab?.refreshRequestId ?? 0,
+        refreshRequestId: existingTab?.kind === "file" ? existingTab.refreshRequestId : 0,
         revealTarget,
         renderContext,
         sourceEntryId,
@@ -547,7 +637,7 @@ export function WorkbenchModePage({
             : current.tabs.map((item) => (item.id === tab.id
               ? {
                   ...tab,
-                  markdownView: item.markdownView.entryId === tab.markdownView.entryId
+                  markdownView: item.kind === "file" && item.markdownView.entryId === tab.markdownView.entryId
                     ? item.markdownView
                     : tab.markdownView,
                 }
@@ -580,6 +670,47 @@ export function WorkbenchModePage({
     },
     [openWorkbenchMainPreview, workbenchPreviewRenderContext],
   );
+  const openWorkbenchBrowserTab = useCallback((options: BrowserTabCreateOptions = {}) => {
+    browserTabSeqRef.current += 1;
+    try {
+      const result = openWorkbenchBrowserTabState(workbenchPreviewTabsRef.current, {
+        id: `workbench-browser-${Date.now().toString(36)}-${browserTabSeqRef.current.toString(36)}`,
+        now: new Date().toISOString(),
+        commandId: `workbench-browser-command-${Date.now().toString(36)}-${browserTabSeqRef.current.toString(36)}`,
+        options,
+      });
+      if (workspaceId) {
+        disposedBrowserTabIdsRef.current.delete(
+          browserRuntimePanelId(`workspace:${workspaceId}`, result.tab.id),
+        );
+      }
+      workbenchPreviewTabsRef.current = result.state;
+      setWorkbenchPreviewTabs(result.state);
+    } catch (error) {
+      notifications.error(error instanceof Error ? error.message : "无法打开本地 HTML 预览");
+    }
+  }, [notifications, workspaceId]);
+  const updateWorkbenchBrowserTab = useCallback((nextTab: WorkbenchBrowserTabState) => {
+    setWorkbenchPreviewTabs((current) => {
+      const next = {
+        ...current,
+        tabs: current.tabs.map((tab) => tab.id === nextTab.id && tab.kind === "browser" ? nextTab : tab),
+      };
+      workbenchPreviewTabsRef.current = next;
+      return next;
+    });
+  }, []);
+  const reloadAssociatedHtmlBrowserTab = useCallback((absolutePath: string) => {
+    browserTabSeqRef.current += 1;
+    const result = requestWorkbenchAssociatedBrowserReloadState(
+      workbenchPreviewTabsRef.current,
+      absolutePath,
+      `workbench-browser-reload-${Date.now().toString(36)}-${browserTabSeqRef.current.toString(36)}`,
+    );
+    if (!result.tab) return;
+    workbenchPreviewTabsRef.current = result.state;
+    setWorkbenchPreviewTabs(result.state);
+  }, []);
   const handleMainPreviewMarkdownOutlineChange = useCallback((outline: MarkdownOutlineItem[]) => {
     setActiveMainPreviewOutline(outline);
     setActiveMainPreviewOutlineReady(true);
@@ -601,14 +732,21 @@ export function WorkbenchModePage({
         resetMainPreviewOutline();
       }
       setWorkbenchPreviewTabs((current) =>
-        current.activeTabId === tabId
-          ? current
-          : {
-              ...current,
-              activeTabId: tabId,
-            },
+        {
+          if (current.activeTabId === tabId) {
+            return current;
+          }
+          const next = {
+            activeTabId: tabId,
+            tabs: current.tabs.map((item) => item.id === tabId && item.kind === "browser"
+              ? { ...item, lastActivatedAt: new Date().toISOString() }
+              : item),
+          };
+          workbenchPreviewTabsRef.current = next;
+          return next;
+        },
       );
-      if (tab.sourceEntryId) {
+      if (tab.kind === "file" && tab.sourceEntryId) {
         previewContext?.switchPreview(tab.sourceEntryId);
       }
     },
@@ -616,32 +754,29 @@ export function WorkbenchModePage({
   );
   const closeWorkbenchPreviewTab = useCallback(
     (tabId: string) => {
-      const tab = workbenchPreviewTabs.tabs.find((item) => item.id === tabId) ?? null;
+      const result = closeWorkbenchTabState(workbenchPreviewTabsRef.current, tabId);
+      const tab = result.closed;
+      if (!tab) return;
       const closingExternalPreview =
-        tab?.request.type === "local-file" && externalPreviewPath && tab.request.path === externalPreviewPath;
-      if (workbenchPreviewTabs.activeTabId === tabId) {
+        tab.kind === "file"
+        && tab.request.type === "local-file"
+        && externalPreviewPath
+        && tab.request.path === externalPreviewPath;
+      if (workbenchPreviewTabsRef.current.activeTabId === tabId) {
         resetMainPreviewOutline();
       }
-      setWorkbenchPreviewTabs((current) => {
-        const closingIndex = current.tabs.findIndex((item) => item.id === tabId);
-        if (closingIndex === -1) {
-          return current;
-        }
-        const tabs = current.tabs.filter((item) => item.id !== tabId);
-        if (tabs.length === 0) {
-          return EMPTY_WORKBENCH_PREVIEW_TABS;
-        }
-        const activeTabId =
-          current.activeTabId === tabId
-            ? (tabs[Math.max(0, Math.min(closingIndex - 1, tabs.length - 1))]?.id ?? null)
-            : current.activeTabId;
-        return {
-          activeTabId,
-          tabs,
-        };
-      });
-      if (tab?.sourceEntryId) {
+      workbenchPreviewTabsRef.current = result.state;
+      setWorkbenchPreviewTabs(result.state);
+      if (tab.kind === "file" && tab.sourceEntryId) {
         previewContext?.closePreviewEntry(tab.sourceEntryId);
+      }
+      if (tab.kind === "browser" && workspaceId) {
+        const runtimePanelId = browserRuntimePanelId(`workspace:${workspaceId}`, tab.id);
+        disposeWorkbenchBrowserTabOnce(
+          disposedBrowserTabIdsRef.current,
+          runtimePanelId,
+          (id) => browserPanelRuntime.disposeCurrent(id),
+        );
       }
       if (workbenchPreviewRenderContext) {
         previewContext?.setPreviewHostContext(workbenchPreviewRenderContext);
@@ -656,8 +791,7 @@ export function WorkbenchModePage({
       previewContext,
       resetMainPreviewOutline,
       workbenchPreviewRenderContext,
-      workbenchPreviewTabs.activeTabId,
-      workbenchPreviewTabs.tabs,
+      workspaceId,
     ],
   );
   const closeActiveWorkbenchPreviewTab = useCallback(() => {
@@ -737,7 +871,9 @@ export function WorkbenchModePage({
     setPreviewBrowserWidth(restoredPreviewBrowserWidth);
     applyWorkbenchPreviewBrowserWidth(restoredPreviewBrowserWidth);
     mainPreviewRequestSeqRef.current = maxWorkbenchPreviewRequestId(restoredState?.previewTabs);
-    setWorkbenchPreviewTabs(restoredState?.previewTabs ?? EMPTY_WORKBENCH_PREVIEW_TABS);
+    const restoredPreviewTabs = restoredState?.previewTabs ?? EMPTY_WORKBENCH_PREVIEW_TABS;
+    workbenchPreviewTabsRef.current = restoredPreviewTabs;
+    setWorkbenchPreviewTabs(restoredPreviewTabs);
     setWorkspaceBrowserState(restoredState?.workspaceBrowserState ?? null);
     setBtwSession(null);
     setBtwLoadedHistoryTurnCount(null);
@@ -793,7 +929,9 @@ export function WorkbenchModePage({
     handledExternalPreviewIntentKeyRef.current = intentKey;
     const request: PreviewRequest = { type: "local-file", path: externalPreviewIntentPath };
     const tabId = workbenchPreviewTabId(request);
-    const existingTab = workbenchPreviewTabs.tabs.find((item) => item.id === tabId);
+    const existingTab = workbenchPreviewTabs.tabs.find(
+      (item): item is WorkbenchMainFileTabState => item.id === tabId && item.kind === "file",
+    );
     openWorkbenchMainPreview(
       request,
       workbenchPreviewRenderContext,
@@ -819,14 +957,18 @@ export function WorkbenchModePage({
     }
     const request: PreviewRequest = { type: "local-file", path: externalPreviewPath };
     const tabId = workbenchPreviewTabId(request);
-    const existingTab = workbenchPreviewTabs.tabs.find((item) => item.id === tabId);
+    const existingTab = workbenchPreviewTabs.tabs.find(
+      (item): item is WorkbenchMainFileTabState => item.id === tabId && item.kind === "file",
+    );
     if (!existingTab || existingTab.renderContext === workbenchPreviewRenderContext) {
       return;
     }
     setWorkbenchPreviewTabs((current) => ({
       activeTabId: current.activeTabId,
       tabs: current.tabs.map((item) =>
-        item.id === tabId ? { ...item, renderContext: workbenchPreviewRenderContext } : item,
+        item.id === tabId && item.kind === "file"
+          ? { ...item, renderContext: workbenchPreviewRenderContext }
+          : item,
       ),
     }));
   }, [externalPreviewPath, workbenchPreviewRenderContext, workbenchPreviewTabs.tabs]);
@@ -982,8 +1124,16 @@ export function WorkbenchModePage({
                     label={workspaceLabel}
                     initialNavigationMode={externalPreviewPath ? "outline" : "files"}
                     previewPath={activeWorkbenchPreviewPath}
-                    previewRequestId={activeWorkbenchPreviewTab?.requestId ?? 0}
-                    previewRevealTarget={activeWorkbenchPreviewTab?.revealTarget ?? null}
+                    previewRequestId={
+                      activeWorkbenchPreviewTab?.kind === "file"
+                        ? activeWorkbenchPreviewTab.requestId
+                        : 0
+                    }
+                    previewRevealTarget={
+                      activeWorkbenchPreviewTab?.kind === "file"
+                        ? activeWorkbenchPreviewTab.revealTarget
+                        : null
+                    }
                     directoryRevealPath={
                       previewContext?.filePanelRequest?.scopeKey === previewContext?.activeScopeKey
                         ? previewContext?.filePanelRequest?.directoryRevealPath ?? null
@@ -1030,16 +1180,30 @@ export function WorkbenchModePage({
               {activeWorkbenchPreviewTab ? (
                 <WorkbenchMainPreviewTabs
                   activeTab={activeWorkbenchPreviewTab}
-                  context={activeWorkbenchPreviewTab.renderContext ?? workbenchPreviewRenderContext}
+                  context={
+                    activeWorkbenchPreviewTab.kind === "file"
+                      ? activeWorkbenchPreviewTab.renderContext ?? workbenchPreviewRenderContext
+                      : null
+                  }
                   fallbackRuntime={runtime}
                   fallbackWorkspaceId={workspaceId}
+                  selectedSessionId={selectedSessionId}
                   workspaceRootPath={selectedWorkspace?.root_path}
                   outlineRevealRequest={mainPreviewOutlineRevealRequest}
                   onCloseActive={closeActiveWorkbenchPreviewTab}
                   onCloseTab={closeWorkbenchPreviewTab}
+                  onCreateBrowserTab={openWorkbenchBrowserTab}
+                  onOpenHtmlBrowserPreview={(absolutePath) => {
+                    openWorkbenchBrowserTab({
+                      activate: true,
+                      previewFilePath: absolutePath,
+                    });
+                  }}
+                  onPersistedHtmlRevision={reloadAssociatedHtmlBrowserTab}
                   onMarkdownOutlineChange={handleMainPreviewMarkdownOutlineChange}
-                  onViewportNearBottomChange={setMainPreviewNearBottom}
+                  onViewportNearBottomChange={handleMainPreviewNearBottomChange}
                   onSelectTab={selectWorkbenchPreviewTab}
+                  onUpdateBrowserTab={updateWorkbenchBrowserTab}
                   tabs={workbenchPreviewTabs.tabs}
                 />
               ) : null}
@@ -1114,8 +1278,8 @@ function readPersistedWorkbenchModeUiState(scopeKey: string): WorkbenchModeUiSta
     const raw = window.localStorage.getItem(workbenchUiStorageKey(scopeKey));
     if (!raw) return null;
     const envelope = JSON.parse(raw) as { scopeKey?: unknown; state?: unknown };
-    if (envelope.scopeKey !== scopeKey || !isPersistedWorkbenchModeUiState(envelope.state)) return null;
-    return envelope.state;
+    if (envelope.scopeKey !== scopeKey) return null;
+    return normalizePersistedWorkbenchModeUiState(envelope.state);
   } catch {
     return null;
   }
@@ -1123,8 +1287,8 @@ function readPersistedWorkbenchModeUiState(scopeKey: string): WorkbenchModeUiSta
 
 function persistWorkbenchModeUiState(scopeKey: string, state: WorkbenchModeUiState): void {
   if (typeof window === "undefined") return;
-  const previewTabs = persistableWorkbenchPreviewTabs(state.previewTabs);
-  const persisted: WorkbenchModeUiState = {
+  const previewTabs = serializePersistableWorkbenchPreviewTabs(state.previewTabs);
+  const persisted = {
     ...state,
     previewTabs,
     activeMainPreviewOutline: previewTabs.tabs.length ? state.activeMainPreviewOutline : [],
@@ -1139,41 +1303,127 @@ function persistWorkbenchModeUiState(scopeKey: string, state: WorkbenchModeUiSta
   }
 }
 
-function persistableWorkbenchPreviewTabs(state: WorkbenchPreviewTabsState): WorkbenchPreviewTabsState {
-  const tabs = state.tabs.filter((tab) => tab.request.type === "file" || tab.request.type === "local-file");
-  const activeTabId = tabs.some((tab) => tab.id === state.activeTabId)
+export function serializePersistableWorkbenchPreviewTabs(
+  state: WorkbenchPreviewTabsState,
+): PersistedWorkbenchPreviewTabsState {
+  const tabs = state.tabs.flatMap((tab): PersistedWorkbenchPreviewTabsState["tabs"] => {
+    if (tab.kind === "file") {
+      return tab.request.type === "file" || tab.request.type === "local-file"
+        ? [{
+            ...tab,
+            kind: "file",
+            renderContext: null,
+            sourceEntryId: null,
+          }]
+        : [];
+    }
+    const browser = serializePersistableBrowserTab(tab);
+    if (!browser) return [];
+    return [{
+      kind: "browser",
+      browser,
+      ...(tab.previewFilePath ? { previewFilePath: tab.previewFilePath } : {}),
+      ...(tab.previewFileKey ? { previewFileKey: tab.previewFileKey } : {}),
+    }];
+  });
+  const activeTabId = tabs.some((tab) =>
+    (tab.kind === "browser" ? tab.browser.id : tab.id) === state.activeTabId)
     ? state.activeTabId
-    : tabs.at(-1)?.id ?? null;
-  return sanitizeWorkbenchPreviewTabs({ activeTabId, tabs });
+    : (() => {
+        const last = tabs.at(-1);
+        return last ? (last.kind === "browser" ? last.browser.id : last.id) : null;
+      })();
+  return { activeTabId, tabs };
 }
 
-function isPersistedWorkbenchModeUiState(value: unknown): value is WorkbenchModeUiState {
-  if (!value || typeof value !== "object") return false;
-  const state = value as Partial<WorkbenchModeUiState>;
-  if (typeof state.previewBrowserWidth !== "number" || !Number.isFinite(state.previewBrowserWidth)) return false;
-  if (!state.previewTabs || !Array.isArray(state.previewTabs.tabs)) return false;
-  if (state.previewTabs.activeTabId !== null && typeof state.previewTabs.activeTabId !== "string") return false;
-  return state.previewTabs.tabs.every((tab) => {
-    if (!tab || typeof tab !== "object") return false;
-    const candidate = tab as Partial<WorkbenchMainPreviewTabState>;
-    const request = candidate.request;
-    return typeof candidate.id === "string"
-      && typeof candidate.requestId === "number"
-      && typeof candidate.refreshRequestId === "number"
-      && typeof candidate.title === "string"
-      && typeof candidate.sourceLabel === "string"
-      && Boolean(candidate.markdownView)
-      && Boolean(request)
-      && (request?.type === "file" || request?.type === "local-file")
-      && typeof request.path === "string";
+export function normalizePersistedWorkbenchModeUiState(value: unknown): WorkbenchModeUiState | null {
+  if (!isRecord(value)) return null;
+  const previewBrowserWidth = value.previewBrowserWidth;
+  const rawPreviewTabs = value.previewTabs;
+  if (typeof previewBrowserWidth !== "number" || !Number.isFinite(previewBrowserWidth)) return null;
+  if (!isRecord(rawPreviewTabs) || !Array.isArray(rawPreviewTabs.tabs)) return null;
+  const tabs = rawPreviewTabs.tabs.flatMap((raw): WorkbenchMainTabState[] => {
+    const fileTab = normalizePersistedWorkbenchFileTab(raw);
+    if (fileTab) return [fileTab];
+    const browserTab = normalizePersistedWorkbenchBrowserTab(raw);
+    return browserTab ? [browserTab] : [];
   });
+  const requestedActive = typeof rawPreviewTabs.activeTabId === "string"
+    ? rawPreviewTabs.activeTabId
+    : null;
+  const previewTabs = sanitizeWorkbenchPreviewTabs({
+    activeTabId: tabs.some((tab) => tab.id === requestedActive)
+      ? requestedActive
+      : tabs.at(-1)?.id ?? null,
+    tabs,
+  });
+  return {
+    previewBrowserWidth,
+    previewTabs,
+    activeMainPreviewOutline: previewTabs.tabs.length > 0 && Array.isArray(value.activeMainPreviewOutline)
+      ? value.activeMainPreviewOutline as MarkdownOutlineItem[]
+      : [],
+    activeMainPreviewOutlineReady: previewTabs.tabs.length > 0
+      && value.activeMainPreviewOutlineReady === true,
+    workspaceBrowserState: isRecord(value.workspaceBrowserState)
+      ? value.workspaceBrowserState as unknown as WorkspaceFileBrowserState
+      : null,
+  };
+}
+
+function normalizePersistedWorkbenchFileTab(raw: unknown): WorkbenchMainFileTabState | null {
+  if (!isRecord(raw) || (raw.kind !== undefined && raw.kind !== "file")) return null;
+  const request = raw.request;
+  if (!isRecord(request)
+    || (request.type !== "file" && request.type !== "local-file")
+    || typeof request.path !== "string"
+    || !request.path.trim()
+    || typeof raw.id !== "string"
+    || !raw.id
+    || typeof raw.requestId !== "number"
+    || !Number.isFinite(raw.requestId)
+    || typeof raw.refreshRequestId !== "number"
+    || !Number.isFinite(raw.refreshRequestId)
+    || typeof raw.title !== "string"
+    || typeof raw.sourceLabel !== "string"
+    || !isRecord(raw.markdownView)) return null;
+  return {
+    ...(raw as unknown as WorkbenchMainFileTabState),
+    kind: "file",
+    renderContext: null,
+    sourceEntryId: null,
+  };
+}
+
+function normalizePersistedWorkbenchBrowserTab(raw: unknown): WorkbenchBrowserTabState | null {
+  if (!isRecord(raw) || raw.kind !== "browser" || !isRecord(raw.browser)) return null;
+  const allowedKeys = new Set(["kind", "browser", "previewFilePath", "previewFileKey"]);
+  if (Object.keys(raw).some((key) => !allowedKeys.has(key))) return null;
+  const browser = normalizePersistedBrowserTab(raw.browser);
+  if (!browser) return null;
+  if (raw.previewFilePath === undefined && raw.previewFileKey === undefined) {
+    return { ...browser, kind: "browser" };
+  }
+  if (typeof raw.previewFilePath !== "string" || typeof raw.previewFileKey !== "string") return null;
+  try {
+    const previewFile = canonicalizeBrowserFileAddress(raw.previewFilePath);
+    if (previewFile.canonicalKey !== raw.previewFileKey) return null;
+    return {
+      ...browser,
+      kind: "browser",
+      previewFilePath: previewFile.windowsPath,
+      previewFileKey: previewFile.canonicalKey,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function workbenchUiStorageKey(scopeKey: string): string {
   return `${WORKBENCH_UI_STORAGE_PREFIX}:${hashText(scopeKey)}`;
 }
 
-function workbenchModeUiScopeKey({
+export function workbenchModeUiScopeKey({
   workspaceId,
   externalPreviewPath,
 }: {
@@ -1209,20 +1459,60 @@ function sanitizeWorkbenchPreviewTabs(state: WorkbenchPreviewTabsState): Workben
   }
   return {
     activeTabId: state.activeTabId,
-    tabs: state.tabs.map((tab) => ({
-      ...tab,
-      renderContext: null,
-      sourceEntryId: null,
-    })),
+    tabs: state.tabs.map((tab) => tab.kind === "file"
+      ? {
+          ...tab,
+          renderContext: null,
+          sourceEntryId: null,
+        }
+      : {
+          id: tab.id,
+          kind: "browser",
+          title: tab.title,
+          ...(tab.faviconUrl ? { faviconUrl: tab.faviconUrl } : {}),
+          restoreUrl: tab.restoreUrl,
+          restoreUrlSanitized: tab.restoreUrlSanitized,
+          profileMode: tab.profileMode,
+          zoomFactor: tab.zoomFactor,
+          createdAt: tab.createdAt,
+          lastActivatedAt: tab.lastActivatedAt,
+          ...(tab.previewFilePath ? { previewFilePath: tab.previewFilePath } : {}),
+          ...(tab.previewFileKey ? { previewFileKey: tab.previewFileKey } : {}),
+        }),
   };
 }
 
 function maxWorkbenchPreviewRequestId(state?: WorkbenchPreviewTabsState | null): number {
-  return state?.tabs.reduce((maxRequestId, tab) => Math.max(maxRequestId, tab.requestId), 0) ?? 0;
+  return state?.tabs.reduce(
+    (maxRequestId, tab) => tab.kind === "file"
+      ? Math.max(maxRequestId, tab.requestId)
+      : maxRequestId,
+    0,
+  ) ?? 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+export function workbenchBrowserInteractiveResizeInput(
+  startWidth: number,
+  startScreenX: number,
+  rootWidth: number,
+) {
+  const maxWidth = rootWidth > 0
+    ? Math.max(MIN_WORKBENCH_BROWSER_WIDTH, rootWidth - MIN_WORKBENCH_MAIN_PREVIEW_WIDTH)
+    : startWidth;
+  return {
+    placement: "left" as const,
+    startScreenX,
+    minDelta: MIN_WORKBENCH_BROWSER_WIDTH - startWidth,
+    maxDelta: maxWidth - startWidth,
+  };
 }
 
 function workbenchPreviewTabMenuPosition(clientX: number, clientY: number): CSSProperties {
@@ -1297,32 +1587,42 @@ function workbenchPreviewTabScrollState(strip: HTMLElement): WorkbenchPreviewTab
   };
 }
 
-function WorkbenchMainPreviewTabs({
+export function WorkbenchMainPreviewTabs({
   activeTab,
   context,
   fallbackRuntime,
   fallbackWorkspaceId,
+  selectedSessionId,
   workspaceRootPath,
   outlineRevealRequest,
   onCloseActive,
   onCloseTab,
+  onCreateBrowserTab,
+  onOpenHtmlBrowserPreview,
+  onPersistedHtmlRevision,
   onMarkdownOutlineChange,
   onViewportNearBottomChange,
   onSelectTab,
+  onUpdateBrowserTab,
   tabs,
 }: {
-  activeTab: WorkbenchMainPreviewTabState;
+  activeTab: WorkbenchMainTabState;
   context: PreviewRenderContext | null;
   fallbackRuntime: RuntimeBridge;
   fallbackWorkspaceId?: string;
+  selectedSessionId?: string;
   workspaceRootPath?: string;
   outlineRevealRequest?: MarkdownOutlineRevealRequest | null;
   onCloseActive: () => void;
   onCloseTab: (tabId: string) => void;
+  onCreateBrowserTab: (options?: BrowserTabCreateOptions) => void;
+  onOpenHtmlBrowserPreview?: (absolutePath: string) => void;
+  onPersistedHtmlRevision?: (absolutePath: string) => void;
   onMarkdownOutlineChange?: (outline: MarkdownOutlineItem[]) => void;
-  onViewportNearBottomChange?: (nearBottom: boolean) => void;
+  onViewportNearBottomChange?: (nearBottom: boolean | null) => void;
   onSelectTab: (tabId: string) => void;
-  tabs: WorkbenchMainPreviewTabState[];
+  onUpdateBrowserTab: (tab: WorkbenchBrowserTabState) => void;
+  tabs: WorkbenchMainTabState[];
 }) {
   const tabMenuRef = useRef<HTMLDivElement | null>(null);
   const tabStripRef = useRef<HTMLDivElement | null>(null);
@@ -1331,6 +1631,7 @@ function WorkbenchMainPreviewTabs({
   const [tabScrollState, setTabScrollState] = useState<WorkbenchPreviewTabScrollState>(
     EMPTY_WORKBENCH_PREVIEW_TAB_SCROLL_STATE,
   );
+  useBrowserOcclusionToken(Boolean(tabMenu), "menu");
   const closeTabMenu = useCallback(() => {
     setTabMenu(null);
   }, []);
@@ -1471,8 +1772,11 @@ function WorkbenchMainPreviewTabs({
   return (
     <section
       className={styles.mainPreview}
+      data-active-tab-kind={activeTab.kind}
       data-open-tab-count={tabs.length}
-      data-testid="workbench-main-file-preview"
+      data-testid={activeTab.kind === "file"
+        ? "workbench-main-file-preview"
+        : "workbench-main-browser-preview"}
     >
       <div
         className={styles.previewTabRail}
@@ -1497,7 +1801,7 @@ function WorkbenchMainPreviewTabs({
           data-testid="workbench-preview-tab-strip"
           ref={tabStripRef}
           role="tablist"
-          aria-label="工作台文件预览"
+          aria-label="工作台预览"
           onScroll={updateTabScrollState}
         >
           {tabs.map((tab) => {
@@ -1518,10 +1822,32 @@ function WorkbenchMainPreviewTabs({
                   type="button"
                   role="tab"
                   aria-selected={active}
-                  title={tab.sourceLabel}
+                  data-profile-mode={tab.kind === "browser" ? tab.profileMode : undefined}
+                  data-tab-kind={tab.kind}
+                  data-navigation-command-kind={
+                    tab.kind === "browser" ? tab.navigationCommand?.kind : undefined
+                  }
+                  data-navigation-command-source={
+                    tab.kind === "browser" ? tab.navigationCommand?.source : undefined
+                  }
+                  title={workbenchMainTabSourceLabel(tab)}
                   onClick={() => onSelectTab(tab.id)}
                 >
+                  {tab.kind === "browser" ? (
+                    <span className={styles.previewTabIcon} data-testid={`workbench-browser-tab-icon-${tab.id}`}>
+                      {tab.previewFilePath || tab.restoreUrl.toLowerCase().startsWith("file:") ? (
+                        <FileCode2 aria-hidden size={13} strokeWidth={1.8} />
+                      ) : tab.faviconUrl ? (
+                        <img alt="" aria-hidden src={tab.faviconUrl} />
+                      ) : (
+                        <Globe2 aria-hidden size={13} strokeWidth={1.8} />
+                      )}
+                    </span>
+                  ) : null}
                   <span className={styles.previewTabTitle}>{tab.title}</span>
+                  {tab.kind === "browser" && tab.profileMode === "incognito" ? (
+                    <span className={styles.previewTabProfileBadge}>无痕</span>
+                  ) : null}
                 </button>
                 <button
                   className={styles.previewTabClose}
@@ -1606,24 +1932,96 @@ function WorkbenchMainPreviewTabs({
           </button>
         </div>
       ) : null}
-      <WorkbenchMainFilePreview
-        context={context}
-        fallbackRuntime={fallbackRuntime}
-        fallbackWorkspaceId={fallbackWorkspaceId}
-        workspaceRootPath={workspaceRootPath}
-        outlineRevealRequest={outlineRevealRequest}
-        request={activeTab.request}
-        requestId={activeTab.requestId}
-        refreshRequestId={activeTab.refreshRequestId ?? 0}
-        markdownView={activeTab.markdownView}
-        revealTarget={activeTab.revealTarget}
-        title={activeTab.title}
-        onClose={onCloseActive}
-        onMarkdownOutlineChange={onMarkdownOutlineChange}
-        onViewportNearBottomChange={onViewportNearBottomChange}
-      />
+      {activeTab.kind === "file" ? (
+        <WorkbenchMainFilePreview
+          context={context}
+          fallbackRuntime={fallbackRuntime}
+          fallbackWorkspaceId={fallbackWorkspaceId}
+          workspaceRootPath={workspaceRootPath}
+          outlineRevealRequest={outlineRevealRequest}
+          request={activeTab.request}
+          requestId={activeTab.requestId}
+          refreshRequestId={activeTab.refreshRequestId ?? 0}
+          markdownView={activeTab.markdownView}
+          revealTarget={activeTab.revealTarget}
+          title={activeTab.title}
+          onClose={onCloseActive}
+          onOpenHtmlBrowserPreview={onOpenHtmlBrowserPreview}
+          onPersistedHtmlRevision={onPersistedHtmlRevision}
+          onMarkdownOutlineChange={onMarkdownOutlineChange}
+          onViewportNearBottomChange={onViewportNearBottomChange}
+        />
+      ) : fallbackWorkspaceId ? (
+        <WorkbenchMainBrowserTab
+          active
+          selectedSessionId={selectedSessionId}
+          state={activeTab}
+          workspaceId={fallbackWorkspaceId}
+          onActivate={onSelectTab}
+          onClose={onCloseTab}
+          onCreate={onCreateBrowserTab}
+          onUpdate={onUpdateBrowserTab}
+        />
+      ) : null}
     </section>
   );
+}
+
+function WorkbenchMainBrowserTab({
+  active,
+  selectedSessionId,
+  state,
+  workspaceId,
+  onActivate,
+  onClose,
+  onCreate,
+  onUpdate,
+}: {
+  active: boolean;
+  selectedSessionId?: string;
+  state: WorkbenchBrowserTabState;
+  workspaceId: string;
+  onActivate: (tabId: string) => void;
+  onClose: (tabId: string) => void;
+  onCreate: (options?: BrowserTabCreateOptions) => void;
+  onUpdate: (state: WorkbenchBrowserTabState) => void;
+}) {
+  const host = useMemo(
+    () => createWorkbenchBrowserAdapter({
+      workspaceId,
+      selectedSessionId,
+      active,
+      state,
+      updateState: onUpdate,
+      createTab: onCreate,
+      activateTab: onActivate,
+      closeTab: onClose,
+    }),
+    [
+      active,
+      onActivate,
+      onClose,
+      onCreate,
+      onUpdate,
+      selectedSessionId,
+      state,
+      workspaceId,
+    ],
+  );
+  return (
+    <div
+      className={styles.mainPreviewBody}
+      data-browser-adapter="workbench"
+      data-testid="workbench-browser-tab-content"
+    >
+      <BrowserTabSurface host={host} />
+    </div>
+  );
+}
+
+function workbenchMainTabSourceLabel(tab: WorkbenchMainTabState): string {
+  if (tab.kind === "file") return tab.sourceLabel;
+  return tab.previewFilePath || tab.restoreUrl || tab.title;
 }
 
 function WorkbenchMainFilePreview({
@@ -1641,6 +2039,8 @@ function WorkbenchMainFilePreview({
   onClose,
   onMarkdownOutlineChange,
   onViewportNearBottomChange,
+  onOpenHtmlBrowserPreview,
+  onPersistedHtmlRevision,
 }: {
   context: PreviewRenderContext | null;
   fallbackRuntime: RuntimeBridge;
@@ -1655,7 +2055,9 @@ function WorkbenchMainFilePreview({
   title: string;
   onClose: () => void;
   onMarkdownOutlineChange?: (outline: MarkdownOutlineItem[]) => void;
-  onViewportNearBottomChange?: (nearBottom: boolean) => void;
+  onViewportNearBottomChange?: (nearBottom: boolean | null) => void;
+  onOpenHtmlBrowserPreview?: (absolutePath: string) => void;
+  onPersistedHtmlRevision?: (absolutePath: string) => void;
 }) {
   const sourceRevealRequest = useMemo<FilePreviewRevealRequest | null>(() => {
     if (!revealTarget) {
@@ -1702,6 +2104,8 @@ function WorkbenchMainFilePreview({
         markdownViewDescriptor={markdownView}
         onMarkdownOutlineChange={onMarkdownOutlineChange}
         onViewportNearBottomChange={onViewportNearBottomChange}
+        onOpenHtmlBrowserPreview={onOpenHtmlBrowserPreview}
+        onPersistedHtmlRevision={onPersistedHtmlRevision}
         onQuoteSelection={context?.onQuoteSelection}
         onStartChatFromAnnotation={context?.onStartChatFromAnnotation}
         onClose={onClose}

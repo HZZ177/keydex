@@ -21,10 +21,13 @@
     } catch {
       return;
     }
-    if (target.protocol !== "http:" && target.protocol !== "https:") return;
+    const targetIsRemote = target.protocol === "http:" || target.protocol === "https:";
+    const targetIsFile = target.protocol === "file:";
+    if (!targetIsRemote && !targetIsFile) return;
 
     event.preventDefault();
     event.stopImmediatePropagation();
+    if (targetIsFile && window.location.protocol !== "file:") return;
     nativeOpen(target.toString(), "_blank", "noopener,noreferrer");
   }, true);
 })();

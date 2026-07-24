@@ -11,7 +11,13 @@ from fastapi.testclient import TestClient
 
 from backend.app.api.git import discover_repositories, router
 from backend.app.git.access import GitAncestorGrantStore
-from backend.app.git.models import GitCapabilityResponse, GitDiscoveryRequest, GitDiscoveryResponse
+from backend.app.git.credential_service import GitCredentialService
+from backend.app.git.models import (
+    GitCapabilityResponse,
+    GitCredentialLoginResponse,
+    GitDiscoveryRequest,
+    GitDiscoveryResponse,
+)
 from backend.app.git.query_service import GitQueryService
 from backend.tests.git.conftest import GitRepoFactory
 
@@ -100,7 +106,13 @@ def test_git_read_api_exposes_discovery_and_all_query_routes(tmp_path: Path) -> 
     reflog = client.get(f"/api/git/repositories/{repository_id}/reflog", params=params)
 
     assert status.status_code == refs.status_code == history.status_code == 200
-    assert commit.status_code == revision_tree.status_code == diff.status_code == compare.status_code == 200
+    assert (
+        commit.status_code
+        == revision_tree.status_code
+        == diff.status_code
+        == compare.status_code
+        == 200
+    )
     assert blame.status_code == reflog.status_code == 200
     assert status.json()["files"][0]["path"] == "README.md"
     assert refs.json()["refs"][0]["kind"] == "local"
@@ -118,6 +130,51 @@ def test_git_read_api_exposes_discovery_and_all_query_routes(tmp_path: Path) -> 
     assert selected_compare.json()["files"][0]["raw_patch"].startswith("diff --git ")
     assert blame.json()["lines"][0]["filename"] == "README.md"
     assert reflog.json()["entries"]
+
+
+def test_git_credential_login_route_uses_the_path_repository_id(tmp_path: Path) -> None:
+    class StubCredentialService(GitCredentialService):
+        def __init__(self) -> None:
+            self.request = None
+
+        async def login(self, request):
+            self.request = request
+            return GitCredentialLoginResponse(
+                repository_id=request.repository_id,
+                remote=request.remote,
+                host="git.example.test",
+            )
+
+    app = FastAPI()
+    app.state.settings = SimpleNamespace(data_dir=tmp_path)
+    app.state.git_query_service = GitQueryService(
+        grants=GitAncestorGrantStore(tmp_path / "grants.json")
+    )
+    credentials = StubCredentialService()
+    app.state.git_credential_service = credentials
+    app.include_router(router)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/git/repositories/repo-from-path/credentials/login",
+        json={
+            "workspace_id": "workspace-api",
+            "project_root": str(tmp_path),
+            "repository_id": "repo-from-body",
+            "remote": "origin",
+            "provider": "generic",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "repository_id": "repo-from-path",
+        "remote": "origin",
+        "host": "git.example.test",
+        "authenticated": True,
+    }
+    assert credentials.request.repository_id == "repo-from-path"
+    assert credentials.request.provider == "generic"
 
 
 def test_git_read_api_maps_scope_and_validation_errors(tmp_path: Path) -> None:

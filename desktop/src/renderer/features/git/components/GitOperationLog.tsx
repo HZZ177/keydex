@@ -1,4 +1,4 @@
-import { Check, Copy, RefreshCw, XCircle } from "lucide-react";
+import { Check, Copy, LogIn, RefreshCw, XCircle } from "lucide-react";
 import { useState } from "react";
 
 import { redactForLog } from "@/runtime/httpClient";
@@ -12,6 +12,8 @@ export function GitOperationLog({
   repositoryLabels,
   canRetry,
   onRetry,
+  canLogin = () => false,
+  onLogin = () => undefined,
   canCancel,
   onCancel,
 }: {
@@ -19,6 +21,8 @@ export function GitOperationLog({
   repositoryLabels: Readonly<Record<string, string>>;
   canRetry: (operationId: string) => boolean;
   onRetry: (operationId: string) => void;
+  canLogin?: (operationId: string) => boolean;
+  onLogin?: (operationId: string) => void;
   canCancel: (operationId: string) => boolean;
   onCancel: (operationId: string) => void;
 }) {
@@ -75,6 +79,15 @@ export function GitOperationLog({
                   {copiedId === operation.operationId ? <Check size={13} /> : <Copy size={13} />}
                   {copiedId === operation.operationId ? "已复制" : "复制诊断"}
                 </button>
+                {operation.error?.code === "git_credentials_missing" ? (
+                  <button
+                    type="button"
+                    disabled={!canLogin(operation.operationId)}
+                    onClick={() => onLogin(operation.operationId)}
+                  >
+                    <LogIn size={13} />登录远程仓库
+                  </button>
+                ) : null}
                 {operation.retryable ? (
                   <button
                     type="button"

@@ -14,7 +14,7 @@ function envelope<K extends BrowserEventEnvelope["kind"]>(
   payload: Extract<BrowserEventEnvelope, { readonly kind: K }>["payload"],
 ): Extract<BrowserEventEnvelope, { readonly kind: K }> {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind,
     panelId: "panel-1",
     surfaceId: "surface-1",
@@ -29,32 +29,78 @@ describe("browser popup and external protocol policy", () => {
   it("opens target blank/window.open only for a trusted HTTP(S) user gesture", () => {
     let subscriber: ((event: BrowserEventEnvelope) => void) | undefined;
     const onOpenPanel = vi.fn();
+    const onNavigationFailure = vi.fn();
     const coordinator = new BrowserPolicyCoordinator({
       client: { subscribe: (next) => { subscriber = next; return vi.fn(); } },
       onExternalProtocolRequest: vi.fn(),
-      onNavigationFailure: vi.fn(),
+      onNavigationFailure,
       onOpenPanel,
     });
     coordinator.start();
 
     subscriber?.(envelope("new_window.requested", {
-      disposition: "tab", url: "https://example.com/popup", userGesture: false,
+      disposition: "tab", url: "https://example.com/popup", sourceUrl: "https://example.com/",
+      userGesture: false, policyAllowed: false,
     }));
     subscriber?.(envelope("new_window.requested", {
-      disposition: "tab", url: "javascript:alert(1)", userGesture: true,
+      disposition: "tab", url: "javascript:alert(1)", sourceUrl: "https://example.com/",
+      userGesture: true, policyAllowed: false,
     }));
     subscriber?.(envelope("new_window.requested", {
-      disposition: "tab", url: "data:text/html,test", userGesture: true,
+      disposition: "tab", url: "data:text/html,test", sourceUrl: "https://example.com/",
+      userGesture: true, policyAllowed: false,
     }));
     subscriber?.(envelope("new_window.requested", {
-      disposition: "tab", url: "file:///C:/secret.txt", userGesture: true,
+      disposition: "tab", url: "file:///C:/secret.txt", sourceUrl: "https://example.com/",
+      userGesture: true, policyAllowed: false,
     }));
     subscriber?.(envelope("new_window.requested", {
-      disposition: "tab", url: "https://example.com/popup", userGesture: true,
+      disposition: "tab", url: "https://example.com/popup", sourceUrl: "https://example.com/",
+      userGesture: true, policyAllowed: true,
     }));
 
     expect(onOpenPanel).toHaveBeenCalledTimes(1);
     expect(onOpenPanel).toHaveBeenCalledWith("https://example.com/popup");
+    expect(onNavigationFailure).toHaveBeenCalledTimes(4);
+    expect(onNavigationFailure).toHaveBeenCalledWith({
+      category: "policy_denied",
+      url: "file:///C:/secret.txt",
+    });
+  });
+
+  it("opens a local-file popup only from a local-file source after both policy layers allow it", () => {
+    let subscriber: ((event: BrowserEventEnvelope) => void) | undefined;
+    const onOpenPanel = vi.fn();
+    const onNavigationFailure = vi.fn();
+    const coordinator = new BrowserPolicyCoordinator({
+      client: { subscribe: (next) => { subscriber = next; return vi.fn(); } },
+      onExternalProtocolRequest: vi.fn(),
+      onNavigationFailure,
+      onOpenPanel,
+    });
+    coordinator.start();
+
+    subscriber?.(envelope("new_window.requested", {
+      disposition: "tab",
+      url: "file:///D:/workspace/popup.html",
+      sourceUrl: "file:///D:/workspace/index.html",
+      userGesture: true,
+      policyAllowed: true,
+    }));
+    subscriber?.(envelope("new_window.requested", {
+      disposition: "tab",
+      url: "file:///D:/workspace/private.html",
+      sourceUrl: "https://example.test/article",
+      userGesture: true,
+      policyAllowed: true,
+    }));
+
+    expect(onOpenPanel).toHaveBeenCalledOnce();
+    expect(onOpenPanel).toHaveBeenCalledWith("file:///D:/workspace/popup.html");
+    expect(onNavigationFailure).toHaveBeenCalledWith({
+      category: "policy_denied",
+      url: "file:///D:/workspace/private.html",
+    });
   });
 
   it("isolates policy events to the current panel, surface, and generation", () => {
@@ -69,11 +115,13 @@ describe("browser popup and external protocol policy", () => {
     });
     coordinator.start();
     subscriber?.(envelope("new_window.requested", {
-      disposition: "tab", url: "https://example.com/stale", userGesture: true,
+      disposition: "tab", url: "https://example.com/stale", sourceUrl: "https://example.com/",
+      userGesture: true, policyAllowed: true,
     }));
     subscriber?.({
       ...envelope("new_window.requested", {
-        disposition: "tab", url: "https://example.com/current", userGesture: true,
+        disposition: "tab", url: "https://example.com/current", sourceUrl: "https://example.com/",
+        userGesture: true, policyAllowed: true,
       }),
       generation: 2,
     });

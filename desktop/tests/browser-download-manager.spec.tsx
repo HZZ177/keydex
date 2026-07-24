@@ -14,7 +14,7 @@ import { runtimeBridge } from "../src/runtime";
 
 function requested(filename: string, id = "download-1"): BrowserEventEnvelope<"download.requested"> {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "download.requested",
     panelId: "panel-1",
     surfaceId: "surface-1",
@@ -32,7 +32,7 @@ function requested(filename: string, id = "download-1"): BrowserEventEnvelope<"d
 
 function completed(id = "download-1"): BrowserEventEnvelope<"download.completed"> {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "download.completed",
     panelId: "panel-1",
     surfaceId: "surface-1",
@@ -51,7 +51,7 @@ function started(
   id = "download-1",
 ): BrowserEventEnvelope<"download.started"> {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "download.started",
     panelId: "panel-1",
     surfaceId: "surface-1",
@@ -68,7 +68,7 @@ function started(
 
 function interrupted(id = "download-1"): BrowserEventEnvelope<"download.interrupted"> {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "download.interrupted",
     panelId: "panel-1",
     surfaceId: "surface-1",
@@ -85,7 +85,7 @@ function interrupted(id = "download-1"): BrowserEventEnvelope<"download.interrup
 
 function resumed(id = "download-1"): BrowserEventEnvelope<"download.resumed"> {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "download.resumed",
     panelId: "panel-1",
     surfaceId: "surface-1",
@@ -98,7 +98,7 @@ function resumed(id = "download-1"): BrowserEventEnvelope<"download.resumed"> {
 
 function failed(errorCategory = "cancelled", id = "download-1"): BrowserEventEnvelope<"download.failed"> {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "download.failed",
     panelId: "panel-1",
     surfaceId: "surface-1",

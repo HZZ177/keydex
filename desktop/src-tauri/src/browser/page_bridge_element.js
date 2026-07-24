@@ -545,7 +545,9 @@
   const sanitizedUrlAttribute = (value) => {
     try {
       const url = new URL(value, location.href);
-      if (!/^https?:$/.test(url.protocol)) return "";
+      const remote = /^https?:$/.test(url.protocol);
+      const localFile = url.protocol === "file:" && location.protocol === "file:";
+      if (!remote && !localFile) return "";
       url.username = "";
       url.password = "";
       url.search = "";

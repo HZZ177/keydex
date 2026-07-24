@@ -23,22 +23,13 @@ describe("GitBranchActions", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "创建新分支" })).toBeNull());
   });
 
-  it("offers Commit, Stash, and Cancel without automatically checking out a dirty tree", () => {
+  it("lets Git attempt checkout when the working tree is dirty", () => {
     const onCheckout = vi.fn();
-    const onOpenChanges = vi.fn();
-    const onStashAndCheckout = vi.fn();
-    renderBranchActions({ onCheckout, onOpenChanges, onStashAndCheckout, dirty: true });
+    renderBranchActions({ onCheckout, dirty: true });
 
     fireEvent.click(screen.getByRole("button", { name: "签出…" }));
-    expect(onCheckout).not.toHaveBeenCalled();
-    expect(screen.getByRole("dialog", { name: "工作树存在本地改动" }).textContent).toContain("不会自动储藏");
-    fireEvent.click(screen.getByRole("button", { name: "提交改动" }));
-    expect(onOpenChanges).toHaveBeenCalledTimes(1);
-
-    fireEvent.click(screen.getByRole("button", { name: "签出…" }));
-    fireEvent.click(screen.getByRole("button", { name: "储藏并签出" }));
-    expect(onStashAndCheckout).toHaveBeenCalledWith(expect.objectContaining({ shortName: "feature/base" }));
-    expect(screen.queryByRole("dialog", { name: "工作树存在本地改动" })).toBeNull();
+    expect(onCheckout).toHaveBeenCalledWith(expect.objectContaining({ shortName: "feature/base" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("classifies protected branches and exposes rename/delete commands", async () => {
@@ -109,8 +100,6 @@ describe("GitBranchActions", () => {
         onDeleteTag={vi.fn()}
         onPushTag={onPushTag}
         onSetUpstream={vi.fn()}
-        onOpenChanges={vi.fn()}
-        onStashAndCheckout={vi.fn()}
       />,
     );
     expect(screen.getByText("Version one")).not.toBeNull();
@@ -140,8 +129,6 @@ describe("GitBranchActions", () => {
 function renderBranchActions(overrides: {
   onCreate?: ReturnType<typeof vi.fn>;
   onCheckout?: ReturnType<typeof vi.fn>;
-  onOpenChanges?: ReturnType<typeof vi.fn>;
-  onStashAndCheckout?: ReturnType<typeof vi.fn>;
   onRename?: ReturnType<typeof vi.fn>;
   onDelete?: ReturnType<typeof vi.fn>;
   onCreateTag?: ReturnType<typeof vi.fn>;
@@ -164,8 +151,6 @@ function renderBranchActions(overrides: {
       onDeleteTag={overrides.onDeleteTag ?? vi.fn()}
       onPushTag={overrides.onPushTag ?? vi.fn()}
       onSetUpstream={overrides.onSetUpstream ?? vi.fn()}
-      onOpenChanges={overrides.onOpenChanges ?? vi.fn()}
-      onStashAndCheckout={overrides.onStashAndCheckout ?? vi.fn()}
     />,
   );
 }

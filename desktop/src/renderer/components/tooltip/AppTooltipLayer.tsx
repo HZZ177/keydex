@@ -111,7 +111,7 @@ export function AppTooltipLayer({
           ),
         );
         showTimerRef.current = null;
-      }, delayMs);
+      }, tooltipDelayMs(target, delayMs));
     },
     [clearShowTimer, defaultPlacement, delayMs, hideTooltip, restoreNativeTitle, targetMode],
   );
@@ -280,6 +280,11 @@ function tooltipPlacement(target: HTMLElement, fallback: TooltipPlacement): Tool
   return placement === "top" || placement === "right" || placement === "bottom" || placement === "left"
     ? placement
     : fallback;
+}
+
+function tooltipDelayMs(target: HTMLElement, fallback: number): number {
+  const delay = Number(target.dataset.tooltipDelayMs);
+  return Number.isFinite(delay) && delay >= 0 ? delay : fallback;
 }
 
 function positionTooltip(

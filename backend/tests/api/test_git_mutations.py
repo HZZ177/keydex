@@ -555,9 +555,37 @@ def test_branch_create_switch_detached_and_dirty_preflight_on_real_repo(tmp_path
         blocked_result = _wait(client, blocked.json()["operation_id"])
         assert blocked_result["state"] == "failed"
         assert blocked_result["result"]["error"].strip()
+        assert blocked_result["error"]["code"] == "git_checkout_conflict"
         assert repo.run("branch", "--show-current").stdout.strip() == "main"
 
         repo.run("restore", "--", "README.md")
+        remote = GitRepoFactory(tmp_path).create_bare("api-branch-flow-remote")
+        repo.run("remote", "add", "origin", str(remote))
+        repo.run("push", "origin", f"{feature_oid}:refs/heads/release/tracked")
+        repo.run("fetch", "origin")
+        repo.write("local-note.txt", "keep this local change\n")
+        tracked = client.post(
+            f"/api/git/repositories/{repository_id}/branches",
+            json={
+                **_payload(repo, repository_id, "branch-track-key"),
+                "workspace_id": "workspace-branch",
+                "branch_name": "release/tracked",
+                "start_point": "origin/release/tracked",
+                "track": True,
+            },
+        )
+        assert _wait(client, tracked.json()["operation_id"])["state"] == "succeeded"
+        assert repo.run("branch", "--show-current").stdout.strip() == "release/tracked"
+        assert repo.run("config", "branch.release/tracked.remote").stdout.strip() == "origin"
+        assert (
+            repo.run("config", "branch.release/tracked.merge").stdout.strip()
+            == "refs/heads/release/tracked"
+        )
+        assert (repo.path / "local-note.txt").read_text(encoding="utf-8") == "keep this local change\n"
+        repo.run("clean", "-f", "--", "local-note.txt")
+        repo.run("restore", "--", "README.md")
+        repo.run("switch", "main")
+
         detached = client.post(
             f"/api/git/repositories/{repository_id}/checkout",
             json={

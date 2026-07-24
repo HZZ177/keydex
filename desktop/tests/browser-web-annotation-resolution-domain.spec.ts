@@ -162,16 +162,39 @@ describe("web annotation resolution domain", () => {
       material: false,
     });
   });
+
+  it("uses the unchanged HTTP scoring threshold for local-file targets", () => {
+    const fileTarget: WebTextTarget = {
+      ...target,
+      frame: { url: "file:///D:/e2e-wbf/annotations/article.html", indexPath: [] },
+    };
+    const accepted = settleWebAnnotationResolution(identity, [
+      candidate("file-threshold", 0.82, {}, fileTarget),
+    ]);
+    const rejected = settleWebAnnotationResolution(identity, [
+      candidate("file-below-threshold", 0.819999, {}, fileTarget),
+    ]);
+
+    expect(accepted).toMatchObject({
+      status: "resolved",
+      selected: { target: { frame: { url: fileTarget.frame.url } } },
+    });
+    expect(rejected).toMatchObject({
+      status: "orphaned",
+      reason: "below_accept_threshold",
+    });
+  });
 });
 
 function candidate(
   candidateId: string,
   score: number,
   flags: { readonly changed?: boolean; readonly fuzzy?: boolean } = {},
+  candidateTarget: WebTextTarget = target,
 ): WebAnnotationResolutionCandidate {
   return {
     candidateId,
-    target,
+    target: candidateTarget,
     score: scoreAnchoringCandidate({
       quoteSimilarity: score,
       prefixSuffix: score,
@@ -182,7 +205,7 @@ function candidate(
     evidence: {
       strategy: flags.fuzzy ? "fuzzy_quote" : "exact_quote",
       frameKey: "main",
-      rects: target.rects,
+      rects: candidateTarget.rects,
       summary: "text candidate",
       changedSignals: flags.changed ? ["text"] : [],
     },

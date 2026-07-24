@@ -219,6 +219,56 @@ describe("MessageText", () => {
     unsubscribe();
   });
 
+  it("keeps HTML source and local rendered-page annotations visibly distinct in history", () => {
+    const webSnapshot = webAnnotationSnapshot();
+    const localSnapshot = {
+      ...webSnapshot,
+      page: {
+        ...webSnapshot.page,
+        sourceKind: "local_file" as const,
+        displayAddress: "D:\\workspace\\index.html",
+        documentUrl: "file:///D:/workspace/index.html",
+        origin: "file://",
+        title: "Rendered index",
+      },
+    };
+    render(
+      <MessageText
+        message={message("user", "对照源码和页面", "completed", {
+          contextItems: [
+            {
+              id: "annotation:workspace-a:source-html",
+              type: "annotation",
+              label: "HTML 源码批注 · 选区",
+              content: "<main>alpha</main>",
+              path: "index.html",
+              metadata: {
+                annotation_id: "source-html",
+                annotation_source_kind: "html_source",
+              },
+            },
+            {
+              id: `web-annotation:${localSnapshot.reference.annotationId}:${localSnapshot.integrity.digest}`,
+              type: "web_annotation",
+              label: "本地页面批注 · Rendered index",
+              content: "发送时快照",
+              metadata: {
+                annotation_id: localSnapshot.reference.annotationId,
+                snapshot_digest: localSnapshot.integrity.digest,
+                snapshot: localSnapshot,
+              },
+            },
+          ],
+        })}
+      />,
+    );
+
+    expect(screen.getByText("HTML 源码批注 · 选区")).not.toBeNull();
+    expect(screen.getByRole("button", {
+      name: "打开本地页面批注来源 Rendered index",
+    }).textContent).toContain("本地页面批注 · Rendered index");
+  });
+
   it("renders restored goal context as a compact hover capsule below the user bubble", async () => {
     render(
       <MessageText
@@ -627,7 +677,14 @@ describe("MessageText", () => {
   it("opens relative markdown file links in the sidebar Files panel with line reveal", () => {
     render(
       <PreviewProvider>
-        <PreviewHostContextSetter context={{ sessionId: "ses-1", workspaceAvailable: true, runtime: {} as RuntimeBridge }} />
+        <PreviewHostContextSetter
+          context={{
+            sessionId: "ses-1",
+            workspaceAvailable: true,
+            workspaceRootPath: "D:/Pycharm Projects/keydex",
+            runtime: {} as RuntimeBridge,
+          }}
+        />
         <MessageText
           message={message(
             "assistant",
@@ -644,6 +701,9 @@ describe("MessageText", () => {
     const link = screen.getByRole("link", { name: "MessageText.tsx" });
     const block = link.closest("[data-markdown-block-id]");
     expect(link.getAttribute("data-keydex-file-link")).toBe("true");
+    expect(link.getAttribute("data-tooltip-label"))
+      .toBe("D:/Pycharm Projects/keydex/desktop/src/renderer/pages/conversation/messages/MessageText.tsx");
+    expect(link.getAttribute("data-tooltip-delay-ms")).toBe("500");
     expect(link.querySelector("[data-keydex-file-link-icon='true']")?.getAttribute("data-icon-id")).toBe("react_ts");
     expect(link.querySelector("[data-keydex-file-link-line-badge='true']")?.textContent).toBe("L120");
     fireEvent.click(link);

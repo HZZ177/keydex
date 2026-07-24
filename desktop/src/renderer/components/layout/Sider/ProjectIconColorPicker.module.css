@@ -1,0 +1,134 @@
+.pickerShell {
+  display: grid;
+  width: 154px;
+  justify-items: center;
+  gap: 2px;
+  margin: 0 auto;
+}
+
+.gradientWrapper {
+  position: relative;
+  display: flex;
+  width: 140px;
+  height: 140px;
+  align-items: center;
+  justify-content: center;
+  margin: 4px auto 0;
+}
+
+.background {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.clearButton {
+  display: inline-flex;
+  width: 140px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-text-3);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  line-height: var(--ui-line-height-tight);
+  transition:
+    background-color var(--motion-fast) var(--motion-ease-out),
+    color var(--motion-fast) var(--motion-ease-out);
+}
+
+.clearButton:hover,
+.clearButton:focus-visible {
+  outline: none;
+  background: var(--surface-hover);
+  color: var(--color-text-1);
+}
+
+.clearButton:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
+
+.clearButton:disabled:hover,
+.clearButton:disabled:focus-visible {
+  background: transparent;
+  color: var(--color-text-3);
+}
+
+.clearButton .clearIcon {
+  color: var(--color-danger);
+}
+
+.gradientBackground {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+}
+
+.solidBackground {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background-color: var(--layer, var(--color-bg-elevated));
+}
+
+.pickerBackground {
+  position: relative;
+  z-index: 2;
+  width: calc(100% - 5px);
+  height: calc(100% - 5px);
+  overflow: visible;
+  border-radius: 50%;
+}
+
+.colorDot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+  translate: -50% -50%;
+}
+
+.colorDot:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.colorDotRing {
+  position: absolute;
+  inset: 0;
+  border: 2px solid white;
+  border-radius: 50%;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+}
+
+.gradientCircle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  translate: -50% -50%;
+  mix-blend-mode: color-burn;
+  pointer-events: none;
+}

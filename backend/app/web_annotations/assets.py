@@ -396,7 +396,7 @@ class WebAnnotationAttachmentCloneService:
             with self._repositories.db.transaction(immediate=True) as conn:
                 session_row = conn.execute(
                     """
-                    select id, user_id from sessions
+                    select id, user_id, workspace_id from sessions
                     where id = ? and archived_at is null
                     """,
                     (payload.session_id,),
@@ -438,14 +438,24 @@ class WebAnnotationAttachmentCloneService:
                         {"annotation_id": annotation_id},
                     )
                 resource = self._web.resources.get(annotation.resource_id, connection=conn)
-                if (
-                    resource is None
-                    or resource.scope.kind != "session"
-                    or resource.scope.id != payload.session_id
-                ):
+                scope_matches_session = (
+                    resource is not None
+                    and (
+                        (
+                            resource.scope.kind == "session"
+                            and resource.scope.id == payload.session_id
+                        )
+                        or (
+                            resource.scope.kind == "workspace"
+                            and resource.scope.id == session_row["workspace_id"]
+                        )
+                        or resource.scope.kind == "global"
+                    )
+                )
+                if not scope_matches_session:
                     raise WebAnnotationAssetServiceError(
                         "web_annotation_scope_forbidden",
-                        "Web annotation evidence must belong to the target session",
+                        "Web annotation evidence must belong to the target session scope",
                         {"annotation_id": annotation_id, "session_id": payload.session_id},
                     )
                 if annotation.target.type != "region":

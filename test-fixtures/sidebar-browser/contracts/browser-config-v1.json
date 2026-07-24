@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "protocols": {
     "rightSidebarState": 2,
-    "browserHost": 1,
+    "browserHost": 2,
     "webAnnotation": 1,
     "webAnnotationBridge": 1
   },

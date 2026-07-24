@@ -343,9 +343,41 @@ describe("WebAnnotationDrawer", () => {
       resolutionDetails: { "annotation-1": changedResolution(["quote_changed", "heading_changed"]) },
     });
 
-    expect(screen.getByText("已定位")).not.toBeNull();
-    expect(screen.getByText("文本变化")).not.toBeNull();
-    expect(screen.queryByText("内容变化")).toBeNull();
+    const card = screen.getByText("检查变化").closest("article");
+    expect(within(card!).getByText("已定位")).not.toBeNull();
+    expect(within(card!).getByText("文本变化")).not.toBeNull();
+    expect(within(card!).queryByText("内容变化")).toBeNull();
+  });
+
+  it("groups local-file annotations by actionable resolution state inside the shared Workbench shelf", async () => {
+    const entries = [
+      localItem("annotation-missing", "Missing local target"),
+      localItem("annotation-pending", "Pending local target"),
+      localItem("annotation-located", "Located local target"),
+    ];
+    const store = createWebAnnotationStore(client({
+      list: vi.fn().mockResolvedValue({ items: entries, nextCursor: null }),
+    }));
+    await activateLocal(store);
+
+    renderDrawer(store, session(), {
+      open: true,
+      showCreationActions: false,
+      variant: "shelf",
+      resolutions: {
+        "annotation-missing": "orphaned",
+        "annotation-pending": "resolving",
+        "annotation-located": "resolved",
+      },
+    });
+
+    expect(within(screen.getByRole("region", { name: "需要处理批注" }))
+      .getByText("Missing local target")).not.toBeNull();
+    expect(within(screen.getByRole("region", { name: "正在解析批注" }))
+      .getByText("Pending local target")).not.toBeNull();
+    expect(within(screen.getByRole("region", { name: "已定位批注" }))
+      .getByText("Located local target")).not.toBeNull();
+    expect(screen.getByText("当前页面").parentElement?.textContent).toContain("3 条");
   });
 
   it("counts the annotation limit by Unicode characters and supports keyboard cancellation", () => {
@@ -460,6 +492,19 @@ async function activate(store: ReturnType<typeof createWebAnnotationStore>) {
   });
 }
 
+async function activateLocal(store: ReturnType<typeof createWebAnnotationStore>) {
+  await store.getState().activatePage({
+    scope: { kind: "workspace", id: "workspace-a" },
+    sourceKind: "local_file",
+    url: "file:///D:/e2e-wbf/annotations/article.html",
+    title: "Local Article",
+    canonicalUrl: null,
+    profileMode: "persistent",
+    surface,
+    navigationId: "navigation-local-1",
+  });
+}
+
 function client(overrides: Partial<WebAnnotationClient>): WebAnnotationClient {
   return {
     list: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
@@ -501,6 +546,33 @@ function item(annotationId: string, bodyMarkdown: string, revision = 1): WebAnno
       revision,
       createdAt: "2026-07-22T00:00:00Z",
       updatedAt: "2026-07-22T00:00:00Z",
+    },
+  };
+}
+
+function localItem(annotationId: string, bodyMarkdown: string): WebAnnotationItem {
+  const value = item(annotationId, bodyMarkdown);
+  const localUrl = "file:///D:/e2e-wbf/annotations/article.html";
+  return {
+    resource: {
+      ...value.resource,
+      id: "resource-local",
+      scope: { kind: "workspace", id: "workspace-a" },
+      sourceKind: "local_file",
+      normalizationVersion: 2,
+      urlKey: "b".repeat(64),
+      urlNormalized: localUrl,
+      documentUrl: localUrl,
+      origin: "file://",
+      title: "Local Article",
+    },
+    annotation: {
+      ...value.annotation,
+      resourceId: "resource-local",
+      target: {
+        ...textTarget,
+        frame: { url: localUrl, indexPath: [] },
+      },
     },
   };
 }

@@ -40,6 +40,7 @@
 .tooltip[data-multiline="true"] {
   max-width: min(320px, calc(100vw - 24px));
   overflow: visible;
+  overflow-wrap: anywhere;
   font-weight: 450;
   line-height: 1.55;
   padding: 8px 10px;

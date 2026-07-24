@@ -28,7 +28,7 @@ function event(
   surfaceId: string,
 ): BrowserEventEnvelope<"surface.ready"> {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "surface.ready",
     panelId,
     surfaceId,
@@ -116,15 +116,62 @@ describe("browser right-sidebar definition", () => {
     })));
   });
 
-  it("rejects POST-like or internal restore schemes", () => {
+  it("restores canonical file URLs while rejecting internal schemes", () => {
     const created = rightSidebarDefinitionRegistry.create("browser", {
       id: "right-sidebar:browser:1", sequence: 1, now: NOW,
     });
     expect(normalizeBrowserPanelState({
       ...serializeBrowserPanelState(created),
       restoreUrl: "file:///C:/secret.txt",
+    })).toMatchObject({
+      restoreUrl: "file:///C:/secret.txt",
+      profileMode: "persistent",
+    });
+    expect(normalizeBrowserPanelState({
+      ...serializeBrowserPanelState(created),
+      restoreUrl: "javascript:alert(1)",
     })).toBeNull();
     expect(created.restoreUrl).toBe(BROWSER_START_URL);
+  });
+
+  it("restores file title and zoom, keeps missing files recoverable, and drops only a corrupted item", () => {
+    const first = rightSidebarDefinitionRegistry.create("browser", {
+      id: "right-sidebar:browser:1",
+      sequence: 1,
+      now: NOW,
+      input: browserPanelCreateInput({ restoreUrl: "file:///D:/workspace/missing.html" }),
+    });
+    const second = rightSidebarDefinitionRegistry.create("browser", {
+      id: "right-sidebar:browser:2",
+      sequence: 2,
+      now: NOW,
+      input: browserPanelCreateInput({ restoreUrl: "https://example.test/docs" }),
+    });
+    const normalized = rightSidebarDefinitionRegistry.normalizeScopeState({
+      version: 2,
+      activePanelId: second.id,
+      panelOrder: [first.id, second.id],
+      panels: {
+        [first.id]: {
+          ...serializeBrowserPanelState(first),
+          title: "Missing local preview",
+          zoomFactor: 1.5,
+        },
+        [second.id]: {
+          ...serializeBrowserPanelState(second),
+          restoreUrl: "javascript:alert(1)",
+        },
+      },
+      nextPanelSeq: 2,
+    }, { now: NOW, source: "persistence" });
+
+    expect(normalized?.panelOrder).toEqual([first.id]);
+    expect(normalized?.activePanelId).toBe(first.id);
+    expect(normalized?.panels[first.id]).toMatchObject({
+      title: "Missing local preview",
+      restoreUrl: "file:///D:/workspace/missing.html",
+      zoomFactor: 1.5,
+    });
   });
 
   it("caps restored browser metadata at the centralized 20-panel limit", () => {
@@ -169,6 +216,10 @@ describe("BrowserPanelRuntimeController", () => {
       generation,
       profileMode: "persistent",
       initialUrl: BROWSER_INTERNAL_BLANK_URL,
+      initialNavigationIntent: {
+        source: "restore",
+        userGesture: false,
+      },
       theme: "dark",
       backgroundColor: { red: 40, green: 42, blue: 54, alpha: 255 },
     }));

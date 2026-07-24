@@ -471,8 +471,13 @@ create table if not exists web_annotation_resources (
     check (scope_kind in ('session', 'workspace', 'global')),
   session_id text,
   workspace_id text,
+  source_kind text not null default 'web'
+    check (source_kind in ('web', 'local_file')),
   normalization_version integer not null default 1
-    check (normalization_version = 1),
+    check (
+      (source_kind = 'web' and normalization_version = 1)
+      or (source_kind = 'local_file' and normalization_version = 2)
+    ),
   url_key text not null
     check (length(url_key) = 64 and lower(url_key) = url_key),
   url_normalized text not null check (length(url_normalized) > 0),
@@ -502,7 +507,7 @@ create unique index if not exists idx_web_resources_global_url
   on web_annotation_resources(scope_kind, url_key)
   where scope_kind = 'global';
 create index if not exists idx_web_resources_document
-  on web_annotation_resources(scope_kind, document_url, updated_at desc);
+  on web_annotation_resources(scope_kind, source_kind, document_url, updated_at desc);
 
 create table if not exists web_annotations (
   id text primary key,
@@ -1519,6 +1524,7 @@ class Database:
             )
             self._migrate_archive_lifecycle_schema(conn)
             self._migrate_file_history_multiscope_schema(conn)
+            self._migrate_web_annotation_resource_identity_schema(conn)
             conn.executescript(SCHEMA_SQL)
             self._ensure_column(conn, "sessions", "workspace_id", "text")
             self._ensure_column(
@@ -1687,6 +1693,117 @@ class Database:
         if column_name in columns:
             return f'{alias}."{column_name}"'
         return default_sql
+
+    @classmethod
+    def _migrate_web_annotation_resource_identity_schema(
+        cls,
+        conn: sqlite3.Connection,
+    ) -> None:
+        """Rebuild the v1-only resource table for web v1/local_file v2.
+
+        SQLite cannot alter CHECK constraints in place. The rebuild keeps the
+        original table name as the foreign-key target and copies every legacy
+        row as ``source_kind='web'`` in one transaction.
+        """
+
+        columns = cls._column_names(conn, "web_annotation_resources")
+        if not columns or "source_kind" in columns:
+            return
+        expected_count = int(
+            conn.execute("select count(*) from web_annotation_resources").fetchone()[0]
+        )
+        conn.commit()
+        conn.execute("pragma foreign_keys = off")
+        conn.execute("pragma legacy_alter_table = on")
+        try:
+            conn.executescript(
+                """
+                begin immediate;
+                drop index if exists idx_web_resources_session_url;
+                drop index if exists idx_web_resources_workspace_url;
+                drop index if exists idx_web_resources_global_url;
+                drop index if exists idx_web_resources_document;
+
+                alter table web_annotation_resources
+                  rename to web_annotation_resources_legacy_v1;
+
+                create table web_annotation_resources (
+                  id text primary key,
+                  scope_kind text not null
+                    check (scope_kind in ('session', 'workspace', 'global')),
+                  session_id text,
+                  workspace_id text,
+                  source_kind text not null default 'web'
+                    check (source_kind in ('web', 'local_file')),
+                  normalization_version integer not null default 1
+                    check (
+                      (source_kind = 'web' and normalization_version = 1)
+                      or (source_kind = 'local_file' and normalization_version = 2)
+                    ),
+                  url_key text not null
+                    check (length(url_key) = 64 and lower(url_key) = url_key),
+                  url_normalized text not null check (length(url_normalized) > 0),
+                  document_url text not null check (length(document_url) > 0),
+                  canonical_url text,
+                  origin text not null check (length(origin) > 0),
+                  title text not null default '',
+                  page_fingerprint_json text,
+                  created_at text not null,
+                  updated_at text not null,
+                  check (
+                    (scope_kind = 'session' and session_id is not null and workspace_id is null)
+                    or (scope_kind = 'workspace' and session_id is null and workspace_id is not null)
+                    or (scope_kind = 'global' and session_id is null and workspace_id is null)
+                  ),
+                  foreign key(session_id) references sessions(id) on delete cascade,
+                  foreign key(workspace_id) references workspaces(id) on delete cascade
+                );
+
+                insert into web_annotation_resources (
+                  id, scope_kind, session_id, workspace_id, source_kind,
+                  normalization_version, url_key, url_normalized, document_url,
+                  canonical_url, origin, title, page_fingerprint_json,
+                  created_at, updated_at
+                )
+                select
+                  id, scope_kind, session_id, workspace_id, 'web',
+                  normalization_version, url_key, url_normalized, document_url,
+                  canonical_url, origin, title, page_fingerprint_json,
+                  created_at, updated_at
+                from web_annotation_resources_legacy_v1;
+
+                drop table web_annotation_resources_legacy_v1;
+
+                create unique index idx_web_resources_session_url
+                  on web_annotation_resources(session_id, url_key)
+                  where scope_kind = 'session';
+                create unique index idx_web_resources_workspace_url
+                  on web_annotation_resources(workspace_id, url_key)
+                  where scope_kind = 'workspace';
+                create unique index idx_web_resources_global_url
+                  on web_annotation_resources(scope_kind, url_key)
+                  where scope_kind = 'global';
+                create index idx_web_resources_document
+                  on web_annotation_resources(
+                    scope_kind, source_kind, document_url, updated_at desc
+                  );
+                commit;
+                """
+            )
+            actual_count = int(
+                conn.execute("select count(*) from web_annotation_resources").fetchone()[0]
+            )
+            if actual_count != expected_count:
+                raise RuntimeError(
+                    "Web annotation resource identity migration changed row count"
+                )
+        except BaseException:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        finally:
+            conn.execute("pragma legacy_alter_table = off")
+            conn.execute("pragma foreign_keys = on")
 
     @classmethod
     def _migrate_file_history_multiscope_schema(cls, conn: sqlite3.Connection) -> None:

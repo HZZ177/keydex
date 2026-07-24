@@ -88,10 +88,11 @@ export function webAnnotationContextItemFromSnapshot(
   snapshot: WebAnnotationContextSnapshot,
 ): AgentContextItem {
   const content = renderWebAnnotationContextSnapshot(snapshot);
+  const localFile = snapshot.page.sourceKind === "local_file";
   return {
     id: `web-annotation:${snapshot.reference.annotationId}:${snapshot.integrity.digest}`,
     type: "web_annotation",
-    label: `网页批注 · ${snapshot.page.title || snapshot.page.origin}`,
+    label: `${localFile ? "本地页面批注" : "网页批注"} · ${snapshot.page.title || snapshot.page.origin}`,
     content,
     description: snapshot.comment.bodyMarkdown,
     role: "HumanMessage",
@@ -107,16 +108,21 @@ export function webAnnotationContextItemFromSnapshot(
       freshness: snapshot.observation.freshness,
       url_key: snapshot.page.urlKey,
       source_url: snapshot.page.documentUrl,
+      source_kind: localFile ? "local_file" : "web",
+      source_display_address: snapshot.page.displayAddress || snapshot.page.documentUrl,
       snapshot,
     },
   };
 }
 
 function annotationContextItem(context: AssembledAnnotationContext): AgentContextItem {
+  const htmlSource = context.sourceKind === "html_source";
   return {
     id: `annotation:${context.workspaceId}:${context.annotationId}`,
     type: "annotation",
-    label: context.kind === "text" ? "选区批注" : "全文批注",
+    label: htmlSource
+      ? `HTML 源码批注 · ${context.kind === "text" ? "选区" : "全文"}`
+      : context.kind === "text" ? "选区批注" : "全文批注",
     content: context.kind === "text" ? context.exact : context.content,
     description: context.body,
     role: "HumanMessage",
@@ -127,6 +133,7 @@ function annotationContextItem(context: AssembledAnnotationContext): AgentContex
     metadata: {
       annotation_id: context.annotationId,
       annotation_kind: context.kind,
+      annotation_source_kind: context.sourceKind,
       annotation_body: context.body,
       document_revision: context.documentRevision,
       text_revision: context.textRevision,

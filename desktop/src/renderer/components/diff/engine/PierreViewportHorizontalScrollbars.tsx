@@ -26,12 +26,29 @@ export interface PierreViewportHorizontalScrollbarsProps {
   readonly scrollbars?: boolean;
 }
 
-const HIDDEN_SCROLLBAR_STYLE = `
-[data-code] {
-  scrollbar-width: none !important;
-}
+const PIERRE_PANE_SCROLLBAR_STYLE = `
 [data-code]::-webkit-scrollbar {
+  width: 11px !important;
   height: 0 !important;
+}
+[data-code]::-webkit-scrollbar-track {
+  background: var(--diff-scrollbar-track, transparent);
+}
+[data-code]::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--diff-scrollbar-thumb, #c9c9c9);
+  background-clip: padding-box;
+}
+[data-code]::-webkit-scrollbar-thumb:hover {
+  background: var(--diff-scrollbar-thumb-hover, #a3a3a3);
+  background-clip: padding-box;
+}
+[data-code]::-webkit-scrollbar-button {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  -webkit-appearance: none;
 }
 `;
 
@@ -114,7 +131,7 @@ export function PierreViewportHorizontalScrollbars({
         if (injectedStyles.has(root)) continue;
         const style = document.createElement("style");
         style.dataset.keydexViewportScrollbar = "true";
-        style.textContent = HIDDEN_SCROLLBAR_STYLE;
+        style.textContent = PIERRE_PANE_SCROLLBAR_STYLE;
         root.append(style);
         injectedStyles.set(root, style);
       }

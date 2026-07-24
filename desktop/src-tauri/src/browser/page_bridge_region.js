@@ -28,6 +28,17 @@
     maxCandidates: 20,
     timeBudgetMs: 12,
   });
+  const materialAnnotationChangeSignals = new Set([
+    "anchor_name_changed",
+    "anchor_text_changed",
+    "anchor_tag_changed",
+    "anchor_role_changed",
+    "anchor_attributes_changed",
+    "local_fingerprint_changed",
+  ]);
+  const hasMaterialAnnotationChange = (signals) => (
+    Array.isArray(signals) && signals.some((signal) => materialAnnotationChangeSignals.has(signal))
+  );
   const nodeBindings = window.KeydexAnnotationBridge?.nodeBindings ?? null;
   let active = null;
 

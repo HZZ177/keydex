@@ -12,13 +12,14 @@ import {
 } from "../runtime";
 import {
   WebAnnotationContextAssembler,
+  WebAnnotationContextError,
   type SelectedWebAnnotationReference,
   type WebAnnotationContextAssembly,
   type WebAnnotationContextResolutionSource,
 } from "./WebAnnotationContextAssembler";
 
 export interface WebAnnotationSendCoordinatorOptions {
-  readonly client: Pick<WebAnnotationClient, "get">;
+  readonly client: Pick<WebAnnotationClient, "get"> & Partial<Pick<WebAnnotationClient, "cloneEvidence">>;
   readonly panelRegistry?: WebAnnotationPanelRegistry;
   readonly now?: () => string;
   readonly resolutionTimeoutMs?: number;
@@ -52,12 +53,13 @@ export interface WebAnnotationSendPreparation extends WebAnnotationContextAssemb
  * silently reread a newer annotation revision.
  */
 export class WebAnnotationSendCoordinator {
-  readonly #client: Pick<WebAnnotationClient, "get">;
+  readonly #client: Pick<WebAnnotationClient, "get"> & Partial<Pick<WebAnnotationClient, "cloneEvidence">>;
   readonly #panelRegistry: WebAnnotationPanelRegistry;
   readonly #now?: () => string;
   readonly #resolutionTimeoutMs?: number;
   readonly #prewarmResolutionTimeoutMs: number;
   readonly #preparations = new Map<string, Promise<WebAnnotationSendPreparation>>();
+  readonly #attachmentPreparations = new Map<string, Promise<WebAnnotationSendPreparation>>();
 
   constructor(options: WebAnnotationSendCoordinatorOptions) {
     this.#client = options.client;
@@ -85,10 +87,64 @@ export class WebAnnotationSendCoordinator {
     references: readonly SelectedWebAnnotationReference[],
     options: WebAnnotationSendPreparationOptions = {},
   ): Promise<WebAnnotationSendPreparation> {
-    return this.#prepare(references, {
+    const preparation = this.#prepare(references, {
       resolutionTimeoutMs: this.#resolutionTimeoutMs,
       signal: options.signal,
     });
+    const sessionId = options.sessionId?.trim();
+    if (!sessionId) return preparation;
+    const referenceKey = referenceSetKey(references);
+    const attachmentKey = `${referenceKey}\u0000session:${sessionId}`;
+    const current = this.#attachmentPreparations.get(attachmentKey);
+    if (current) return current;
+    const withAttachments = preparation
+      .then(async (assembly) => {
+        const captures = assembly.snapshots.flatMap((snapshot) => {
+          const capture = snapshot.evidence?.regionCapture;
+          return capture ? [{ snapshot, capture }] : [];
+        });
+        if (!captures.length) return assembly;
+        if (!this.#client.cloneEvidence) {
+          throw new WebAnnotationContextError(
+            "evidence_unavailable",
+            "网页区域批注截图无法附加，请重试。",
+            captures.map(({ snapshot }) => snapshot.reference.annotationId),
+          );
+        }
+        const clones = await Promise.all(captures.map(({ snapshot, capture }) => (
+          this.#client.cloneEvidence!(
+            snapshot.reference.annotationId,
+            capture.assetId,
+            {
+              sessionId,
+              contextDigest: snapshot.integrity.digest,
+              signal: options.signal,
+            },
+          )
+        )));
+        const attachments = clones.map(({ attachment }) => Object.freeze({
+          id: attachment.id,
+          attachment_id: attachment.attachmentId,
+          type: attachment.type,
+          source: attachment.source,
+          name: attachment.name,
+          path: attachment.path,
+          mime_type: attachment.mimeType,
+          size: attachment.size,
+        } satisfies WebAnnotationSendAttachment));
+        return Object.freeze({
+          ...assembly,
+          attachments: Object.freeze(attachments),
+        });
+      })
+      .catch((reason: unknown) => {
+        if (this.#attachmentPreparations.get(attachmentKey) === withAttachments) {
+          this.#attachmentPreparations.delete(attachmentKey);
+        }
+        throw reason;
+      });
+    this.#attachmentPreparations.set(attachmentKey, withAttachments);
+    return withAttachments;
   }
 
   #prepare(
@@ -130,10 +186,17 @@ export class WebAnnotationSendCoordinator {
 
   clear(): void {
     this.#preparations.clear();
+    this.#attachmentPreparations.clear();
   }
 
   #deletePreparation(references: readonly SelectedWebAnnotationReference[]): void {
-    this.#preparations.delete(referenceSetKey(references));
+    const key = referenceSetKey(references);
+    this.#preparations.delete(key);
+    for (const attachmentKey of this.#attachmentPreparations.keys()) {
+      if (attachmentKey.startsWith(`${key}\u0000session:`)) {
+        this.#attachmentPreparations.delete(attachmentKey);
+      }
+    }
   }
 }
 

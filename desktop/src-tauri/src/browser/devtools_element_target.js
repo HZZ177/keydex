@@ -65,7 +65,9 @@ function () {
   const sanitizedUrlAttribute = (value) => {
     try {
       const url = new URL(value, location.href);
-      if (!/^https?:$/.test(url.protocol)) return "";
+      const remote = /^https?:$/.test(url.protocol);
+      const localFile = url.protocol === "file:" && location.protocol === "file:";
+      if (!remote && !localFile) return "";
       url.username = "";
       url.password = "";
       url.search = "";
@@ -189,7 +191,9 @@ function () {
 
   const safePageUrl = () => {
     try {
-      if (location.href === "about:blank" || /^https?:$/.test(location.protocol)) {
+      if (location.href === "about:blank"
+        || /^https?:$/.test(location.protocol)
+        || location.protocol === "file:") {
         return location.href.slice(0, 4096);
       }
     } catch {

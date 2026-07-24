@@ -251,6 +251,7 @@ export interface GitCommitCommand extends GitCommandBase {
 export interface GitBranchCommand extends GitCommandBase {
   branchName: string;
   startPoint?: string;
+  track?: boolean;
 }
 
 export interface GitBranchRenameCommand extends GitCommandBase {
@@ -282,6 +283,20 @@ export interface GitRemoteInfo {
   fetchUrl: string | null;
   pushUrl: string | null;
   trackingBranches: readonly string[];
+}
+
+export type GitCredentialProvider = "auto" | "gitlab" | "generic";
+
+export interface GitCredentialLoginCommand extends GitRepositoryScope {
+  remote: string;
+  provider?: GitCredentialProvider;
+}
+
+export interface GitCredentialLoginResult {
+  repositoryId: GitRepositoryId;
+  remote: string;
+  host: string;
+  authenticated: boolean;
 }
 
 export interface GitRemoteAddCommand extends GitCommandBase { remoteName: string; url: string }
@@ -498,6 +513,7 @@ export interface GitRuntime {
   removeRemote(command: GitRemoteRemoveCommand, options?: GitQueryOptions): Promise<GitCommandResult>;
   setUpstream(command: GitUpstreamCommand, options?: GitQueryOptions): Promise<GitCommandResult>;
   checkout(command: GitCheckoutCommand, options?: GitQueryOptions): Promise<GitCommandResult>;
+  loginCredentials(command: GitCredentialLoginCommand, options?: GitQueryOptions): Promise<GitCredentialLoginResult>;
   fetch(command: GitFetchCommand, options?: GitQueryOptions): Promise<GitCommandResult>;
   update(command: GitUpdateCommand, options?: GitQueryOptions): Promise<GitCommandResult>;
   push(command: GitPushCommand, options?: GitQueryOptions): Promise<GitCommandResult>;
@@ -859,6 +875,28 @@ export function createGitRuntime(http: HttpClient): GitRuntime {
     removeRemote: (command, options) => requestCommand("/remotes/remove", command, options),
     setUpstream: (command, options) => requestCommand("/upstream", command, options),
     checkout: (command, options) => requestCommand("/checkout", command, options),
+    async loginCredentials(command, options = {}) {
+      const raw = await http.request<Record<string, unknown>>(
+        repositoryPath(command, "/credentials/login"),
+        {
+          method: "POST",
+          body: {
+            workspace_id: command.workspaceId,
+            project_root: command.projectRoot,
+            repository_id: command.repositoryId,
+            remote: command.remote,
+            provider: command.provider ?? "auto",
+          },
+          signal: options.signal,
+        },
+      );
+      return {
+        repositoryId: requiredCredentialText(raw.repository_id, "repository_id") as GitRepositoryId,
+        remote: requiredCredentialText(raw.remote, "remote"),
+        host: requiredCredentialText(raw.host, "host"),
+        authenticated: raw.authenticated === true,
+      };
+    },
     fetch: (command, options) => requestCommand("/fetch", command, options),
     update: (command, options) => requestCommand("/update", command, options),
     push: (command, options) => requestCommand("/push", command, options),
@@ -926,6 +964,13 @@ function historySinceValue(value: string | undefined): string {
       ? 7 * 24 * 60 * 60 * 1000
       : 0;
   return duration > 0 ? new Date(Date.now() - duration).toISOString() : normalized;
+}
+
+function requiredCredentialText(value: unknown, field: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`Git credential login.${field} is invalid`);
+  }
+  return value;
 }
 
 function normalizeGitIdentity(raw: Record<string, unknown>): GitIdentity {
@@ -1044,7 +1089,10 @@ function commandPayload(command: GitCommandBase): Record<string, unknown> {
   if ("branchName" in command) {
     const branch = command as GitBranchCommand & GitBranchDeleteCommand & GitUpstreamCommand;
     payload.branch_name = branch.branchName;
-    if ("startPoint" in branch) payload.start_point = branch.startPoint ?? "HEAD";
+    if ("startPoint" in branch) {
+      payload.start_point = branch.startPoint ?? "HEAD";
+      payload.track = branch.track ?? false;
+    }
     if ("upstream" in branch) payload.upstream = branch.upstream;
     if ("force" in branch || "remote" in branch) {
       payload.force = branch.force ?? false;

@@ -42,7 +42,15 @@ export interface LocalHtmlContentPreviewResponse {
 
 export interface LocalPreviewRuntime {
   readFile(path: string): Promise<LocalPreviewFileResponse>;
+  /**
+   * Compatibility-only loopback registration retained for older callers and
+   * API clients. FilePreview no longer uses this as its HTML render path.
+   */
   prepareHtmlFile(path: string, scopePath?: string): Promise<LocalHtmlPreviewResponse>;
+  /**
+   * Active caller: conversation Markdown HTML capsules that need an isolated,
+   * no-store URL instead of exposing application-origin srcdoc.
+   */
   prepareHtmlContent(content: string): Promise<LocalHtmlContentPreviewResponse>;
   readDocument(path: string, options?: LocalPreviewDocumentReadOptions): Promise<DocumentReadResult>;
   readMedia(path: string): Promise<LocalPreviewMediaResponse>;

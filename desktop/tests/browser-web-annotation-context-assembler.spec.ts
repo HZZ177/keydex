@@ -3,14 +3,19 @@ import { describe, expect, it, vi } from "vitest";
 import {
   WebAnnotationContextAssembler,
   WebAnnotationContextError,
+  webAnnotationPresentationFromSnapshot,
   webAnnotationSendWarningNotice,
+  webAnnotationSnapshotFromContextItem,
   type SelectedWebAnnotationReference,
   type WebAnnotationContextResolutionSource,
   type WebAnnotationCoordinatorResolution,
   type WebAnnotationDetail,
 } from "@/renderer/features/browser/annotations";
-import type { WebTextTarget } from "@/renderer/features/browser/runtime";
-import { prepareComposerMessage } from "@/renderer/utils/messageInjection";
+import type { WebAnnotationTarget, WebTextTarget } from "@/renderer/features/browser/runtime";
+import {
+  prepareComposerMessage,
+  webAnnotationContextItemFromSnapshot,
+} from "@/renderer/utils/messageInjection";
 
 const CAPTURED_AT = "2026-07-22T08:00:00.000Z";
 
@@ -157,6 +162,107 @@ describe("WebAnnotationContextAssembler", () => {
     );
   });
 
+  it("assembles text, element, and region local-file snapshots with explicit source and trust", async () => {
+    const localUrl = "file:///D:/Keydex%20Workspace/%E4%B8%AD%E6%96%87/index.html";
+    const details = {
+      "local-text": detail("local-text", {
+        sourceKind: "local_file",
+        url: localUrl,
+        target: localTarget("text", localUrl),
+      }),
+      "local-element": detail("local-element", {
+        sourceKind: "local_file",
+        url: localUrl,
+        target: localTarget("element", localUrl),
+      }),
+      "local-region": detail("local-region", {
+        sourceKind: "local_file",
+        url: localUrl,
+        target: localTarget("region", localUrl),
+        regionAsset: true,
+      }),
+    };
+    const assembler = new WebAnnotationContextAssembler({
+      client: client(details),
+      resolutions: resolutionSource({}),
+      now: () => CAPTURED_AT,
+      resolutionTimeoutMs: 0,
+    });
+    const references = Object.keys(details).map((id, index) => (
+      reference(id, 1, `2026-07-22T08:00:0${index}Z`)
+    ));
+
+    const left = await assembler.assemble(references);
+    const right = await assembler.assemble(references);
+
+    expect(left.snapshots.map((snapshot) => snapshot.anchor.kind))
+      .toEqual(["text", "element", "region"]);
+    expect(left.snapshots.every((snapshot) => snapshot.page.sourceKind === "local_file")).toBe(true);
+    expect(left.snapshots.every((snapshot) => snapshot.page.origin === "file://")).toBe(true);
+    expect(left.snapshots.every((snapshot) => snapshot.page.displayAddress === "D:\\Keydex Workspace\\中文\\index.html"))
+      .toBe(true);
+    expect(left.snapshots.every((snapshot) => snapshot.trust.pageEvidence === "untrusted_reference")).toBe(true);
+    expect(left.snapshots[2].evidence?.regionCapture).toMatchObject({
+      assetId: "web-capture-00000000000000000000000000000001",
+      mimeType: "image/png",
+      sizeBytes: 128,
+      width: 120,
+      height: 80,
+    });
+    expect(left.markdown).toContain("## 本地页面批注");
+    expect(left.markdown).toContain("来源类型：本地文件");
+    expect(left.markdown).toContain("地址：D:\\Keydex Workspace\\中文\\index.html");
+    expect(left.markdown).toContain("本地 HTML 页面");
+    expect(left.markdown).toContain("不受信任");
+    expect(left.digest).toBe(right.digest);
+    expect(left.snapshots.map((snapshot) => snapshot.integrity.digest))
+      .toEqual(right.snapshots.map((snapshot) => snapshot.integrity.digest));
+
+    const prepared = webAnnotationContextItemFromSnapshot(left.snapshots[0]);
+    expect(prepared.label).toBe("本地页面批注 · Article local-text");
+    expect(prepared.metadata).toMatchObject({
+      source_kind: "local_file",
+      source_display_address: "D:\\Keydex Workspace\\中文\\index.html",
+    });
+  });
+
+  it("replays legacy HTTP v2 snapshots without the new local-source fields", async () => {
+    const assembler = new WebAnnotationContextAssembler({
+      client: client({ legacy: detail("legacy") }),
+      resolutions: resolutionSource({ legacy: settled("legacy", "resolved") }),
+      now: () => CAPTURED_AT,
+    });
+    const snapshot = (await assembler.assemble([reference("legacy", 1, CAPTURED_AT)])).snapshots[0];
+    const currentItem = webAnnotationContextItemFromSnapshot(snapshot);
+    const legacySnapshot = JSON.parse(JSON.stringify(snapshot)) as {
+      page: Record<string, unknown>;
+      evidence?: unknown;
+    };
+    delete legacySnapshot.page.sourceKind;
+    delete legacySnapshot.page.displayAddress;
+    delete legacySnapshot.evidence;
+    const legacyItem = {
+      ...currentItem,
+      metadata: {
+        ...currentItem.metadata,
+        source_kind: undefined,
+        source_display_address: undefined,
+        snapshot: legacySnapshot,
+      },
+    };
+
+    const replayed = webAnnotationSnapshotFromContextItem(legacyItem);
+
+    expect(replayed).not.toBeNull();
+    expect(replayed?.schemaVersion).toBe(2);
+    expect(replayed?.page.documentUrl).toBe("https://example.test/article?id=legacy");
+    expect(webAnnotationPresentationFromSnapshot(replayed!)).toMatchObject({
+      sourceKind: "web",
+      displayAddress: "https://example.test/article?id=legacy",
+      origin: "https://example.test",
+    });
+  });
+
   it("waits briefly for resolving state, then uses last-known evidence with explicit warnings", async () => {
     const lastKnown = settled("pending", "changed", "Last known quote").settled!;
     const source = resolutionSource({
@@ -270,6 +376,9 @@ function detail(
     readonly tags?: readonly string[];
     readonly reverseProperties?: boolean;
     readonly urlProperty?: boolean;
+    readonly sourceKind?: "web" | "local_file";
+    readonly target?: WebAnnotationTarget;
+    readonly regionAsset?: boolean;
   } = {},
 ): WebAnnotationDetail {
   const properties = [
@@ -285,12 +394,15 @@ function detail(
     resource: {
       id: `resource-${annotationId}`,
       scope: { kind: "session", id: "session-1" },
-      normalizationVersion: 1,
+      sourceKind: options.sourceKind ?? "web",
+      normalizationVersion: options.sourceKind === "local_file" ? 2 : 1,
       urlKey: annotationId.padEnd(64, "a").slice(0, 64),
       urlNormalized: options.url ?? `https://example.test/article?id=${annotationId}`,
-      documentUrl: "https://example.test/article",
+      documentUrl: options.sourceKind === "local_file"
+        ? (options.url ?? "file:///D:/Keydex/index.html").split("#", 1)[0]
+        : "https://example.test/article",
       canonicalUrl: null,
-      origin: "https://example.test",
+      origin: options.sourceKind === "local_file" ? "file://" : "https://example.test",
       title: `Article ${annotationId}`,
       createdAt: CAPTURED_AT,
       updatedAt: CAPTURED_AT,
@@ -299,7 +411,7 @@ function detail(
       id: annotationId,
       resourceId: `resource-${annotationId}`,
       targetSchemaVersion: 1,
-      target: textTarget(annotationId),
+      target: options.target ?? textTarget(annotationId),
       bodyMarkdown: options.body ?? `Note ${annotationId}`,
       tags: options.tags ?? ["review"],
       properties: options.reverseProperties ? [...properties].reverse() : properties,
@@ -308,7 +420,55 @@ function detail(
       updatedAt: CAPTURED_AT,
     },
     targetHistory: [],
-    assets: [],
+    assets: options.regionAsset ? [{
+      id: "web-capture-00000000000000000000000000000001",
+      resourceId: `resource-${annotationId}`,
+      annotationId,
+      assetKind: "region_screenshot",
+      state: "attached",
+      storagePath: "browser/captures/staged/current/capture.png",
+      mimeType: "image/png",
+      sizeBytes: 128,
+      sha256: "b".repeat(64),
+      width: 120,
+      height: 80,
+      expiresAt: null,
+      createdAt: CAPTURED_AT,
+      updatedAt: CAPTURED_AT,
+    }] : [],
+  };
+}
+
+function localTarget(
+  kind: "text" | "element" | "region",
+  url: string,
+): WebAnnotationTarget {
+  if (kind === "text") {
+    return {
+      ...textTarget("local"),
+      frame: { url, indexPath: [] },
+    };
+  }
+  if (kind === "element") {
+    return {
+      type: "element",
+      tag: "a",
+      role: "link",
+      accessibleName: "本地链接",
+      textSummary: "打开下一页",
+      stableAttributes: [{ name: "href", value: "file:///D:/Keydex%20Workspace/next.html" }],
+      path: [{ childIndex: 1, shadowRoot: false }],
+      context: { headingPath: ["本地内容"] },
+      rect: { x: 10, y: 20, width: 120, height: 24 },
+      frame: { url, indexPath: [] },
+    };
+  }
+  return {
+    type: "region",
+    rect: { x: 10, y: 20, width: 120, height: 80 },
+    viewport: { width: 1280, height: 720 },
+    scroll: { x: 0, y: 240 },
+    frame: { url, indexPath: [] },
   };
 }
 

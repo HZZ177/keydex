@@ -11,6 +11,7 @@ import type { BrowserSurfaceRef } from "../src/renderer/features/browser/domain"
 import type { BrowserBridgeEnvelope, WebElementTarget } from "../src/renderer/features/browser/runtime";
 
 const surface: BrowserSurfaceRef = { panelId: "panel-1", surfaceId: "surface-1", generation: 2 };
+const localFileUrl = "file:///D:/e2e-wbf/annotations/article.html";
 
 describe("WebAnnotationResolverCoordinator", () => {
   it("batches 75 annotations as 50 + 25 and keeps all work off the activation call stack", () => {
@@ -234,6 +235,144 @@ describe("WebAnnotationResolverCoordinator", () => {
     expect(run.resolveAnnotations).toHaveBeenCalledTimes(2);
     run.coordinator.applyBridgeEnvelope(resolution("navigation-child", "resolved", "frame:0", undefined, "resolve-2:0"));
   });
+
+  it("keeps an exact local-file match resolved with complete evidence", () => {
+    const run = prepareLocalFileRun();
+
+    run.coordinator.applyBridgeEnvelope(fileResolution("resolved", {
+      strategy: "stable_dom_path",
+      score: 1,
+      rects: [{ x: 10, y: 20, width: 120, height: 32 }],
+      candidateCount: 1,
+      truncated: false,
+      changedSignals: [],
+    }));
+
+    expect(run.coordinator.getSnapshot().resolutions["annotation-0"]).toMatchObject({
+      status: "resolved",
+      reason: "exact_match",
+      identity: { resourceId: "local-resource-1", navigationId: "file-navigation-a" },
+      settled: {
+        target: { frame: { url: localFileUrl, indexPath: [] } },
+        candidateIds: [],
+        evidence: { strategy: "stable_dom_path", score: 1, candidateCount: 1 },
+      },
+    });
+    expect(run.coordinator.getSnapshot().visibleStatuses["annotation-0"]).toBe("resolved");
+  });
+
+  it("distinguishes a relocated local-file target without reporting material content change", () => {
+    const run = prepareLocalFileRun();
+
+    run.coordinator.applyBridgeEnvelope(fileResolution("resolved", {
+      strategy: "role_name",
+      score: 0.93,
+      rects: [{ x: 40, y: 120, width: 120, height: 32 }],
+      candidateCount: 1,
+      truncated: false,
+      changedSignals: ["anchor_position_changed"],
+    }));
+
+    expect(run.coordinator.getSnapshot().resolutions["annotation-0"]).toMatchObject({
+      status: "resolved",
+      reason: "exact_match",
+      settled: {
+        evidence: {
+          strategy: "role_name",
+          candidateCount: 1,
+          changedSignals: ["anchor_position_changed"],
+        },
+      },
+    });
+  });
+
+  it("preserves a changed local-file target as settled evidence while exposing it as navigable", () => {
+    const run = prepareLocalFileRun();
+
+    run.coordinator.applyBridgeEnvelope(fileResolution("changed", {
+      strategy: "stable_attributes",
+      score: 0.9,
+      rects: [{ x: 10, y: 20, width: 120, height: 32 }],
+      candidateCount: 1,
+      truncated: false,
+      changedSignals: ["anchor_text_changed"],
+    }));
+
+    expect(run.coordinator.getSnapshot().resolutions["annotation-0"]).toMatchObject({
+      status: "changed",
+      reason: "content_changed",
+      settled: { evidence: { changedSignals: ["anchor_text_changed"] } },
+    });
+    expect(run.coordinator.getSnapshot().visibleStatuses["annotation-0"]).toBe("resolved");
+  });
+
+  it("keeps multiple local-file candidates ambiguous and does not select a target", () => {
+    const run = prepareLocalFileRun();
+
+    run.coordinator.applyBridgeEnvelope(fileResolution("ambiguous", {
+      strategy: "role_name",
+      score: 0.9,
+      rects: [],
+      candidateCount: 2,
+      truncated: false,
+      changedSignals: [],
+    }, ["candidate-a", "candidate-b"]));
+
+    expect(run.coordinator.getSnapshot().resolutions["annotation-0"]).toMatchObject({
+      status: "ambiguous",
+      reason: "ambiguous_candidates",
+      settled: {
+        target: null,
+        candidateIds: ["candidate-a", "candidate-b"],
+        evidence: { candidateCount: 2 },
+      },
+    });
+    expect(run.coordinator.getSnapshot().visibleStatuses["annotation-0"]).toBe("ambiguous");
+  });
+
+  it("keeps a deleted local-file target as missing without inventing a candidate", () => {
+    const run = prepareLocalFileRun();
+
+    run.coordinator.applyBridgeEnvelope(fileResolution("orphaned", {
+      strategy: "stable_dom_path",
+      score: 0,
+      rects: [],
+      candidateCount: 0,
+      truncated: false,
+      changedSignals: [],
+    }));
+
+    expect(run.coordinator.getSnapshot().resolutions["annotation-0"]).toMatchObject({
+      status: "orphaned",
+      reason: "no_candidate",
+      settled: { target: null, candidateIds: [], evidence: { candidateCount: 0 } },
+    });
+    expect(run.coordinator.getSnapshot().visibleStatuses["annotation-0"]).toBe("orphaned");
+  });
+
+  it("rejects a late local-file result after the canonical resource identity changes", () => {
+    const run = prepareLocalFileRun();
+    run.coordinator.activatePage(sourcePage(1, {
+      resourceId: "local-resource-2",
+      hostNavigationId: "host-file-navigation-2",
+      url: "file:///D:/e2e-wbf/annotations/renamed.html",
+    }));
+    run.scheduler.runAll();
+
+    run.coordinator.applyBridgeEnvelope(fileResolution("resolved", {
+      strategy: "stable_dom_path",
+      score: 1,
+      rects: [{ x: 10, y: 20, width: 120, height: 32 }],
+      candidateCount: 1,
+      truncated: false,
+      changedSignals: [],
+    }, [], "resolve-1:0"));
+
+    expect(run.coordinator.getSnapshot().resolutions["annotation-0"]).toMatchObject({
+      status: "resolving",
+      identity: { resourceId: "local-resource-2" },
+    });
+  });
 });
 
 function createRun(nowStep = 0) {
@@ -248,23 +387,50 @@ function createRun(nowStep = 0) {
 }
 
 function page(count: number, indexPath: readonly number[] = []) {
-  const annotations = Array.from({ length: count }, (_, index) => annotation(index, indexPath));
+  return sourcePage(count, { indexPath });
+}
+
+function sourcePage(
+  count: number,
+  options: {
+    readonly indexPath?: readonly number[];
+    readonly resourceId?: string;
+    readonly hostNavigationId?: string;
+    readonly url?: string;
+  } = {},
+) {
+  const indexPath = options.indexPath ?? [];
+  const resourceId = options.resourceId ?? "resource-1";
+  const url = options.url ?? "https://example.test/article";
+  const annotations = Array.from(
+    { length: count },
+    (_, index) => annotation(index, indexPath, resourceId, url),
+  );
   return {
-    resourceId: "resource-1",
-    hostNavigationId: "host-navigation-1",
+    resourceId,
+    hostNavigationId: options.hostNavigationId ?? "host-navigation-1",
     annotations,
   };
 }
 
-function annotation(index: number, indexPath: readonly number[]): WebAnnotationResolverTarget {
+function annotation(
+  index: number,
+  indexPath: readonly number[],
+  resourceId = "resource-1",
+  url = "https://example.test/article",
+): WebAnnotationResolverTarget {
   return {
-    resourceId: "resource-1",
+    resourceId,
     annotationId: `annotation-${index}`,
-    target: elementTarget(index, indexPath),
+    target: elementTarget(index, indexPath, url),
   };
 }
 
-function elementTarget(index: number, indexPath: readonly number[] = []): WebElementTarget {
+function elementTarget(
+  index: number,
+  indexPath: readonly number[] = [],
+  url = "https://example.test/article",
+): WebElementTarget {
   return {
     type: "element",
     tag: "button",
@@ -275,7 +441,7 @@ function elementTarget(index: number, indexPath: readonly number[] = []): WebEle
     path: [{ childIndex: index + 1, shadowRoot: false }],
     context: { headingPath: [] },
     rect: { x: 10, y: 20 + index, width: 120, height: 32 },
-    frame: { url: "https://example.test/article", indexPath },
+    frame: { url, indexPath },
   };
 }
 
@@ -283,11 +449,41 @@ function ready(
   navigationId: string,
   frameKey: string,
   top: boolean,
+  href = "https://example.test/article",
 ): BrowserBridgeEnvelope<"bridge.ready"> {
   return envelope("bridge.ready", navigationId, frameKey, {
-    href: "https://example.test/article",
+    href,
     top,
   });
+}
+
+function prepareLocalFileRun() {
+  const run = createRun();
+  run.coordinator.activatePage(sourcePage(1, {
+    resourceId: "local-resource-1",
+    hostNavigationId: "host-file-navigation-1",
+    url: localFileUrl,
+  }));
+  run.coordinator.applyBridgeEnvelope(ready("file-navigation-a", "main", true, localFileUrl));
+  run.scheduler.runAll();
+  return run;
+}
+
+function fileResolution(
+  status: "resolved" | "changed" | "ambiguous" | "orphaned",
+  evidence: BrowserBridgeEnvelope<"resolution.result">["payload"]["evidence"],
+  candidateIds: readonly string[] = [],
+  requestId = "resolve-1:0",
+): BrowserBridgeEnvelope<"resolution.result"> {
+  return envelope("resolution.result", "file-navigation-a", "main", {
+    annotationId: "annotation-0",
+    status,
+    ...(status === "resolved" || status === "changed"
+      ? { target: elementTarget(0, [], localFileUrl) }
+      : {}),
+    candidateIds,
+    evidence,
+  }, requestId);
 }
 
 function pageChanged(

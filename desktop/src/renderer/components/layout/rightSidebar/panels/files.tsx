@@ -177,6 +177,7 @@ function FilesPanel({
           directoryRevealRequestId={state.directoryRevealRequestId}
           onQuoteSelection={onQuoteSelection}
           onStartChatFromAnnotation={renderContext.onStartChatFromAnnotation}
+          onOpenHtmlBrowserPreview={hostContext.onOpenHtmlBrowserPreview}
           onPreviewPathChange={(path) => {
             const next = normalizeFilesPanelState({
               ...serializeFilesPanelState(state),

@@ -60,11 +60,63 @@ describe("browser surface link policy", () => {
 
     expect(nativeOpen).not.toHaveBeenCalled();
   });
+
+  it("routes relative and absolute file popups only when the current page is also local", () => {
+    const local = createDocument("file:///D:/workspace/index.html");
+    const localOpen = vi.fn();
+    Object.defineProperty(local.window, "open", { configurable: true, value: localOpen });
+    local.window.eval(policySource);
+
+    for (const href of ["nested/page.html", "file:///D:/workspace/absolute.html"]) {
+      const anchor = local.window.document.createElement("a");
+      anchor.href = href;
+      anchor.target = "_blank";
+      local.window.document.body.append(anchor);
+      anchor.dispatchEvent(new local.window.MouseEvent(
+        "click",
+        { bubbles: true, cancelable: true, button: 0 },
+      ));
+    }
+
+    expect(localOpen).toHaveBeenNthCalledWith(
+      1,
+      "file:///D:/workspace/nested/page.html",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    expect(localOpen).toHaveBeenNthCalledWith(
+      2,
+      "file:///D:/workspace/absolute.html",
+      "_blank",
+      "noopener,noreferrer",
+    );
+  });
+
+  it("consumes a remote-page file popup before shell interception without opening it", () => {
+    const remote = createDocument("https://example.test/article");
+    const nativeOpen = vi.fn();
+    const shellOpen = vi.fn();
+    Object.defineProperty(remote.window, "open", { configurable: true, value: nativeOpen });
+    remote.window.eval(policySource);
+    remote.window.document.body.addEventListener("click", shellOpen);
+
+    const anchor = remote.window.document.createElement("a");
+    anchor.href = "file:///D:/workspace/private.html";
+    anchor.target = "_blank";
+    remote.window.document.body.append(anchor);
+    anchor.dispatchEvent(new remote.window.MouseEvent(
+      "click",
+      { bubbles: true, cancelable: true, button: 0 },
+    ));
+
+    expect(nativeOpen).not.toHaveBeenCalled();
+    expect(shellOpen).not.toHaveBeenCalled();
+  });
 });
 
-function createDocument(): JSDOM {
+function createDocument(url = "https://www.bing.com/"): JSDOM {
   return new JSDOM("<!doctype html><body></body>", {
     runScripts: "outside-only",
-    url: "https://www.bing.com/",
+    url,
   });
 }

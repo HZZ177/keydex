@@ -113,6 +113,8 @@ async def register_local_html_preview(
     payload: LocalHtmlPreviewRequest,
     request: Request,
 ) -> LocalHtmlPreviewResponse:
+    # Compatibility endpoint for older integrations. Workbench file previews
+    # now navigate the native browser surface directly to canonical file URLs.
     target = _resolve_preview_file(payload.path)
     if target.suffix.lower() not in {".html", ".htm"}:
         raise _local_preview_error(

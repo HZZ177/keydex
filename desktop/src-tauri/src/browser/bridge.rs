@@ -1367,7 +1367,10 @@ fn validate_element_target(object: &Map<String, Value>) -> Result<(), BrowserBri
     read_optional_string(object, "role", 128)?;
     read_optional_string(object, "accessibleName", 1_024)?;
     read_optional_string(object, "textSummary", 1_024)?;
-    validate_stable_attributes(required(object, "stableAttributes")?)?;
+    let frame = required(object, "frame")?;
+    validate_frame(frame)?;
+    let frame_url = frame_url(frame)?;
+    validate_stable_attributes(required(object, "stableAttributes")?, Some(frame_url))?;
     validate_dom_path(required(object, "path")?)?;
     if let Some(path) = object.get("shadowHostPath") {
         validate_dom_path(path)?;
@@ -1378,7 +1381,7 @@ fn validate_element_target(object: &Map<String, Value>) -> Result<(), BrowserBri
     exact_keys(context, &["headingPath"], &[])?;
     validate_string_array(required(context, "headingPath")?, 16, 256)?;
     validate_rect(required(object, "rect")?, false)?;
-    validate_frame(required(object, "frame")?)
+    Ok(())
 }
 
 fn validate_region_target(object: &Map<String, Value>) -> Result<(), BrowserBridgeError> {
@@ -1400,6 +1403,9 @@ fn validate_region_target(object: &Map<String, Value>) -> Result<(), BrowserBrid
     exact_keys(scroll, &["x", "y"], &[])?;
     read_f64(scroll, "x")?;
     read_f64(scroll, "y")?;
+    let frame = required(object, "frame")?;
+    validate_frame(frame)?;
+    let frame_url = frame_url(frame)?;
     if let Some(relative) = object.get("relativeElement") {
         let relative = relative
             .as_object()
@@ -1432,7 +1438,7 @@ fn validate_region_target(object: &Map<String, Value>) -> Result<(), BrowserBrid
         read_optional_string(relative, "accessibleName", 1_024)?;
         read_optional_string(relative, "textSummary", 1_024)?;
         if let Some(attributes) = relative.get("stableAttributes") {
-            validate_stable_attributes(attributes)?;
+            validate_stable_attributes(attributes, Some(frame_url))?;
         }
     }
     if let Some(visual) = object.get("visual") {
@@ -1460,10 +1466,13 @@ fn validate_region_target(object: &Map<String, Value>) -> Result<(), BrowserBrid
             }
         }
     }
-    validate_frame(required(object, "frame")?)
+    Ok(())
 }
 
-fn validate_stable_attributes(value: &Value) -> Result<(), BrowserBridgeError> {
+fn validate_stable_attributes(
+    value: &Value,
+    frame_url: Option<&str>,
+) -> Result<(), BrowserBridgeError> {
     let attributes = value
         .as_array()
         .ok_or(BrowserBridgeError::InvalidValue("stableAttributes"))?;
@@ -1475,7 +1484,7 @@ fn validate_stable_attributes(value: &Value) -> Result<(), BrowserBridgeError> {
             .as_object()
             .ok_or(BrowserBridgeError::InvalidValue("stableAttributes"))?;
         exact_keys(attribute, &["name", "value"], &[])?;
-        read_enum(
+        let name = read_enum(
             attribute,
             "name",
             &[
@@ -1490,7 +1499,16 @@ fn validate_stable_attributes(value: &Value) -> Result<(), BrowserBridgeError> {
                 "role",
             ],
         )?;
-        read_string(attribute, "value", 2_048, true)?;
+        let value = read_string(attribute, "value", 2_048, true)?;
+        if matches!(name, "href" | "src") {
+            let value_kind = parse_page_url_kind(value)?;
+            let frame_kind = frame_url.map(parse_page_url_kind).transpose()?;
+            if value_kind == PageUrlKind::Blank
+                || (value_kind == PageUrlKind::File && frame_kind != Some(PageUrlKind::File))
+            {
+                return Err(BrowserBridgeError::InvalidValue("stableAttributes"));
+            }
+        }
     }
     Ok(())
 }
@@ -1540,6 +1558,14 @@ fn validate_frame(value: &Value) -> Result<(), BrowserBridgeError> {
         validate_dom_path(path)?;
     }
     Ok(())
+}
+
+fn frame_url(value: &Value) -> Result<&str, BrowserBridgeError> {
+    value
+        .as_object()
+        .and_then(|frame| frame.get("url"))
+        .and_then(Value::as_str)
+        .ok_or(BrowserBridgeError::InvalidValue("frame"))
 }
 
 fn validate_dom_path(value: &Value) -> Result<(), BrowserBridgeError> {
@@ -1629,16 +1655,26 @@ fn validate_string_array(
 }
 
 fn validate_page_url(value: &str) -> Result<(), BrowserBridgeError> {
+    parse_page_url_kind(value).map(|_| ())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PageUrlKind {
+    Blank,
+    Remote,
+    File,
+}
+
+fn parse_page_url_kind(value: &str) -> Result<PageUrlKind, BrowserBridgeError> {
     if value == "about:blank" {
-        return Ok(());
+        return Ok(PageUrlKind::Blank);
     }
-    let url = value
-        .parse::<Url>()
+    let url = super::host::parse_browser_url(value, false)
         .map_err(|_| BrowserBridgeError::InvalidValue("url"))?;
-    if matches!(url.scheme(), "http" | "https") {
-        Ok(())
-    } else {
-        Err(BrowserBridgeError::InvalidValue("url"))
+    match url.scheme() {
+        "http" | "https" => Ok(PageUrlKind::Remote),
+        "file" => Ok(PageUrlKind::File),
+        _ => Err(BrowserBridgeError::InvalidValue("url")),
     }
 }
 
@@ -2226,6 +2262,95 @@ mod tests {
                 &child.to_string(),
             )
             .is_ok());
+    }
+
+    #[test]
+    fn file_ready_channels_are_native_bound_for_main_and_child_frames() {
+        let broker = BrowserBridgeBroker::default();
+        broker.register_surface(surface(), "navigation-2".to_string());
+        let mut main = message(1);
+        main["payload"]["href"] = json!("file:///D:/workspace/index.html#selection");
+        assert!(broker
+            .receive_on_channel(
+                MAIN_FRAME_CHANNEL,
+                Some("file:///D:/workspace/index.html"),
+                &main.to_string(),
+            )
+            .is_ok());
+
+        let child = frame_ready(
+            "frame:0",
+            "navigation:file-frame-1",
+            "file:///D:/workspace/frame.html#selection",
+        );
+        assert!(broker
+            .receive_on_channel(
+                "frame-native:file-1",
+                Some("file:///D:/workspace/frame.html"),
+                &child.to_string(),
+            )
+            .is_ok());
+
+        let forged = BrowserBridgeBroker::default();
+        forged.register_surface(surface(), "navigation-2".to_string());
+        assert_eq!(
+            forged.receive_on_channel(
+                MAIN_FRAME_CHANNEL,
+                Some("https://spoofed.example.test/article"),
+                &main.to_string(),
+            ),
+            Err(BrowserBridgeError::SourceMismatch)
+        );
+    }
+
+    #[test]
+    fn file_frame_and_stable_url_attributes_are_scheme_and_origin_context_safe() {
+        let fixture: Value = serde_json::from_str(SHARED_FIXTURE).unwrap();
+        let mut selection = fixture["pageToHost"][2].clone();
+        selection["payload"]["target"]["frame"]["url"] = json!("file:///D:/workspace/index.html");
+        selection["payload"]["target"]["stableAttributes"] = json!([{
+            "name": "href",
+            "value": "file:///D:/workspace/nested/page.html"
+        }]);
+        assert!(parse_browser_bridge_envelope_for_direction(
+            &selection.to_string(),
+            BrowserBridgeDirection::PageToHost,
+        )
+        .is_ok());
+        let mut blank = message(1);
+        blank["payload"]["href"] = json!("about:blank");
+        assert!(parse_browser_bridge_envelope_for_direction(
+            &blank.to_string(),
+            BrowserBridgeDirection::PageToHost,
+        )
+        .is_ok());
+
+        let mut remote_claim = selection.clone();
+        remote_claim["payload"]["target"]["frame"]["url"] = json!("https://example.test/article");
+        assert_eq!(
+            parse_browser_bridge_envelope_for_direction(
+                &remote_claim.to_string(),
+                BrowserBridgeDirection::PageToHost,
+            ),
+            Err(BrowserBridgeError::InvalidValue("stableAttributes"))
+        );
+
+        for invalid in [
+            "file:///D:/workspace/folder/",
+            "file:///tmp/index.html",
+            "javascript:alert(1)",
+        ] {
+            let mut ready = message(1);
+            ready["payload"]["href"] = json!(invalid);
+            assert_eq!(
+                parse_browser_bridge_envelope_for_direction(
+                    &ready.to_string(),
+                    BrowserBridgeDirection::PageToHost,
+                ),
+                Err(BrowserBridgeError::InvalidValue("url")),
+                "{invalid}",
+            );
+        }
     }
 
     #[test]

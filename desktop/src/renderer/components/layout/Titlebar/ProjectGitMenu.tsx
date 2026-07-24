@@ -48,6 +48,15 @@ import { gitOperationErrorMessage, gitUiErrorMessage } from "@/renderer/features
 import { useGitErrorNotificationState } from "@/renderer/features/git/GitNotifications";
 import { GitDivergenceIndicator } from "@/renderer/features/git/components/GitDivergenceIndicator";
 import {
+  checkoutIntentForRef,
+  checkoutIntentForRevision,
+  requiresSmartCheckout,
+  runCheckoutIntent,
+  runSmartCheckout,
+  smartCheckoutFailureMessage,
+  type GitCheckoutIntent,
+} from "@/renderer/features/git/smartCheckout";
+import {
   GitDialogField,
   GitChoiceDialog,
   GitCommitPushDialog,
@@ -126,8 +135,10 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
   const [commandValue, setCommandValue] = useState("");
   const [busyAction, setBusyAction] = useState<GitQuickActionId | "checkout" | "rename" | "merge" | "rebase" | "delete" | "init" | null>(null);
   const [commandError, setCommandError] = useGitErrorNotificationState();
-  const [pendingDirtyCheckout, setPendingDirtyCheckout] = useState<{ ref: string; detach: boolean } | null>(null);
+  const [pendingSmartCheckout, setPendingSmartCheckout] = useState<GitCheckoutIntent | null>(null);
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
+  const [updateCredentialRemote, setUpdateCredentialRemote] = useState<string | null>(null);
+  const [updateCredentialLoginBusy, setUpdateCredentialLoginBusy] = useState(false);
   const [pushDialogOpen, setPushDialogOpen] = useState(false);
   const [pushTarget, setPushTarget] = useState<GitCommitPushTarget | null>(null);
   const [pushCommits, setPushCommits] = useState<readonly GitCommitSummary[]>([]);
@@ -184,8 +195,10 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
     pushPreviewAbortRef.current = null;
     pushDetailAbortRef.current = null;
     setCommandForm(null);
-    setPendingDirtyCheckout(null);
+    setPendingSmartCheckout(null);
     setUpdateDialogOpen(false);
+    setUpdateCredentialRemote(null);
+    setUpdateCredentialLoginBusy(false);
     setPushDialogOpen(false);
     setPushTarget(null);
     setPushCommits([]);
@@ -240,6 +253,7 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
   const openUpdateDialog = () => {
     closeMenu();
     setCommandError(null);
+    setUpdateCredentialRemote(null);
     setUpdateDialogOpen(true);
   };
 
@@ -385,6 +399,8 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
       if (!upstream || separator <= 0 || separator === upstream.length - 1) {
         throw new Error("当前分支没有可用的上游，请先在 Git 面板设置后再更新。");
       }
+      const remote = upstream.slice(0, separator);
+      setUpdateCredentialRemote(null);
       gitStore?.getState().updateProjectUi(commandScope.workspaceId, {
         updateStrategyByRepository: {
           ...(snapshot.ui?.updateStrategyByRepository ?? {}),
@@ -395,11 +411,16 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
         ...commandScope,
         idempotencyKey: createGitIdempotencyKey("update"),
         expectedRepositoryVersion: snapshot.status?.repositoryVersion ?? null,
-        remote: upstream.slice(0, separator),
+        remote,
         refspec: upstream.slice(separator + 1),
         strategy,
       }));
-      if (operation.state === "failed") throw new Error(gitOperationErrorMessage(operation));
+      if (operation.state === "failed") {
+        if (operation.error?.code === "git_credentials_missing") {
+          setUpdateCredentialRemote(remote);
+        }
+        throw new Error(gitOperationErrorMessage(operation));
+      }
       setUpdateDialogOpen(false);
       window.requestAnimationFrame(() => triggerRef.current?.focus());
       return true;
@@ -408,6 +429,24 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
       return false;
     } finally {
       setBusyAction(null);
+    }
+  };
+  const loginForUpdate = async () => {
+    const commandScope = commandScopeFromSnapshot(snapshot);
+    if (!runtime || !commandScope || !updateCredentialRemote || updateCredentialLoginBusy) return;
+    setUpdateCredentialLoginBusy(true);
+    setCommandError(null);
+    try {
+      await runtime.loginCredentials({
+        ...commandScope,
+        remote: updateCredentialRemote,
+        provider: "auto",
+      });
+      setUpdateCredentialRemote(null);
+    } catch (error) {
+      setCommandError(gitUiErrorMessage(error));
+    } finally {
+      setUpdateCredentialLoginBusy(false);
     }
   };
 
@@ -454,20 +493,27 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
     }
   };
 
-  const runRefCheckout = async (ref: string, detach = false) => {
+  const runRefCheckout = async (intent: GitCheckoutIntent) => {
     const commandScope = commandScopeFromSnapshot(snapshot);
-    if (!controller || !runtime || !commandScope || !ref.trim()) return;
+    if (!controller || !runtime || !commandScope) return;
     setBusyAction("checkout");
     setCommandError(null);
     try {
-      const operation = await controller.runCommand(() => runtime.checkout({
-        ...commandScope,
-        idempotencyKey: createGitIdempotencyKey("checkout"),
+      const operation = await runCheckoutIntent({
+        runtime,
+        runCommand: (submit) => controller.runCommand(submit),
+        scope: commandScope,
+        intent,
         expectedRepositoryVersion: snapshot?.status?.repositoryVersion ?? null,
-        ref: ref.trim(),
-        detach,
-      }));
+        idempotencyKey: createGitIdempotencyKey("checkout"),
+      });
+      if (requiresSmartCheckout(operation)) {
+        setCommandForm(null);
+        setPendingSmartCheckout(intent);
+        return;
+      }
       if (operation.state === "failed") throw new Error(gitOperationErrorMessage(operation));
+      setPendingSmartCheckout(null);
       closeMenu();
     } catch (error) {
       setCommandError(gitUiErrorMessage(error));
@@ -476,42 +522,33 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
     }
   };
 
-  const requestRefCheckout = (ref: string, detach = false) => {
-    const normalized = ref.trim();
-    if (!normalized) return;
-    if ((snapshot?.status?.files.length ?? 0) > 0) {
-      setCommandForm(null);
-      setPendingDirtyCheckout({ ref: normalized, detach });
-      setCommandError(null);
-      return;
-    }
-    void runRefCheckout(normalized, detach);
+  const requestRefCheckout = (intent: GitCheckoutIntent) => {
+    void runRefCheckout(intent);
   };
 
-  const stashAndCheckout = async (ref: string, detach: boolean) => {
+  const smartCheckout = async (intent: GitCheckoutIntent) => {
     const commandScope = commandScopeFromSnapshot(snapshot);
     if (!controller || !runtime || !commandScope) return;
     setBusyAction("checkout");
     setCommandError(null);
     try {
-      const stashed = await controller.runCommand(() => runtime.createStash({
-        ...commandScope,
-        idempotencyKey: createGitIdempotencyKey("stash-before-checkout"),
+      const result = await runSmartCheckout({
+        runtime,
+        runCommand: (submit) => controller.runCommand(submit),
+        scope: commandScope,
+        intent,
         expectedRepositoryVersion: snapshot?.status?.repositoryVersion ?? null,
-        message: `Keydex：切换到 ${ref} 前的自动储藏`,
-        staged: false,
-        includeUntracked: true,
-      }));
-      if (stashed.state !== "succeeded") throw new Error(gitOperationErrorMessage(stashed));
-      const checkedOut = await controller.runCommand(() => runtime.checkout({
-        ...commandScope,
-        idempotencyKey: createGitIdempotencyKey("checkout-after-stash"),
-        expectedRepositoryVersion: null,
-        ref,
-        detach,
-      }));
-      if (checkedOut.state !== "succeeded") throw new Error(gitOperationErrorMessage(checkedOut));
-      setPendingDirtyCheckout(null);
+        createIdempotencyKey: createGitIdempotencyKey,
+      });
+      if (result.state === "failed") {
+        setCommandError(smartCheckoutFailureMessage(result));
+        if (result.stage !== "stash") {
+          setPendingSmartCheckout(null);
+          onOpenToolWindow();
+        }
+        return;
+      }
+      setPendingSmartCheckout(null);
     } catch (error) {
       setCommandError(gitUiErrorMessage(error));
     } finally {
@@ -743,7 +780,7 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
     setRefMenu(null);
     if (action === "checkout") {
       closeMenu();
-      requestRefCheckout(ref.shortName, ref.kind !== "local");
+      requestRefCheckout(checkoutIntentForRef(ref, snapshot?.refs ?? []));
       return;
     }
     if (action === "checkout_rebase") {
@@ -962,7 +999,7 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
             ? runCreateBranch(commandForm.startPoint)
             : commandForm.kind === "rename"
               ? runRenameBranch(commandForm.ref)
-              : requestRefCheckout(commandValue, commandForm.detach)}
+              : requestRefCheckout(checkoutIntentForRevision(commandValue, commandForm.detach))}
         >
           {commandForm.kind !== "checkout" ? (
             <GitDialogSummary>{commandForm.kind === "branch" ? `起点：${commandForm.startPoint}` : `原名称：${commandForm.ref.shortName}`}</GitDialogSummary>
@@ -985,21 +1022,21 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
           </GitDialogField>
         </GitFormDialog>
       ) : null}
-      {pendingDirtyCheckout ? (
+      {pendingSmartCheckout ? (
         <GitChoiceDialog
-          title="工作树存在本地改动"
-          description={`签出 ${pendingDirtyCheckout.ref} 前请选择如何处理当前改动。Keydex 不会自动储藏。`}
+          title="本地改动会被覆盖"
+          description={`Git 无法直接切换到 ${pendingSmartCheckout.label}。Smart Checkout 会临时储藏改动，切换后立即自动恢复。`}
           busy={busyAction === "checkout"}
           error={commandError}
           actions={[
-            { label: "提交改动", tone: "secondary", onSelect: () => { setPendingDirtyCheckout(null); onOpenToolWindow(); } },
-            { label: "储藏并签出", tone: "primary", onSelect: () => void stashAndCheckout(pendingDirtyCheckout.ref, pendingDirtyCheckout.detach) },
+            { label: "查看改动", tone: "secondary", onSelect: () => { setPendingSmartCheckout(null); onOpenToolWindow(); } },
+            { label: "Smart Checkout", tone: "primary", onSelect: () => void smartCheckout(pendingSmartCheckout) },
           ]}
-          onCancel={() => { setPendingDirtyCheckout(null); setCommandError(null); window.requestAnimationFrame(() => triggerRef.current?.focus()); }}
+          onCancel={() => { setPendingSmartCheckout(null); setCommandError(null); window.requestAnimationFrame(() => triggerRef.current?.focus()); }}
         >
           <GitDialogSummary tone="warning">
             <strong>{snapshot?.status?.files.length ?? 0} 个本地改动</strong>
-            <span>目标：{pendingDirtyCheckout.ref}{pendingDirtyCheckout.detach ? "（分离指针）" : ""}</span>
+            <span>目标：{pendingSmartCheckout.label}{pendingSmartCheckout.kind === "switch" && pendingSmartCheckout.detach ? "（分离指针）" : ""}</span>
           </GitDialogSummary>
         </GitChoiceDialog>
       ) : null}
@@ -1011,12 +1048,16 @@ export function ProjectGitMenu({ onOpenToolWindow, shortcuts }: ProjectGitMenuPr
           : "ff_only"}
         busy={busyAction === "update"}
         error={commandError}
+        credentialHost={updateCredentialRemote}
+        credentialBusy={updateCredentialLoginBusy}
         onCancel={() => {
           setUpdateDialogOpen(false);
+          setUpdateCredentialRemote(null);
           setCommandError(null);
           window.requestAnimationFrame(() => triggerRef.current?.focus());
         }}
         onConfirm={runUpdateAction}
+        onCredentialLogin={updateCredentialRemote ? loginForUpdate : undefined}
         onOpenBranchSettings={() => {
           setUpdateDialogOpen(false);
           onOpenToolWindow();

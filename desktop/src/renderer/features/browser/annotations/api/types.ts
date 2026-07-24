@@ -2,6 +2,7 @@ import type { BrowserProfileMode } from "../../domain";
 import type { WebAnnotationTarget } from "../../runtime";
 
 export type WebAnnotationScopeKind = "session" | "workspace" | "global";
+export type WebAnnotationSourceKind = "web" | "local_file";
 
 export interface WebAnnotationScope {
   readonly kind: WebAnnotationScopeKind;
@@ -9,6 +10,7 @@ export interface WebAnnotationScope {
 }
 
 export interface WebAnnotationSource {
+  readonly sourceKind?: WebAnnotationSourceKind;
   readonly url: string;
   readonly title: string;
   readonly canonicalUrl?: string | null;
@@ -25,7 +27,8 @@ export type WebAnnotationTypedProperty =
 export interface WebAnnotationResourceRecord {
   readonly id: string;
   readonly scope: WebAnnotationScope;
-  readonly normalizationVersion: 1;
+  readonly sourceKind?: WebAnnotationSourceKind;
+  readonly normalizationVersion: 1 | 2;
   readonly urlKey: string;
   readonly urlNormalized: string;
   readonly documentUrl: string;
@@ -93,6 +96,7 @@ export interface WebAnnotationPage {
 
 export interface WebAnnotationListInput {
   readonly scope: WebAnnotationScope;
+  readonly sourceKind?: WebAnnotationSourceKind;
   readonly url?: string;
   readonly documentUrl?: string;
   readonly cursor?: string;

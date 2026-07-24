@@ -107,6 +107,38 @@ describe("GitHistoryView", () => {
     expect(undecoratedRow.querySelector("[data-git-history-ref-slot]")?.textContent).toBe("");
   });
 
+  it("keeps duplicate ancestor lanes continuous until they converge at the ancestor row", () => {
+    const root = commit(10);
+    const base = { ...commit(11), parentIds: [root.objectId] };
+    const left = { ...commit(12), parentIds: [base.objectId] };
+    const right = { ...commit(13), parentIds: [base.objectId] };
+    const otherRoot = commit(14);
+    const other = { ...commit(15), parentIds: [otherRoot.objectId] };
+    const merge = { ...commit(16), parentIds: [left.objectId, right.objectId] };
+
+    render(
+      <GitHistoryView
+        commits={[merge, left, right, other, base]}
+        selectedObjectId={merge.objectId}
+        loading={false}
+        hasMore
+        onSelect={vi.fn()}
+        onLoadMore={vi.fn()}
+        onRefresh={vi.fn()}
+      />,
+    );
+
+    const interveningGraph = screen.getByRole("option", { name: /commit 15/ }).querySelector("svg");
+    const interveningPaths = Array.from(interveningGraph?.querySelectorAll("path") ?? [], (path) => path.getAttribute("d"));
+    expect(interveningPaths).toContain("M 6 0 L 6 40");
+    expect(interveningPaths).toContain("M 18 0 L 18 40");
+    expect(interveningPaths).not.toContain("M 18 0 L 6 40");
+
+    const ancestorGraph = screen.getByRole("option", { name: /commit 11/ }).querySelector("svg");
+    const ancestorPaths = Array.from(ancestorGraph?.querySelectorAll("path") ?? [], (path) => path.getAttribute("d"));
+    expect(ancestorPaths).toContain("M 18 0 L 6 20");
+  });
+
   it("normalizes, groups and orders full Git decorations for display", () => {
     expect(presentGitHistoryDecorations([
       "refs/tags/v1.2.0",

@@ -70,7 +70,7 @@ describe("BrowserHost wire contract", () => {
     const command = contract.commands[0] as BrowserCommandEnvelope;
     const event = contract.events[0] as BrowserEventEnvelope;
 
-    expect(() => parseBrowserCommandEnvelope({ ...command, schemaVersion: 2 })).toThrow(
+    expect(() => parseBrowserCommandEnvelope({ ...command, schemaVersion: 3 })).toThrow(
       "schema version is unsupported",
     );
     expect(() => parseBrowserCommandEnvelope({ ...command, command: "browser_evaluate_javascript" })).toThrow(
@@ -79,7 +79,7 @@ describe("BrowserHost wire contract", () => {
     expect(() => parseBrowserCommandEnvelope({ ...command, agentAction: "click" })).toThrow(
       "fields are invalid",
     );
-    expect(() => parseBrowserEventEnvelope({ ...event, schemaVersion: 2 })).toThrow(
+    expect(() => parseBrowserEventEnvelope({ ...event, schemaVersion: 3 })).toThrow(
       "schema version is unsupported",
     );
     expect(() => parseBrowserEventEnvelope({ ...event, kind: "agent.action" })).toThrow(
@@ -108,7 +108,7 @@ describe("BrowserHost wire contract", () => {
 
   it("validates Chromium-native structured element selection events", () => {
     const event: BrowserEventEnvelope<"selection.result"> = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       kind: "selection.result",
       panelId: "panel-1",
       surfaceId: "surface-1",
@@ -140,6 +140,37 @@ describe("BrowserHost wire contract", () => {
       ...event,
       payload: { ...event.payload, target: { ...event.payload.target, tag: "CANVAS" } },
     })).toThrow("payload.target.tag must be lowercase");
+  });
+
+  it("binds popup policy decisions to the native source URL and user gesture", () => {
+    const event: BrowserEventEnvelope<"new_window.requested"> = {
+      schemaVersion: 2,
+      kind: "new_window.requested",
+      panelId: "panel-1",
+      surfaceId: "surface-1",
+      generation: 2,
+      sequence: 9,
+      navigationId: "navigation-1",
+      occurredAt: "2026-07-23T00:00:01.000Z",
+      payload: {
+        url: "file:///D:/workspace/popup.html",
+        sourceUrl: "file:///D:/workspace/index.html",
+        userGesture: true,
+        policyAllowed: true,
+        disposition: "tab",
+      },
+    };
+
+    expect(parseBrowserEventEnvelope(event)).toEqual(event);
+    expect(() => parseBrowserEventEnvelope({
+      ...event,
+      payload: {
+        url: event.payload.url,
+        userGesture: true,
+        policyAllowed: true,
+        disposition: "tab",
+      },
+    })).toThrow("fields are invalid");
   });
 
   it("keeps the success/error response shape stable and rejects invalid combinations", () => {

@@ -1,6 +1,7 @@
 import { createStore, type StoreApi } from "zustand/vanilla";
 
 import type { BrowserProfileMode, BrowserSurfaceRef } from "../../domain";
+import { canonicalizeBrowserFileAddress } from "../../domain/browserNavigation";
 import type { WebAnnotationTarget } from "../../runtime";
 import {
   readWebAnnotationConflict,
@@ -14,11 +15,13 @@ import {
   type WebAnnotationRetargetInput,
   type WebAnnotationScope,
   type WebAnnotationSource,
+  type WebAnnotationSourceKind,
   type WebAnnotationTypedProperty,
 } from "../api";
 
 export interface WebAnnotationPageActivation {
   readonly scope: WebAnnotationScope;
+  readonly sourceKind?: WebAnnotationSourceKind;
   readonly url: string;
   readonly title: string;
   readonly canonicalUrl?: string | null;
@@ -28,6 +31,7 @@ export interface WebAnnotationPageActivation {
 }
 
 export interface ActiveWebAnnotationPage extends WebAnnotationPageActivation {
+  readonly sourceKind: WebAnnotationSourceKind;
   readonly requestKey: string;
   readonly pageKey: string;
 }
@@ -38,6 +42,7 @@ export interface WebAnnotationPageEntry {
   readonly key: string;
   readonly requestKey: string;
   readonly scope: WebAnnotationScope;
+  readonly sourceKind: WebAnnotationSourceKind;
   readonly requestedUrl: string;
   readonly urlKey: string | null;
   readonly resource: WebAnnotationItem["resource"] | null;
@@ -116,15 +121,17 @@ export function createWebAnnotationStore(
     async function activatePage(input: WebAnnotationPageActivation): Promise<void> {
       const url = input.url.trim();
       if (!url) throw new Error("Web annotation page URL is required");
+      const sourceKind = input.sourceKind ?? webAnnotationSourceKind(url);
       activeLoad?.abort();
       const controller = new AbortController();
       activeLoad = controller;
       const requestId = ++loadSequence;
-      const requestKey = webAnnotationRequestKey(input.scope, url);
+      const requestKey = webAnnotationRequestKey(input.scope, url, sourceKind);
       const pageKey = get().aliases[requestKey] ?? requestKey;
       const cached = get().pages[pageKey];
       const nextActive: ActiveWebAnnotationPage = Object.freeze({
         ...input,
+        sourceKind,
         url,
         requestKey,
         pageKey,
@@ -133,6 +140,7 @@ export function createWebAnnotationStore(
         key: pageKey,
         requestKey,
         scope: input.scope,
+        sourceKind,
         requestedUrl: url,
         urlKey: cached?.urlKey ?? null,
         resource: cached?.resource ?? null,
@@ -148,16 +156,24 @@ export function createWebAnnotationStore(
       }));
 
       try {
-        const items = await loadAllPages(client, input.scope, url, controller.signal);
+        const items = await loadAllPages(
+          client,
+          input.scope,
+          sourceKind,
+          url,
+          controller.signal,
+        );
         if (controller.signal.aborted || requestId !== loadSequence) return;
         const resource = singlePageResource(items);
+        const resourceSourceKind = resource?.sourceKind ?? sourceKind;
         const canonicalKey = resource
-          ? webAnnotationCacheKey(input.scope, resource.urlKey)
+          ? webAnnotationCacheKey(input.scope, resource.urlKey, resourceSourceKind)
           : pageKey;
         const entry: WebAnnotationPageEntry = Object.freeze({
           key: canonicalKey,
           requestKey,
           scope: input.scope,
+          sourceKind: resourceSourceKind,
           requestedUrl: url,
           urlKey: resource?.urlKey ?? cached?.urlKey ?? null,
           resource,
@@ -234,18 +250,29 @@ export function createWebAnnotationStore(
     }
 
     function applyItem(item: WebAnnotationItem): void {
-      const canonicalKey = webAnnotationCacheKey(item.resource.scope, item.resource.urlKey);
+      const sourceKind = item.resource.sourceKind
+        ?? activeSourceKind(get().activePage, item.resource.urlNormalized);
+      const canonicalKey = webAnnotationCacheKey(
+        item.resource.scope,
+        item.resource.urlKey,
+        sourceKind,
+      );
       set((state) => {
         const active = state.activePage;
         const existing = state.pages[canonicalKey]
           ?? (active ? state.pages[active.pageKey] : undefined);
         const items = upsertItem(existing?.items ?? [], item);
         const requestKey = existing?.requestKey ?? active?.requestKey
-          ?? webAnnotationRequestKey(item.resource.scope, item.resource.urlNormalized);
+          ?? webAnnotationRequestKey(
+            item.resource.scope,
+            item.resource.urlNormalized,
+            sourceKind,
+          );
         const entry: WebAnnotationPageEntry = Object.freeze({
           key: canonicalKey,
           requestKey,
           scope: item.resource.scope,
+          sourceKind,
           requestedUrl: existing?.requestedUrl ?? item.resource.urlNormalized,
           urlKey: item.resource.urlKey,
           resource: item.resource,
@@ -458,26 +485,45 @@ export function webAnnotationScopeKey(scope: WebAnnotationScope): string {
   return `${scope.kind}:${id}`;
 }
 
-export function webAnnotationCacheKey(scope: WebAnnotationScope, urlKey: string): string {
+export function webAnnotationCacheKey(
+  scope: WebAnnotationScope,
+  urlKey: string,
+  sourceKind: WebAnnotationSourceKind = "web",
+): string {
   const normalizedUrlKey = urlKey.trim();
   if (!normalizedUrlKey) throw new Error("Web annotation url_key is required");
-  return `${webAnnotationScopeKey(scope)}|url-key:${normalizedUrlKey}`;
+  return `${webAnnotationScopeKey(scope)}|source:${sourceKind}|url-key:${normalizedUrlKey}`;
 }
 
-export function webAnnotationRequestKey(scope: WebAnnotationScope, url: string): string {
-  return `${webAnnotationScopeKey(scope)}|url:${url.trim()}`;
+export function webAnnotationRequestKey(
+  scope: WebAnnotationScope,
+  url: string,
+  sourceKind: WebAnnotationSourceKind = webAnnotationSourceKind(url),
+): string {
+  const normalizedUrl = sourceKind === "local_file"
+    ? canonicalizeBrowserFileAddress(url).canonicalKey
+    : url.trim();
+  return `${webAnnotationScopeKey(scope)}|source:${sourceKind}|url:${normalizedUrl}`;
 }
 
 async function loadAllPages(
   client: WebAnnotationClient,
   scope: WebAnnotationScope,
+  sourceKind: WebAnnotationSourceKind,
   url: string,
   signal: AbortSignal,
 ): Promise<readonly WebAnnotationItem[]> {
   const items: WebAnnotationItem[] = [];
   let cursor: string | undefined;
   do {
-    const page = await client.list({ scope, url, cursor, limit: 100, signal });
+    const page = await client.list({
+      scope,
+      sourceKind,
+      url,
+      cursor,
+      limit: 100,
+      signal,
+    });
     items.push(...page.items);
     cursor = page.nextCursor ?? undefined;
   } while (cursor && !signal.aborted);
@@ -510,11 +556,28 @@ function upsertItem(
 
 function sourceFromActivePage(active: ActiveWebAnnotationPage): WebAnnotationSource {
   return Object.freeze({
+    sourceKind: active.sourceKind,
     url: active.url,
     title: active.title,
     canonicalUrl: active.canonicalUrl ?? null,
     profileMode: active.profileMode,
   });
+}
+
+function webAnnotationSourceKind(url: string): WebAnnotationSourceKind {
+  try {
+    canonicalizeBrowserFileAddress(url);
+    return "local_file";
+  } catch {
+    return "web";
+  }
+}
+
+function activeSourceKind(
+  active: ActiveWebAnnotationPage | null,
+  url: string,
+): WebAnnotationSourceKind {
+  return active?.sourceKind ?? webAnnotationSourceKind(url);
 }
 
 function sameSurface(left: BrowserSurfaceRef, right: BrowserSurfaceRef): boolean {

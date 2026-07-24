@@ -68,6 +68,7 @@ class GitCliRunner:
         *,
         cwd: str | Path,
         env: Mapping[str, str] | None = None,
+        allow_credential_prompt: bool = False,
         input_text: str | None = None,
         timeout_seconds: float | None = None,
         cancel_event: asyncio.Event | None = None,
@@ -78,6 +79,7 @@ class GitCliRunner:
                 args,
                 cwd=cwd,
                 env=env,
+                allow_credential_prompt=allow_credential_prompt,
                 input_text=input_text,
                 timeout_seconds=timeout_seconds,
                 cancel_event=cancel_event,
@@ -88,6 +90,7 @@ class GitCliRunner:
                 args,
                 cwd=cwd,
                 env=env,
+                allow_credential_prompt=allow_credential_prompt,
                 input_text=input_text,
                 timeout_seconds=timeout_seconds,
                 cancel_event=cancel_event,
@@ -100,6 +103,7 @@ class GitCliRunner:
         *,
         cwd: str | Path,
         env: Mapping[str, str] | None = None,
+        allow_credential_prompt: bool = False,
         input_text: str | None = None,
         timeout_seconds: float | None = None,
         cancel_event: asyncio.Event | None = None,
@@ -111,7 +115,10 @@ class GitCliRunner:
             raise GitRunnerValidationError(f"Git cwd does not exist: {resolved_cwd}")
         if max_output_bytes < 1:
             raise GitRunnerValidationError("Git output limit must be positive")
-        process_env = git_environment(env)
+        process_env = git_environment(
+            env,
+            allow_credential_prompt=allow_credential_prompt,
+        )
         started = time.monotonic()
         if cancel_event is not None and cancel_event.is_set():
             return GitCommandResult(
@@ -275,7 +282,11 @@ async def _create_threaded_windows_process(
     return _ThreadedProcess(process)
 
 
-def git_environment(overrides: Mapping[str, str] | None = None) -> dict[str, str]:
+def git_environment(
+    overrides: Mapping[str, str] | None = None,
+    *,
+    allow_credential_prompt: bool = False,
+) -> dict[str, str]:
     environment = os.environ.copy()
     if overrides:
         environment.update({str(key): str(value) for key, value in overrides.items()})
@@ -290,7 +301,8 @@ def git_environment(overrides: Mapping[str, str] | None = None) -> dict[str, str
             "GIT_EDITOR": "true",
             "GIT_SEQUENCE_EDITOR": "true",
             "GIT_TERMINAL_PROMPT": "0",
-            "GCM_INTERACTIVE": "Never",
+            "GCM_INTERACTIVE": "true" if allow_credential_prompt else "Never",
+            "GCM_GUI_PROMPT": "true" if allow_credential_prompt else "false",
             "SSH_ASKPASS_REQUIRE": "never",
         }
     )

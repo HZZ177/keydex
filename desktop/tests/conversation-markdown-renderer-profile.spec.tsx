@@ -58,7 +58,9 @@ describe("Conversation Markdown renderer profile", () => {
     const parser = new StreamingTailParser(parserOptions);
     const root = document.createElement("div");
     const view = new StreamingTailView(root, {
-      registry: createConversationMarkdownRendererRegistry(),
+      registry: createConversationMarkdownRendererRegistry({
+        workspaceRootPath: "D:/Pycharm Projects/keydex",
+      }),
       interactions: { onLinkActivate },
     });
     const snapshot = parser.update({ source, revision: "l1", epoch: 1, final: true }).snapshot;
@@ -67,6 +69,10 @@ describe("Conversation Markdown renderer profile", () => {
 
     expect(link.dataset.keydexFileLink).toBe("true");
     expect(link.dataset.keydexFilePath).toBe("desktop/src/renderer/pages/conversation/messages/MessageText.tsx");
+    expect(link.dataset.tooltipLabel)
+      .toBe("D:/Pycharm Projects/keydex/desktop/src/renderer/pages/conversation/messages/MessageText.tsx");
+    expect(link.dataset.tooltipDelayMs).toBe("500");
+    expect(link.dataset.tooltipMultiline).toBe("true");
     const icon = link.querySelector<HTMLImageElement>('[data-keydex-file-link-icon="true"]')!;
     expect(icon.getAttribute("data-icon-id")).toBe("react_ts");
     expect(icon.style.width).toBe("16px");

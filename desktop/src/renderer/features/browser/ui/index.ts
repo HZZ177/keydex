@@ -1,5 +1,6 @@
 export * from "./BrowserSurfacePlaceholder";
 export * from "./BrowserSurfaceOverlay";
+export * from "./BrowserTabSurface";
 export * from "./BrowserToolbar";
 export * from "./BrowserPanel";
 export * from "./BrowserFindBar";

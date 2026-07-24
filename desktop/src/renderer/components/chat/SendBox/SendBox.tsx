@@ -2122,7 +2122,10 @@ function FileContextChip({
   onRemove: () => void;
 }) {
   const fileKindLabel = selectedFileKindLabel(file);
-  const chipLabel = fileName(file.name || file.path);
+  const fileLabel = fileName(file.name || file.path);
+  const chipLabel = file.annotationReference && /\.html?$/iu.test(file.path)
+    ? `HTML 源码批注 · ${fileLabel}`
+    : fileLabel;
   const referenceKindLabel = file.type === "directory" ? "目录" : "文件";
   const canActivate = Boolean(onOpen);
 
@@ -2180,8 +2183,9 @@ function WebAnnotationContextChip({
     webAnnotationReferencePresentations.getSnapshot,
   );
   const presentation = presentations[reference.annotationId];
-  const title = presentation?.title || "网页批注";
-  const label = title === "网页批注" ? title : `网页批注 · ${title}`;
+  const sourceLabel = presentation?.sourceKind === "local_file" ? "本地页面批注" : "网页批注";
+  const title = presentation?.title || sourceLabel;
+  const label = title === sourceLabel ? title : `${sourceLabel} · ${title}`;
   const warning = warningPresentation(presentation?.status, presentation?.change);
   return (
     <ComposerContextHover
@@ -2189,7 +2193,7 @@ function WebAnnotationContextChip({
       hoverAnchor="web-annotation"
       title={label}
       description={[presentation?.summary, presentation?.bodyMarkdown].filter(Boolean).join("\n\n") || `修订 ${reference.selectedRevision}`}
-      meta={warning?.label ?? presentation?.origin ?? "网页引用"}
+      meta={warning?.label ?? presentation?.displayAddress ?? presentation?.origin ?? "网页引用"}
     >
       <span
         className={styles.webAnnotationChip}
@@ -2210,7 +2214,7 @@ function WebAnnotationContextChip({
         <button
           className={styles.webAnnotationChipRemove}
           type="button"
-          aria-label={`移除网页批注引用 ${title}`}
+          aria-label={`移除${sourceLabel}引用 ${title}`}
           onClick={onRemove}
         >
           <X size={12} strokeWidth={2} />
@@ -2258,6 +2262,9 @@ function fileHoverDescription(file: SelectedFile): string {
 
 function selectedFileKindLabel(file: SelectedFile): string {
   if (file.annotationReference) {
+    if (/\.html?$/iu.test(file.path)) {
+      return "HTML 源码批注";
+    }
     if (file.annotationReference.kind === "document") {
       return "全文批注";
     }

@@ -351,6 +351,23 @@
   padding: 0 6px 0 10px;
 }
 
+.previewTabIcon {
+  display: inline-grid;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  margin-right: 5px;
+  place-items: center;
+  color: var(--color-text-tertiary);
+}
+
+.previewTabIcon img {
+  width: 13px;
+  height: 13px;
+  border-radius: 2px;
+  object-fit: contain;
+}
+
 .previewTabTitle {
   min-width: 0;
   overflow: hidden;
@@ -358,6 +375,17 @@
   line-height: var(--ui-line-height-tight);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.previewTabProfileBadge {
+  flex: 0 0 auto;
+  margin-left: 5px;
+  border-radius: var(--radius-pill);
+  padding: 1px 4px;
+  background: color-mix(in srgb, var(--color-text-tertiary) 10%, transparent);
+  color: var(--color-text-tertiary);
+  font-size: 9px;
+  line-height: 1.2;
 }
 
 .previewTab[data-active="true"] .previewTabTitle {

@@ -1,4 +1,5 @@
 import { BROWSER_LIMITS, BROWSER_PROTOCOL_VERSIONS } from "../config";
+import type { BrowserNavigationIntent } from "./browserNavigation";
 
 export const BROWSER_EVENT_TOPIC = "keydex://browser-event" as const;
 export const BROWSER_HOST_SCHEMA_VERSION = BROWSER_PROTOCOL_VERSIONS.browserHost;
@@ -75,6 +76,7 @@ export interface BrowserCommandPayloadByKind {
     readonly generation: number;
     readonly profileMode: BrowserProfileMode;
     readonly initialUrl: string;
+    readonly initialNavigationIntent: BrowserNavigationIntent;
     readonly theme: "light" | "dark";
     readonly backgroundColor: BrowserRgbaColor;
   };
@@ -86,6 +88,7 @@ export interface BrowserCommandPayloadByKind {
   readonly browser_navigate: BrowserSurfaceRef & {
     readonly navigationId: string;
     readonly url: string;
+    readonly intent: BrowserNavigationIntent;
   };
   readonly browser_go_back: BrowserSurfaceRef;
   readonly browser_go_forward: BrowserSurfaceRef;
@@ -250,7 +253,9 @@ export interface BrowserEventPayloadByKind {
   };
   readonly "new_window.requested": {
     readonly url: string;
+    readonly sourceUrl: string;
     readonly userGesture: boolean;
+    readonly policyAllowed: boolean;
     readonly disposition: "tab" | "window" | "popup";
   };
   readonly "external_protocol.requested": { readonly scheme: string; readonly target: string };
@@ -355,12 +360,13 @@ type Validator = (value: unknown, path: string) => void;
 
 const commandValidators: Readonly<Record<BrowserCommandKind, Validator>> = {
   browser_create_surface: objectValidator(
-    ["panelId", "generation", "profileMode", "initialUrl", "theme", "backgroundColor"],
+    ["panelId", "generation", "profileMode", "initialUrl", "initialNavigationIntent", "theme", "backgroundColor"],
     {
       panelId: idValidator,
       generation: generationValidator,
       profileMode: enumValidator(["persistent", "incognito"]),
       initialUrl: urlValidator,
+      initialNavigationIntent: navigationIntentValidator,
       theme: enumValidator(["light", "dark"]),
       backgroundColor: rgbaColorValidator,
     },
@@ -370,7 +376,11 @@ const commandValidators: Readonly<Record<BrowserCommandKind, Validator>> = {
     visible: booleanValidator,
     reason: enumValidator(["active", "inactive_tab", "sidebar_closed", "window_hidden", "occluded"]),
   }),
-  browser_navigate: surfaceRefValidator({ navigationId: idValidator, url: urlValidator }),
+  browser_navigate: surfaceRefValidator({
+    navigationId: idValidator,
+    url: urlValidator,
+    intent: navigationIntentValidator,
+  }),
   browser_go_back: surfaceRefValidator(),
   browser_go_forward: surfaceRefValidator(),
   browser_reload: surfaceRefValidator({ mode: enumValidator(["normal", "ignore_cache"]) }),
@@ -493,11 +503,16 @@ const eventValidators: Readonly<Record<BrowserEventKind, Validator>> = {
   "shortcut.requested": objectValidator(["shortcut"], {
     shortcut: enumValidator(["focus_address", "reload", "close_panel", "find"]),
   }),
-  "new_window.requested": objectValidator(["url", "userGesture", "disposition"], {
+  "new_window.requested": objectValidator(
+    ["url", "sourceUrl", "userGesture", "policyAllowed", "disposition"],
+    {
     url: urlValidator,
+    sourceUrl: urlValidator,
     userGesture: booleanValidator,
+    policyAllowed: booleanValidator,
     disposition: enumValidator(["tab", "window", "popup"]),
-  }),
+    },
+  ),
   "external_protocol.requested": objectValidator(["scheme", "target"], {
     scheme: stringValidator(1, 32),
     target: stringValidator(1, MAX_URL_LENGTH),
@@ -883,6 +898,26 @@ function rgbaColorValidator(value: unknown, path: string): void {
       blue: numberRangeValidator(0, 255),
       alpha: numberRangeValidator(0, 255),
     },
+  )(value, path);
+}
+
+function navigationIntentValidator(value: unknown, path: string): void {
+  objectValidator(
+    ["source", "userGesture"],
+    {
+      source: enumValidator([
+        "address_bar",
+        "app_preview",
+        "page_link",
+        "redirect",
+        "popup",
+        "restore",
+        "history",
+      ]),
+      initiatorUrl: urlValidator,
+      userGesture: booleanValidator,
+    },
+    ["initiatorUrl"],
   )(value, path);
 }
 

@@ -188,6 +188,7 @@ export function readWebAnnotationConflict(error: unknown): {
 
 function listSearchParams(input: WebAnnotationListInput): URLSearchParams {
   const params = new URLSearchParams({ scope_kind: input.scope.kind });
+  params.set("source_kind", input.sourceKind ?? "web");
   if (input.scope.kind === "global") {
     if (input.scope.id !== null) throw new Error("Global web annotation scope cannot have an id");
   } else {
@@ -210,6 +211,7 @@ function annotationPath(annotationId: string): string {
 
 function toApiSource(source: WebAnnotationSource): ApiWebAnnotationSource {
   return {
+    source_kind: source.sourceKind ?? "web",
     url: source.url,
     title: source.title,
     canonical_url: source.canonicalUrl ?? null,
@@ -456,6 +458,7 @@ function fromApiResource(resource: ApiWebAnnotationResourceRecord): WebAnnotatio
   return Object.freeze({
     id: resource.id,
     scope: Object.freeze({ ...resource.scope }),
+    sourceKind: resource.source_kind,
     normalizationVersion: resource.normalization_version,
     urlKey: resource.url_key,
     urlNormalized: resource.url_normalized,
@@ -604,6 +607,7 @@ type ApiWebAnnotationTarget =
     };
 
 interface ApiWebAnnotationSource {
+  readonly source_kind: "web" | "local_file";
   readonly url: string;
   readonly title: string;
   readonly canonical_url: string | null;
@@ -613,7 +617,8 @@ interface ApiWebAnnotationSource {
 interface ApiWebAnnotationResourceRecord {
   readonly id: string;
   readonly scope: WebAnnotationScope;
-  readonly normalization_version: 1;
+  readonly source_kind: "web" | "local_file";
+  readonly normalization_version: 1 | 2;
   readonly url_key: string;
   readonly url_normalized: string;
   readonly document_url: string;

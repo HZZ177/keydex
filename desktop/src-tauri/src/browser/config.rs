@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 pub(crate) const BROWSER_CONFIG_SCHEMA_VERSION: u16 = 1;
 pub(crate) const RIGHT_SIDEBAR_STATE_SCHEMA_VERSION: u16 = 2;
-pub(crate) const BROWSER_HOST_SCHEMA_VERSION: u16 = 1;
+pub(crate) const BROWSER_HOST_SCHEMA_VERSION: u16 = 2;
 pub(crate) const WEB_ANNOTATION_SCHEMA_VERSION: u16 = 1;
 pub(crate) const WEB_ANNOTATION_BRIDGE_SCHEMA_VERSION: u16 = 1;
 

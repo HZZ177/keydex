@@ -29,6 +29,7 @@ class BrowserGeometryCoordinator {
   readonly #entries = new Map<string, GeometryEntry>();
   readonly #lastRevisions = new Map<string, number>();
   readonly #occlusionElements = new Map<string, readonly HTMLElement[]>();
+  readonly #spatialOcclusionElements = new Map<string, HTMLElement>();
   #interactiveSessionId: number | null = null;
   #lastInteractiveSessionId = 0;
 
@@ -86,6 +87,20 @@ class BrowserGeometryCoordinator {
     if (entry) this.#sync(entry, true);
   }
 
+  registerSpatialOcclusionElement(key: string, element: HTMLElement): () => void {
+    this.#spatialOcclusionElements.set(key, element);
+    this.syncAll();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (this.#spatialOcclusionElements.get(key) === element) {
+        this.#spatialOcclusionElements.delete(key);
+        this.syncAll();
+      }
+    };
+  }
+
   beginInteractiveResize(input: BrowserInteractiveResizeStart): number | null {
     const surfaces = this.#collectFrames(true);
     if (surfaces.length === 0) return null;
@@ -135,9 +150,15 @@ class BrowserGeometryCoordinator {
       width: Math.max(0, finiteOrZero(domRect.width)),
       height: Math.max(0, finiteOrZero(domRect.height)),
     };
+    const occlusionElements = new Set([
+      ...(this.#occlusionElements.get(entry.key) ?? []),
+      ...this.#spatialOcclusionElements.values(),
+    ]);
     const occlusions = browserSurfaceOcclusionRects(
       domRect,
-      this.#occlusionElements.get(entry.key)?.map((element) => element.getBoundingClientRect()) ?? [],
+      Array.from(occlusionElements)
+        .filter((element) => element.isConnected)
+        .map((element) => element.getBoundingClientRect()),
     );
     if (!force && sameRect(entry.lastRect, rect) && sameRects(entry.lastOcclusions, occlusions)) return null;
     entry.lastRect = rect;

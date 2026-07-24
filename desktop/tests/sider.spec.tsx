@@ -1,10 +1,15 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactElement } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RuntimeHttpError } from "@/runtime";
 import type { ChatChannel, ListSessionsOptions, RuntimeBridge, WsConnectionStatus } from "@/runtime";
 import { Sider } from "@/renderer/components/layout/Sider";
+import {
+  PROJECT_ICON_COLOR_OPTIONS,
+  PROJECT_ICON_COLOR_STORAGE_KEY,
+  projectIconOutlineValue,
+} from "@/renderer/components/layout/Sider/projectIconColors";
 import { emitLifecycleEvent } from "@/renderer/events/lifecycleEvents";
 import { emitSessionCreated, emitSessionUpdated } from "@/renderer/events/sessionEvents";
 import { AgentSessionProvider } from "@/renderer/providers/AgentSessionProvider";
@@ -41,7 +46,56 @@ function openSessionMenu(title: string) {
   return screen.getByRole("menu", { name: `会话操作 ${title}` });
 }
 
+function colorContrast(foreground: string, background: string): number {
+  const luminance = (color: string) => {
+    const channels = [1, 3, 5].map((offset) => Number.parseInt(color.slice(offset, offset + 2), 16) / 255);
+    const [red = 0, green = 0, blue = 0] = channels.map((channel) =>
+      channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
+    );
+    return red * 0.2126 + green * 0.7152 + blue * 0.0722;
+  };
+  const foregroundLuminance = luminance(foreground);
+  const backgroundLuminance = luminance(background);
+  return (
+    (Math.max(foregroundLuminance, backgroundLuminance) + 0.05)
+    / (Math.min(foregroundLuminance, backgroundLuminance) + 0.05)
+  );
+}
+
 describe("Sider", () => {
+  beforeEach(() => {
+    window.localStorage.removeItem(PROJECT_ICON_COLOR_STORAGE_KEY);
+  });
+
+  it("keeps project icon colors bright in the picker and readable across sidebar surfaces", () => {
+    const surfaces = {
+      light: ["#f7f6f3", "#ececec", "#e9e9e9"],
+      dark: ["#242631", "#393c4d", "#44475a"],
+    } as const;
+
+    for (const option of PROJECT_ICON_COLOR_OPTIONS) {
+      for (const background of surfaces.light) {
+        expect(colorContrast(option.lightColor, background)).toBeGreaterThanOrEqual(3);
+      }
+      for (const background of surfaces.dark) {
+        expect(colorContrast(option.darkColor, background)).toBeGreaterThanOrEqual(3);
+      }
+      const lightOutline = projectIconOutlineValue(option.id, "light");
+      const darkOutline = projectIconOutlineValue(option.id, "dark");
+      expect(lightOutline).toBeDefined();
+      expect(darkOutline).toBeDefined();
+      expect(colorContrast(option.lightSwatch, lightOutline ?? "#000000")).toBeGreaterThanOrEqual(2);
+      expect(colorContrast(option.darkSwatch, darkOutline ?? "#000000")).toBeGreaterThanOrEqual(2);
+      if (option.ring === "vivid") {
+        const channels = [1, 3, 5].map((offset) =>
+          Number.parseInt(option.lightSwatch.slice(offset, offset + 2), 16),
+        );
+        expect(Math.max(...channels)).toBeGreaterThanOrEqual(190);
+        expect(Math.max(...channels) - Math.min(...channels)).toBeGreaterThanOrEqual(65);
+      }
+    }
+  });
+
   it("renders the personal local navigation without removed AionUi entries", () => {
     const { container } = renderSider(
       <Sider
@@ -1555,6 +1609,53 @@ describe("Sider", () => {
     expect(screen.getByRole("dialog", { name: "重命名会话" })).not.toBeNull();
   });
 
+  it("keeps session and project context menus available while the sidebar is collapsed", async () => {
+    const runtime = fakeRuntime([
+      thread({
+        id: "thread-collapsed-context",
+        title: "折叠态会话",
+        session_type: "workspace",
+        workspace_id: "ws-1",
+        workspace: workspace("ws-1", "keydex"),
+      }),
+    ], {
+      archiveWorkspace: vi.fn(),
+      forkSession: vi.fn(),
+      loadHistory: vi.fn(),
+      revealPath: vi.fn(),
+      updateWorkspace: vi.fn(),
+    });
+    renderSider(
+      <AppContextMenuProvider>
+        <Sider runtime={runtime} collapsed />
+      </AppContextMenuProvider>,
+    );
+
+    const sessionButton = await screen.findByRole("button", { name: "打开会话 折叠态会话" });
+    fireEvent.contextMenu(sessionButton, { clientX: 80, clientY: 96 });
+
+    expect(screen.queryByRole("menu", { name: "页面右键菜单" })).toBeNull();
+    const sessionMenu = screen.getByRole("menu", { name: "会话操作 折叠态会话" });
+    expect(within(sessionMenu).getByRole("menuitem", { name: "从对话派生" })).not.toBeNull();
+    expect(within(sessionMenu).getByRole("menuitem", { name: "重命名" })).not.toBeNull();
+    expect(within(sessionMenu).getByRole("menuitem", { name: "刷新" })).not.toBeNull();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => {
+      expect(screen.queryByRole("menu", { name: "会话操作 折叠态会话" })).toBeNull();
+    });
+
+    const projectButton = screen.getByRole("button", { name: "收起项目 keydex" });
+    fireEvent.contextMenu(projectButton, { clientX: 80, clientY: 120 });
+
+    expect(screen.queryByRole("menu", { name: "页面右键菜单" })).toBeNull();
+    const projectMenu = screen.getByRole("menu", { name: "项目操作 keydex" });
+    expect(within(projectMenu).getByRole("menuitem", { name: "重命名" })).not.toBeNull();
+    expect(within(projectMenu).getByRole("menuitem", { name: "图标颜色" })).not.toBeNull();
+    expect(within(projectMenu).getByRole("menuitem", { name: "资源管理器" })).not.toBeNull();
+    expect(within(projectMenu).getByRole("menuitem", { name: "归档" })).not.toBeNull();
+  });
+
   it("refreshes the session list from the session right-click menu", async () => {
     const runtime = fakeRuntime([thread({ id: "thread-a", title: "可刷新会话" })]);
     renderSider(<Sider runtime={runtime} />);
@@ -1818,6 +1919,99 @@ describe("Sider", () => {
     menu = screen.getByRole("menu", { name: "项目操作 keydex-next" });
     fireEvent.click(within(menu).getByRole("menuitem", { name: "资源管理器" }));
     await waitFor(() => expect(revealPath).toHaveBeenCalledWith("D:/Pycharm Projects/keydex"));
+  });
+
+  it("sets, isolates, persists, and resets each project folder icon color", async () => {
+    const projectSessions = [
+      thread({
+        id: "thread-project-color-a",
+        title: "Keydex 会话",
+        session_type: "workspace",
+        workspace_id: "ws-1",
+        workspace: workspace("ws-1", "keydex"),
+      }),
+      thread({
+        id: "thread-project-color-b",
+        title: "Framework 会话",
+        session_type: "workspace",
+        workspace_id: "ws-2",
+        workspace: workspace("ws-2", "framework"),
+        updated_at: "2026-06-16T10:00:00Z",
+      }),
+    ];
+    const runtimeOptions = {
+      updateWorkspace: vi.fn(),
+      archiveWorkspace: vi.fn(),
+      revealPath: vi.fn(),
+    };
+    const view = renderSider(<Sider runtime={fakeRuntime(projectSessions, runtimeOptions)} />);
+
+    const keydexToggle = await screen.findByRole("button", { name: "收起项目 keydex" });
+    const frameworkToggle = screen.getByRole("button", { name: "收起项目 framework" });
+    expect(keydexToggle.querySelector("[data-project-icon-color=\"default\"]")).not.toBeNull();
+    expect(frameworkToggle.querySelector("[data-project-icon-color=\"default\"]")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "更多项目操作 keydex" }));
+    const menu = screen.getByRole("menu", { name: "项目操作 keydex" });
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "图标颜色" }));
+    const picker = within(menu).getByRole("group", { name: "选择项目图标颜色" });
+    fireEvent.click(within(picker).getByRole("button", { name: "蓝色" }));
+
+    const coloredOpenIcon = screen
+      .getByRole("button", { name: "收起项目 keydex" })
+      .querySelector<SVGElement>("[data-project-icon-color=\"vivid-blue\"]");
+    expect(coloredOpenIcon).not.toBeNull();
+    expect(coloredOpenIcon?.style.fill).toBe("#2eb8ed");
+    expect(coloredOpenIcon?.style.fillOpacity).toBe("0.86");
+    expect(coloredOpenIcon?.style.color).toBe("rgb(38, 103, 134)");
+    expect(coloredOpenIcon?.getAttribute("stroke-width")).toBe("1.55");
+    fireEvent.click(screen.getByRole("button", { name: "切换主题" }));
+    await waitFor(() => expect(coloredOpenIcon?.style.fill).toBe("#2eb8ed"));
+    expect(coloredOpenIcon?.style.fillOpacity).toBe("0.92");
+    expect(coloredOpenIcon?.style.color).toBe("rgb(38, 103, 134)");
+    expect(
+      screen
+        .getByRole("button", { name: "收起项目 framework" })
+        .querySelector("[data-project-icon-color=\"default\"]"),
+    ).not.toBeNull();
+
+    fireEvent.pointerDown(document.body);
+    fireEvent.click(screen.getByRole("button", { name: "收起项目 keydex" }));
+    expect(
+      screen
+        .getByRole("button", { name: "展开项目 keydex" })
+        .querySelector("[data-project-icon-color=\"vivid-blue\"]"),
+    ).not.toBeNull();
+
+    expect(JSON.parse(window.localStorage.getItem(PROJECT_ICON_COLOR_STORAGE_KEY) ?? "{}")).toEqual({
+      version: 1,
+      colors: { "ws-1": "vivid-blue" },
+    });
+
+    view.unmount();
+    renderSider(<Sider runtime={fakeRuntime(projectSessions, runtimeOptions)} />);
+    expect(
+      (await screen.findByRole("button", { name: "收起项目 keydex" }))
+        .querySelector("[data-project-icon-color=\"vivid-blue\"]"),
+    ).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "更多项目操作 keydex" }));
+    const restoredMenu = screen.getByRole("menu", { name: "项目操作 keydex" });
+    fireEvent.click(within(restoredMenu).getByRole("menuitem", { name: "图标颜色" }));
+    fireEvent.click(
+      within(within(restoredMenu).getByRole("group", { name: "选择项目图标颜色" }))
+        .getByRole("button", { name: "移除颜色" }),
+    );
+
+    expect(
+      screen
+        .getByRole("button", { name: "收起项目 keydex" })
+        .querySelector("[data-project-icon-color=\"default\"]"),
+    ).not.toBeNull();
+    expect(JSON.parse(window.localStorage.getItem(PROJECT_ICON_COLOR_STORAGE_KEY) ?? "{}")).toEqual({
+      version: 1,
+      colors: {},
+    });
   });
 
   it("opens the same project actions on right click and archives the project", async () => {

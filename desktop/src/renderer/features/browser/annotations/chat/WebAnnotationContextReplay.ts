@@ -33,6 +33,10 @@ export function webAnnotationSnapshotFromContextItem(
   const page = record(snapshot?.page);
   const anchor = record(snapshot?.anchor);
   const machineTarget = record(anchor?.machineTarget);
+  const evidence = snapshot?.evidence === undefined ? undefined : record(snapshot.evidence);
+  const regionCapture = evidence?.regionCapture === null
+    ? null
+    : record(evidence?.regionCapture);
   const observation = record(snapshot?.observation);
   const changes = record(observation?.changes);
   const integrity = record(snapshot?.integrity);
@@ -54,6 +58,12 @@ export function webAnnotationSnapshotFromContextItem(
     || !stringArray(comment.tags)
     || !Array.isArray(comment.properties)
     || !page
+    || (
+      page.sourceKind !== undefined
+      && page.sourceKind !== "web"
+      && page.sourceKind !== "local_file"
+    )
+    || (page.displayAddress !== undefined && !nonEmptyString(page.displayAddress))
     || typeof page.title !== "string"
     || !nonEmptyString(page.documentUrl)
     || !nonEmptyString(page.urlKey)
@@ -64,6 +74,25 @@ export function webAnnotationSnapshotFromContextItem(
     || !record(anchor.display)
     || !machineTarget
     || !webAnnotationTargetType(machineTarget.type)
+    || (
+      evidence !== undefined
+      && (
+        !evidence
+        || !("regionCapture" in evidence)
+        || (
+          regionCapture !== null
+          && (
+            !regionCapture
+            || !nonEmptyString(regionCapture.assetId)
+            || !imageMimeType(regionCapture.mimeType)
+            || !positiveInteger(regionCapture.sizeBytes)
+            || !sha256Hex(regionCapture.sha256)
+            || !positiveInteger(regionCapture.width)
+            || !positiveInteger(regionCapture.height)
+          )
+        )
+      )
+    )
     || !observation
     || !observationStatus(observation.status)
     || !observationFreshness(observation.freshness)
@@ -99,6 +128,8 @@ export function webAnnotationPresentationFromSnapshot(
     summary: snapshot.anchor.display.label,
     bodyMarkdown: snapshot.comment.bodyMarkdown,
     origin: snapshot.page.origin,
+    sourceKind: snapshot.page.sourceKind === "local_file" ? "local_file" : "web",
+    displayAddress: snapshot.page.displayAddress || snapshot.page.documentUrl,
     status: visibleWebAnnotationStatus(replayResolutionStatus(snapshot.observation.status)),
     change: summarizeWebAnnotationChanges(snapshot.observation.changes.signals),
     updatedAt: snapshot.reference.assembledAt,
@@ -125,6 +156,14 @@ function positiveInteger(value: unknown): value is number {
 
 function stringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function imageMimeType(value: unknown): boolean {
+  return value === "image/png" || value === "image/jpeg" || value === "image/webp";
+}
+
+function sha256Hex(value: unknown): boolean {
+  return typeof value === "string" && /^[0-9a-f]{64}$/u.test(value);
 }
 
 function webAnnotationTargetType(value: unknown): boolean {

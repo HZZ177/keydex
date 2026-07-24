@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { BrowserEventEnvelope, BrowserSurfaceRef } from "../src/renderer/features/browser/domain";
 import {
   BrowserBridgeRouter,
+  parseBrowserBridgeEnvelope,
   type BrowserBridgeRouteFailure,
 } from "../src/renderer/features/browser/runtime";
 
@@ -143,6 +144,91 @@ describe("browser bridge frame broker and React routing", () => {
     expect(router.applyHostEvent(bridgeEvent(forgedFrame, 2))).toBe(false);
     expect(failures.at(-1)?.code).toBe("frame_identity_mismatch");
   });
+
+  it("accepts legal file page/frame/attributes and rejects remote-file or forged schemes", () => {
+    const ready = structuredClone(fixture.pageToHost[0]);
+    ready.payload = { href: "file:///D:/workspace/index.html#selection", top: true };
+    expect(parseBrowserBridgeEnvelope(ready, "page-to-host").ok).toBe(true);
+    const blank = structuredClone(ready);
+    blank.payload = { href: "about:blank", top: true };
+    expect(parseBrowserBridgeEnvelope(blank, "page-to-host").ok).toBe(true);
+
+    const selection = structuredClone(fixture.pageToHost[2]);
+    const target = (selection.payload as {
+      target: {
+        frame: { url: string };
+        stableAttributes: Array<{ name: string; value: string }>;
+      };
+    }).target;
+    target.frame.url = "file:///D:/workspace/index.html";
+    target.stableAttributes = [{
+      name: "href",
+      value: "file:///D:/workspace/nested/page.html",
+    }];
+    expect(parseBrowserBridgeEnvelope(selection, "page-to-host").ok).toBe(true);
+
+    const remoteClaim = structuredClone(selection);
+    (remoteClaim.payload as typeof selection.payload & {
+      target: { frame: { url: string } };
+    }).target.frame.url = "https://example.test/article";
+    expect(parseBrowserBridgeEnvelope(remoteClaim, "page-to-host")).toEqual({
+      ok: false,
+      error: "invalid_value",
+    });
+
+    for (const href of [
+      "file:///D:/workspace/folder/",
+      "file:///tmp/index.html",
+      "javascript:alert(1)",
+    ]) {
+      const invalid = structuredClone(ready);
+      invalid.payload = { href, top: true };
+      expect(parseBrowserBridgeEnvelope(invalid, "page-to-host")).toEqual({
+        ok: false,
+        error: "invalid_value",
+      });
+    }
+  });
+
+  it("keeps file main/child frames correlated to surface, navigation, and frame identity", () => {
+    const router = new BrowserBridgeRouter(surface);
+    const failures: BrowserBridgeRouteFailure[] = [];
+    router.subscribeErrors((failure) => failures.push(failure));
+    const main = {
+      ...structuredClone(fixture.pageToHost[0]),
+      payload: { href: "file:///D:/workspace/index.html", top: true },
+    };
+    expect(router.applyHostEvent(bridgeEvent(main, 1))).toBe(true);
+
+    const child = {
+      ...structuredClone(fixture.pageToHost[0]),
+      navigationId: "navigation:file-frame-1",
+      frameKey: "frame:0",
+      payload: { href: "file:///D:/workspace/frame.html", top: false },
+    };
+    expect(router.applyHostEvent(bridgeEvent(child, 2))).toBe(true);
+
+    const geometry = {
+      ...structuredClone(fixture.pageToHost[5]),
+      navigationId: "navigation:file-frame-1",
+      frameKey: "frame:0",
+      sequence: 2,
+    };
+    expect(router.applyHostEvent(bridgeEvent(geometry, 3))).toBe(true);
+    expect(router.applyHostEvent(bridgeEvent({
+      ...geometry,
+      navigationId: "navigation:forged",
+      sequence: 3,
+    }, 4))).toBe(false);
+    expect(failures.at(-1)?.code).toBe("stale_navigation");
+
+    expect(router.applyHostEvent(bridgeEvent({
+      ...child,
+      panelId: "panel-forged",
+      sequence: 2,
+    }, 5))).toBe(false);
+    expect(failures.at(-1)?.code).toBe("stale_surface");
+  });
 });
 
 function bridgeEvent(bridgeEnvelope: Record<string, unknown>, sequence: number): BrowserEventEnvelope {
@@ -155,7 +241,7 @@ function hostEvent<K extends BrowserEventEnvelope["kind"]>(
   payload: Extract<BrowserEventEnvelope, { kind: K }>["payload"],
 ): BrowserEventEnvelope {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind,
     ...surface,
     sequence,

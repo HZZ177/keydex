@@ -1,16 +1,29 @@
 from __future__ import annotations
 
 import hashlib
+import json
+from pathlib import Path
 
 import pytest
 
 from backend.app.web_annotations.url_identity import (
     REDACTED_QUERY_VALUE,
+    LOCAL_FILE_ANNOTATION_URL_NORMALIZATION_VERSION,
     WEB_ANNOTATION_URL_NORMALIZATION_VERSION,
     WebUrlIdentityError,
+    normalize_local_file_url,
     normalize_web_url,
     sanitize_url_reference,
 )
+
+IDENTITY_VECTORS_PATH = (
+    Path(__file__).resolve().parents[2]
+    / ".."
+    / ".dev"
+    / "test"
+    / "2026-07-23_21-12-15-workbench-browser-file-preview-annotations"
+    / "file-identity-vectors.json"
+).resolve()
 
 
 def test_normalizes_idn_default_port_dot_segments_and_fragment() -> None:
@@ -88,6 +101,50 @@ def test_fragment_participates_in_page_identity_but_not_document_url() -> None:
 
     assert first.document_url == second.document_url == "https://example.com/docs"
     assert first.url_key != second.url_key
+
+
+def test_local_file_identity_matches_shared_versioned_vectors() -> None:
+    vectors = json.loads(IDENTITY_VECTORS_PATH.read_text(encoding="utf-8"))["vectors"]
+    for vector in vectors:
+        identity = (
+            normalize_web_url(vector["input"])
+            if vector["source_kind"] == "web"
+            else normalize_local_file_url(vector["input"])
+        )
+        assert identity.source_kind == vector["source_kind"], vector["name"]
+        assert identity.normalization_version == vector["normalization_version"], vector["name"]
+        assert identity.url_normalized == vector["url_normalized"], vector["name"]
+        assert identity.document_url == vector["document_url"], vector["name"]
+        assert identity.origin == vector["origin"], vector["name"]
+        assert identity.url_key == vector["url_key"], vector["name"]
+
+
+def test_local_file_identity_is_case_insensitive_and_fragment_is_page_specific() -> None:
+    drive = normalize_local_file_url(r"D:\Workspace\Demo\index.html")
+    equivalent = normalize_local_file_url("file:///d:/workspace/demo/index.html")
+    fragment = normalize_local_file_url("file:///D:/workspace/demo/index.html#details")
+
+    assert drive.normalization_version == LOCAL_FILE_ANNOTATION_URL_NORMALIZATION_VERSION
+    assert drive.url_key == equivalent.url_key
+    assert fragment.url_key != equivalent.url_key
+    assert fragment.document_url == equivalent.document_url
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "file:///tmp/index.html",
+        "file:///D:/workspace/",
+        "file://user:password@server/share/index.html",
+        "file:///D:/workspace/%ZZ/index.html",
+        "file:///D:/workspace/index.html?token=secret",
+        r"D:\..\index.html",
+        r"\\server\share",
+    ],
+)
+def test_local_file_identity_rejects_invalid_inputs_without_accessing_disk(value: str) -> None:
+    with pytest.raises(WebUrlIdentityError):
+        normalize_local_file_url(value)
 
 
 def test_normalizes_ipv6_and_percent_escape_case() -> None:

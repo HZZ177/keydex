@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from "react";
 
 import type { GitRef, GitStatusSnapshot } from "@/runtime/gitTypes";
 import {
-  GitChoiceDialog,
   GitConfirmActionDialog,
   GitDialogField,
   GitDialogOptions,
@@ -28,8 +27,6 @@ export interface GitBranchActionsProps {
   onDeleteTag: (ref: GitRef, remote: string | null) => void | Promise<void>;
   onPushTag: (ref: GitRef, remote: string) => void | Promise<void>;
   onSetUpstream: (branch: GitRef, upstream: string | null) => void | Promise<void>;
-  onOpenChanges: () => void;
-  onStashAndCheckout: (ref: GitRef) => void | Promise<void>;
 }
 
 export function GitBranchActions({
@@ -46,8 +43,6 @@ export function GitBranchActions({
   onDeleteTag,
   onPushTag,
   onSetUpstream,
-  onOpenChanges,
-  onStashAndCheckout,
 }: GitBranchActionsProps) {
   const selected = useMemo(
     () => refs.find((ref) => ref.fullName === selectedRef) ?? refs.find((ref) => ref.current) ?? null,
@@ -61,7 +56,6 @@ export function GitBranchActions({
     | { kind: "tag"; ref: GitRef }
     | null
   >(null);
-  const [dirtyCheckout, setDirtyCheckout] = useState<GitRef | null>(null);
   const [tagName, setTagName] = useState("");
   const [tagMessage, setTagMessage] = useState("");
   const [tagAnnotated, setTagAnnotated] = useState(false);
@@ -69,7 +63,6 @@ export function GitBranchActions({
   const [tagRemote, setTagRemote] = useState(remotes[0] ?? "");
   const [upstreamChoice, setUpstreamChoice] = useState("");
   const validation = validateBranchName(branchName);
-  const dirty = Boolean(status?.files.length);
   const deletionRisk = branchDeletionRisk(selected, status);
   const availableRemotes = useMemo(() => Array.from(new Set([
     ...remotes,
@@ -77,7 +70,6 @@ export function GitBranchActions({
   ])), [refs, remotes]);
 
   useEffect(() => {
-    setDirtyCheckout(null);
     setDialog(null);
     setDeleteRequest(null);
     setBranchName("");
@@ -93,10 +85,6 @@ export function GitBranchActions({
 
   const checkout = () => {
     if (!selected || selected.current) return;
-    if (dirty) {
-      setDirtyCheckout(selected);
-      return;
-    }
     void onCheckout(selected);
   };
 
@@ -284,27 +272,6 @@ export function GitBranchActions({
             else void onDelete(request.ref, request.force);
           }}
         />
-      ) : null}
-      {dirtyCheckout ? (
-        <GitChoiceDialog
-          title="工作树存在本地改动"
-          description={`签出 ${dirtyCheckout.shortName} 前请选择如何处理当前改动。Keydex 不会自动储藏。`}
-          busy={busy}
-          actions={[
-            { label: "提交改动", tone: "secondary", onSelect: () => { setDirtyCheckout(null); onOpenChanges(); } },
-            { label: "储藏并签出", tone: "primary", onSelect: () => {
-              const target = dirtyCheckout;
-              setDirtyCheckout(null);
-              void onStashAndCheckout(target);
-            } },
-          ]}
-          onCancel={() => setDirtyCheckout(null)}
-        >
-          <GitDialogSummary tone="warning">
-            <strong>{status?.files.length ?? 0} 个本地改动</strong>
-            <span>目标：{dirtyCheckout.shortName}{dirtyCheckout.kind === "local" ? "" : "（分离指针）"}</span>
-          </GitDialogSummary>
-        </GitChoiceDialog>
       ) : null}
     </section>
   );

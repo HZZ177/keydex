@@ -130,16 +130,62 @@ describe("page bridge structured text selection", () => {
     expect(target.frame.url).toBe("about:blank");
     expect(JSON.stringify(target.frame)).not.toContain("runtime");
   });
+
+  it("captures a complete version-1 text target from a scrolled local file page", () => {
+    const run = createRun(
+      "<h1>本地指南</h1><p>重复文本</p><h2>详情</h2><p><span>重复</span><strong>文本 😀</strong></p>",
+      "file:///D:/Keydex%20Fixtures/nested/annotation.html?mode=preview#section",
+    );
+    Object.defineProperties(run.window, {
+      scrollX: { configurable: true, value: 64 },
+      scrollY: { configurable: true, value: 480 },
+    });
+    const paragraphs = run.document.querySelectorAll("p");
+    const start = paragraphs[1].querySelector("span")!.firstChild!;
+    const end = paragraphs[1].querySelector("strong")!.firstChild!;
+    run.select(start, 0, end, end.nodeValue!.length);
+    run.startAndCommit("selection-local-file");
+
+    const target = run.result("selection-local-file");
+    expect(target).toMatchObject({
+      type: "text",
+      quote: {
+        exact: "重复文本 😀",
+      },
+      position: {
+        textModelVersion: 1,
+      },
+      context: {
+        headingPath: ["本地指南", "详情"],
+        containerRole: "paragraph",
+      },
+      rects: [{ x: 10, y: 20, width: 120, height: 24 }],
+      frame: {
+        url: "file:///D:/Keydex%20Fixtures/nested/annotation.html?mode=preview#section",
+        indexPath: [],
+      },
+    });
+    expect(target.quote.prefix).toBeTypeOf("string");
+    expect(target.quote.suffix).toBeTypeOf("string");
+    expect(target.position!.end - target.position!.start).toBe(target.quote.exact.length);
+    expect(Array.isArray(target.domRange?.startPath)).toBe(true);
+    expect(Array.isArray(target.domRange?.endPath)).toBe(true);
+    expect(target.domRange?.startOffset).toBe(0);
+    expect(target.domRange?.endOffset).toBe("文本 😀".length);
+    expect(target.domRange!.startPath).not.toEqual(target.domRange!.endPath);
+    expect(target.context.containerTextDigest).toMatch(/^fnv1a32:[0-9a-f]{8}$/);
+    expect(JSON.stringify(target)).not.toMatch(/https?:\/\/|scrollX|scrollY|runtime/);
+  });
 });
 
-function createRun(html: string) {
+function createRun(html: string, url = "https://example.test/article") {
   const dom = new JSDOM(`<!doctype html><body>${html}</body>`, {
-    url: "https://example.test/article",
+    url,
     pretendToBeVisual: true,
     runScripts: "outside-only",
   });
   openDoms.push(dom);
-  return installRun(dom.window, "https://example.test/article");
+  return installRun(dom.window, url);
 }
 
 function installRun(window: DOMWindow, _url: string) {
@@ -167,7 +213,7 @@ function installRun(window: DOMWindow, _url: string) {
     surfaceId: "surface-1",
     generation: 2,
   }));
-  window.eval(rendered);
+  window.eval(`let __KEYDEX_BRIDGE_DIAGNOSTICS_POST__ = null;\n${rendered}`);
   window.eval(textSource);
   const metadata = (window as unknown as {
     KeydexAnnotationBridge: { navigationId: string; frameKey: string };

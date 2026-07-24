@@ -151,6 +151,11 @@ function createFrameRun() {
       },
     },
   });
+  Object.defineProperty(child, "__KEYDEX_BRIDGE_DIAGNOSTICS_POST__", {
+    configurable: true,
+    writable: true,
+    value: null,
+  });
   child.eval(bridgeSource.replace("__KEYDEX_BRIDGE_BOOTSTRAP__", JSON.stringify({
     panelId: "panel-1",
     surfaceId: "surface-1",

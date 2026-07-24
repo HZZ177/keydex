@@ -1,6 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { ConfirmDialog } from "@/renderer/components/dialog";
+import {
+  browserGeometryCoordinator,
+  useBrowserSpatialOcclusion,
+} from "@/renderer/features/browser/runtime";
 import { useTheme } from "@/renderer/providers/ThemeProvider";
 import type { TerminalSnapshot } from "@/runtime";
 
@@ -53,6 +57,10 @@ export function TerminalDock({ registry = terminalXtermRegistry }: { registry?: 
   const activeTerminal = session?.activeTerminalId ? snapshotsById[session.activeTerminalId] ?? null : null;
   const compact = ui.listPresentation === "compact" || (ui.listPresentation === "auto" && compactByWidth);
   const scopeReady = Boolean(available && scope.sessionId && !scope.loading);
+  useBrowserSpatialOcclusion(rootRef, ui.dockOpen, "terminal-dock", { observeResize: false });
+  useLayoutEffect(() => {
+    if (ui.dockOpen) browserGeometryCoordinator.syncAll();
+  }, [ui.dockHeight, ui.dockOpen]);
 
   useEffect(() => registry.updateTheme(theme), [registry, theme]);
   useEffect(() => {

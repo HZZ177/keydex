@@ -844,6 +844,7 @@ button.sectionTitle[data-kind="pinned"]:focus-visible,
   position: fixed;
   z-index: 170;
   display: grid;
+  box-sizing: border-box;
   min-width: 118px;
   gap: 3px;
   padding: 6px;
@@ -858,12 +859,16 @@ button.sectionTitle[data-kind="pinned"]:focus-visible,
   backdrop-filter: blur(18px);
 }
 
+.historyActionMenu[data-project-menu="true"] {
+  width: 174px;
+}
+
 .historyActionMenu[data-state="closing"] {
   pointer-events: none;
   animation: historyActionMenuOut 120ms ease both;
 }
 
-.historyActionMenu button {
+.historyActionMenu > button {
   display: grid;
   grid-template-columns: 14px minmax(0, 1fr);
   width: 100%;
@@ -884,30 +889,30 @@ button.sectionTitle[data-kind="pinned"]:focus-visible,
     color var(--motion-fast) var(--motion-ease-out);
 }
 
-.historyActionMenu button:hover,
-.historyActionMenu button:focus-visible {
+.historyActionMenu > button:hover,
+.historyActionMenu > button:focus-visible {
   outline: none;
   background: var(--surface-hover);
   color: var(--color-text-1);
 }
 
-.historyActionMenu button:disabled {
+.historyActionMenu > button:disabled {
   cursor: default;
   opacity: 0.56;
 }
 
-.historyActionMenu button:disabled:hover,
-.historyActionMenu button:disabled:focus-visible {
+.historyActionMenu > button:disabled:hover,
+.historyActionMenu > button:disabled:focus-visible {
   background: transparent;
   color: var(--color-text-2);
 }
 
-.historyActionMenu button[data-tone="danger"] {
+.historyActionMenu > button[data-tone="danger"] {
   color: color-mix(in srgb, var(--color-danger) 84%, var(--color-text-2));
 }
 
-.historyActionMenu button[data-tone="danger"]:hover,
-.historyActionMenu button[data-tone="danger"]:focus-visible {
+.historyActionMenu > button[data-tone="danger"]:hover,
+.historyActionMenu > button[data-tone="danger"]:focus-visible {
   background: color-mix(in srgb, var(--color-danger) 8%, transparent);
   color: var(--color-danger);
 }

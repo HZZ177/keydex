@@ -11,11 +11,20 @@ import type { GitCommitCommand, GitConflictActionCommand, GitConflictFileAction,
 import { GIT_HISTORY_PAGE_SIZE } from "@/renderer/features/git/performancePolicy";
 import { gitOperationErrorMessage, gitUiErrorMessage } from "@/renderer/features/git/errorPresentation";
 import { useGitErrorNotificationState } from "@/renderer/features/git/GitNotifications";
+import {
+  checkoutIntentForRef,
+  requiresSmartCheckout,
+  runCheckoutIntent,
+  runSmartCheckout,
+  smartCheckoutFailureMessage,
+  type GitCheckoutIntent,
+} from "@/renderer/features/git/smartCheckout";
 import { WorkspaceSelector, type WorkspaceSelectorProps } from "@/renderer/components/workspace";
 import { useRafPanelResize } from "@/renderer/components/layout/useRafPanelResize";
 import { LoadingSkeleton } from "@/renderer/components/loading";
 import {
   GitCommitPushDialog,
+  GitChoiceDialog,
   GitConfirmActionDialog,
   GitDialogField,
   GitDialogSummary,
@@ -165,6 +174,9 @@ export function GitToolWindow({
   const [moreOpen, setMoreOpen] = useState(false);
   const [projectAction, setProjectAction] = useState<"init" | "grant" | "retry" | null>(null);
   const [actionError, setActionError] = useGitErrorNotificationState();
+  const [credentialLoginOperationId, setCredentialLoginOperationId] = useState<string | null>(null);
+  const [updateCredentialRemote, setUpdateCredentialRemote] = useState<string | null>(null);
+  const [updateCredentialLoginBusy, setUpdateCredentialLoginBusy] = useState(false);
   const [identity, setIdentity] = useState<GitIdentity | null>(null);
   const [identityLoading, setIdentityLoading] = useState(false);
   const [commitPushOpen, setCommitPushOpen] = useState(false);
@@ -254,6 +266,7 @@ export function GitToolWindow({
   const [branchContextDialog, setBranchContextDialog] = useState<BranchContextDialog | null>(null);
   const [branchContextName, setBranchContextName] = useState("");
   const [pendingBranchOperation, setPendingBranchOperation] = useState<PendingBranchOperation | null>(null);
+  const [pendingSmartCheckout, setPendingSmartCheckout] = useState<GitCheckoutIntent | null>(null);
   const [patchDryRunSignature, setPatchDryRunSignature] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<GitConflictsSnapshot | null>(null);
   const [conflictsLoading, setConflictsLoading] = useState(false);
@@ -499,6 +512,41 @@ export function GitToolWindow({
       setActionError(gitUiErrorMessage(error));
     }
   };
+  const loginForLoggedOperation = async (operationId: string) => {
+    if (
+      !controller
+      || !runtime
+      || !storeSnapshot?.project
+      || credentialLoginOperationId !== null
+    ) return;
+    const operation = storeSnapshot.operations.find((candidate) => candidate.operationId === operationId);
+    if (!operation) {
+      setActionError("找不到需要登录的 Git 操作。");
+      return;
+    }
+    const remote = credentialRemoteForOperation(operation, remotes);
+    if (!remote) {
+      setActionError("无法确定需要登录的远程仓库。");
+      return;
+    }
+    setCredentialLoginOperationId(operationId);
+    setActionError(null);
+    try {
+      await runtime.loginCredentials({
+        workspaceId: storeSnapshot.project.workspaceId,
+        projectRoot: storeSnapshot.project.projectRoot,
+        repositoryId: operation.repositoryId,
+        remote,
+        provider: "auto",
+      });
+      const result = await controller.retryOperation(operationId);
+      if (result.state === "failed") setActionError(gitOperationFailureMessage(result));
+    } catch (error) {
+      setActionError(gitUiErrorMessage(error));
+    } finally {
+      setCredentialLoginOperationId(null);
+    }
+  };
   const cancelLoggedOperation = async (operationId: string) => {
     if (!controller) return;
     try {
@@ -522,6 +570,9 @@ export function GitToolWindow({
     setNavigationPanePercent(storeSnapshot?.ui?.navigationPanePercent ?? 19);
     setDetailPanePercent(storeSnapshot?.ui?.detailPanePercent ?? 28);
     setCommitPanePercent(28);
+    setCredentialLoginOperationId(null);
+    setUpdateCredentialRemote(null);
+    setUpdateCredentialLoginBusy(false);
   }, [initialView, projectKey]);
 
   useEffect(() => {
@@ -1803,24 +1854,32 @@ export function GitToolWindow({
       await runCheckoutAndRebase(ref);
       return;
     }
-    if (storeSnapshot.status?.files.length) {
-      setActionError("工作区存在本地改动，请先选择提交、储藏或取消；Keydex 不会自动储藏。");
-      return;
-    }
     if (!controller || !runtime || !storeSnapshot.project.selectedRepositoryId) return;
+    const intent = checkoutIntentForRef(ref, storeSnapshot.refs ?? []);
     setMutation("checkout");
     setActionError(null);
     try {
-      const result = await controller.runCommand(() => runtime.checkout({
-        workspaceId: storeSnapshot.project!.workspaceId,
-        projectRoot: storeSnapshot.project!.projectRoot,
-        repositoryId: storeSnapshot.project!.selectedRepositoryId!,
-        idempotencyKey: `tool-window-checkout-${Date.now()}`,
+      const result = await runCheckoutIntent({
+        runtime,
+        runCommand: (submit) => controller.runCommand(submit),
+        scope: {
+          workspaceId: storeSnapshot.project.workspaceId,
+          projectRoot: storeSnapshot.project.projectRoot,
+          repositoryId: storeSnapshot.project.selectedRepositoryId,
+        },
+        intent,
         expectedRepositoryVersion: storeSnapshot.status?.repositoryVersion ?? null,
-        ref: ref.shortName,
-        detach: ref.kind !== "local",
-      }));
-      if (result.state !== "succeeded") setActionError(gitOperationFailureMessage(result));
+        idempotencyKey: `tool-window-checkout-${Date.now()}`,
+      });
+      if (requiresSmartCheckout(result)) {
+        setPendingSmartCheckout(intent);
+        return;
+      }
+      if (result.state !== "succeeded") {
+        setActionError(gitOperationFailureMessage(result));
+        return;
+      }
+      setPendingSmartCheckout(null);
     } catch (error) {
       setActionError(gitUiErrorMessage(error));
     } finally {
@@ -2345,7 +2404,9 @@ export function GitToolWindow({
       setActionError(`无法解析上游：${upstream}`);
       return false;
     }
+    const remote = upstream.slice(0, separator);
     setMutation("update");
+    setUpdateCredentialRemote(null);
     setActionError(null);
     try {
       const result = await controller.runCommand(() => runtime.update({
@@ -2354,11 +2415,14 @@ export function GitToolWindow({
         repositoryId: storeSnapshot.project!.selectedRepositoryId!,
         idempotencyKey: `tool-window-update-${Date.now()}`,
         expectedRepositoryVersion: storeSnapshot.status?.repositoryVersion ?? null,
-        remote: upstream.slice(0, separator),
+        remote,
         refspec: upstream.slice(separator + 1),
         strategy,
       }));
       if (result.state !== "succeeded") {
+        if (result.error?.code === "git_credentials_missing") {
+          setUpdateCredentialRemote(remote);
+        }
         const message = gitOperationFailureMessage(result);
         throw new Error(message);
       }
@@ -2369,6 +2433,30 @@ export function GitToolWindow({
       return false;
     } finally {
       setMutation(null);
+    }
+  };
+  const loginForUpdate = async () => {
+    if (
+      !runtime
+      || !storeSnapshot?.project?.selectedRepositoryId
+      || !updateCredentialRemote
+      || updateCredentialLoginBusy
+    ) return;
+    setUpdateCredentialLoginBusy(true);
+    setActionError(null);
+    try {
+      await runtime.loginCredentials({
+        workspaceId: storeSnapshot.project.workspaceId,
+        projectRoot: storeSnapshot.project.projectRoot,
+        repositoryId: storeSnapshot.project.selectedRepositoryId,
+        remote: updateCredentialRemote,
+        provider: "auto",
+      });
+      setUpdateCredentialRemote(null);
+    } catch (error) {
+      setActionError(gitUiErrorMessage(error));
+    } finally {
+      setUpdateCredentialLoginBusy(false);
     }
   };
   const runPush = async (options: GitPushOptions): Promise<boolean> => {
@@ -2480,7 +2568,7 @@ export function GitToolWindow({
       setMutation(null);
     }
   };
-  const runStashAndCheckout = async (ref: GitRefsSnapshotRef) => {
+  const runPendingSmartCheckout = async (intent: GitCheckoutIntent) => {
     if (!controller || !runtime || !storeSnapshot?.project?.selectedRepositoryId) return;
     setMutation("checkout");
     setActionError(null);
@@ -2490,26 +2578,23 @@ export function GitToolWindow({
         projectRoot: storeSnapshot.project.projectRoot,
         repositoryId: storeSnapshot.project.selectedRepositoryId,
       };
-      const stashed = await controller.runCommand(() => runtime.createStash({
-        ...scope,
-        idempotencyKey: `tool-window-stash-before-checkout-${Date.now()}`,
+      const result = await runSmartCheckout({
+        runtime,
+        runCommand: (submit) => controller.runCommand(submit),
+        scope,
+        intent,
         expectedRepositoryVersion: storeSnapshot.status?.repositoryVersion ?? null,
-        message: `Keydex：切换到 ${ref.shortName} 前的自动储藏`,
-        staged: false,
-        includeUntracked: true,
-      }));
-      if (stashed.state !== "succeeded") throw new Error(gitOperationFailureMessage(stashed));
-      const checkoutRef = ref.fullName.startsWith("refs/heads/")
-        ? ref.fullName.slice("refs/heads/".length)
-        : ref.shortName;
-      const checkedOut = await controller.runCommand(() => runtime.checkout({
-        ...scope,
-        idempotencyKey: `tool-window-checkout-after-stash-${Date.now()}`,
-        expectedRepositoryVersion: null,
-        ref: checkoutRef,
-        detach: ref.kind !== "local",
-      }));
-      if (checkedOut.state !== "succeeded") throw new Error(gitOperationFailureMessage(checkedOut));
+        createIdempotencyKey: createToolWindowIdempotencyKey,
+      });
+      if (result.state === "failed") {
+        setActionError(smartCheckoutFailureMessage(result));
+        if (result.stage !== "stash") {
+          setPendingSmartCheckout(null);
+          activateView(result.stage === "restore" ? "changes" : "stash");
+        }
+        return;
+      }
+      setPendingSmartCheckout(null);
       await reloadStashes();
     } catch (error) {
       setActionError(gitUiErrorMessage(error));
@@ -3749,6 +3834,8 @@ export function GitToolWindow({
               updateStrategy={updateStrategy}
               updateBusy={mutation === "update"}
               updateError={mutation === "update" ? null : actionError}
+              credentialLoginRemote={updateCredentialRemote}
+              credentialLoginBusy={updateCredentialLoginBusy}
               pushBusy={mutation === "push"}
               pushError={mutation === "push" ? null : actionError}
               outgoingCommits={outgoingCommits}
@@ -3756,6 +3843,7 @@ export function GitToolWindow({
               onFetch={runFetch}
               onUpdateStrategyChange={setUpdateStrategy}
               onUpdate={runUpdate}
+              onCredentialLogin={loginForUpdate}
               onPush={runPush}
             />
             <GitBranchActions
@@ -3772,8 +3860,6 @@ export function GitToolWindow({
               onDeleteTag={runDeleteTag}
               onPushTag={runPushTag}
               onSetUpstream={runSetUpstream}
-              onOpenChanges={() => activateView("changes")}
-              onStashAndCheckout={runStashAndCheckout}
             />
             <GitRemoteManager
               repositoryId={storeSnapshot?.project?.selectedRepositoryId ?? null}
@@ -3824,6 +3910,11 @@ export function GitToolWindow({
                 )}
                 canRetry={(operationId) => controller?.canRetryOperation(operationId) ?? false}
                 onRetry={(operationId) => void retryLoggedOperation(operationId)}
+                canLogin={(operationId) => (
+                  credentialLoginOperationId === null
+                  && (controller?.canRetryOperation(operationId) ?? false)
+                )}
+                onLogin={(operationId) => void loginForLoggedOperation(operationId)}
                 canCancel={(operationId) => controller?.canCancelOperation(operationId) ?? false}
                 onCancel={(operationId) => void cancelLoggedOperation(operationId)}
               />
@@ -4118,6 +4209,24 @@ export function GitToolWindow({
           onCancel={() => setPendingChangeRollback(null)}
           onConfirm={() => void runRollbackChanges(pendingChangeRollback)}
         />
+      ) : null}
+      {pendingSmartCheckout ? (
+        <GitChoiceDialog
+          title="本地改动会被覆盖"
+          description={`Git 无法直接切换到 ${pendingSmartCheckout.label}。Smart Checkout 会临时储藏改动，切换后立即自动恢复。`}
+          busy={mutation === "checkout"}
+          error={actionError}
+          actions={[
+            { label: "查看改动", tone: "secondary", onSelect: () => { setPendingSmartCheckout(null); activateView("changes"); } },
+            { label: "Smart Checkout", tone: "primary", onSelect: () => void runPendingSmartCheckout(pendingSmartCheckout) },
+          ]}
+          onCancel={() => { setPendingSmartCheckout(null); setActionError(null); }}
+        >
+          <GitDialogSummary tone="warning">
+            <strong>{storeSnapshot?.status?.files.length ?? 0} 个本地改动</strong>
+            <span>目标：{pendingSmartCheckout.label}{pendingSmartCheckout.kind === "switch" && pendingSmartCheckout.detach ? "（分离指针）" : ""}</span>
+          </GitDialogSummary>
+        </GitChoiceDialog>
       ) : null}
       {branchContextDialog?.kind === "create" ? (
         <GitFormDialog
@@ -4420,6 +4529,23 @@ export function adjacentGitToolView(
 }
 
 type GitRefsSnapshotRef = NonNullable<GitToolWindowStoreSnapshot["refs"]>[number];
+
+let toolWindowIdempotencySequence = 0;
+
+function createToolWindowIdempotencyKey(action: string): string {
+  toolWindowIdempotencySequence += 1;
+  return `tool-window-${action}-${Date.now()}-${toolWindowIdempotencySequence}`;
+}
+
+function credentialRemoteForOperation(
+  operation: GitCommandResult,
+  remotes: readonly GitRemoteInfo[],
+): string | null {
+  const remote = operation.error?.details.remote;
+  if (typeof remote === "string" && remote.trim()) return remote.trim();
+  return remotes.find((candidate) => candidate.name === "origin")?.name
+    ?? (remotes.length === 1 ? remotes[0]?.name ?? null : null);
+}
 
 export function defaultGitToolWindowView(status: Pick<GitStatusSnapshot, "files">): "changes" | "history" {
   return status.files.length > 0 ? "changes" : "history";

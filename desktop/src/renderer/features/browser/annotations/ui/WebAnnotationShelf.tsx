@@ -51,6 +51,7 @@ export function WebAnnotationShelf({
       data-app-tooltip-owner="browser-panel"
       data-browser-chrome-tooltips="true"
       data-browser-surface-occlusion="true"
+      data-annotation-mode="active"
       data-open={open ? "true" : "false"}
     >
       <div className={styles.summary}>

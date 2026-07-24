@@ -14,7 +14,7 @@ import {
   type MarkdownBlockRendererDefinitions,
   type MarkdownBlockSourceMap,
 } from "@/renderer/markdownRuntime/renderers";
-import { parseFileLinkTarget } from "@/renderer/utils/fileLinks";
+import { parseFileLinkTarget, workspaceAbsoluteFilePath } from "@/renderer/utils/fileLinks";
 import type { PreviewContextValue } from "@/renderer/providers/PreviewProvider";
 import type { LocalPreviewRuntime } from "@/runtime";
 
@@ -24,13 +24,15 @@ export function createConversationMarkdownRendererRegistry(
   options: {
     readonly htmlPreviewRuntime?: Pick<LocalPreviewRuntime, "prepareHtmlContent">;
     readonly previewContext?: PreviewContextValue | null;
+    readonly workspaceRootPath?: string | null;
   } = {},
 ): SemanticMarkdownRendererRegistry {
   const code = conversationCodeRenderer(options);
+  const workspaceRootPath = options.workspaceRootPath ?? options.previewContext?.hostContext?.workspaceRootPath ?? null;
   const enhanced = Object.fromEntries(
     Object.entries(defaultSemanticMarkdownRenderers).map(([kind, definition]) => [
       kind,
-      definition ? enhanceConversationDefinition(definition) : definition,
+      definition ? enhanceConversationDefinition(definition, workspaceRootPath) : definition,
     ]),
   ) as MarkdownBlockRendererDefinitions;
   return new SemanticMarkdownRendererRegistry(enhanced, {
@@ -40,16 +42,19 @@ export function createConversationMarkdownRendererRegistry(
   });
 }
 
-function enhanceConversationDefinition(definition: MarkdownBlockRendererDefinition): MarkdownBlockRendererDefinition {
+function enhanceConversationDefinition(
+  definition: MarkdownBlockRendererDefinition,
+  workspaceRootPath: string | null,
+): MarkdownBlockRendererDefinition {
   return {
     create(context) {
       const instance = definition.create(context);
-      enhanceConversationElement(instance.element);
+      enhanceConversationElement(instance.element, workspaceRootPath);
       return {
         get element() { return instance.element; },
         update(next) {
           const result = instance.update(next);
-          enhanceConversationElement(instance.element);
+          enhanceConversationElement(instance.element, workspaceRootPath);
           return result;
         },
         sourceMap: () => instance.sourceMap(),
@@ -60,7 +65,7 @@ function enhanceConversationDefinition(definition: MarkdownBlockRendererDefiniti
   };
 }
 
-function enhanceConversationElement(element: HTMLElement): void {
+function enhanceConversationElement(element: HTMLElement, workspaceRootPath: string | null): void {
   if (element.dataset.markdownTableScroll === "true") element.classList.add("keydex-markdown-table-scroll");
   element.querySelectorAll<HTMLImageElement>("img").forEach((image) => {
     image.loading = "lazy";
@@ -137,6 +142,9 @@ function enhanceConversationElement(element: HTMLElement): void {
     anchor.style.verticalAlign = "-0.15em";
     anchor.dataset.keydexFileLink = "true";
     anchor.dataset.keydexFilePath = targetPath;
+    anchor.dataset.tooltipLabel = workspaceAbsoluteFilePath(targetPath, workspaceRootPath ?? "") ?? targetPath;
+    anchor.dataset.tooltipDelayMs = "500";
+    anchor.dataset.tooltipMultiline = "true";
     if (target.line) {
       anchor.dataset.keydexFileLine = String(target.line);
       const badge = anchor.ownerDocument.createElement("span");

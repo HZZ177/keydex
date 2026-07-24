@@ -2,10 +2,16 @@ import {
   createContext,
   useContext,
   useEffect,
+  useId,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useSyncExternalStore,
   type PropsWithChildren,
+  type RefObject,
 } from "react";
+
+import { browserGeometryCoordinator } from "./BrowserGeometryCoordinator";
 
 export type BrowserOcclusionReason =
   | "dialog"
@@ -92,6 +98,56 @@ export function useBrowserOcclusionSnapshot(): BrowserOcclusionSnapshot {
     ZERO_SNAPSHOT,
   );
   return coordinator?.snapshot() ?? EMPTY_SNAPSHOT;
+}
+
+export function useBrowserSpatialOcclusion(
+  elementRef: RefObject<HTMLElement | null>,
+  active: boolean,
+  reason: string,
+  options: { readonly observeResize?: boolean } = {},
+): void {
+  const instanceId = useId();
+  const frameRef = useRef<number | null>(null);
+  const observeResize = options.observeResize !== false;
+  useLayoutEffect(() => {
+    const element = elementRef.current;
+    if (!active || !element) return;
+    const schedule = () => {
+      if (frameRef.current !== null) return;
+      frameRef.current = window.requestAnimationFrame(() => {
+        frameRef.current = null;
+        browserGeometryCoordinator.syncAll();
+      });
+    };
+    const release = browserGeometryCoordinator.registerSpatialOcclusionElement(
+      `${reason}:${instanceId}`,
+      element,
+    );
+    const resizeObserver = !observeResize || typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(schedule);
+    const mutationObserver = typeof MutationObserver === "undefined"
+      ? null
+      : new MutationObserver(schedule);
+    resizeObserver?.observe(element);
+    mutationObserver?.observe(element, {
+      attributes: true,
+      attributeFilter: ["class", "hidden", "style"],
+      childList: true,
+      subtree: true,
+    });
+    window.addEventListener("resize", schedule);
+    window.addEventListener("scroll", schedule, true);
+    return () => {
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("scroll", schedule, true);
+      if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+      release();
+    };
+  }, [active, elementRef, instanceId, observeResize, reason]);
 }
 
 const EMPTY_SNAPSHOT: BrowserOcclusionSnapshot = Object.freeze({

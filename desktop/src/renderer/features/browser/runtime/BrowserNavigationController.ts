@@ -1,4 +1,4 @@
-import type { BrowserSurfaceRef } from "../domain";
+import type { BrowserNavigationIntent, BrowserSurfaceRef } from "../domain";
 import { resolveBrowserAddress, type ResolvedBrowserAddress } from "../domain/browserNavigation";
 import type { BrowserRuntimeStore } from "../state/browserRuntimeStore";
 import type { BrowserHostClient } from "./BrowserHostClient";
@@ -22,11 +22,22 @@ export class BrowserNavigationController {
     this.#generation = input.generation;
   }
 
-  async navigate(address: string): Promise<ResolvedBrowserAddress> {
+  async navigate(
+    address: string,
+    intent: BrowserNavigationIntent = {
+      source: "address_bar",
+      userGesture: true,
+    },
+  ): Promise<ResolvedBrowserAddress> {
     const resolved = resolveBrowserAddress(address);
     const surface = this.#surface();
     const navigationId = `${this.#panelId}-navigation-${++this.#navigationSequence}`;
-    await this.#client.send("browser_navigate", { ...surface, navigationId, url: resolved.url });
+    await this.#client.send("browser_navigate", {
+      ...surface,
+      navigationId,
+      url: resolved.url,
+      intent,
+    });
     return resolved;
   }
 

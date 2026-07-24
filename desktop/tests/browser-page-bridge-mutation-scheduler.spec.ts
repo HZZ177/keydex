@@ -71,6 +71,24 @@ describe("page bridge mutation scheduler", () => {
     });
   });
 
+  it("coalesces dynamic local-file DOM updates with the same bounded scheduler", async () => {
+    vi.useFakeTimers();
+    const run = createRun("file:///D:/e2e-wbf/annotations/dynamic.html");
+    const article = run.document.createElement("article");
+    run.document.body.append(article);
+    article.replaceChildren(run.document.createTextNode("updated local content"));
+    await Promise.resolve();
+
+    await vi.advanceTimersByTimeAsync(250);
+
+    expect(run.changes()).toHaveLength(1);
+    expect(run.changes()[0].payload).toEqual({
+      reason: "dom",
+      revision: 1,
+      annotationIds: ["annotation-1"],
+    });
+  });
+
   it("ignores Keydex overlay mutations and cancels pending work on pagehide", async () => {
     vi.useFakeTimers();
     const run = createRun();
@@ -90,9 +108,9 @@ describe("page bridge mutation scheduler", () => {
   });
 });
 
-function createRun() {
+function createRun(url = "https://example.test/dynamic") {
   const dom = new JSDOM("<!doctype html><body></body>", {
-    url: "https://example.test/dynamic",
+    url,
     pretendToBeVisual: true,
     runScripts: "outside-only",
   });

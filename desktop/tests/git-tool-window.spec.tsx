@@ -52,7 +52,7 @@ describe("GitToolWindow", () => {
         error_code: "git_credentials_missing",
         error: "Git credentials are unavailable.",
       },
-    })).toBe("Git 凭据不可用：远程仓库认证失败，请先配置可用凭据。 在系统凭据管理器或外部 Git 客户端中配置凭据后重试。");
+    })).toBe("Git 凭据不可用：远程仓库认证失败，请先配置可用凭据。 点击“登录远程仓库”，完成系统凭据提示后重试。");
   });
 
   it("derives an explicit push target and rejects detached/no-upstream states", () => {

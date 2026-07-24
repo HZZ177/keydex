@@ -21,6 +21,10 @@
   background: transparent;
 }
 
+.root[data-annotation-mode="active"] .summary {
+  background: color-mix(in srgb, var(--annotation-accent) 9%, var(--surface-bg));
+}
+
 .summaryTrigger {
   display: grid;
   width: 100%;

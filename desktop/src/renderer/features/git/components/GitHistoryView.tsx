@@ -484,7 +484,7 @@ function GitGraphCell({ row, columnCount }: { row: GitGraphRow; columnCount: num
   const laneWidth = 12;
   const width = historyGraphWidth(columnCount);
   const x = (column: number) => 6 + column * laneWidth;
-  const outputIndex = (objectId: string) => row.outputLanes.findIndex((lane) => lane.objectId === objectId);
+  const outputIndex = (laneId: number) => row.outputLanes.findIndex((lane) => lane.laneId === laneId);
   return (
     <svg
       className={styles.graph}
@@ -496,17 +496,24 @@ function GitGraphCell({ row, columnCount }: { row: GitGraphRow; columnCount: num
       data-commit-column={row.commitColumn}
     >
       {row.inputLanes.map((lane, inputColumn) => {
-        if (lane.objectId === row.objectId) return null;
-        const nextColumn = outputIndex(lane.objectId);
+        if (lane.objectId === row.objectId) {
+          return (
+            <path
+              key={`incoming-${lane.laneId}`}
+              d={`M ${x(inputColumn)} 0 L ${x(row.commitColumn)} ${ROW_HEIGHT / 2}`}
+              stroke={gitGraphColor(lane.colorIndex)}
+            />
+          );
+        }
+        const nextColumn = outputIndex(lane.laneId);
         if (nextColumn < 0) return null;
-        return <path key={`lane-${lane.objectId}-${inputColumn}`} d={`M ${x(inputColumn)} 0 L ${x(nextColumn)} ${ROW_HEIGHT}`} stroke={gitGraphColor(lane.colorIndex)} />;
+        return <path key={`lane-${lane.laneId}`} d={`M ${x(inputColumn)} 0 L ${x(nextColumn)} ${ROW_HEIGHT}`} stroke={gitGraphColor(lane.colorIndex)} />;
       })}
-      {row.parentIds.map((parentId) => {
-        const nextColumn = outputIndex(parentId);
+      {row.parentLaneIds.map((laneId) => {
+        const nextColumn = outputIndex(laneId);
         if (nextColumn < 0) return null;
-        return <path key={`parent-${parentId}`} d={`M ${x(row.commitColumn)} ${ROW_HEIGHT / 2} L ${x(nextColumn)} ${ROW_HEIGHT}`} stroke={gitGraphColor(row.outputLanes[nextColumn].colorIndex)} />;
+        return <path key={`parent-${laneId}`} d={`M ${x(row.commitColumn)} ${ROW_HEIGHT / 2} L ${x(nextColumn)} ${ROW_HEIGHT}`} stroke={gitGraphColor(row.outputLanes[nextColumn].colorIndex)} />;
       })}
-      {row.inputLanes.some((lane) => lane.objectId === row.objectId) ? <path d={`M ${x(row.commitColumn)} 0 L ${x(row.commitColumn)} ${ROW_HEIGHT / 2}`} stroke={gitGraphColor(row.commitColorIndex)} /> : null}
       <circle cx={x(row.commitColumn)} cy={ROW_HEIGHT / 2} r={3.75} fill={gitGraphColor(row.commitColorIndex)} />
     </svg>
   );

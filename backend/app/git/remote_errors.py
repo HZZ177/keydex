@@ -55,7 +55,7 @@ def classify_remote_failure(stderr: str) -> GitRemoteFailure:
             code="git_credentials_missing",
             message="Git credentials are unavailable or were rejected.",
             help_action=(
-                "Configure credentials in the system credential manager or an external Git client, "
+                "Start the explicit Keydex credential login, complete the system prompt, "
                 "then retry."
             ),
             diagnostic=diagnostic,

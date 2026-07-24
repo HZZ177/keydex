@@ -259,6 +259,63 @@ describe("FilePreview auto refresh", () => {
     expect(await screen.findByRole("heading", { name: "Changed" })).not.toBeNull();
     expect(fixture.readDocument).toHaveBeenCalledTimes(2);
   });
+
+  it("notifies an associated HTML browser only after an external revision is accepted", async () => {
+    const fixture = createFixture();
+    const pending = deferred<DocumentReadResult>();
+    const onPersistedHtmlRevision = vi.fn();
+    fixture.readDocument
+      .mockResolvedValueOnce(snapshot("pages/index.html", "<main>before</main>", "r1"))
+      .mockReturnValueOnce(pending.promise);
+    renderPreview(
+      fixture,
+      <FilePreview
+        request={{ type: "file", path: "pages/index.html" }}
+        runtime={fixture.runtime}
+        workspaceId="ws-1"
+        workspaceRootPath="D:/repo"
+        onPersistedHtmlRevision={onPersistedHtmlRevision}
+      />,
+    );
+    await waitFor(() => expect(previewRoot().getAttribute("data-document-revision")).toBe("r1"));
+
+    emitChanges(fixture, [{ kind: "modified", path: "pages/index.html" }]);
+    expect(onPersistedHtmlRevision).not.toHaveBeenCalled();
+    pending.resolve(snapshot("pages/index.html", "<main>after</main>", "r2"));
+
+    await waitFor(() => {
+      expect(onPersistedHtmlRevision).toHaveBeenCalledWith(
+        "D:/repo/pages/index.html",
+        "external_change",
+        "r2",
+      );
+    });
+    expect(onPersistedHtmlRevision).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not notify an associated HTML browser when the external refresh fails", async () => {
+    const fixture = createFixture();
+    const onPersistedHtmlRevision = vi.fn();
+    fixture.readDocument
+      .mockResolvedValueOnce(snapshot("index.html", "<main>safe</main>", "r1"))
+      .mockRejectedValueOnce(new Error("disk busy"));
+    renderPreview(
+      fixture,
+      <FilePreview
+        request={{ type: "file", path: "index.html" }}
+        runtime={fixture.runtime}
+        workspaceId="ws-1"
+        workspaceRootPath="D:/repo"
+        onPersistedHtmlRevision={onPersistedHtmlRevision}
+      />,
+    );
+    await waitFor(() => expect(previewRoot().getAttribute("data-document-revision")).toBe("r1"));
+
+    emitChanges(fixture, [{ kind: "modified", path: "index.html" }]);
+
+    expect((await screen.findByRole("alert")).textContent).toContain("刷新失败");
+    expect(onPersistedHtmlRevision).not.toHaveBeenCalled();
+  });
 });
 
 interface Fixture {

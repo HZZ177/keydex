@@ -24,12 +24,20 @@ export interface MockBackendState {
   historyRequests: Array<{ sessionId: string; cursor: string | null; allTurns: string | null }>;
   workspaceSearchRequests: Array<{ workspaceId: string; query: string }>;
   workspaceReadRequests: Array<{ workspaceId: string; path: string }>;
+  workspaceWriteRequests: Array<{
+    workspaceId: string;
+    path: string;
+    content: string;
+    expectedRevision: string;
+    writeId: string;
+  }>;
   toolDetailsRequests: Array<{ sessionId: string; startEventId: string; endEventId: string }>;
   approvalDecisions: Array<{ approvalId: string; body: Record<string, unknown> }>;
   reversePreviewRequests: Array<{ sessionId: string; body: Record<string, unknown> }>;
   reverseExecuteRequests: Array<{ sessionId: string; body: Record<string, unknown> }>;
   workspaceFiles: Record<string, string>;
   workspaceTreeEntries: E2EWorkspaceTreeEntry[];
+  workspaceWriteConflicts: Set<string>;
 }
 
 export interface E2EWorkspaceTreeEntry {
@@ -91,6 +99,7 @@ export function createWorkbenchBackend(
     toolDetailsByRef?: Record<string, AgentToolDetails>;
     workspaceFiles?: Record<string, string>;
     workspaceTreeEntries?: E2EWorkspaceTreeEntry[];
+    workspaceWriteConflicts?: string[];
   } = {},
 ): MockBackendState {
   return {
@@ -123,12 +132,14 @@ export function createWorkbenchBackend(
     historyRequests: [],
     workspaceSearchRequests: [],
     workspaceReadRequests: [],
+    workspaceWriteRequests: [],
     toolDetailsRequests: [],
     approvalDecisions: [],
     reversePreviewRequests: [],
     reverseExecuteRequests: [],
     workspaceFiles: { ...(options.workspaceFiles ?? {}) },
     workspaceTreeEntries: options.workspaceTreeEntries ?? defaultWorkspaceTreeEntries(),
+    workspaceWriteConflicts: new Set(options.workspaceWriteConflicts ?? []),
   };
 }
 
@@ -361,6 +372,9 @@ export async function mockWorkbenchBackend(page: Page, backend: MockBackendState
         backend.workspaceReadRequests.push({ workspaceId: sessionWorkspaceId, path: readRequest.path });
         return fulfillDocumentRead(route, readRequest, workspaceFileContent(readRequest.path, backend));
       }
+      if (suffix === "/write/document" && method === "POST") {
+        return fulfillDocumentWrite(route, request.postDataJSON() as DocumentWriteRequest, sessionWorkspaceId, backend);
+      }
       if (suffix === "/tree") {
         return fulfillJson(route, {
           root: workspace(sessionWorkspaceId, sessionWorkspaceId).root_path,
@@ -388,6 +402,9 @@ export async function mockWorkbenchBackend(page: Page, backend: MockBackendState
         const readRequest = request.postDataJSON() as DocumentReadRequest;
         backend.workspaceReadRequests.push({ workspaceId, path: readRequest.path });
         return fulfillDocumentRead(route, readRequest, workspaceFileContent(readRequest.path, backend));
+      }
+      if (suffix === "/write/document" && method === "POST") {
+        return fulfillDocumentWrite(route, request.postDataJSON() as DocumentWriteRequest, workspaceId, backend);
       }
       if (suffix === "/tree") {
         return fulfillJson(route, {
@@ -963,6 +980,45 @@ interface DocumentReadRequest {
   document_id: string;
   source: string;
   path: string;
+}
+
+interface DocumentWriteRequest {
+  protocol_version: "document-write/v1";
+  write_id: string;
+  path: string;
+  content: string;
+  expected_revision: string;
+}
+
+function fulfillDocumentWrite(
+  route: Route,
+  request: DocumentWriteRequest,
+  workspaceId: string,
+  backend: MockBackendState,
+) {
+  backend.workspaceWriteRequests.push({
+    workspaceId,
+    path: request.path,
+    content: request.content,
+    expectedRevision: request.expected_revision,
+    writeId: request.write_id,
+  });
+  if (backend.workspaceWriteConflicts.has(request.path)) {
+    return fulfillJson(route, {
+      code: "revision_conflict",
+      message: "文件已被外部修改",
+      details: { actual_revision: `sha256:e2e-conflict-${request.path}` },
+    }, 409);
+  }
+  backend.workspaceFiles[request.path] = request.content;
+  const totalBytes = new TextEncoder().encode(request.content).byteLength;
+  return fulfillJson(route, {
+    protocol_version: "document-write/v1",
+    path: request.path,
+    revision: `sha256:e2e-write-${request.path.replaceAll(/[^a-z0-9]/giu, "-")}-${totalBytes}`,
+    encoding: "utf-8",
+    total_bytes: totalBytes,
+  });
 }
 
 function fulfillDocumentRead(route: Route, request: DocumentReadRequest, content: string) {

@@ -146,6 +146,7 @@ test("workbench terminal action stays at the far right of the file tab rail", as
     "workbench-preview-tab-scroll-right",
     "terminal-dock-action",
   ]);
+  await saveEvidence(page, "e2e-007");
 });
 
 test("workbench capsule creates workspace-owned sessions, sends, searches and previews files", async ({ page }) => {

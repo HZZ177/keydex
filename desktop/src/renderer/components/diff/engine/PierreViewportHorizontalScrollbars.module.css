@@ -20,7 +20,7 @@
   z-index: 6;
   grid-row: 2;
   width: 100%;
-  height: 17px;
+  height: 20px;
   box-sizing: border-box;
   align-self: stretch;
   border-top: 1px solid var(--diff-border-subtle);
@@ -30,20 +30,18 @@
 
 .scroller {
   position: absolute;
-  top: 3px;
+  top: 2px;
   bottom: 2px;
-  left: var(--scrollbar-left);
-  width: var(--scrollbar-width);
+  left: calc(var(--scrollbar-left) + 6px);
+  width: max(0px, calc(var(--scrollbar-width) - 12px));
   height: auto;
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-color: var(--diff-scrollbar-thumb) var(--diff-scrollbar-track);
-  scrollbar-width: thin;
   pointer-events: auto;
 }
 
 .overlay .scroller::-webkit-scrollbar {
-  height: 10px;
+  height: 14px;
 }
 
 .overlay .scroller::-webkit-scrollbar-track {
@@ -66,6 +64,8 @@
   display: none;
   width: 0;
   height: 0;
+  -webkit-appearance: none;
+  background: transparent;
 }
 
 .spacer {

@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
+const tauriApiSpies = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  listen: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: tauriApiSpies.invoke }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: tauriApiSpies.listen }));
+
 import {
   BrowserHostClient,
   BrowserHostCommandError,
@@ -33,9 +41,17 @@ function event(
 describe("BrowserHostClient", () => {
   it("fails before loading Tauri APIs in an ordinary Web runtime", async () => {
     expect(isBrowserHostRuntimeAvailable()).toBe(false);
-    await expect(new BrowserHostClient().connect()).rejects.toBeInstanceOf(
+    const client = new BrowserHostClient();
+    await expect(client.connect()).rejects.toBeInstanceOf(
       BrowserHostUnavailableError,
     );
+    await expect(client.send("browser_destroy_surface", {
+      panelId: "panel-1",
+      surfaceId: "surface-1",
+      generation: 1,
+    })).rejects.toBeInstanceOf(BrowserHostUnavailableError);
+    expect(tauriApiSpies.listen).not.toHaveBeenCalled();
+    expect(tauriApiSpies.invoke).not.toHaveBeenCalled();
   });
 
   it("validates commands and correlates native responses", async () => {
@@ -50,6 +66,7 @@ describe("BrowserHostClient", () => {
       generation: 1,
       profileMode: "persistent",
       initialUrl: "https://example.com",
+      initialNavigationIntent: { source: "restore", userGesture: false },
       theme: "dark",
       backgroundColor: { red: 40, green: 42, blue: 54, alpha: 255 },
     });
@@ -61,6 +78,7 @@ describe("BrowserHostClient", () => {
         generation: 1,
         profileMode: "persistent",
         initialUrl: "https://example.com",
+        initialNavigationIntent: { source: "restore", userGesture: false },
         theme: "dark",
         backgroundColor: { red: 40, green: 42, blue: 54, alpha: 255 },
       },

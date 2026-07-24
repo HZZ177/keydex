@@ -61,10 +61,12 @@ describe("computeGitGraph", () => {
           "output": [
             {
               "colorIndex": 0,
+              "laneId": 0,
               "objectId": "left",
             },
             {
               "colorIndex": 1,
+              "laneId": 1,
               "objectId": "right",
             },
           ],
@@ -76,20 +78,24 @@ describe("computeGitGraph", () => {
           "input": [
             {
               "colorIndex": 0,
+              "laneId": 0,
               "objectId": "left",
             },
             {
               "colorIndex": 1,
+              "laneId": 1,
               "objectId": "right",
             },
           ],
           "output": [
             {
               "colorIndex": 0,
+              "laneId": 0,
               "objectId": "base",
             },
             {
               "colorIndex": 1,
+              "laneId": 1,
               "objectId": "right",
             },
           ],
@@ -101,20 +107,24 @@ describe("computeGitGraph", () => {
           "input": [
             {
               "colorIndex": 0,
+              "laneId": 0,
               "objectId": "base",
             },
             {
               "colorIndex": 1,
+              "laneId": 1,
               "objectId": "right",
             },
           ],
           "output": [
             {
               "colorIndex": 0,
+              "laneId": 0,
               "objectId": "base",
             },
             {
               "colorIndex": 1,
+              "laneId": 1,
               "objectId": "base",
             },
           ],
@@ -126,10 +136,12 @@ describe("computeGitGraph", () => {
           "input": [
             {
               "colorIndex": 0,
+              "laneId": 0,
               "objectId": "base",
             },
             {
               "colorIndex": 1,
+              "laneId": 1,
               "objectId": "base",
             },
           ],
@@ -137,6 +149,40 @@ describe("computeGitGraph", () => {
         },
       ]
     `);
+  });
+
+  it("keeps duplicate target lanes stable across intervening rows before converging", () => {
+    const model = computeGitGraph([
+      commit("merge", "left", "right"),
+      commit("left", "base"),
+      commit("right", "base"),
+      commit("other", "other-root"),
+      commit("base", "root"),
+    ]);
+
+    const intervening = model.rows[3];
+    expect(intervening.inputLanes.slice(0, 2)).toEqual([
+      lane("base", 0, 0),
+      lane("base", 1, 1),
+    ]);
+    expect(intervening.outputLanes.slice(0, 2)).toEqual(intervening.inputLanes.slice(0, 2));
+
+    const sharedBase = model.rows[4];
+    expect(sharedBase.inputLanes.filter((item) => item.objectId === "base").map((item) => item.laneId)).toEqual([0, 1]);
+    expect(sharedBase.commitColumn).toBe(0);
+    expect(sharedBase.parentLaneIds).toEqual([0]);
+    expect(sharedBase.outputLanes).toContainEqual(lane("root", 0, 0));
+  });
+
+  it("keeps unrelated active lanes when a disconnected root commit is visited", () => {
+    const model = computeGitGraph([
+      commit("tip", "base"),
+      commit("unrelated-root"),
+      commit("base"),
+    ]);
+
+    expect(model.rows[1].outputLanes).toEqual([lane("base", 0, 0)]);
+    expect(model.rows[2].inputLanes).toEqual([lane("base", 0, 0)]);
   });
 
   it("normalizes octopus parents and allocates deterministic colors", () => {
@@ -218,8 +264,8 @@ function commit(objectId: string, ...parentIds: string[]): GitGraphCommitInput {
   return { objectId, parentIds };
 }
 
-function lane(objectId: string, colorIndex: number) {
-  return { objectId, colorIndex };
+function lane(objectId: string, colorIndex: number, laneId = colorIndex) {
+  return { laneId, objectId, colorIndex };
 }
 
 function row(
@@ -237,12 +283,21 @@ function row(
     commitColorIndex,
     inputLanes,
     outputLanes,
+    parentLaneIds: parentIds.map((parentId) => {
+      const parentLane = outputLanes.find((item) => item.objectId === parentId);
+      if (!parentLane) throw new Error(`Missing expected parent lane for ${parentId}`);
+      return parentLane.laneId;
+    }),
     isMerge: parentIds.length > 1,
   };
 }
 
-function validLane(item: { objectId: string; colorIndex: number }) {
-  return Boolean(item.objectId) && item.colorIndex >= 0 && item.colorIndex < GIT_GRAPH_COLOR_COUNT;
+function validLane(item: { laneId: number; objectId: string; colorIndex: number }) {
+  return Number.isInteger(item.laneId)
+    && item.laneId >= 0
+    && Boolean(item.objectId)
+    && item.colorIndex >= 0
+    && item.colorIndex < GIT_GRAPH_COLOR_COUNT;
 }
 
 function generatedDag(seed: number, size: number): GitGraphCommitInput[] {

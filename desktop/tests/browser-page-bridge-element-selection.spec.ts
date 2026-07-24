@@ -128,6 +128,135 @@ describe("page bridge element selection", () => {
     expect(linkTarget.stableAttributes.find((entry) => entry.name === "href")?.value).toBe("https://example.test/report");
   });
 
+  it("keeps canonical file href/src only for a native local-file document", async () => {
+    const local = createRun(`
+      <img alt='Local diagram' src='./assets/diagram.png?token=secret#part'>
+      <a href='./nested/page.html?session=secret#section'>Local page</a>
+    `, "file:///D:/workspace/index.html");
+    const image = local.document.querySelector("img")!;
+    const link = local.document.querySelector("a")!;
+    local.rect(image, { x: 10, y: 20, width: 180, height: 80 });
+    local.rect(link, { x: 10, y: 120, width: 180, height: 30 });
+
+    local.start("selection-local-image");
+    await local.hover(image);
+    image.dispatchEvent(new local.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(local.result("selection-local-image").stableAttributes).toContainEqual({
+      name: "src",
+      value: "file:///D:/workspace/assets/diagram.png",
+    });
+
+    local.start("selection-local-link");
+    await local.hover(link);
+    link.dispatchEvent(new local.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(local.result("selection-local-link").stableAttributes).toContainEqual({
+      name: "href",
+      value: "file:///D:/workspace/nested/page.html",
+    });
+
+    const remote = createRun("<a href='file:///D:/workspace/private.html'>Blocked local path</a>");
+    const remoteLink = remote.document.querySelector("a")!;
+    remote.rect(remoteLink, { x: 10, y: 20, width: 180, height: 30 });
+    remote.start("selection-remote-file-link");
+    await remote.hover(remoteLink);
+    remoteLink.dispatchEvent(new remote.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+    expect(remote.result("selection-remote-file-link").stableAttributes)
+      .not.toContainEqual({ name: "href", value: "file:///D:/workspace/private.html" });
+  });
+
+  it("selects a local-file button without firing its page action", async () => {
+    const run = createRun(
+      "<h1>Local controls</h1><button id='save' aria-label='Save local draft'>Save</button>",
+      "file:///D:/Keydex%20Fixtures/annotation.html",
+    );
+    const button = run.document.querySelector("button")!;
+    run.rect(button, { x: 20, y: 40, width: 160, height: 36 });
+    const pageAction = vi.fn();
+    button.addEventListener("click", pageAction);
+
+    run.start("selection-local-button");
+    await run.hover(button);
+    const dispatched = button.dispatchEvent(new run.window.MouseEvent("click", {
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+    }));
+
+    expect(dispatched).toBe(false);
+    expect(pageAction).not.toHaveBeenCalled();
+    expect(run.result("selection-local-button")).toMatchObject({
+      type: "element",
+      tag: "button",
+      role: "button",
+      accessibleName: "Save local draft",
+      stableAttributes: expect.arrayContaining([{ name: "id", value: "save" }]),
+      rect: { x: 20, y: 40, width: 160, height: 36 },
+      frame: {
+        url: "file:///D:/Keydex%20Fixtures/annotation.html",
+        indexPath: [],
+      },
+    });
+  });
+
+  it("selects a local-file form submit control without submitting the form", async () => {
+    const run = createRun(
+      "<form><label for='name'>Name</label><input id='name'><button type='submit'>Send form</button></form>",
+      "file:///D:/Keydex%20Fixtures/forms.html",
+    );
+    const form = run.document.querySelector("form")!;
+    const submit = run.document.querySelector("button")!;
+    run.rect(submit, { x: 30, y: 80, width: 120, height: 32 });
+    const pageSubmit = vi.fn((event: Event) => event.preventDefault());
+    form.addEventListener("submit", pageSubmit);
+
+    run.start("selection-local-submit");
+    await run.hover(submit);
+    submit.click();
+
+    expect(pageSubmit).not.toHaveBeenCalled();
+    expect(run.result("selection-local-submit")).toMatchObject({
+      tag: "button",
+      role: "button",
+      accessibleName: "Send form",
+      stableAttributes: expect.arrayContaining([{ name: "type", value: "submit" }]),
+      frame: { url: "file:///D:/Keydex%20Fixtures/forms.html", indexPath: [] },
+    });
+  });
+
+  it("persists an open-shadow target from a local file with host boundaries", async () => {
+    const run = createRun(
+      "<main><div id='widget-host' aria-label='Local widget'></div></main>",
+      "file:///D:/Keydex%20Fixtures/shadow.html",
+    );
+    const host = run.document.querySelector("#widget-host")!;
+    const shadow = host.attachShadow({ mode: "open" });
+    const action = run.document.createElement("button");
+    action.setAttribute("aria-label", "Shadow save");
+    action.textContent = "Save";
+    shadow.append(action);
+    run.rect(host, { x: 10, y: 20, width: 220, height: 80 });
+    run.rect(action, { x: 30, y: 40, width: 120, height: 32 });
+
+    run.start("selection-local-shadow");
+    await run.hover(action);
+    action.dispatchEvent(new run.window.MouseEvent("click", {
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+    }));
+
+    const target = run.result("selection-local-shadow");
+    expect(target).toMatchObject({
+      tag: "button",
+      role: "button",
+      accessibleName: "Shadow save",
+      rect: { x: 30, y: 40, width: 120, height: 32 },
+      frame: { url: "file:///D:/Keydex%20Fixtures/shadow.html", indexPath: [] },
+    });
+    expect(target.path.some((segment) => segment.shadowRoot)).toBe(true);
+    expect(target.shadowHostPath?.length).toBeGreaterThan(0);
+  });
+
   it("selects table cells and records open Shadow DOM host/path boundaries", async () => {
     const run = createRun("<table><tbody><tr><td><span>42</span></td></tr></tbody></table><div id='host'></div>");
     const cell = run.document.querySelector("td")!;
@@ -228,9 +357,9 @@ describe("page bridge element selection", () => {
   });
 });
 
-function createRun(html: string) {
+function createRun(html: string, url = "https://example.test/article") {
   const dom = new JSDOM(`<!doctype html><body>${html}</body>`, {
-    url: "https://example.test/article",
+    url,
     pretendToBeVisual: true,
     runScripts: "outside-only",
   });
@@ -258,11 +387,11 @@ function installRun(window: DOMWindow) {
       },
     },
   });
-  window.eval(bridgeSource.replace("__KEYDEX_BRIDGE_BOOTSTRAP__", JSON.stringify({
+  window.eval(`let __KEYDEX_BRIDGE_DIAGNOSTICS_POST__ = null;\n${bridgeSource.replace("__KEYDEX_BRIDGE_BOOTSTRAP__", JSON.stringify({
     panelId: "panel-1",
     surfaceId: "surface-1",
     generation: 2,
-  })));
+  }))}`);
   const internalResponses: Array<{ kind: string; payload?: Record<string, unknown> }> = [];
   window.document.addEventListener("keydex:web-annotation-response", (event) => {
     const detail = (event as CustomEvent).detail;

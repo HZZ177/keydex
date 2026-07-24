@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from backend.app.git.access import GitAncestorGrantStore, GitWorktreeGrantStore
 from backend.app.git.command_service import GitCommandRegistry, GitCommandRisk, GitCommandService
 from backend.app.git.confirmations import GitConfirmationService
+from backend.app.git.credential_service import GitCredentialService
 from backend.app.git.default_commands import create_default_git_command_registry
 from backend.app.git.history_query import GitHistoryQuery
 from backend.app.git.models import (
@@ -31,7 +32,6 @@ from backend.app.git.models import (
     GitCommandResponse,
     GitCommitCommandRequest,
     GitCommitDetailResponse,
-    GitRevisionTreeResponse,
     GitCompareResponse,
     GitConfirmationRequest,
     GitConfirmationResponse,
@@ -39,6 +39,8 @@ from backend.app.git.models import (
     GitConflictResultSaveRequest,
     GitConflictResultSaveResponse,
     GitConflictsResponse,
+    GitCredentialLoginRequest,
+    GitCredentialLoginResponse,
     GitDiffResponse,
     GitDiscoveryRequest,
     GitDiscoveryResponse,
@@ -72,6 +74,7 @@ from backend.app.git.models import (
     GitRestoreCommandRequest,
     GitRevertCommandRequest,
     GitRevertControlCommandRequest,
+    GitRevisionTreeResponse,
     GitStashBranchCommandRequest,
     GitStashClearCommandRequest,
     GitStashDetailResponse,
@@ -159,12 +162,27 @@ GitConfirmations = Annotated[GitConfirmationService, Depends(get_git_confirmatio
 GitRegistry = Annotated[GitCommandRegistry, Depends(get_git_command_registry)]
 
 
+def get_git_credential_service(request: Request) -> GitCredentialService:
+    service = getattr(request.app.state, "git_credential_service", None)
+    if isinstance(service, GitCredentialService):
+        return service
+    service = GitCredentialService(query_service=get_git_query_service(request))
+    request.app.state.git_credential_service = service
+    return service
+
+
+GitCredentials = Annotated[GitCredentialService, Depends(get_git_credential_service)]
+
+
 def _error_responses() -> dict[int | str, dict[str, object]]:
     return {
+        401: {"model": GitErrorResponse},
         403: {"model": GitErrorResponse},
         404: {"model": GitErrorResponse},
         422: {"model": GitErrorResponse},
+        502: {"model": GitErrorResponse},
         503: {"model": GitErrorResponse},
+        504: {"model": GitErrorResponse},
     }
 
 
@@ -362,6 +380,20 @@ async def repository_remotes(
 ) -> GitRemotesResponse:
     request.repository_id = repository_id
     return await _await(service.remotes, request)
+
+
+@router.post(
+    "/repositories/{repository_id}/credentials/login",
+    response_model=GitCredentialLoginResponse,
+    responses=_error_responses(),
+)
+async def login_git_credentials(
+    repository_id: str,
+    payload: GitCredentialLoginRequest,
+    service: GitCredentials,
+) -> GitCredentialLoginResponse:
+    payload.repository_id = repository_id
+    return await _await(service.login, payload)
 
 
 @router.get("/repositories/{repository_id}/history", response_model=GitHistoryPageResponse)

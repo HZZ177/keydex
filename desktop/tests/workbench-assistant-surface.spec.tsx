@@ -1876,6 +1876,83 @@ describe("WorkbenchAssistantSurface", () => {
     expect(screen.queryByTestId("workbench-assistant-capsule-restore")).toBeNull();
   });
 
+  it("preserves the capsule position while a new preview viewport is still unknown", async () => {
+    const controller = fakeController();
+    const view = render(
+      <WorkbenchSurfaceTestProviders>
+        <WorkbenchAssistantSurface
+          runtime={fakeRuntime()}
+          workspaceId="ws-1"
+          workspace={workspace()}
+          controller={controller}
+          contentNearBottom={false}
+          contentViewportKey="preview-1"
+        />
+      </WorkbenchSurfaceTestProviders>,
+    );
+    const surface = screen.getByTestId("workbench-assistant-surface");
+
+    view.rerender(
+      <WorkbenchSurfaceTestProviders>
+        <WorkbenchAssistantSurface
+          runtime={fakeRuntime()}
+          workspaceId="ws-1"
+          workspace={workspace()}
+          controller={controller}
+          contentNearBottom={null}
+          contentViewportKey="preview-2"
+        />
+      </WorkbenchSurfaceTestProviders>,
+    );
+    expect(surface.getAttribute("data-capsule-yielded")).toBe("false");
+
+    view.rerender(
+      <WorkbenchSurfaceTestProviders>
+        <WorkbenchAssistantSurface
+          runtime={fakeRuntime()}
+          workspaceId="ws-1"
+          workspace={workspace()}
+          controller={controller}
+          contentNearBottom
+          contentViewportKey="preview-2"
+        />
+      </WorkbenchSurfaceTestProviders>,
+    );
+    await waitFor(() => {
+      expect(surface.getAttribute("data-capsule-yielded")).toBe("true");
+    });
+
+    view.rerender(
+      <WorkbenchSurfaceTestProviders>
+        <WorkbenchAssistantSurface
+          runtime={fakeRuntime()}
+          workspaceId="ws-1"
+          workspace={workspace()}
+          controller={controller}
+          contentNearBottom={null}
+          contentViewportKey="preview-3"
+        />
+      </WorkbenchSurfaceTestProviders>,
+    );
+    expect(surface.getAttribute("data-capsule-yielded")).toBe("true");
+
+    view.rerender(
+      <WorkbenchSurfaceTestProviders>
+        <WorkbenchAssistantSurface
+          runtime={fakeRuntime()}
+          workspaceId="ws-1"
+          workspace={workspace()}
+          controller={controller}
+          contentNearBottom={false}
+          contentViewportKey="preview-3"
+        />
+      </WorkbenchSurfaceTestProviders>,
+    );
+    await waitFor(() => {
+      expect(surface.getAttribute("data-capsule-yielded")).toBe("false");
+    });
+  });
+
   it("lets the user manually yield and restore the capsule without viewport reports", async () => {
     render(
       <WorkbenchSurfaceTestProviders>

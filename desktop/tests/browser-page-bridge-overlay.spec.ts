@@ -179,6 +179,40 @@ describe("page bridge themed overlay", () => {
     });
   });
 
+  it("persists native-inspected local-file targets with their real frame URL", () => {
+    const url = "file:///D:/Keydex%20Fixtures/forms.html";
+    const run = createRun(
+      "<a id='next' href='./next.html?token=secret#section'>Next page</a>",
+      url,
+    );
+    const link = run.document.querySelector("a")!;
+    Object.defineProperty(link, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        x: 24,
+        y: 40,
+        left: 24,
+        top: 40,
+        right: 184,
+        bottom: 76,
+        width: 160,
+        height: 36,
+      }),
+    });
+    const serializeTarget = run.window.eval(`(${devtoolsElementTargetSource})`) as (
+      this: Element,
+    ) => Record<string, unknown>;
+
+    expect(serializeTarget.call(link)).toMatchObject({
+      type: "element",
+      tag: "a",
+      stableAttributes: expect.arrayContaining([
+        { name: "href", value: "file:///D:/Keydex%20Fixtures/next.html" },
+      ]),
+      frame: { url, indexPath: [] },
+    });
+  });
+
   it("draws selection candidates, keeps the page non-interactive, and clears after terminal selection", () => {
     const run = createRun("<button id='save'>Save changes</button>");
     run.configure("light", false);
@@ -380,11 +414,69 @@ describe("page bridge themed overlay", () => {
     expect(scrollIntoView).toHaveBeenCalledWith({ block: "center", inline: "nearest", behavior: "auto" });
     expect(run.marker("annotation-quote")?.getAttribute("data-flash")).toBe("true");
   });
+
+  it("renders, opens, navigates, retargets, and clears a local-file highlight", async () => {
+    const localUrl = "file:///D:/e2e-wbf/annotations/article.html";
+    const run = createRun("<button id='local-target'>Local target</button>", localUrl);
+    const button = run.document.querySelector<HTMLElement>("#local-target")!;
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(button, "scrollIntoView", { configurable: true, value: scrollIntoView });
+    const initial = elementTarget(
+      documentPath(0),
+      { x: 20, y: 36, width: 140, height: 32 },
+      localUrl,
+    );
+    run.configure("light", false);
+
+    run.send("highlight.render", "highlight-local", {
+      annotationId: "annotation-local",
+      state: "resolved",
+      bodyMarkdown: "Local annotation",
+      target: initial,
+    });
+    expect(run.marker("annotation-local")?.style.top).toBe("36px");
+    expect(run.root().shadowRoot?.querySelector("style")?.textContent)
+      .toContain('[data-kind="highlight"]:hover');
+    run.marker("annotation-local")?.click();
+    expect(run.root().shadowRoot?.querySelector("[part='annotation-highlight-popover']")?.textContent)
+      .toContain("Local annotation");
+
+    run.send("navigate.toTarget", "navigate-local", {
+      annotationId: "annotation-local",
+      target: initial,
+    });
+    await run.nextFrame();
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      block: "center",
+      inline: "nearest",
+      behavior: "smooth",
+    });
+    expect(run.marker("annotation-local")?.getAttribute("data-flash")).toBe("true");
+
+    run.send("highlight.render", "highlight-local-retarget", {
+      annotationId: "annotation-local",
+      state: "changed",
+      bodyMarkdown: "Local annotation",
+      target: elementTarget(
+        documentPath(0),
+        { x: 40, y: 88, width: 160, height: 32 },
+        localUrl,
+      ),
+    });
+    expect(run.root().shadowRoot?.querySelectorAll(
+      "[part='annotation-highlight'][data-annotation-id='annotation-local']",
+    )).toHaveLength(1);
+    expect(run.marker("annotation-local")?.style.top).toBe("88px");
+    expect(run.marker("annotation-local")?.getAttribute("data-state")).toBe("changed");
+
+    run.send("highlight.clear", "highlight-local-clear", { annotationIds: ["annotation-local"] });
+    expect(run.document.querySelector("[data-keydex-annotation-overlay-root='true']")).toBeNull();
+  });
 });
 
-function createRun(html: string) {
+function createRun(html: string, url = "https://example.test/article") {
   const dom = new JSDOM(`<!doctype html><body>${html}</body>`, {
-    url: "https://example.test/article",
+    url,
     pretendToBeVisual: true,
     runScripts: "outside-only",
   });
@@ -412,11 +504,11 @@ function installRun(window: DOMWindow) {
       },
     },
   });
-  window.eval(bridgeSource.replace("__KEYDEX_BRIDGE_BOOTSTRAP__", JSON.stringify({
+  window.eval(`let __KEYDEX_BRIDGE_DIAGNOSTICS_POST__ = null;\n${bridgeSource.replace("__KEYDEX_BRIDGE_BOOTSTRAP__", JSON.stringify({
     panelId: "panel-1",
     surfaceId: "surface-1",
     generation: 2,
-  })));
+  }))}`);
   window.eval(overlaySource);
   const metadata = (window as unknown as {
     KeydexAnnotationBridge: { navigationId: string; frameKey: string };
@@ -485,6 +577,7 @@ function textTarget(rects: readonly { x: number; y: number; width: number; heigh
 function elementTarget(
   path: readonly { childIndex: number; shadowRoot: boolean }[],
   rect: { x: number; y: number; width: number; height: number },
+  url = "https://example.test/article",
 ) {
   return {
     type: "element",
@@ -495,7 +588,7 @@ function elementTarget(
     path,
     context: { headingPath: [] },
     rect,
-    frame: { url: "https://example.test/article", indexPath: [] },
+    frame: { url, indexPath: [] },
   };
 }
 

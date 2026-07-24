@@ -45,6 +45,18 @@ PrepareCommand = Callable[[_RequestT], GitPreparedCommand]
 ParseResult = Callable[[GitCommandResult], dict[str, Any]]
 Preflight = Callable[[_RequestT], None]
 
+_CHECKOUT_CONFLICT_MARKERS = (
+    "would be overwritten by checkout",
+    "would be overwritten by merge",
+    "please commit your changes or stash them before you switch branches",
+    "please commit your changes or stash them before you can switch branches",
+)
+
+
+def _is_checkout_conflict(stderr: str) -> bool:
+    normalized = stderr.casefold()
+    return any(marker in normalized for marker in _CHECKOUT_CONFLICT_MARKERS)
+
 
 @dataclass(frozen=True)
 class GitCommandDefinition(Generic[_RequestT]):
@@ -229,16 +241,34 @@ class GitCommandService:
                     self._queries.invalidate(repository.id)
                 if prepared.argv[0] in {"fetch", "pull", "push", "ls-remote"}:
                     failure = classify_remote_failure(result.safe_stderr)
+                    details: dict[str, Any] = {
+                        "help_action": failure.help_action,
+                        "diagnostic": failure.diagnostic,
+                    }
+                    failed_remote = (
+                        prepared.result_data.get("remote")
+                        if prepared.result_data is not None
+                        else None
+                    )
+                    if isinstance(failed_remote, str) and failed_remote:
+                        details["remote"] = failed_remote
                     raise GitApiError(
                         failure.code,
                         failure.message,
                         retryable=failure.retryable,
                         operation_id=context.operation_id,
                         repository_id=repository.id,
-                        details={
-                            "help_action": failure.help_action,
-                            "diagnostic": failure.diagnostic,
-                        },
+                        details=details,
+                    )
+                if definition.name in {"checkout", "create_branch"} and _is_checkout_conflict(
+                    result.safe_stderr
+                ):
+                    raise GitApiError(
+                        "git_checkout_conflict",
+                        "Local changes would be overwritten by switching branches",
+                        operation_id=context.operation_id,
+                        repository_id=repository.id,
+                        details={"diagnostic": result.safe_stderr.strip()},
                     )
                 raise GitApiError(
                     "git_failed",

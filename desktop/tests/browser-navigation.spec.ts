@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  BrowserFileAddressError,
+  authorizeBrowserNavigation,
+  canonicalizeBrowserFileAddress,
   persistableBrowserMetadata,
   resolveBrowserAddress,
   sanitizeBrowserFaviconUrl,
@@ -30,7 +33,10 @@ describe("browser address and persisted navigation metadata", () => {
       url: "https://www.bing.com/search?q=%E7%BD%91%E9%A1%B5%E6%89%B9%E6%B3%A8%20%E8%AE%BE%E8%AE%A1",
     });
     expect(() => resolveBrowserAddress("javascript:alert(1)")).toThrow("不支持此地址协议");
-    expect(() => resolveBrowserAddress("file:///C:/secret.txt")).toThrow("不支持此地址协议");
+    expect(resolveBrowserAddress("file:///C:/work/index.html")).toEqual({
+      kind: "file",
+      url: "file:///C:/work/index.html",
+    });
   });
 
   it("keeps runtime URLs visible but strips one-time secrets from restore URLs", () => {
@@ -77,12 +83,144 @@ describe("browser address and persisted navigation metadata", () => {
   });
 });
 
+describe("Windows and file URL normalization", () => {
+  it.each([
+    ["D:\\workspace\\demo\\index.html", "file:///D:/workspace/demo/index.html"],
+    ["d:/workspace/demo/index.html", "file:///D:/workspace/demo/index.html"],
+    ["D:\\workspace\\.\\nested\\..\\index.html", "file:///D:/workspace/index.html"],
+    ["D:\\workspace\\空 格\\100%#完成.html", "file:///D:/workspace/%E7%A9%BA%20%E6%A0%BC/100%25%23%E5%AE%8C%E6%88%90.html"],
+    ["file:///d:/workspace/index.html", "file:///D:/workspace/index.html"],
+    ["file:///D:/workspace/100%25%23done.html", "file:///D:/workspace/100%25%23done.html"],
+    ["file:///D:/workspace/%E4%B8%AD%E6%96%87%20%E9%A1%B5.html", "file:///D:/workspace/%E4%B8%AD%E6%96%87%20%E9%A1%B5.html"],
+    ["\\\\server\\share\\folder\\index.html", "file://server/share/folder/index.html"],
+    ["file://SERVER/share/folder/index.html", "file://server/share/folder/index.html"],
+    ["file:///D:/workspace/one/../two/index.html", "file:///D:/workspace/two/index.html"],
+  ])("normalizes %s", (input, expected) => {
+    expect(canonicalizeBrowserFileAddress(input).url).toBe(expected);
+  });
+
+  it("uses one case-insensitive canonical key for equivalent Windows inputs", () => {
+    const first = canonicalizeBrowserFileAddress("D:\\Workspace\\Demo\\INDEX.HTML");
+    const second = canonicalizeBrowserFileAddress("file:///d:/workspace/demo/index.html");
+
+    expect(first.canonicalKey).toBe(second.canonicalKey);
+    expect(first.windowsPath).toBe("D:\\Workspace\\Demo\\INDEX.HTML");
+  });
+
+  it.each([
+    ["relative\\index.html", "relative_path"],
+    ["D:relative\\index.html", "relative_path"],
+    ["file:///D:/bad/%ZZ/index.html", "invalid_percent_encoding"],
+    ["D:\\bad\u0000\\index.html", "control_character"],
+    ["D:\\workspace\\folder\\", "directory_path"],
+    ["file:///D:/workspace/folder/", "directory_path"],
+    ["file://user:pass@server/share/index.html", "invalid_file_authority"],
+    ["file:///tmp/index.html", "invalid_file_path"],
+    ["\\\\server\\share", "invalid_file_authority"],
+  ] as const)("classifies invalid input %s as %s", (input, code) => {
+    try {
+      canonicalizeBrowserFileAddress(input);
+      throw new Error("Expected local file input to be rejected");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BrowserFileAddressError);
+      expect((error as BrowserFileAddressError).code).toBe(code);
+    }
+  });
+
+  it("keeps HTTP address and search behavior unchanged", () => {
+    expect(resolveBrowserAddress("https://example.com/docs")).toEqual({
+      kind: "url",
+      url: "https://example.com/docs",
+    });
+    expect(resolveBrowserAddress("file annotations")).toMatchObject({
+      kind: "search",
+    });
+  });
+
+  it("keeps a literal percent sequence in a Windows filename instead of decoding it", () => {
+    const file = canonicalizeBrowserFileAddress("D:\\workspace\\literal%20name.html");
+
+    expect(file.url).toBe("file:///D:/workspace/literal%2520name.html");
+    expect(file.windowsPath).toBe("D:\\workspace\\literal%20name.html");
+  });
+});
+
+describe("renderer file navigation intent policy", () => {
+  it.each([
+    ["address_bar", undefined, true],
+    ["app_preview", undefined, false],
+    ["restore", undefined, false],
+    ["page_link", "file:///D:/workspace/index.html", true],
+    ["redirect", "file:///D:/workspace/index.html", false],
+    ["popup", "file:///D:/workspace/index.html", true],
+    ["history", "file:///D:/workspace/index.html", false],
+  ] as const)("allows trusted %s navigation to a local file", (source, initiatorUrl, userGesture) => {
+    expect(authorizeBrowserNavigation({
+      target: "D:\\workspace\\nested\\page.html",
+      intent: { source, initiatorUrl, userGesture },
+    })).toMatchObject({
+      targetKind: "local_file",
+      url: "file:///D:/workspace/nested/page.html",
+      intent: { source, userGesture },
+    });
+  });
+
+  it.each([
+    ["page_link", true],
+    ["redirect", false],
+    ["popup", true],
+    ["history", false],
+  ] as const)("rejects remote-origin %s navigation to file", (source, userGesture) => {
+    expect(() => authorizeBrowserNavigation({
+      target: "file:///D:/workspace/private.html",
+      intent: {
+        source,
+        initiatorUrl: "https://example.test/article",
+        userGesture,
+      },
+    })).toThrow("远程页面不能导航到本地文件");
+  });
+
+  it.each(["page_link", "popup"] as const)(
+    "requires a user gesture for local-page %s file navigation",
+    (source) => {
+      expect(() => authorizeBrowserNavigation({
+        target: "file:///D:/workspace/next.html",
+        intent: {
+          source,
+          initiatorUrl: "file:///D:/workspace/index.html",
+          userGesture: false,
+        },
+      })).toThrow("远程页面不能导航到本地文件");
+    },
+  );
+
+  it("allows a local page to navigate to HTTP without widening file access", () => {
+    expect(authorizeBrowserNavigation({
+      target: "https://example.test/docs",
+      intent: {
+        source: "page_link",
+        initiatorUrl: "file:///D:/workspace/index.html",
+        userGesture: true,
+      },
+    })).toEqual({
+      url: "https://example.test/docs",
+      targetKind: "remote",
+      intent: {
+        source: "page_link",
+        initiatorUrl: "file:///D:/workspace/index.html",
+        userGesture: true,
+      },
+    });
+  });
+});
+
 describe("BrowserNavigationController", () => {
   it("correlates navigate/history/reload/stop with the current surface", async () => {
     const store = createBrowserRuntimeStore();
     store.getState().beginCreate("panel-1", 1, "persistent", "about:blank");
     store.getState().applyEvent({
-      schemaVersion: 1,
+      schemaVersion: 2,
       kind: "surface.ready",
       panelId: "panel-1",
       surfaceId: "surface-1",
@@ -128,6 +266,10 @@ describe("BrowserNavigationController", () => {
         generation: 1,
         navigationId: "panel-1-navigation-1",
         url: "https://example.com/",
+        intent: {
+          source: "address_bar",
+          userGesture: true,
+        },
       },
     });
   });

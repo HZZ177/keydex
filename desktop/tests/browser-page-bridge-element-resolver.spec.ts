@@ -176,11 +176,48 @@ describe("page bridge semantic element resolver", () => {
     expect(result.payload.status).toBe("orphaned");
     expect(JSON.stringify(result.payload)).not.toMatch(/password-secret|data-token|secret/);
   });
+
+  it("restores a persisted local-file element after a full page reload", () => {
+    const url = "file:///D:/Keydex%20Fixtures/nested/annotation.html";
+    const beforeReload = createRun(
+      "<main><button id='save' aria-label='Save local draft'>Save</button></main>",
+      url,
+    );
+    const originalButton = beforeReload.document.querySelector("button")!;
+    beforeReload.rect(originalButton, 20, 40, 160, 36);
+    const original = beforeReload.select(originalButton);
+    expect(original.frame).toEqual({ url, indexPath: [] });
+
+    const afterReload = createRun(
+      "<main><section><button id='save' aria-label='Save local draft'>Save</button></section></main>",
+      url,
+    );
+    const currentButton = afterReload.document.querySelector("button")!;
+    afterReload.rect(currentButton, 60, 120, 160, 36);
+    const result = afterReload.resolve(original);
+
+    expect(result.payload).toMatchObject({
+      status: "resolved",
+      target: {
+        tag: "button",
+        role: "button",
+        accessibleName: "Save local draft",
+        stableAttributes: expect.arrayContaining([{ name: "id", value: "save" }]),
+        rect: { x: 60, y: 120, width: 160, height: 36 },
+        frame: { url, indexPath: [] },
+      },
+      evidence: {
+        strategy: "unique_id",
+        candidateCount: 1,
+        truncated: false,
+      },
+    });
+  });
 });
 
-function createRun(html: string) {
+function createRun(html: string, url = "https://example.test/article") {
   const dom = new JSDOM(`<!doctype html><body>${html}</body>`, {
-    url: "https://example.test/article",
+    url,
     pretendToBeVisual: true,
     runScripts: "outside-only",
   });
@@ -208,12 +245,12 @@ function installRun(window: DOMWindow) {
       },
     },
   });
-  window.eval(bridgeSource.replace("__KEYDEX_BRIDGE_BOOTSTRAP__", JSON.stringify({
+  window.eval(`let __KEYDEX_BRIDGE_DIAGNOSTICS_POST__ = null;\n${bridgeSource.replace("__KEYDEX_BRIDGE_BOOTSTRAP__", JSON.stringify({
     panelId: "panel-1",
     surfaceId: "surface-1",
     generation: 2,
     scoringPolicy,
-  })));
+  }))}`);
   window.eval(elementSource);
   const metadata = (window as unknown as {
     KeydexAnnotationBridge: { navigationId: string; frameKey: string };

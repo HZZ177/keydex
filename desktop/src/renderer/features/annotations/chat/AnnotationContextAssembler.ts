@@ -14,6 +14,8 @@ export interface AnnotationAssemblyDocument {
   readonly workspaceId: string;
 }
 
+export type AnnotationContextSourceKind = "document" | "html_source";
+
 export type AssembledAnnotationContext =
   | {
       readonly annotationId: string;
@@ -22,6 +24,7 @@ export type AssembledAnnotationContext =
       readonly documentRevision: string;
       readonly kind: "document";
       readonly path: string;
+      readonly sourceKind: AnnotationContextSourceKind;
       readonly textRevision: string;
       readonly workspaceId: string;
     }
@@ -32,6 +35,7 @@ export type AssembledAnnotationContext =
       readonly exact: string;
       readonly kind: "text";
       readonly path: string;
+      readonly sourceKind: AnnotationContextSourceKind;
       readonly sourceRanges: readonly SourceRange[];
       readonly sourceSegments: readonly string[];
       readonly textRevision: string;
@@ -92,6 +96,7 @@ function assembleOne(
     body: resolution.record.body,
     documentRevision: document.model.revision.documentRevision,
     path: document.path,
+    sourceKind: isHtmlDocumentPath(document.path) ? "html_source" : "document",
     textRevision: document.model.revision.textRevision,
     workspaceId: document.workspaceId,
   } as const;
@@ -111,6 +116,10 @@ function assembleOne(
     sourceRanges: Object.freeze(sourceRanges.map((range) => Object.freeze({ ...range }))),
     sourceSegments: Object.freeze(sourceSegments),
   });
+}
+
+function isHtmlDocumentPath(path: string): boolean {
+  return /\.html?$/iu.test(path.trim());
 }
 
 function assertCurrentIndex(document: AnnotationAssemblyDocument): void {

@@ -116,6 +116,7 @@ async def test_remote_failure_is_structured_redacted_and_actionable(
         prepare=lambda _request: GitPreparedCommand(
             argv=("fetch", "origin"),
             summary="Fetch origin",
+            result_data={"remote": "origin"},
         ),
     )
 
@@ -143,7 +144,8 @@ async def test_remote_failure_is_structured_redacted_and_actionable(
     assert operation.state == "failed"
     assert operation.result["error_code"] == "git_credentials_missing"
     assert operation.result["retryable"] is True
-    assert "credential manager" in str(operation.result["help_action"])
+    assert operation.result["remote"] == "origin"
+    assert "credential login" in str(operation.result["help_action"])
     assert "secret" not in str(operation.result["diagnostic"])
     assert operation.command == "fetch-test"
     assert operation.risk == "write"

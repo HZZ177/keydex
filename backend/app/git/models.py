@@ -414,6 +414,18 @@ class GitRemotesResponse(GitModel):
     remotes: list[GitRemoteResponse] = Field(default_factory=list)
 
 
+class GitCredentialLoginRequest(GitRepositoryRequest):
+    remote: str = Field(default="origin", min_length=1, max_length=255)
+    provider: Literal["auto", "gitlab", "generic"] = "auto"
+
+
+class GitCredentialLoginResponse(GitModel):
+    repository_id: str = Field(min_length=1)
+    remote: str = Field(min_length=1)
+    host: str = Field(min_length=1)
+    authenticated: bool = True
+
+
 class GitHistoryPageResponse(GitModel):
     repository_id: str = Field(min_length=1)
     repository_version: str = Field(min_length=1)
@@ -663,6 +675,7 @@ class GitCommitCommandRequest(GitCommandRequest):
 class GitBranchCommandRequest(GitCommandRequest):
     branch_name: str = Field(min_length=1, max_length=255)
     start_point: str = "HEAD"
+    track: bool = False
 
 
 class GitBranchRenameCommandRequest(GitCommandRequest):

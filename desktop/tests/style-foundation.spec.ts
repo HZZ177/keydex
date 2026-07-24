@@ -409,10 +409,16 @@ describe("style foundation", () => {
       /\.viewer\s+:global\(\[data-keydex-diff-surface\]\[data-profile="compact"\]\)\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*overflow:\s*hidden/s,
     );
     expect(diffView).toMatch(
-      /\.patchViewport\s*\{[^}]*overflow-y:\s*auto;[^}]*scrollbar-gutter:\s*stable;[^}]*scrollbar-width:\s*thin/s,
+      /\.patchViewport\s*\{[^}]*overflow-y:\s*auto;[^}]*scrollbar-gutter:\s*stable/s,
+    );
+    expect(diffView).not.toMatch(
+      /\.patchViewport\s*\{[^}]*scrollbar-(?:width|color):/s,
     );
     expect(diffView).toMatch(
-      /\.patchViewport::-webkit-scrollbar\s*\{[^}]*width:\s*9px;[^}]*height:\s*9px/s,
+      /\.patchViewport::-webkit-scrollbar\s*\{[^}]*width:\s*12px;[^}]*height:\s*12px/s,
+    );
+    expect(diffView).toMatch(
+      /\.patchViewport::-webkit-scrollbar-thumb\s*\{[^}]*border:\s*2px solid transparent;/s,
     );
     expect(pierreCodeView).toMatch(
       /\.scrollViewport\s*\{[^}]*overflow:\s*auto;[^}]*scrollbar-gutter:\s*stable;[^}]*scrollbar-width:\s*thin/s,
@@ -482,6 +488,12 @@ describe("style foundation", () => {
     expect(resizeHandle).not.toMatch(/\.handle:hover::before,[^{]+\.handle:focus-visible::before,[^{]+\.handle\[data-dragging="true"\]::before\s*{[^}]*width:\s*3px/s);
     expect(rightResizeHandle).toMatch(/\.handle::before\s*{[^}]*top:\s*0/s);
     expect(rightResizeHandle).toMatch(/\.handle::before\s*{[^}]*bottom:\s*0/s);
+    expect(rightResizeHandle).toMatch(
+      /\.root\s*{[^}]*flex:\s*0 0 0;[^}]*width:\s*0;[^}]*min-width:\s*0;[^}]*overflow:\s*visible;[^}]*background:\s*transparent/s,
+    );
+    expect(rightResizeHandle).toMatch(
+      /\.handle\s*{[^}]*position:\s*absolute;[^}]*left:\s*-8px;[^}]*width:\s*16px/s,
+    );
     expect(rightResizeHandle).toMatch(/\.handle:hover::before,[^{]+\.handle:focus-visible::before,[^{]+\.handle\[data-dragging="true"\]::before\s*{[^}]*background:/s);
     expect(rightResizeHandle).not.toMatch(/\.handle:hover::before,[^{]+\.handle:focus-visible::before,[^{]+\.handle\[data-dragging="true"\]::before\s*{[^}]*width:\s*3px/s);
     expect(shell).toMatch(/\.shell\s*{[^}]*grid-template-rows:\s*var\(--titlebar-height\) minmax\(0,\s*1fr\)/s);

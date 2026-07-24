@@ -24,6 +24,10 @@
     guaranteedExactScanChars: 16 * 1024,
     timeBudgetMs: 12,
   });
+  const materialAnnotationChangeSignals = new Set(["quote_changed"]);
+  const hasMaterialAnnotationChange = (signals) => (
+    Array.isArray(signals) && signals.some((signal) => materialAnnotationChangeSignals.has(signal))
+  );
   const nodeBindings = window.KeydexAnnotationBridge?.nodeBindings ?? null;
   let active = null;
 

@@ -699,11 +699,31 @@ mod tests {
             );
             let result = crop_png_to_css_rect(&source, &rect, &viewport).unwrap();
             assert_eq!((result.width, result.height), expected);
+            let decoded = image::load_from_memory_with_format(&result.png, ImageFormat::Png)
+                .unwrap()
+                .to_rgba8();
+            assert_eq!(decoded.dimensions(), expected);
+            let source_left = (rect.x * scale).floor() as u32;
+            let source_top = (rect.y * scale).floor() as u32;
             assert_eq!(
-                image::load_from_memory_with_format(&result.png, ImageFormat::Png)
-                    .unwrap()
-                    .dimensions(),
-                expected
+                decoded.get_pixel(0, 0),
+                &Rgba([
+                    (source_left % 251) as u8,
+                    (source_top % 251) as u8,
+                    ((source_left + source_top) % 251) as u8,
+                    255,
+                ])
+            );
+            let source_right = source_left + expected.0 - 1;
+            let source_bottom = source_top + expected.1 - 1;
+            assert_eq!(
+                decoded.get_pixel(expected.0 - 1, expected.1 - 1),
+                &Rgba([
+                    (source_right % 251) as u8,
+                    (source_bottom % 251) as u8,
+                    ((source_right + source_bottom) % 251) as u8,
+                    255,
+                ])
             );
         }
     }

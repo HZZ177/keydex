@@ -86,6 +86,32 @@ describe("GitOperationLog", () => {
     });
     expect(diagnostic).not.toContain("super-secret");
   });
+
+  it("offers an explicit credential login only for authentication failures", () => {
+    const onLogin = vi.fn();
+    const failed = operation("failed", "credential-op", true);
+    failed.error = {
+      code: "git_credentials_missing",
+      message: "credentials unavailable",
+      retryable: true,
+      details: { remote: "origin" },
+    };
+    render(
+      <GitOperationLog
+        operations={[failed]}
+        repositoryLabels={{ "repo-1": "repo" }}
+        canRetry={() => true}
+        onRetry={vi.fn()}
+        canLogin={(operationId) => operationId === "credential-op"}
+        onLogin={onLogin}
+        canCancel={() => false}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "登录远程仓库" }));
+    expect(onLogin).toHaveBeenCalledWith("credential-op");
+  });
 });
 
 function operation(
